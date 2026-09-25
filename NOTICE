@@ -1,0 +1,24 @@
+BoardDock
+Copyright (c) 2026 BoardDock contributors. Licensed under the MIT License (see LICENSE).
+
+The printed parts BoardDock generates (holders, rail shoes, sockets, rods, caps, clips) are yours to use,
+modify and share without restriction.
+
+BoardDock includes or depends on the following third-party software:
+
+manifold-3d (geometry kernel, WebAssembly)       Apache License 2.0   https://github.com/elalish/manifold
+three.js (3D viewer)                               MIT                  https://github.com/mrdoob/three.js
+React, React DOM                                   MIT                  https://github.com/facebook/react
+fflate (zip, 3MF)                                  MIT                  https://github.com/101arrowz/fflate
+occt-import-js (STEP import)                       LGPL-2.1             https://github.com/kovacsv/occt-import-js
+  built on Open CASCADE Technology                 LGPL-2.1 with the OCCT exception   https://dev.opencascade.org
+  occt-import-js is loaded as a separate WebAssembly module and can be replaced by a user-built copy.
+Space Grotesk (font)                               SIL Open Font License 1.1   https://github.com/floriankarsten/space-grotesk
+JetBrains Mono (font)                              SIL Open Font License 1.1   https://github.com/JetBrains/JetBrainsMono
+Electron (desktop app only)                        MIT                  https://github.com/electron/electron
+
+Build and test tools (Vite, TypeScript, Vitest, electron-builder, happy-dom) are MIT licensed and are not
+shipped in the app.
+
+Board templates are dimensioned from the manufacturers' published mechanical drawings (Raspberry Pi Ltd,
+Arduino); product names are trademarks of their owners and are used only to identify compatible boards.
