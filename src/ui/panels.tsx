@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { zipSync, strToU8 } from 'fflate';
 import type { Board, Comp, Hole, Project, V2 } from '../model/types';
-import { CONNECTORS, MATERIALS, PRINTERS, connById, connSetup } from '../model/library';
+import { CONNECTORS, DEFAULT_FEATURES, HOLDER_PRESETS, MATERIALS, PRINTERS, connById, connSetup } from '../model/library';
 import { TEMPLATES } from '../model/templates';
 import { ACCEPT } from '../import';
 import { openFiles } from './importFlow';
@@ -9,10 +9,11 @@ import { bbox, circleLoop, roundedRectLoop, round, uid } from '../geom/poly';
 import { activeModule, addBoard, closeProject, edit, editMod, isSel, select, setBoard, store, useApp, type SelItem } from '../state';
 import { Check, Chip, Num, Pick, Section, Seg, Text, download, safeName } from './controls';
 import { estimate, packPlates, placedMesh, write3mf, writeStl } from '../cad/export';
-import { runClipFea } from '../worker/client';
+import { buildTestKit, runClipFea } from '../worker/client';
 import type { ClipFeaResult } from '../fea/clipfea';
 import { clipDims } from '../cad/dinclip';
 import { PanelSide } from './PanelSide';
+import { duplicateModule } from './panelOps';
 import { DockFeaSection } from './DockFea';
 
 // ============================================================================================ IMPORT
@@ -156,6 +157,7 @@ export function BoardPanel() {
         <p className="hint">{b.source}. {b.holes.length} holes, {b.comps.filter((c) => !c.hidden).length} parts, {b.comps.filter((c) => c.conn).length} connectors.</p>
         {b.notes.length > 0 && <div className="warns">{b.notes.map((n, i) => <div key={i}>{n}</div>)}</div>}
       </Section>
+      <CleanUp />
       {sel.length > 0 && <Inspector />}
       <Section title={`Holes · ${b.holes.length}`} right={<span className="btns"><AllBox items={b.holes.map((h) => ({ kind: 'hole' as const, id: h.id }))} /><button className="btn small" onClick={() => { editMod((q) => { q.board.holes.push({ id: uid('h'), x: (bb.x0 + bb.x1) / 2, y: (bb.y0 + bb.y1) / 2, d: 3.2, plated: false, use: 'auto' }); }); store.set({ view: 'editor' }); }}>+ Add</button></span>}>
         <div className="list">
@@ -357,6 +359,36 @@ export function HolderPanel() {
       <Section title="Material">
         <Seg value={H.material} options={(Object.keys(MATERIALS) as (keyof typeof MATERIALS)[]).map((m) => [m, m])} onChange={(v) => set((h) => { h.material = v; })} />
         <p className="hint">{H.material === 'PLA' ? 'PLA works but is stiff and brittle for springs and softens around 55 °C. PETG is the default.' : `${H.material}: E ≈ ${MATERIALS[H.material].E} MPa, spring strain limit ${(MATERIALS[H.material].strainAllow * 100).toFixed(1)}%.`}</p>
+      </Section>
+      <Section title="Preset" right={<span className="hint" style={{ margin: 0 }}>sets walls, base and pattern</span>}>
+        <div className="presets">
+          {([['sturdy', 'Sturdy', 'thicker walls and base, fine pattern'], ['balanced', 'Balanced', 'the default'], ['lean', 'Lean', 'fastest print, least filament']] as const).map(([k, n, d]) => {
+            const on = Object.entries(HOLDER_PRESETS[k]).every(([key, v]) => (H as any)[key] === v);
+            return <button key={k} className={`preset ${on ? 'on' : ''}`} onClick={() => set((h) => { Object.assign(h, HOLDER_PRESETS[k]); })}><b>{n}</b><small>{d}</small></button>;
+          })}
+        </div>
+        {p.modules.length > 1 && <div className="btns" style={{ marginTop: 8 }}><button className="btn small ghost" onClick={() => edit((q) => { for (const m of q.modules) Object.assign(m.holder, { wall: H.wall, base: H.base, pattern: H.pattern, cell: H.cell, rib: H.rib, wallAbove: H.wallAbove, chamfer: H.chamfer, material: H.material, feat: H.feat }); })}>Use these settings for every board</button></div>}
+      </Section>
+      <Section title="Features">
+        {(() => {
+          const F = { ...DEFAULT_FEATURES, ...(H.feat ?? {}) };
+          const setF = (k: keyof typeof F, v: boolean) => set((h) => { h.feat = { ...DEFAULT_FEATURES, ...(h.feat ?? {}), [k]: v }; });
+          return (
+            <>
+              <div className="featgrid">
+                <Check label="Plug cradles" value={F.cradles} onChange={(v) => setF('cradles', v)} />
+                <Check label="Snap-on plug caps" value={F.caps} onChange={(v) => setF('caps', v)} />
+                <Check label="Cable-tie anchors" value={F.ties} onChange={(v) => setF('ties', v)} />
+                <Check label="Receptacle guards" value={F.guards} onChange={(v) => setF('guards', v)} />
+                <Check label="Wall snap fingers" value={H.tabs !== 'off'} onChange={(v) => set((h) => { h.tabs = v ? 'auto' : 'off'; })} />
+                <Check label="Finger notches" value={H.notches} onChange={(v) => set((h) => { h.notches = v; })} />
+                <Check label="Engraved label" value={!!H.label.trim()} onChange={(v) => set((h) => { h.label = v ? activeModule(p).board.name.slice(0, 24) : ''; })} />
+                <Check label="Base pattern" value={H.pattern !== 'none'} onChange={(v) => set((h) => { h.pattern = v ? 'hex' : 'none'; })} />
+              </div>
+              <p className="hint">Switch a feature off for the whole holder here; the Plugs step still remembers each connector's own choice for when you switch it back on.</p>
+            </>
+          );
+        })()}
       </Section>
       <Section title="Tray">
         <div className="row">
@@ -627,6 +659,7 @@ export function ExportPanel() {
           <button className="btn ghost" onClick={() => store.set({ view: 'print' })}>Show plates in 3D</button>
         </div>
       </Section>
+      {p.layout === 'panel' && <TestKitSection />}
       <Section title="Estimate">
         <table className="table"><tbody>
           <tr><th>Part</th><th className="num">Qty</th><th className="num">Filament</th><th className="num">Time</th></tr>
@@ -713,6 +746,7 @@ export function LayoutSection() {
           <div key={m.id} className={`item ${p.active === i ? 'sel' : ''}`} onClick={() => edit((q) => { q.active = i; })}>
             <span className="grow"><b>{i + 1}.</b> {m.board.name} <small>{round(bbox(m.board.outline).x1 - bbox(m.board.outline).x0, 0)} × {round(bbox(m.board.outline).y1 - bbox(m.board.outline).y0, 0)} mm</small></span>
             {multi && i > 0 && <button className="btn small ghost" title="Move up" onClick={(e) => { e.stopPropagation(); edit((q) => { [q.modules[i - 1], q.modules[i]] = [q.modules[i], q.modules[i - 1]]; q.active = i - 1; }); }}>↑</button>}
+            <button className="btn small ghost" title="Duplicate this board and its holder" onClick={(e) => { e.stopPropagation(); duplicateModule(i); }}>⧉</button>
             {multi && <button className="btn small ghost danger" title="Remove" onClick={(e) => { e.stopPropagation(); edit((q) => { q.modules.splice(i, 1); q.active = Math.min(q.active, q.modules.length - 1); }); }}>✕</button>}
           </div>
         ))}
@@ -750,4 +784,48 @@ function quietEdge(p: Project): 'bottom' | 'top' | 'left' | 'right' {
     count[e]++;
   }
   return (['bottom', 'top', 'left', 'right'] as const).reduce((best, e) => (count[e] < count[best] ? e : best), 'bottom');
+}
+
+/** Undo what the importer got wrong: revert, drop small parts, ignore holes, strip plug protection. */
+function CleanUp() {
+  const p = useApp((s) => s.project)!;
+  const m = activeModule(p);
+  const b = m.board;
+  const small = b.comps.filter((c) => !c.hidden && !c.conn && c.h < 3 && c.side === 'top' && !c.tht).length;
+  const prot = b.comps.filter((c) => c.conn && (c.conn.cradle || c.conn.cap || c.conn.guard || c.conn.tie)).length;
+  const [all, setAll] = useState(false);
+  const each = (fn: (mm: Project['modules'][number]) => void) => edit((q) => { for (const x of all ? q.modules : [q.modules[q.active]]) fn(x); });
+  return (
+    <Section title="Clean up the import">
+      <div className="cleanup">
+        <button className="btn small" disabled={!small} onClick={() => each((x) => { for (const c of x.board.comps) if (!c.conn && c.h < 3 && c.side === 'top' && !c.tht) c.hidden = true; })}>Hide small parts <small>({small})</small></button>
+        <button className="btn small" disabled={!b.comps.some((c) => c.hidden)} onClick={() => each((x) => { for (const c of x.board.comps) c.hidden = false; })}>Show hidden parts</button>
+        <button className="btn small" disabled={!prot} onClick={() => each((x) => { for (const c of x.board.comps) if (c.conn) Object.assign(c.conn, { cradle: false, cap: false, guard: false, tie: false }); })}>Strip plug cradles, caps & ties <small>({prot})</small></button>
+        <button className="btn small" disabled={!b.holes.length} onClick={() => each((x) => { for (const h of x.board.holes) h.use = 'none'; })}>Ignore all holes</button>
+        <button className="btn small ghost" disabled={!m.original} onClick={() => each((x) => { if (x.original) x.board = structuredClone(x.original); })}>↺ Revert to the import</button>
+      </div>
+      {p.modules.length > 1 && <div style={{ marginTop: 8 }}><Check label="Apply to every board" value={all} onChange={setAll} /></div>}
+      <p className="hint">Small parts only matter under the board or near the walls; hiding them frees room for snap fingers and labels. Everything here can be undone (⌘Z).</p>
+    </Section>
+  );
+}
+
+
+function TestKitSection() {
+  const p = useApp((s) => s.project)!;
+  const [busy, setBusy] = useState(false);
+  const get = async () => {
+    setBusy(true);
+    try {
+      const parts = await buildTestKit(p.panel.fit ?? 0);
+      const plates = packPlates(parts, p.printer.bed, p.printer.spacing);
+      download('boarddock_test_fit_kit.3mf', write3mf(plates.flatMap((pl) => pl.items.map((it) => ({ name: it.part.name, mesh: placedMesh(it, p.printer.bed, pl.used) })))));
+    } finally { setBusy(false); }
+  };
+  return (
+    <Section title="Test-fit kit · print this first">
+      <p className="hint" style={{ marginTop: 0 }}>One rail shoe, one socket and a small tongue key with its release rod: about 30 to 40 minutes. Clip the shoe on your rail, push the key in until it clicks, press its button and lift. If the key is tight, raise <b>Tongue fit</b> in the Panel step by 0.05 to 0.1 mm and print the kit again.</p>
+      <div className="btns" style={{ marginTop: 8 }}><button className="btn" disabled={busy} onClick={get}>{busy ? 'Building…' : 'Download test-fit kit (3MF)'}</button></div>
+    </Section>
+  );
 }

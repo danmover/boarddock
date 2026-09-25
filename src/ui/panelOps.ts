@@ -12,7 +12,7 @@ export function materialise(p: Project) {
   const r = rep();
   if (!r) return;
   p.panel.rails = r.rails.map((x) => ({ id: x.id, x: round(x.x, 1), y: round(x.y, 1), dir: x.dir, length: null }));
-  p.panel.mounts = r.mounts.map((m) => ({ id: m.id, rail: m.rail, at: round(m.at, 1), kind: m.kind, turn: m.turn, slots: m.slots.map((s) => ({ ...s })) }));
+  p.panel.mounts = r.mounts.map((m) => ({ id: m.id, rail: m.rail, at: round(m.at, 1), kind: m.kind, turn: m.turn, lever: m.lever, slots: m.slots.map((s) => ({ ...s })) }));
   p.panel.auto = false;
 }
 
@@ -161,4 +161,21 @@ export function setSlot(mountId: string, slot: number, fn: (s: { module: string 
 export function autoArrange() {
   edit((p) => { p.panel.auto = true; });
   select([]);
+}
+
+export function setLever(ids: string[], lever: RailMount['lever']) {
+  panelEdit((p) => { for (const m of mountsOf(p, ids)) m.lever = lever; });
+}
+
+/** Copy a board and its holder settings; on a manual panel the copy gets a dock at the end of the last rail. */
+export function duplicateModule(i: number) {
+  edit((q) => {
+    const src = q.modules[i];
+    const copy = { ...structuredClone(src), id: Math.random().toString(36).slice(2, 9) };
+    const n = q.modules.filter((x) => x.board.name.replace(/ \(\d+\)$/, '') === src.board.name.replace(/ \(\d+\)$/, '')).length + 1;
+    copy.board.name = `${src.board.name.replace(/ \(\d+\)$/, '')} (${n})`;
+    q.modules.splice(i + 1, 0, copy);
+    q.active = i + 1;
+    if (q.layout === 'panel' && !q.panel.auto) appendDock(q, copy.id);
+  });
 }

@@ -1,8 +1,9 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import type { GenResult, MeshData, V2 } from '../model/types';
-import { packPlates, placedMesh, type Plate } from '../cad/export';
+import { packPlates, placedMesh, printability, type Plate } from '../cad/export';
 
 interface Props {
   result: GenResult | null;
@@ -13,6 +14,7 @@ interface Props {
   theme: 'dark' | 'light';
   camera?: { dir: [number, number, number]; n: number };
   installed?: 'h' | 'v' | null; // show the assembly on a horizontal / vertical rail against a wall
+  overhangs?: boolean; // print view: paint faces that need support (red) and bridges (amber)
 }
 
 function rigidInverse(m: number[]): number[] {
@@ -32,7 +34,7 @@ function geom(m: MeshData): THREE.BufferGeometry {
   return g;
 }
 
-export function Viewer3D({ result, mode, showGhosts, bed, spacing, theme, camera: camReq, installed }: Props) {
+export function Viewer3D({ result, mode, showGhosts, bed, spacing, theme, camera: camReq, installed, overhangs }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const ctx = useRef<{ renderer: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.PerspectiveCamera; controls: OrbitControls; group: THREE.Group; fitted: string; key: THREE.DirectionalLight } | null>(null);
 
@@ -52,8 +54,12 @@ export function Viewer3D({ result, mode, showGhosts, bed, spacing, theme, camera
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.12;
-    scene.add(new THREE.HemisphereLight(0xeaf6ff, 0x1b2a22, 1.35));
-    const key = new THREE.DirectionalLight(0xfff4e6, 2.1);
+    // studio reflections: soft, even, and they make the printed plastic read as plastic
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    scene.environmentIntensity = 0.55;
+    scene.add(new THREE.HemisphereLight(0xeaf6ff, 0x1b2a22, 0.8));
+    const key = new THREE.DirectionalLight(0xfff4e6, 1.9);
     key.position.set(120, -160, 260);
     key.castShadow = true;
     key.shadow.mapSize.set(2048, 2048);
@@ -111,7 +117,7 @@ export function Viewer3D({ result, mode, showGhosts, bed, spacing, theme, camera
     const edgeColor = theme === 'dark' ? 0x06120c : 0x1d3328;
     const addMesh = (m: MeshData, color: string, opacity: number, matrix?: number[], edges = true) => {
       const g = geom(m);
-      const mat = new THREE.MeshStandardMaterial({ color, roughness: opacity < 1 ? 0.35 : 0.48, metalness: 0.02, flatShading: true, transparent: opacity < 1, opacity, depthWrite: opacity >= 1, side: THREE.DoubleSide });
+      const mat = new THREE.MeshStandardMaterial({ color, roughness: opacity < 1 ? 0.3 : 0.52, metalness: 0.0, flatShading: true, transparent: opacity < 1, opacity, depthWrite: opacity >= 1, side: THREE.DoubleSide });
       const mesh = new THREE.Mesh(g, mat);
       mesh.castShadow = opacity >= 0.8;
       mesh.receiveShadow = false; // self-shadowing on flat-shaded parts shows acne; only the ground and wall receive
@@ -171,7 +177,19 @@ export function Viewer3D({ result, mode, showGhosts, bed, spacing, theme, camera
           const m = placedMesh(it, bed, pl.used);
           const pos = new Float32Array(m.pos);
           for (let k = 0; k < pos.length; k += 3) pos[k] += ox;
-          addMesh({ pos, idx: m.idx }, it.part.color, 1);
+          addMesh({ pos, idx: m.idx }, it.part.color, overhangs ? 0.35 : 1);
+          if (overhangs) {
+            const q = printability({ pos, idx: m.idx });
+            for (const [k, col] of [[1, 0xff3b5c], [2, 0xffb020]] as const) {
+              const tri: number[] = [];
+              q.kind.forEach((v, t) => { if (v === k) tri.push(m.idx[3 * t], m.idx[3 * t + 1], m.idx[3 * t + 2]); });
+              if (!tri.length) continue;
+              const g = new THREE.BufferGeometry();
+              g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+              g.setIndex(tri);
+              group.add(new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: col, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })));
+            }
+          }
         }
       });
     }
@@ -221,7 +239,7 @@ export function Viewer3D({ result, mode, showGhosts, bed, spacing, theme, camera
       camera.far = size * 20;
       camera.updateProjectionMatrix();
     }
-  }, [result, mode, showGhosts, bed[0], bed[1], spacing, theme, installed]);
+  }, [result, mode, showGhosts, bed[0], bed[1], spacing, theme, installed, overhangs]);
 
   // camera presets
   useEffect(() => {

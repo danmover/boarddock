@@ -1,7 +1,7 @@
 // Builds every printable part for a project: the board holder (tray), DIN clip, plug caps, plus display ghosts
 // (board, components, plugs, rail) and a report of checks. All parts come out in print orientation.
 import type { Board, Check, EdgeName, GenResult, Ghost, HolderSettings, Loop, MeshData, MountSettings, PartOut, Project, V2 } from '../model/types';
-import { MATERIALS } from '../model/library';
+import { DEFAULT_FEATURES, MATERIALS } from '../model/library';
 import { bbox, centroid, compRect, extentAlong, inside, rad, rayExit, round } from '../geom/poly';
 import type { CS, MF } from './kernel';
 import { box, circle2, cyl, ext, extCh, freeAll, K, orientedBox, poly, rect2, roundCS, sweepTZ, toMesh, unionCS, unionMF } from './kernel';
@@ -24,7 +24,7 @@ export interface ArrangeHooks {
 export interface Job {
   p: Project; mi: number; b: Board; H: HolderSettings; din: boolean; stand: boolean; hooks: ArrangeHooks; name: string;
   mount?: MountSettings; // overrides p.mount (panel flat clips)
-  dock?: { edge: EdgeName }; // holder plugs into a rail dock with this board edge
+  dock?: { edge: EdgeName; fit?: number }; // holder plugs into a rail dock with this board edge
 }
 
 interface Ctx {
@@ -249,12 +249,13 @@ function standoffs(C: Ctx, fingersHold: boolean) {
 function connectors(C: Ctx) {
   const { b, zt, zb, zw } = C;
   const H = C.H;
+  const F = { ...DEFAULT_FEATURES, ...(H.feat ?? {}) };
   const specs: CradleSpec[] = [];
   for (const c of b.comps) {
     const cn = c.conn;
     if (!cn || c.hidden) continue;
     if (cn.entry === 'top') {
-      if (cn.tie) tieAnchor(C, [c.x, c.y], null);
+      if (cn.tie && F.ties) tieAnchor(C, [c.x, c.y], null);
       continue;
     }
     const d = dirOf(cn.angle);
@@ -270,15 +271,15 @@ function connectors(C: Ctx) {
     C.blocked.push({ poly: orientedRect(mouth, d, -2, toOut + 2, -(pw / 2 + cl + 3), pw / 2 + cl + 3), why: c.ref });
     // plug ghost
     C.ghosts.push({ name: `plug ${c.ref}`, mesh: meshFrom(orientedBox(mouth, d, 0.4, 0.4 + pl, -pw / 2, pw / 2, zAx - ph / 2, zAx + ph / 2)), color: '#e8a15a', opacity: 0.33 });
-    if (cn.cradle && ph > 0.5) {
-      specs.push({ ref: c.ref, mouth, d, sEdge, toOut, zAx, pw, ph, pl, cap: cn.cap, angle: cn.angle });
-    } else if (cn.guard) {
+    if (cn.cradle && F.cradles && ph > 0.5) {
+      specs.push({ ref: c.ref, mouth, d, sEdge, toOut, zAx, pw, ph, pl, cap: cn.cap && F.caps, angle: cn.angle });
+    } else if (cn.guard && F.guards) {
       // collar that shields the receptacle and frames the opening
       const ow = pw + 2 * cl, oh = ph + 2 * cl;
       const frame = roundCS(rect2(-(ow / 2 + 1.8), 0, ow / 2 + 1.8, zAx + oh / 2 + 1.8), 0.8).subtract(rect2(-ow / 2, zLo, ow / 2, zAx + oh / 2)).intersect(rect2(-50, 0, 50, 200));
       C.late.push(sweepTZ(mouth, d, frame, toOut - 0.6, toOut + 2.5));
     }
-    if (cn.tie) tieAnchor(C, mouth, { d, half: pw / 2 + cl });
+    if (cn.tie && F.ties) tieAnchor(C, mouth, { d, half: pw / 2 + cl });
   }
   buildCradles(C, specs);
 }
@@ -903,7 +904,7 @@ function dockBlocks(C: Ctx, s: DockSite) {
 function dockFeatures(C: Ctx, s: DockSite) {
   const H = C.H, mat = MATERIALS[H.material];
   const D = inv(dockFrame(s.edge, s.tc, s.L0)); // socket-local -> holder
-  const f = holderDock(s.far, s.ped, s.side);
+  const f = holderDock(s.far, s.ped, s.side, C.job.dock?.fit ?? 0);
   C.pos.push(f.add.transform(D as any));
   C.neg.push(f.cut.transform(D as any));
   C.keep.push(poly(tsPoly(s, s.tc - HD.spineHx - 1.2, s.tc + HD.spineHx + 1.2, -1, s.far + 1)), poly(tsPoly(s, s.tc - HD.base.hx - 1.2, s.tc + HD.base.hx + 1.2, -1, s.ped + 1.5)));

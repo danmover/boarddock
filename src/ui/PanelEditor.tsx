@@ -260,6 +260,13 @@ export function PanelEditor() {
           if (layer === 'hub') return (
             <g key={`h${m.id}`} data-kind="mount" data-id={m.id} style={{ cursor: 'grab' }}>
               {m.kind === 'dock' && <rect x={sx - (h ? 10.5 : 25)} y={-(sy + (h ? 25 : 10.5))} width={h ? 21 : 50} height={h ? 50 : 21} rx={2} fill="#f59e42" stroke="#7a4a12" strokeWidth={fs(1)} />}
+              {m.kind === 'dock' && (() => {
+                // release lever pad (hub y 21.9..24.9 on the lever side)
+                const L = m.leverSide;
+                const x0 = h ? sx - 10.5 : sx - L * 24.9, y0 = h ? sy + L * 21.9 : sy - 10.5;
+                const w = h ? 21 : 3, hh = h ? 3 : 21;
+                return <rect x={h ? x0 : Math.min(x0, x0 + L * 3)} y={-(h ? Math.max(y0, y0 + L * 3) : y0 + hh)} width={w} height={hh} rx={0.8} fill="#ffd08a" stroke="#7a4a12" strokeWidth={fs(0.8)} />;
+              })()}
               {m.kind === 'dock' && <rect x={sx - 9} y={-(sy + 10.4)} width={18} height={20.8} rx={1.5} transform={`rotate(${rot} ${sx} ${-sy})`} fill="#5b8def" stroke="#1d3f8a" strokeWidth={fs(1)} />}
               {m.kind === 'dock' && <path d={`M${sx - 3.5} ${-sy - 3} L${sx} ${-sy - 8} L${sx + 3.5} ${-sy - 3}`} transform={`rotate(${rot} ${sx} ${-sy})`} fill="none" stroke="#fff" strokeWidth={fs(1.8)} strokeLinecap="round" strokeLinejoin="round" />}
               {m.kind === 'flat' && <rect x={sx - (h ? 7 : 25)} y={-(sy + (h ? 25 : 7))} width={h ? 14 : 50} height={h ? 50 : 14} rx={2} fill="#ff6b5b" stroke="#7a2a22" strokeWidth={fs(1)} />}

@@ -25,7 +25,15 @@ Everything is checked with FEA and packed onto as few print plates as possible.
   - Docks that turn four ways and take two boards back to back.
   - Flat clips for boards that should lie against the wall.
   - All laid out automatically, then editable by drag, turn, swap and multi-select.
-- **Checks:** hand calculations for every snap, plus 2D FEA of the dock's springs (the socket latch and the rail shoe hinge) for your material.
+- **Checks:** hand calculations for every snap, plus 2D FEA of the dock's springs (the socket latch and the rail shoe hinge) for your material. A printability check finds every overhang and bridge; the print view can paint them.
+- **Easy to correct:**
+  - Switch cradles, caps, tie anchors, guards, fingers, labels or the base pattern off for a whole holder.
+  - Hide small parts, ignore holes, strip plug protection, or revert to the import, for one board or all of them.
+- **Efficient:**
+  - Sturdy, balanced and lean presets.
+  - Duplicate a board.
+  - A tongue-fit tolerance.
+  - A 30–40 minute test-fit kit to print before the real thing.
 - **Exports** binary STL or 3MF, one file per print plate, packed onto your printer's bed.
 - **Open source** (MIT). It runs in the browser or as a desktop app for Windows, macOS and Linux.
 
@@ -60,7 +68,7 @@ Every board sits in a holder that plugs into a dock on the rail. This is the scr
 
 | Part | What it does | Prints |
 |---|---|---|
-| **Rail shoe** (orange) | Clips onto a TS35 rail. **To remove it:** push the thumb lever beside the socket toward the dock and tilt the dock off. A stop stops the hinge from being over-bent. | on its end face |
+| **Rail shoe** (orange) | Clips onto a TS35 rail. Its jaw wraps round the rail flange and hangs from a hinge leaf directly **above** the lip, so pulling the dock off the wall can't pry it open. **To remove it:** lift the boards out, push the ridged lever pad beside the socket toward it, and tilt the dock off. A built-in stop protects the hinge. The lever goes on whichever side of the rail has more room; you can flip it per dock. | on its end face |
 | **Socket** (blue) | Snaps into the shoe in any of four 90° turns and takes two holders back to back. It has two print-in-place latches. | on its end face |
 | **Holder** | The tray around your board, with a tongue on its dock edge and a spine that carries the release rod. | flat on its back |
 | **Release rod** (red) | Its head is the **button on the holder's top edge**. Press it and the rod's 45° foot wedges the latch open. The latch spring returns it. | flat |
@@ -114,6 +122,7 @@ The **Panel** step shows the wall from the front: rails, docks, and every board'
 
 The inspector sets:
 - dock or flat clip;
+- which side of the rail the release lever is on;
 - turn, with a picture of each turn;
 - rail and position;
 - the board in each slot;
@@ -168,26 +177,26 @@ PETG results (E = 2100 MPa, strain limit 2%):
 |---|---|---|---|
 | Latch: holder pushed in (nose moves out 1.3 mm) | about 10 N push | 1.6% | 1.0% |
 | Latch: button pressed (nose clears the groove after 1.9 of 3.1 mm) | 3.2 N | 1.2% | 0.8% |
-| Rail shoe: thumb lever (jaw opens 1.7 mm, 2.1 mm of lever travel) | 3.2 N | 1.7–1.9% | 0.5% |
-| Rail shoe: pressed onto the rail | 4.5 N | 1.6–1.8% | 0.5% |
-| Rail shoe: 100 N pull away from the wall (held by friction) | reaches the strain limit at about 53 N | 3.8% at 100 N | 0.6% |
+| Rail shoe: thumb lever (jaw opens 1.7 mm; 3.3 mm of pad travel; the stop engages at 2.1 mm) | 2.7 N | 1.7–1.9% | 0.6% |
+| Rail shoe: pressed onto the rail | 4.3 N | 1.7–1.9% | 0.5% |
+| Rail shoe: pulled straight off the wall | holds to about 90–120 N (the hinge's strain limit), friction or not | 1.7–2.3% at 100 N | 0.4% |
 
-**Two design changes came out of this analysis:**
-- **Hinge leaf:** the original design tapered the rail shoe's hinge leaf from 0.84 to 1.14 mm. That suits clipping onto the rail, but the thumb lever pushes from above the hinge, so its bending peaks at the thin end. BoardDock uses a uniform 0.9 mm leaf (two 0.45 mm lines), which cut the release strain from about 2.7% to 1.9%.
-- **Pull-off:** a straight pull tends to open the jaw, because the hinge sits outboard of the lip. Friction on the flange holds it: about 0.2 is needed, and PETG on steel is usually 0.3 to 0.5. Keep heavy cables supported. Moving the hinge above the lip is the next design step.
+**Design changes that came out of this analysis**, compared with the original DIN hub:
+- **Pull-off.** The original jaw hung from a hinge outboard of its lip. Pulling the dock off the wall pried the jaw open, and in the model only friction held it: without friction it let go at about 14 N. The v3 "C-jaw" wraps round the flange edge with the hinge leaf directly above the lip, so a pull runs straight down the leaf. It no longer depends on friction; the jaw moves about 0.03 mm per 100 N. The shoe is also 5% lighter.
+- **Hinge leaf.** The thumb lever pushes from above the hinge, so its bending peaks at the leaf's lower end. A uniform 0.9 mm leaf (two 0.45 mm lines) replaces the old 0.84–1.14 mm taper.
 
 ## Printing
 
 - **Material: PETG.** Every dock part is a spring. PLA is stiffer and more brittle, so strains that are fine in PETG are marginal in PLA. The Check step judges each part against your material's limit.
 - **Supports: none.** Overhangs are 45° chamfers or short bridges, round holes on their side are teardrops, and all springs flex within their print layers.
 - **Plates:** each plate becomes one STL or 3MF file with every part already placed. The estimate shows grams and print time per part.
-- **First print:** print one dock (shoe, socket, one holder and its rod) before a batch, to check the fit on your printer.
+- **First print:** the **test-fit kit** in Export: a shoe, a socket and a small tongue key with its release rod, about 21 g. Clip it on your rail, plug the key in, press its button. If the key is tight, raise **Tongue fit** in the Panel step by 0.05–0.1 mm.
+- **Check:** the Check step lists every part's overhangs and longest bridge. **Overhangs** on the print plates paints faces that would need support in red and bridges in amber. The generated parts need no supports; bridges are 5.4 mm at most.
 
 ## Honest limits
 
 - Nothing here has been physically printed and tested yet. Fits, snap forces, creep and fatigue all depend on your printer and filament.
 - The FEA is linear, 2D and idealised. It has no contact, friction or print anisotropy, and its peaks sit at pixel-mesh corners. Treat it as a comparison between designs, not a guarantee.
-- The rail shoe's pull-off hold relies on friction, as described under [Checks and FEA](#checks-and-fea).
 - Template boards come from the manufacturers' drawings; check yours. Imported part heights are only as good as the source (IDF and STEP are best).
 - A large board docked by one tongue feels a sizeable lever when you plug in a stiff cable at the far end: the Check step lists the tongue stress. Hold the holder while you plug in.
 

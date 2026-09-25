@@ -17,3 +17,16 @@ it('dock parts are single solids and the 2D FEA runs', async () => {
     console.log('elements', r.mesh.elements);
   }
 }, 300000);
+
+it('test-fit kit: four single-piece parts, no supports needed', async () => {
+  const { testKit } = await import('../src/cad/testkit');
+  const { printability } = await import('../src/cad/export');
+  await initKernel();
+  const parts = testKit(0.1);
+  expect(parts.map((p) => p.id)).toEqual(['kit_shoe', 'kit_socket', 'kit_key', 'kit_rod']);
+  for (const p of parts) {
+    const q = printability(p.mesh);
+    console.log(p.name, (p.volume / 1000).toFixed(2), 'cm3', p.size.map((v) => v.toFixed(1)).join(' x '), 'overhang', q.slope.toFixed(1), 'span', q.span.toFixed(1));
+    expect(q.slope).toBeLessThan(8);
+  }
+}, 300000);

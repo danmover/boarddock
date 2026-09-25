@@ -158,6 +158,15 @@ export const DEFAULT_HOLDER: HolderSettings = {
   pattern: 'hex', cell: 10, rib: 1.8, tabs: 'auto', tabLip: 0.7, notches: true, label: '', chamfer: true, pinClear: 0.15, material: 'PETG',
 };
 
+export const DEFAULT_FEATURES = { cradles: true, caps: true, ties: true, guards: true };
+
+/** Holder presets: sturdier walls, or lean for faster prints and less filament. */
+export const HOLDER_PRESETS: Record<'sturdy' | 'balanced' | 'lean', Partial<HolderSettings>> = {
+  sturdy: { wall: 2.4, base: 2.4, pattern: 'hex', cell: 9, rib: 2.2, wallAbove: 1.2, chamfer: true },
+  balanced: { wall: 1.8, base: 2.0, pattern: 'hex', cell: 10, rib: 1.8, wallAbove: 0.8, chamfer: true },
+  lean: { wall: 1.6, base: 1.6, pattern: 'hex', cell: 14, rib: 1.6, wallAbove: 0.4, chamfer: false },
+};
+
 export const DEFAULT_MOUNT: MountSettings = { kind: 'din', mode: 'flat', rotation: 0, edge: 'bottom', clipWidth: 14, tabSide: 'down', railT: 1.0, at: null };
 
 export const DEFAULT_STAND: StandSettings = {
@@ -169,7 +178,7 @@ export const DEFAULT_ARRANGE: ArrangeSettings = { mode: 'stack', stackGap: 3, si
 export const DEFAULT_PANEL: PanelSettings = { auto: true, rowDir: 'h', pairs: true, gap: 2, maxRail: 400, rowGap: 25, rails: [], mounts: [] };
 
 export function newModule(board: Board, holder?: HolderSettings): Module {
-  return { id: Math.random().toString(36).slice(2, 9), board, holder: { ...(holder ?? DEFAULT_HOLDER), label: board.name.slice(0, 24) } };
+  return { id: Math.random().toString(36).slice(2, 9), board, holder: { ...(holder ?? DEFAULT_HOLDER), label: board.name.slice(0, 24) }, original: structuredClone(board) };
 }
 
 export function newProject(board: Board): Project {

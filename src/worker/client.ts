@@ -1,5 +1,5 @@
 // Promise wrappers around the workers. Generation is "latest wins": stale requests are dropped.
-import type { GenResult, Project } from '../model/types';
+import type { GenResult, PartOut, Project } from '../model/types';
 import type { ClipFeaResult } from '../fea/clipfea';
 import type { DockFeaResult } from '../fea/dockfea';
 
@@ -47,4 +47,8 @@ export async function runDockFea(E: number, nu: number, h: number, onProgress?: 
   fea ??= makeWorker(new Worker(new URL('./fea.worker.ts', import.meta.url), { type: 'module' }));
   const res = await fea.call<DockFeaResult>('dock', { latch, shoe, E, nu, h }, onProgress);
   return { ...res, latch, shoe };
+}
+
+export function buildTestKit(fit: number): Promise<PartOut[]> {
+  return cad.call<PartOut[]>('testKit', { fit });
 }

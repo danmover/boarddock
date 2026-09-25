@@ -88,6 +88,15 @@ export interface HolderSettings {
   pinClear: number; // radial clearance of pins in board holes
   material: Material;
   color?: string; // preview colour of the printed holder
+  feat?: HolderFeatures; // global switches over the per-connector options
+}
+
+/** Whole-holder switches: turn a kind of feature off for every connector at once (per-connector choices are kept). */
+export interface HolderFeatures {
+  cradles: boolean;
+  caps: boolean;
+  ties: boolean;
+  guards: boolean;
 }
 
 export interface MountSettings {
@@ -125,6 +134,7 @@ export interface Module {
   id: string;
   board: Board;
   holder: HolderSettings;
+  original?: Board; // the board as imported, for "revert to import"
 }
 
 /** How several holders combine into one assembly. */
@@ -161,6 +171,7 @@ export interface RailMount {
   kind: 'dock' | 'flat';
   turn: Turn; // dock: socket turn about the panel normal; flat: board rotation on the panel
   slots: Slot[];
+  lever?: 'auto' | 'pos' | 'neg'; // dock: side of the rail the shoe's release lever is on (auto = the more open side)
 }
 
 export interface PanelSettings {
@@ -170,6 +181,7 @@ export interface PanelSettings {
   gap: number; // free space between neighbours along a rail
   maxRail: number; // auto: longest rail before a new row starts
   rowGap: number; // auto: space between rows of rails
+  fit?: number; // tongue made this much smaller on every face (mm): raise it if holders are hard to plug in
   rails: Rail[]; // manual layout
   mounts: RailMount[];
 }
@@ -236,7 +248,7 @@ export interface Access { ref: string; type: string; dir: AccessDir; ok: 'good' 
 /** Resolved panel layout (panel frame, mm). */
 export interface PanelReport {
   rails: (Rail & { length: number })[];
-  mounts: (RailMount & { at: number; x: number; y: number; foot: [number, number, number, number] })[];
+  mounts: (RailMount & { at: number; x: number; y: number; foot: [number, number, number, number]; leverSide: 1 | -1 })[];
   modules: { id: string; mount: string; slot: number; edge: EdgeName; turn: Turn; foot: [number, number, number, number]; z1: number; access: Access[] }[];
   unplaced: string[];
   depth: number; // furthest point from the wall

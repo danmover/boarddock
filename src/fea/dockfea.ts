@@ -73,14 +73,15 @@ export function dockFea(latchLoops: Loop[], shoeLoops: Loop[], E: number, nu: nu
   // ---- rail shoe: body clamped, the jaw hangs on the hinge leaf ----
   const hs = Math.max(h, 0.06);
   onProgress?.('Meshing the rail shoe');
-  const Sh = model(shoeLoops, hs, E, nu, 14, (x, y) => (x < 16.0 && y > 7.0) || (y > 22.4 && x < 20.35));
+  const Sh = model(shoeLoops, hs, E, nu, 14, (x, y) => (x < 14.6 && y > 7.0) || (y > 21.0 && x < 17.95));
   elements += Sh.m.elems.length;
-  const lip = nearestNode(Sh.m, 16.3, 6.0), pad = nearestNode(Sh.m, 23.5, 28.5);
+  const lip = nearestNode(Sh.m, 16.3, 6.0), pad = nearestNode(Sh.m, 23.5, 28.5), post = nearestNode(Sh.m, 19.95, 21.3);
   onProgress?.('Solving: thumb lever released');
   u = solve(Sh, (x, y) => x > 21.5 && y > 26.8, [-1, 0]);
   k = 1.7 / u[2 * lip];
   s = stats(Sh.m, u, Sh.R, k);
-  cases.push({ part: 'shoe', name: 'Rail shoe: lever pushed (jaw off the flange)', force: Math.abs(k), target: 'jaw lip moves 1.7 mm clear of the rail flange', peakStrain: s.peak, p99Strain: s.p99, notes: [`lever pad travel ${Math.abs(u[2 * pad] * k).toFixed(2)} mm`, s.where] });
+  const stopAt = (2.0 / Math.abs(u[2 * post] * k)) * 1.7; // lip travel when the post meets the body shelf (2.0 mm gap, SHOE_LEVER.stopGap)
+  cases.push({ part: 'shoe', name: 'Rail shoe: lever pushed (jaw off the flange)', force: Math.abs(k), target: 'jaw lip moves 1.7 mm clear of the rail flange', peakStrain: s.peak, p99Strain: s.p99, notes: [`lever pad travel ${Math.abs(u[2 * pad] * k).toFixed(2)} mm`, `stop engages at ${stopAt.toFixed(2)} mm lip travel`, s.where] });
   fields.push(field('Rail shoe, lever pushed', Sh.m, hs, s.eps));
   onProgress?.('Solving: clipping onto the rail');
   const a = [15.8, 6.0], b = [17.7, 3.9];
@@ -107,6 +108,6 @@ export function dockFea(latchLoops: Loop[], shoeLoops: Loop[], E: number, nu: nu
   for (let i = 0; i < Sh.m.nNodes; i++) if (lipTop(Sh.m.nodeXY[2 * i], Sh.m.nodeXY[2 * i + 1])) lockFix[2 * i] = 1;
   const u3 = solve({ ...Sh, fixed: lockFix }, lipTop, [0, -1]);
   s = stats(Sh.m, u3, Sh.R, 100);
-  cases.push({ part: 'shoe', name: 'Rail shoe: 100 N pull away from the wall', force: 100, target: muCrit <= MU ? `holds: the pull locks the jaw once friction on the flange exceeds ${muCrit.toFixed(2)} (PETG on steel: about 0.3 to 0.5)` : `the jaw opens: needs friction above ${muCrit.toFixed(2)} to hold`, peakStrain: s.peak, p99Strain: s.p99, notes: [`hinge reaches the strain limit at about ${((allowFor(E) / s.peak) * 100).toFixed(0)} N`, `without friction the jaw would let go at about ${isFinite(letGo) ? letGo.toFixed(0) : '∞'} N`, 'hinge outboard of the lip: a pull tends to open the jaw, friction holds it'] });
+  cases.push({ part: 'shoe', name: 'Rail shoe: 100 N pull away from the wall', force: 100, target: letGo > 1000 ? `holds without relying on friction (jaw opens ${Math.abs(dn).toFixed(3)} mm per 100 N)` : muCrit <= MU ? `holds while friction on the flange exceeds ${muCrit.toFixed(2)} (PETG on steel: about 0.3 to 0.5)` : `the jaw opens: needs friction above ${muCrit.toFixed(2)} to hold`, peakStrain: s.peak, p99Strain: s.p99, notes: [`hinge reaches the strain limit at about ${((allowFor(E) / s.peak) * 100).toFixed(0)} N`, letGo > 1000 ? 'the pull runs straight down the hinge leaf: it cannot pry the jaw open, friction or not' : `without friction the jaw would let go at about ${letGo.toFixed(0)} N`] });
   return { cases, fields, mesh: { h, elements } };
 }

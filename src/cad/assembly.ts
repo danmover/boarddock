@@ -5,6 +5,7 @@ import { bbox, round } from '../geom/poly';
 import { buildModule, computeLevels, transformMesh, type ArrangeHooks, type Job } from './generate';
 import { box, cyl, freeAll, poly, rect2, toMesh, unionMF } from './kernel';
 import { generatePanel } from './panelgen';
+import { printability } from './export';
 
 type M4 = number[];
 const I4: M4 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
@@ -17,7 +18,21 @@ const tr = (x: number, y: number, z: number): M4 => [1, 0, 0, 0, 0, 1, 0, 0, 0, 
 const rotX180: M4 = [1, 0, 0, 0, 0, -1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1];
 
 export function generate(p: Project): GenResult {
-  if (p.layout === 'panel') return generatePanel(p);
+  const r = p.layout === 'panel' ? generatePanel(p) : generateLoose(p);
+  // printability of every distinct part, in its print pose
+  const seen = new Set<string>();
+  for (const pt of r.parts) {
+    const key = pt.id.replace(/^m\d+_/, '') === 'holder' ? pt.id : pt.name;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const q = printability(pt.mesh);
+    const bad = q.slope > 8, long = q.span > 25;
+    r.report.checks.push({ group: 'Printability', name: pt.name, value: bad ? `${round(q.slope, 0)} mm² overhang` : long ? `${round(q.span, 0)} mm bridge` : 'no supports', status: bad || long ? 'warn' : 'ok', detail: `downward faces steeper than 45°: ${round(q.slope, 1)} mm² sloped${q.flat > 0.5 ? `, ${round(q.flat, 0)} mm² of bridges (longest span ${round(q.span, 1)} mm)` : ''}. Show them on the print plates with "Overhangs".` });
+  }
+  return r;
+}
+
+function generateLoose(p: Project): GenResult {
   const t0 = Date.now();
   const mods = p.modules;
   const n = mods.length;

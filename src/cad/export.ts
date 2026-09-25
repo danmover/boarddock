@@ -161,3 +161,45 @@ export function estimate(p: PartOut, density: number) {
   const minutes = (extruded / 9 + layers * 2.5 + A * 0.02) / 60; // ~9 mm3/s average flow, per-layer overhead, travel
   return { grams, minutes, extruded };
 }
+
+/**
+ * Printability of a part in its print pose: faces pointing down more steeply than 45 degrees that are not on the
+ * bed. Flat ones are bridges (fine when short); sloped ones need support. Returns the flagged triangles too.
+ */
+export function printability(m: MeshData) {
+  const { pos, idx } = m;
+  const nT = idx.length / 3;
+  const kind = new Uint8Array(nT); // 0 ok, 1 slope overhang, 2 flat (bridge)
+  let slope = 0, flat = 0;
+  for (let t = 0; t < nT; t++) {
+    const a = idx[3 * t] * 3, b = idx[3 * t + 1] * 3, c = idx[3 * t + 2] * 3;
+    const ux = pos[b] - pos[a], uy = pos[b + 1] - pos[a + 1], uz = pos[b + 2] - pos[a + 2];
+    const vx = pos[c] - pos[a], vy = pos[c + 1] - pos[a + 1], vz = pos[c + 2] - pos[a + 2];
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    const L = Math.hypot(nx, ny, nz);
+    if (L < 1e-12) continue;
+    const zc = (pos[a + 2] + pos[b + 2] + pos[c + 2]) / 3;
+    if (zc < 0.3 || nz / L > -0.72) continue;
+    const area = L / 2;
+    if (nz / L < -0.985) { kind[t] = 2; flat += area; } else { kind[t] = 1; slope += area; }
+  }
+  // bridge spans: connected flat regions, narrowest side of their footprint
+  const parent = new Int32Array(nT).map((_, i) => i);
+  const find = (i: number): number => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
+  const byVert = new Map<number, number>();
+  for (let t = 0; t < nT; t++) if (kind[t] === 2) for (let k = 0; k < 3; k++) {
+    const v = idx[3 * t + k];
+    const o = byVert.get(v);
+    if (o === undefined) byVert.set(v, t); else parent[find(t)] = find(o);
+  }
+  const box = new Map<number, number[]>();
+  for (let t = 0; t < nT; t++) if (kind[t] === 2) {
+    const r = find(t);
+    const b = box.get(r) ?? [Infinity, Infinity, -Infinity, -Infinity];
+    for (let k = 0; k < 3; k++) { const v = idx[3 * t + k] * 3; b[0] = Math.min(b[0], pos[v]); b[1] = Math.min(b[1], pos[v + 1]); b[2] = Math.max(b[2], pos[v]); b[3] = Math.max(b[3], pos[v + 1]); }
+    box.set(r, b);
+  }
+  let span = 0;
+  for (const b of box.values()) span = Math.max(span, Math.min(b[2] - b[0], b[3] - b[1]));
+  return { slope, flat, span, kind };
+}

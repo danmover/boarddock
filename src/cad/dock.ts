@@ -106,15 +106,19 @@ export function socket(): MF {
   return unionMF([body, lat, lat.mirror([0, 1, 0])]);
 }
 
-// ---------------- shoe ----------------
-// hinge leaf: uniform 0.9 mm (two 0.45 mm lines). v2 tapered it 0.84 -> 1.14 mm for the clip-on load, but the thumb
-// lever pushes from above the hinge, so its moment peaks at the thin jaw end; uniform balances both (FEA, Check tab)
-const HINGE = [[18.2, 13.0], [20.1, 13.0], [19.6, 13.5], [19.6, 21.0], [20.1, 21.5], [18.2, 21.5], [18.7, 21.0], [18.7, 13.5]];
+// ---------------- shoe (v3 "C-jaw") ----------------
+// The jaw wraps round the rail flange's edge and hangs from a 0.9 mm hinge leaf that stands directly ABOVE the lip.
+// A pull away from the wall therefore runs straight down the leaf (tension) instead of prying the jaw open, so the
+// hold does not depend on friction. Push the thumb pad toward the socket: the jaw swings out about the leaf and the
+// lip slides sideways off the flange; the post meets the body shelf just past the needed travel (built-in stop).
 const SHOE_BODY = [[-20.3, 3.9], [-15.9, 3.9], [-15.4, 4.4], [-15.4, 5.7], [-15.9, 6.2], [-17.5, 6.2], [-17.783, 6.317], [-17.9, 6.6],
-  [-17.9, 7.5], [16.9, 7.5], [16.9, 20.8], [17.6, 21.5], [20.3, 21.5], [20.3, 22.3], [19.6, 23.0], [-19.6, 23.0], [-20.3, 22.3]];
-// jaw: engages 1.7 mm of the flange; release lever post rises outside the hinge to a thumb pad above the shoe
-const SHOE_JAW = [[17.7, 3.9], [20.3, 3.9], [23.6, 7.2], [23.6, 26.9], [25.1, 27.4], [25.1, 29.0], [24.6, 29.5], [22.1, 29.5], [21.6, 29.0],
-  [21.6, 12.5], [20.3, 12.5], [20.3, 13.0], [17.9, 13.0], [17.9, 6.6], [17.783, 6.317], [17.5, 6.2], [16.0, 6.2], [15.8, 6.0]];
+  [-17.9, 7.5], [15.1, 7.5], [15.1, 19.6], [15.8, 20.3], [17.9, 20.3], [17.9, 22.5], [17.4, 23.0], [-19.6, 23.0], [-20.3, 22.3]];
+// hinge leaf 16.3..17.2 (0.9 mm = two 0.45 mm lines), z 10.4..19.8, flared roots
+const HINGE = [[15.8, 9.9], [17.7, 9.9], [17.2, 10.4], [17.2, 19.8], [17.7, 20.3], [15.8, 20.3], [16.3, 19.8], [16.3, 10.4]];
+// jaw: lip under the flange (engages 1.7 mm, 48 deg lead-in), pocket round the flange edge, top bar, lever post, ridged pad
+const SHOE_JAW = [[17.7, 3.9], [20.6, 3.9], [21.9, 5.2], [21.9, 26.6], [24.9, 27.1], [24.5, 27.55], [24.9, 28.0], [24.5, 28.45], [24.9, 28.9],
+  [24.4, 29.5], [20.4, 29.5], [19.9, 29.0], [19.9, 9.9], [15.9, 9.9], [15.9, 8.0], [18.0, 8.0], [18.0, 6.2], [16.0, 6.2], [15.8, 6.0]];
+export const SHOE_LEVER = { pad: [21.9, 24.9], z: [26.6, 29.5], stopGap: 2.0 };
 const HOOK_TIP = [[9.15, 20.33], [8.35, 20.47], [8.35, 20.8], [8.65, 21.1], [9.15, 21.1]];
 const mir = (pts: number[][]) => pts.map(([y, z]) => [-y, z]).reverse();
 
@@ -125,13 +129,13 @@ function slot(y0: number, y1: number, z0: number, z1: number): CS {
 
 /** (y, z) profile of the shoe: body, hinge leaf, jaw and lever. Also used by the 2D FEA. */
 export function shoeProfile(): CS {
-  const cuts = shoeCuts();
-  let c = unionCS([P(SHOE_BODY), P(SHOE_JAW), P(HINGE)]);
-  // true 0.5 mm root fillets where the hinge leaf meets the jaw and the body (the v2 profile had 45 degree
-  // chamfers there, which the FEA shows as a stress peak that grows with mesh refinement)
+  const jaw = P(SHOE_JAW);
+  // 0.4 mm fillets in the jaw's inside corners (pocket), 0.5 mm at both hinge roots
+  const jawR = jaw.add(jaw.offset(0.4, 'Round').offset(-0.4, 'Round').intersect(rect2(15.5, 5.5, 19.9, 10.5)));
+  let c = unionCS([P(SHOE_BODY), jawR, P(HINGE)]);
   const closed = c.offset(0.5, 'Round').offset(-0.5, 'Round');
-  c = c.add(closed.intersect(unionCS([rect2(18.0, 12.9, 20.4, 14.3), rect2(18.0, 20.1, 20.4, 21.6)])));
-  return c.subtract(unionCS(cuts)).add(unionCS([P(HOOK_TIP), P(mir(HOOK_TIP))]));
+  c = c.add(closed.intersect(unionCS([rect2(15.9, 9.8, 17.8, 11.0), rect2(15.9, 19.2, 17.8, 20.4)])));
+  return c.subtract(unionCS(shoeCuts())).add(unionCS([P(HOOK_TIP), P(mir(HOOK_TIP))]));
 }
 
 function shoeCuts(): CS[] {
@@ -142,7 +146,7 @@ function shoeCuts(): CS[] {
     inner, flip(inner), outer, flip(outer), // slits that free the snap-hook beams
     P([[8.5, 22.6], [10.65, 22.6], [10.65, 23.1], [8.5, 23.1]]), P(mir([[8.5, 22.6], [10.65, 22.6], [10.65, 23.1], [8.5, 23.1]])),
     P([[-7.3, 9.5], [7.3, 9.5], [7.3, 15.5], [6.3, 16.5], [-6.3, 16.5], [-7.3, 15.5]]), // lightening windows
-    P([[11.6, 9.5], [15.0, 9.5], [15.0, 19.0], [14.0, 20.0], [12.6, 20.0], [11.6, 19.0]]),
+    P([[11.6, 9.5], [14.1, 9.5], [14.1, 18.6], [13.4, 19.3], [12.3, 19.3], [11.6, 18.6]]),
     P([[-16.0, 9.5], [-11.6, 9.5], [-11.6, 19.0], [-12.6, 20.0], [-15.0, 20.0], [-16.0, 19.0]]),
   ];
 }
@@ -151,7 +155,7 @@ function shoeCuts(): CS[] {
 export function shoe(): MF {
   const hx = LEN_X / 2;
   // the hinge leaf is split into two 7 mm segments to lower the release force
-  const body = extYZ(shoeProfile(), hx).subtract(box(-3.5, 19.0 - 0.9, 13.2, 3.5, 19.0 + 0.9, 21.3));
+  const body = extYZ(shoeProfile(), hx).subtract(box(-3.5, 16.0, 10.7, 3.5, 17.5, 19.5));
   const stop = extXZ(P([[8.1, 18.0], [hx, 18.0], [hx, 20.2], [10.3, 20.2]]), -8.1, 8.1); // x stops seat the boss chamfer
   return unionMF([body, stop, stop.mirror([1, 0, 0])]);
 }
@@ -163,8 +167,10 @@ export const END_POSE = { pose: [0, 0, 1, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 0, 1
 export { HD, SPINE_TOP, DOCK_MIN_ZB } from './dockdims';
 
 /** Tongue that plugs into the socket (from matching_tongue.stl), with a 0.6 mm lead-in at the tip. */
-export function tongue(into = 0.2): MF {
-  let t = ext(P([[-6, 0.5], [6, 0.5], [6, 2.5], [4, 4.5], [-4, 4.5], [-6, 2.5]]), -14, into);
+export function tongue(into = 0.2, fit = 0): MF {
+  // `fit` shrinks the sides and front face (the back face stays on the socket's divider)
+  const f = Math.max(0, Math.min(0.4, fit));
+  let t = ext(P([[-6 + f, 0.5], [6 - f, 0.5], [6 - f, 2.5 - f * 0.4], [4 - f * 0.6, 4.5 - f], [-4 + f * 0.6, 4.5 - f], [-6 + f, 2.5 - f * 0.4]]), -14, into);
   t = t.subtract(box(-10, 3.3, -8.25, 10, 6.0, -4.8)); // latch groove
   return t.subtract(extYZ(P([[3.9, -14.1], [4.6, -14.1], [4.6, -13.3]]), 10));
 }
@@ -175,12 +181,12 @@ export function tongue(into = 0.2): MF {
  * under the board (grip bar centred on it), +1 / -1 when it runs beside the board on the +x / -x side (grip bar
  * reaches away from the board, so it stays clear of plugs on the top edge).
  */
-export function holderDock(far: number, pedestal: number, side = 0) {
+export function holderDock(far: number, pedestal: number, side = 0, fit = 0) {
   const { spineHx, spineY1, grip } = HD;
   const zg0 = far + grip.gap, zg1 = zg0 + grip.t;
   const [g0, g1] = gripSpan(side);
   const add = unionMF([
-    tongue(Math.min(1.0, pedestal)),
+    tongue(Math.min(1.0, pedestal), fit),
     extXZ(rect2(-HD.base.hx, 0, HD.base.hx, Math.max(HD.base.t, pedestal)), HD.backY, HD.base.y1), // pedestal on the socket top
     box(-spineHx, HD.backY, 0, spineHx, spineY1, zg1), // spine, dock face to grip bar
     extXZ(P([[g0, zg0 + 1.5], [g0 + 1.5, zg0], [g1 - 1.5, zg0], [g1, zg0 + 1.5], [g1, zg1], [g0, zg1]]), HD.backY, spineY1),

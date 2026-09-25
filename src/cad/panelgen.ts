@@ -13,7 +13,7 @@ import { autoAssign, bestDock, classify, clipToRail, plugDirs, railMatrix, slotM
 const SHOE_BOX = { x: [-LEN_X / 2, LEN_X / 2], y: [-25.1, 25.1], z: [0, 29.5] };
 
 interface Seat { mod: Module; mi: number; slot: number; edge: EdgeName; out: ModuleOut; M: M4 }
-interface Placed { mt: RailMount; seats: Seat[]; lo: number; hi: number; ylo: number; yhi: number; zhi: number; boxes: { id: string; b: number[] }[] }
+interface Placed { mt: RailMount; seats: Seat[]; lo: number; hi: number; ylo: number; yhi: number; zhi: number; boxes: { id: string; b: number[] }[]; lever: 1 | -1 }
 
 function rest(m: MF, pose: M4): { mesh: MeshData; back: M4; volume: number; size: [number, number, number] } {
   const pm = m.transform(pose as any);
@@ -72,7 +72,7 @@ export function generatePanel(p: Project): GenResult {
       try {
         const out = buildModule({
           p, mi: i, b: m.board, H: m.holder, din: mt.kind === 'flat', stand: false, hooks: {}, name: m.board.name,
-          dock: mt.kind === 'dock' ? { edge } : undefined,
+          dock: mt.kind === 'dock' ? { edge, fit: P.fit ?? 0 } : undefined,
           mount: mt.kind === 'flat' ? { ...p.mount, kind: 'din', mode: 'flat', rotation: mt.turn, at: null } : undefined,
         });
         const M = mt.kind === 'dock' ? slotMatrix(mt.turn, slot, out.dockM!) : mul(clipToRail(p.mount.clipWidth), inv(out.clipT ?? I4));
@@ -97,7 +97,11 @@ export function generatePanel(p: Project): GenResult {
       for (let k = 0; k < 3; k++) { all[k] = Math.min(all[k], b[k]); all[k + 3] = Math.max(all[k + 3], b[k + 3]); }
     }
     if (!isFinite(all[0])) { all.splice(0, 6, -LEN_X / 2, -20, 0, LEN_X / 2, 20, 30); }
-    placed.push({ mt, seats, lo: all[0], hi: all[3], ylo: all[1], yhi: all[4], zhi: all[5], boxes });
+    // release lever on the side where the boards overhang the shoe least (easiest to reach)
+    const mb = boxes.filter((bx) => bx.id);
+    const over = (sgn: number) => Math.max(0, ...mb.map((bx) => (sgn > 0 ? bx.b[4] : -bx.b[1]) - 20));
+    const lever: 1 | -1 = mt.lever === 'pos' ? 1 : mt.lever === 'neg' ? -1 : over(-1) < over(1) - 0.5 ? -1 : 1;
+    placed.push({ mt, seats, lo: all[0], hi: all[3], ylo: all[1], yhi: all[4], zhi: all[5], boxes, lever });
   }
   if (failed.length) warnings.push(...failed);
 
@@ -181,7 +185,7 @@ export function generatePanel(p: Project): GenResult {
       const r = railOf(q.mt)!;
       const R = mul(railMatrix(r), tr(q.mt.at!, 0, 0));
       if (q.mt.kind === 'dock') {
-        shoeInst.push(mul(R, sh!.back));
+        shoeInst.push(mul(R, rotZ(q.lever > 0 ? 0 : 180), sh!.back));
         sockInst.push(mul(R, tr(0, 0, SOCKET_Z), rotZ(q.mt.turn), so!.back));
       }
       for (const s of q.seats) {
@@ -199,7 +203,7 @@ export function generatePanel(p: Project): GenResult {
       const all = [q.lo, q.ylo, 0, q.hi, q.yhi, q.zhi];
       const f = toPanel(r, q.mt.at!, all);
       const c = mul(railMatrix(r), tr(q.mt.at!, 0, 0));
-      mountOut.push({ ...q.mt, at: q.mt.at!, x: c[12], y: c[13], foot: f });
+      mountOut.push({ ...q.mt, at: q.mt.at!, x: c[12], y: c[13], foot: f, leverSide: q.lever });
     }
     const base = { toAssembly: I4, color: '' };
     if (sh && so) {
@@ -220,10 +224,10 @@ export function generatePanel(p: Project): GenResult {
   const st = (eps: number): Check['status'] => (eps <= allow * 0.85 ? 'ok' : eps <= allow * 1.1 ? 'warn' : 'bad');
   if (docks.length) {
     // PETG numbers from the in-app 2D FEA (0.06 mm mesh), scaled by stiffness; the Check tab reruns it for your material
-    checks.push({ group: 'Panel', name: 'Rail shoe release', value: `${(3.2 * eR).toFixed(1)} N push`, status: 'info', detail: 'push the lever pad beside the socket toward the dock, about 2.1 mm, then tilt the dock off the rail. A stop limits the jaw so the hinge cannot be over-bent.' });
-    checks.push({ group: 'Panel', name: 'Rail shoe hinge', value: '1.9% peak', status: st(0.019), detail: 'uniform 0.9 mm leaf, at the root fillet; 99% of the shoe stays under 0.45%. Clipping on: 4.5 N (PETG) at the jaw ramp.' });
+    checks.push({ group: 'Panel', name: 'Rail shoe release', value: `${(2.7 * eR).toFixed(1)} N push`, status: 'info', detail: 'lift the boards out first, then push the ridged lever pad beside the socket toward it (about 3.3 mm) and tilt the dock off the rail. A stop meets the post at 2.1 mm of jaw travel (1.7 needed), so the hinge cannot be over-bent. Each dock puts its lever on the side with the most room.' });
+    checks.push({ group: 'Panel', name: 'Rail shoe hinge', value: '1.9% peak', status: st(0.019), detail: 'uniform 0.9 mm leaf above the lip, at its root fillet; 99% of the shoe stays under 0.6%. Clipping on: 4.3 N (PETG) at the jaw ramp.' });
     checks.push({ group: 'Panel', name: 'Socket latch (per board)', value: `${(9.8 * eR).toFixed(1)} N to plug in`, status: st(0.018), detail: `1.8% peak at the spring root while the tongue goes in, 1.3% while the button releases it; the nose clears the groove after 1.9 mm of the 3.1 mm button stroke; a stop post prevents over-bending` });
-    checks.push({ group: 'Panel', name: 'Rail shoe pull-off', value: `~${Math.round(53 * (allow / 0.02))} N`, status: 'warn', detail: 'a pull straight off the wall is held by friction on the rail flange (needs about 0.2; PETG on steel is 0.3 to 0.5), and the hinge reaches its strain limit near this load. Support heavy cables separately. Next revision: move the hinge above the lip so a pull cannot open the jaw.' });
+    checks.push({ group: 'Panel', name: 'Rail shoe pull-off', value: `~${Math.round(90 * (allow / 0.02))} N`, status: 'ok', detail: 'the hinge leaf stands above the lip, so a pull straight off the wall runs down the leaf and cannot pry the jaw open, friction or not; this is where the hinge reaches its strain limit.' });
     checks.push({ group: 'Panel', name: 'Socket to shoe hooks', value: '0.84% strain', status: st(0.0084), detail: 'press the socket into the shoe in any of 4 turns; a pull tightens the 10° hooks' });
   }
   const railLens = rails.map((r) => r.length!);

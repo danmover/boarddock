@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { activeModule, redo, store, undo, useApp, type Step } from './state';
 import { generateProject } from './worker/client';
 import { Viewer3D } from './ui/Viewer3D';
@@ -11,15 +11,38 @@ import { MATERIALS } from './model/library';
 import { estimate, packPlates } from './cad/export';
 import { openFiles } from './ui/importFlow';
 
-const STEPS: { id: Step; label: string; icon: string }[] = [
-  { id: 'import', label: 'Start', icon: 'M4 15v4h16v-4M12 4v11m0 0l-4-4m4 4l4-4' },
-  { id: 'board', label: 'Board', icon: 'M4 6h16v12H4zM7.5 9.5h.01M16.5 9.5h.01M7.5 14.5h.01M16.5 14.5h.01M10 10h4v4h-4z' },
-  { id: 'plugs', label: 'Plugs', icon: 'M9 3v5M15 3v5M6 8h12v3a6 6 0 01-12 0zM12 17v4' },
-  { id: 'holder', label: 'Holder', icon: 'M3 9l2 10h14l2-10M3 9h18M8 13l1 3M16 13l-1 3M12 13v3' },
-  { id: 'mount', label: 'Panel', icon: 'M3 8h18M3 12h18M6 8v11M10 8v11M14 8v11M18 8v11M3 5h18' },
-  { id: 'check', label: 'Check', icon: 'M4 18l5-6 4 3 7-9M15 6h5v5' },
-  { id: 'export', label: 'Export', icon: 'M12 3v12m0 0l-4-4m4 4l4-4M4 17v4h16v-4' },
+const STEPS: { id: Step; label: string; icon: string; hue: string; tag: string }[] = [
+  { id: 'import', label: 'Start', icon: 'M4 15v4h16v-4M12 4v11m0 0l-4-4m4 4l4-4', hue: '#ff9f43', tag: 'bring a board in' },
+  { id: 'board', label: 'Board', icon: 'M4 6h16v12H4zM7.5 9.5h.01M16.5 9.5h.01M7.5 14.5h.01M16.5 14.5h.01M10 10h4v4h-4z', hue: '#3ddc97', tag: 'check what was read' },
+  { id: 'plugs', label: 'Plugs', icon: 'M9 3v5M15 3v5M6 8h12v3a6 6 0 01-12 0zM12 17v4', hue: '#ffc857', tag: 'protect every connector' },
+  { id: 'holder', label: 'Holder', icon: 'M3 9l2 10h14l2-10M3 9h18M8 13l1 3M16 13l-1 3M12 13v3', hue: '#e9dfc4', tag: 'shape the tray' },
+  { id: 'mount', label: 'Panel', icon: 'M3 8h18M3 12h18M6 8v11M10 8v11M14 8v11M18 8v11M3 5h18', hue: '#6cb6ff', tag: 'dock it on the rails' },
+  { id: 'check', label: 'Check', icon: 'M4 18l5-6 4 3 7-9M15 6h5v5', hue: '#b69cff', tag: 'forces, strain, printability' },
+  { id: 'export', label: 'Export', icon: 'M12 3v12m0 0l-4-4m4 4l4-4M4 17v4h16v-4', hue: '#5eead4', tag: 'plates ready to print' },
 ];
+
+/** Banner at the top of each step: outlined number, name, tagline, progress trace, big line icon. */
+function StepBanner({ step }: { step: Step }) {
+  const i = STEPS.findIndex((s) => s.id === step);
+  const s = STEPS[i];
+  return (
+    <div className="stepbanner" style={{ ['--hue' as string]: s.hue }}>
+      <svg className="traces" viewBox="0 0 320 90" preserveAspectRatio="none" aria-hidden="true">
+        <path d="M-10 70 H70 L92 48 H170 L188 30 H330" />
+        <path d="M-10 82 H110 L128 64 H236 L252 80 H330" />
+        <circle cx="92" cy="48" r="3" /><circle cx="188" cy="30" r="3" /><circle cx="252" cy="80" r="3" />
+      </svg>
+      <div className="num">{String(i + 1).padStart(2, '0')}</div>
+      <div className="txt">
+        <small>step {i + 1} of {STEPS.length}</small>
+        <b>{s.label}</b>
+        <span>{s.tag}</span>
+        <div className="ticks">{STEPS.map((x, k) => <i key={x.id} className={k < i ? 'done' : k === i ? 'on' : ''} />)}</div>
+      </div>
+      <svg className="big" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"><path d={s.icon} /></svg>
+    </div>
+  );
+}
 
 const I = {
   undo: 'M9 14L4 9l5-5M4 9h11a5 5 0 010 10h-3',
@@ -48,6 +71,9 @@ export function App() {
   const layout = project?.layout;
   useEffect(() => { setInstalled(layout === 'panel' ? 'h' : null); }, [layout]);
   const [dragging, setDragging] = useState(false);
+  const [overhangs, setOverhangs] = useState(false);
+  const panelRef = useRef<HTMLElement>(null);
+  useEffect(() => { panelRef.current?.scrollTo({ top: 0 }); }, [step]);
   const [dropErr, setDropErr] = useState<string | null>(null);
   const onDrop = async (e: React.DragEvent) => {
     e.preventDefault();
@@ -129,15 +155,15 @@ export function App() {
         <button className="iconbtn" onClick={() => store.set({ theme: theme === 'dark' ? 'light' : 'dark' })} title="Light / dark"><Icon d={theme === 'dark' ? I.sun : I.moon} /></button>
       </header>
       <div className="main">
-        <nav className="rail">
+        <nav className="rail" style={{ ['--progress' as string]: `${(STEPS.findIndex((s) => s.id === step) / (STEPS.length - 1)) * 100}%`, ['--hue' as string]: STEPS.find((s) => s.id === step)?.hue }}>
           {STEPS.map((s, i) => (
-            <button key={s.id} className={step === s.id ? 'on' : ''} disabled={!project && s.id !== 'import'} onClick={() => store.set({ step: s.id, ...(s.id === 'mount' && project?.layout === 'panel' ? { view: 'panel' as const } : view === 'panel' && s.id !== 'mount' ? { view: 'assembly' as const } : {}) })}>
+            <button key={s.id} className={step === s.id ? 'on' : i < STEPS.findIndex((x) => x.id === step) ? 'done' : ''} style={{ ['--hue' as string]: s.hue }} disabled={!project && s.id !== 'import'} onClick={() => store.set({ step: s.id, ...(s.id === 'mount' && project?.layout === 'panel' ? { view: 'panel' as const } : view === 'panel' && s.id !== 'mount' ? { view: 'assembly' as const } : {}) })}>
               <span className="pad"><Icon d={s.icon} /><i>{s.id === 'check' && (badCount || warnCount) ? '!' : i + 1}</i></span>
               <span>{s.label}</span>
             </button>
           ))}
         </nav>
-        <aside className="panel">{panel}</aside>
+        <aside ref={panelRef} className="panel" style={{ ['--hue' as string]: STEPS.find((s) => s.id === step)?.hue }}><StepBanner step={step} />{panel}</aside>
         <section className="stage">
           {project ? (
             <>
@@ -146,7 +172,7 @@ export function App() {
               </div>
               {view === 'editor' ? <BoardEditor tool={tool} setTool={setTool} /> : view === 'panel' && project.layout === 'panel' ? <PanelEditor /> : (
                 <>
-                  <Viewer3D result={result} mode={view === 'print' ? 'print' : 'assembly'} showGhosts={showGhosts} bed={project.printer.bed} spacing={project.printer.spacing} theme={theme} camera={cam} installed={view === 'assembly' ? installed : null} />
+                  <Viewer3D result={result} mode={view === 'print' ? 'print' : 'assembly'} showGhosts={showGhosts} bed={project.printer.bed} spacing={project.printer.spacing} theme={theme} camera={cam} installed={view === 'assembly' ? installed : null} overhangs={view === 'print' && overhangs} />
                   <div className="tools">
                     <span className="seg">
                       <button onClick={() => look([0.55, -0.75, 0.62])}>Iso</button>
@@ -168,6 +194,7 @@ export function App() {
                       </span>
                     )}
                     {view === 'assembly' && <span className="seg"><button className={showGhosts ? 'on' : ''} onClick={() => store.set({ showGhosts: !showGhosts })}>Board & rail</button></span>}
+                    {view === 'print' && <span className="seg" title="Red: faces that would need support. Amber: bridges (fine when short)."><button className={overhangs ? 'on' : ''} onClick={() => setOverhangs(!overhangs)}>Overhangs</button></span>}
                   </div>
                   {view === 'assembly' && result && (
                     <div className="legend floating">

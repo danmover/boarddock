@@ -4,7 +4,7 @@ import type { Access, EdgeName, Project, Turn } from '../model/types';
 import { edit, isSel, select, useApp } from '../state';
 import { Check, Chip, Num, Pick, Section, Seg } from './controls';
 import { accessCounts, MODULE_DRAG, PALETTE } from './PanelEditor';
-import { addDock, autoArrange, placeMount, removeMounts, removeRails, seat, setKind, setRail, setSlot, swapSlots, turnMounts, unseat } from './panelOps';
+import { addDock, autoArrange, duplicateModule, placeMount, removeMounts, removeRails, seat, setKind, setLever, setRail, setSlot, swapSlots, turnMounts, unseat } from './panelOps';
 import { turnLabel } from '../cad/dockplan';
 
 const DIR_TEXT: Record<string, string> = { front: 'faces you', up: 'points up', down: 'points down', left: 'points left', right: 'points right', wall: 'into the wall' };
@@ -67,6 +67,9 @@ export function PanelSide() {
           <Num label="Space between rails" value={P.rowGap} min={0} max={200} step={1} onChange={(v) => setAuto((q) => { q.rowGap = v; })} />
         </div>
         <div style={{ marginTop: 8 }}><Check label="Two boards back to back per dock when their plugs allow it" value={P.pairs} onChange={(v) => setAuto((q) => { q.pairs = v; })} /></div>
+        <div className="row" style={{ marginTop: 8 }}>
+          <Num label="Tongue fit (looser +)" value={P.fit ?? 0} min={0} max={0.4} step={0.05} hint="print the test-fit kit first" onChange={(v) => edit((q) => { q.panel.fit = v; })} />
+        </div>
       </Section>
 
       <Section title={`Boards · ${p.modules.length}`}>
@@ -83,6 +86,7 @@ export function PanelSide() {
                 <span className="dot" style={{ background: PALETTE[i % PALETTE.length] }} />
                 <span className="grow"><b>{m.board.name}</b><small>{where}</small></span>
                 {at ? <AccessChips list={at.access} /> : <button className="btn small" onClick={(e) => { e.stopPropagation(); seat(m.id); }}>Place</button>}
+                <button className="btn small ghost icon" title="Duplicate board (another holder like this one)" onClick={(e) => { e.stopPropagation(); duplicateModule(i); }}>⧉</button>
               </div>
             );
           })}
@@ -109,6 +113,15 @@ export function PanelSide() {
           {!one && <div className="btns" style={{ marginTop: 8 }}><button className="btn small" onClick={() => turnMounts(mountsSel, -90)}>⟲ Turn all</button><button className="btn small" onClick={() => turnMounts(mountsSel, 90)}>Turn all ⟳</button><button className="btn small" onClick={() => swapSlots(mountsSel)}>Swap front / back</button></div>}
           {one && (
             <>
+              {one.kind === 'dock' && (() => {
+                const v = railOf(one.rail)?.dir === 'v';
+                const side = (sgn: number) => (v ? (sgn > 0 ? 'left' : 'right') : sgn > 0 ? 'upper' : 'lower');
+                return (
+                  <div className="row" style={{ marginTop: 10, gridTemplateColumns: '1fr' }}>
+                    <Pick label="Rail release lever" value={one.lever ?? 'auto'} options={[['auto', `Auto: ${side(one.leverSide)} side (more room)`], ['pos', `${side(1)} side`], ['neg', `${side(-1)} side`]]} onChange={(val) => setLever([one.id], val)} />
+                  </div>
+                );
+              })()}
               <div className="row" style={{ marginTop: 10 }}>
                 <Pick label="Rail" value={one.rail} options={(rep?.rails ?? []).map((r) => [r.id, `Rail ${r.id.replace(/^r/, '')} (${r.dir === 'h' ? '⟷' : '↕'})`] as [string, string])} onChange={(v) => placeMount(one.id, v, one.at)} />
                 <Num label="Position on the rail" value={Math.round(one.at * 10) / 10} min={0} step={1} onChange={(v) => placeMount(one.id, one.rail, v)} />
