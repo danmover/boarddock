@@ -8,7 +8,7 @@
 //  socket-local: same axes, Z = 0 at the socket top; tongues plug in along -Z; holder A faces +Y
 import type { V2 } from '../model/types';
 import { box, circle2, ext, extCh, K, poly, rect2, roundCS, unionCS, unionMF, type CS, type MF } from './kernel';
-import { gripSpan, HD, headSpan, LEN_X } from './dockdims';
+import { gripSpan, HD, headSpan, LEN_X, NOSE_TIP, TONGUE } from './dockdims';
 export { gripSpan, headSpan };
 
 const P = (pts: number[][]): CS => poly(pts as V2[], 'NonZero');
@@ -39,13 +39,13 @@ export function rail(len: number): MF {
 // ---------------- socket ----------------
 const S = {
   hx: 9.0, coreY: 6.2, halfY: 10.4, bottom: -20.5, floor: -14.5, anchorTop: -19.0, bossHalf: 9.0, bossBottom: -25.3, bossCh: 1.0,
-  cavHalf: 6.2, cavFullY: 2.7, cavFrontY: 4.7, dividerHalf: 0.35, dividerTop: -1.0, windowZ: [-8.15, -5.05], windowX: [-5.0, 5.2], mouthCh: 0.6,
+  cavHalf: TONGUE.hx + 0.2, cavFullY: TONGUE.y1 - 1.8, cavFrontY: TONGUE.y1 + 0.2, dividerHalf: 0.35, dividerTop: -1.0, windowZ: [-8.15, -5.05], windowX: [-5.0, 5.2], mouthCh: 0.6,
 };
 // shoe hook notch on all four boss faces; 10 degree retaining face so a pull draws the hooks in
 const BOSS_NOTCH = [[8.2, -23.11], [9.3, -23.3], [9.3, -21.2], [8.2, -22.3]];
 const LATCH = { hx: 9.0, t: 0.85, rIn: 0.6, rOut: 1.0, zRoot: -20.5 };
 const POST = [[9.1, -19.0], [9.4, -18.7], [9.4, -9.0], [10.4, -9.0], [10.4, -19.0]];
-const NOSE = [[6.65, -7.95], [3.45, -7.95], [3.45, -6.55], [4.75, -5.25], [6.65, -5.25]];
+const NOSE = [[6.65, -7.95], [NOSE_TIP, -7.95], [NOSE_TIP, -6.55], [NOSE_TIP + 1.3, -5.25], [6.65, -5.25]];
 const NOSE_HX = 4.8;
 
 /** (y, z) outline of the +Y latch: plain full-width spring beam with rounded roots, stiff arm, 45 deg push ramp on top. */
@@ -204,13 +204,13 @@ export const END_POSE = { pose: [0, 0, 1, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 0, 1
 // ---------------- holder side (socket-local coordinates, holder A) ----------------
 export { HD, SPINE_TOP, DOCK_MIN_ZB } from './dockdims';
 
-/** Tongue that plugs into the socket (from matching_tongue.stl), with a 0.6 mm lead-in at the tip. */
+/** Tongue that plugs into the socket (after matching_tongue.stl, grown to 14 x 4.5 mm), with a lead-in at the tip. */
 export function tongue(into = 0.2, fit = 0): MF {
   // `fit` shrinks the sides and front face (the back face stays on the socket's divider)
-  const f = Math.max(0, Math.min(0.4, fit));
-  let t = ext(P([[-6 + f, 0.5], [6 - f, 0.5], [6 - f, 2.5 - f * 0.4], [4 - f * 0.6, 4.5 - f], [-4 + f * 0.6, 4.5 - f], [-6 + f, 2.5 - f * 0.4]]), -14, into);
-  t = t.subtract(box(-10, 3.3, -8.25, 10, 6.0, -4.8)); // latch groove
-  return t.subtract(extYZ(P([[3.9, -14.1], [4.6, -14.1], [4.6, -13.3]]), 10));
+  const f = Math.max(0, Math.min(0.4, fit)), { hx, y0, y1 } = TONGUE;
+  let t = ext(P([[-hx + f, y0], [hx - f, y0], [hx - f, y1 - 2 - f * 0.4], [hx - 2 - f * 0.6, y1 - f], [-hx + 2 + f * 0.6, y1 - f], [-hx + f, y1 - 2 - f * 0.4]]), -14, into);
+  t = t.subtract(box(-10, NOSE_TIP - 0.15, -8.25, 10, y1 + 1.5, -4.8)); // latch groove
+  return t.subtract(extYZ(P([[y1 - 0.6, -14.1], [y1 + 0.1, -14.1], [y1 + 0.1, -13.3]]), 10));
 }
 
 /**

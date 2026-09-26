@@ -12,6 +12,7 @@ import { textCS, textWidth } from './font';
 import { computeLevels } from './levels';
 import { boardDetail, plugDetail, plugUp } from './boardviz';
 import { DOCK_MIN_ZB, gripSpan, holderDock, HD, rod } from './dock';
+import { TONGUE } from './dockdims';
 import { dockFrame, dockSite, type DockSite } from './dockplan';
 import { inv, type M4 } from '../geom/mat';
 import { rectSection, roundSection, solveFrame, type FElem, type FNode } from '../fea/frame3d';
@@ -294,18 +295,27 @@ function standoffs(C: Ctx, fingersHold: boolean) {
 
     if (snap && h.d >= 1.8) {
       snaps++;
-      const barb = Math.min(0.3, Math.max(0.2, 0.08 * h.d));
-      const sw = Math.min(1.1, Math.max(0.6, 0.3 * h.d));
+      let barb = Math.min(0.3, Math.max(0.2, 0.08 * h.d));
+      let sw = Math.min(1.1, Math.max(0.6, 0.3 * h.d));
+      const slotDepth = Math.min(2.5, C.s - 0.6);
+      // leg bending strain of the split pin (it bends across layers, so it is judged 30% stricter)
+      const strainOf = (bb: number, w: number) => {
+        const L = zt + 0.1 + (rp + bb - 0.45 * rp) / 2 - (zb - slotDepth);
+        return { L, eps: (3 * (rp - w / 2) * (bb + 0.05)) / (2 * L * L) };
+      };
+      // a short pin (little room under the board) flexes too far: thin its legs (a wider split, legs at least
+      // 0.6 mm) until it is comfortably within the material's limit; only if it would still break, take a little
+      // off the barb (that costs grip)
+      const allow = MATERIALS[H.material].strainAllow, ok = (allow * 0.85) / 1.3, breaks = (allow * 1.1) / 1.3;
+      let tuned = false;
+      while (strainOf(barb, sw).eps > ok && sw + 0.1 <= 2 * (rp - 0.6) + 1e-9) { sw += 0.1; tuned = true; }
+      while (strainOf(barb, sw).eps > breaks * 0.97 && barb > 0.18 + 1e-9) { barb = Math.max(0.18, barb - 0.02); tuned = true; }
       const cone = rp + barb - 0.45 * rp;
       C.pos.push(cyl(h.x, h.y, zb - 0.01, zt + 0.1, rp));
       C.pos.push(cyl(h.x, h.y, zt + 0.1, zt + 0.1 + cone, rp + barb, 0.45 * rp));
-      const slotDepth = Math.min(2.5, C.s - 0.6);
       C.neg.push(box(h.x - sw / 2, h.y - rp - barb - 0.1, zb - slotDepth, h.x + sw / 2, h.y + rp + barb + 0.1, zt + 5));
-      const L = zt + 0.1 + cone / 2 - (zb - slotDepth);
-      const halfT = rp - sw / 2;
-      const defl = barb + H.pinClear * 0 + 0.05;
-      const eps = (3 * halfT * defl) / (2 * L * L);
-      if (snaps === 1) C.checks.push({ group: 'Board', name: `Snap pins (Ø${round(h.d, 2)} holes)`, value: `${(eps * 100).toFixed(2)}% strain`, status: strainStatus(C, eps * 1.3), detail: `split pin, ${round(barb, 2)} mm barb, ${round(L, 1)} mm flexing length. Bends across layers, so judged 30% stricter.` });
+      const { L, eps } = strainOf(barb, sw);
+      if (snaps === 1) C.checks.push({ group: 'Board', name: `Snap pins (Ø${round(h.d, 2)} holes)`, value: `${(eps * 100).toFixed(2)}% strain`, status: strainStatus(C, eps * 1.3), detail: `split pin, ${round(barb, 2)} mm barb, ${round(sw, 1)} mm split, ${round(L, 1)} mm flexing length${tuned ? ' (split widened for the short pin)' : ''}. Bends across layers, so judged 30% stricter.` });
     } else {
       C.pos.push(cyl(h.x, h.y, zb - 0.01, zt + 0.5, rp), cyl(h.x, h.y, zt + 0.49, zt + 0.5 + rp * 0.5, rp, rp * 0.5));
     }
@@ -1292,8 +1302,9 @@ function dockFeatures(C: Ctx, s: DockSite) {
   (C as any).spine = { a: tsPoly(s, s.tc, s.tc, 0, 0)[0], b: tsPoly(s, s.tc, s.tc, s.far, s.far)[0], hx: HD.spineHx };
   if (s.conflicts.length) C.warnings.push(`Dock on the ${s.edge} edge: ${s.conflicts.join(', ')} ${s.conflicts.length > 1 ? 'are' : 'is'} in the way. Pick another dock edge in the Rails step.`);
   const eRatio = mat.E / MATERIALS.PETG.E;
-  const F = 20, Mo = F * s.far, sig = Mo / 32; // tongue root 12 x 4 mm, out-of-plane push on the far edge
+  // tongue root at the socket mouth, bending under an out-of-plane push on the far edge
+  const tb = 2 * TONGUE.hx, th = TONGUE.y1 - TONGUE.y0, F = 20, Mo = F * s.far, sig = Mo / ((tb * th * th) / 6);
   C.checks.push({ group: 'Dock', name: 'Release', value: `press the button, ${HD.stroke} mm`, status: 'info', detail: `thumb on the button at the ${({ bottom: 'top', top: 'bottom', left: 'right', right: 'left' } as Record<EdgeName, string>)[s.edge]} edge, two fingers under the grip bar, squeeze and lift. About ${(4.0 * eRatio).toFixed(1)} N (${H.material}); the latch spring returns the button. Rod: ${round(r.len, 0)} mm, printed flat.` });
-  C.checks.push({ group: 'Dock', name: `Tongue root, ${F} N push on the far edge`, value: `${round(sig, 0)} MPa`, status: sig < 0.4 * mat.yield ? 'ok' : sig < 0.8 * mat.yield ? 'warn' : 'bad', detail: `${round(s.far, 0)} mm lever onto the 12 × 4 mm tongue (${H.material} yields at ~${mat.yield} MPa). Hold the holder while plugging in stiff cables at the far end.` });
+  C.checks.push({ group: 'Dock', name: `Tongue root, ${F} N push on the far edge`, value: `${round(sig, 0)} MPa`, status: sig < 0.4 * mat.yield ? 'ok' : sig < 0.8 * mat.yield ? 'warn' : 'bad', detail: `${round(s.far, 0)} mm lever onto the ${tb} × ${th} mm tongue (${H.material} yields at ~${mat.yield} MPa). Hold the holder while plugging in stiff cables at the far end.` });
   if (s.under && C.zb > DOCK_MIN_ZB - 0.2) C.checks.push({ group: 'Dock', name: 'Board raised over the rod spine', value: `${round(C.zb, 1)} mm`, status: 'info', detail: 'the release-rod spine runs under the board' });
 }

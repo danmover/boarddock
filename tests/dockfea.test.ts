@@ -30,3 +30,22 @@ it('test-fit kit: four single-piece parts, no supports needed', async () => {
     expect(q.slope).toBeLessThan(8);
   }
 }, 300000);
+
+it('the 14 x 4.5 mm tongue seats in the socket, the latch nose in its groove', async () => {
+  await initKernel();
+  const { tongue } = await import('../src/cad/dock');
+  const { box } = await import('../src/cad/kernel');
+  const s = socket(), t = tongue(0.2, 0);
+  // nothing of the tongue is inside the socket's plastic
+  expect(s.intersect(t).volume()).toBeLessThan(0.05);
+  // take the nose (its window is at z -8.15..-5.05, y 3.95..6.65) out of the picture: the rest of the socket still
+  // clears the tongue by its 0.2 mm, and the nose really reaches into the groove
+  const noseZone = box(-5, 3.5, -8.2, 5.3, 6.7, -5.0);
+  expect(s.intersect(noseZone).volume()).toBeGreaterThan(5); // the nose is there
+  // with the latch groove filled in, the tongue would hit the nose: the nose engages
+  const solid = t.add(box(-4.8, 3.8, -8.25, 4.8, 5.0, -4.8));
+  expect(s.intersect(solid).volume()).toBeGreaterThan(1);
+  // and the tongue's cross-section at the mouth is 14 x 4.5 mm (less the corner chamfers)
+  const slab = t.intersect(box(-10, -10, -1, 10, 10, -0.9));
+  expect(slab.volume() / 0.1).toBeGreaterThan(14 * 4.5 - 4.5);
+}, 120000);

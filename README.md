@@ -381,7 +381,7 @@ PETG results (E = 2100 MPa, strain limit 2%):
 - Nothing here has been physically printed and tested yet. Fits, snap forces, creep and fatigue all depend on your printer and filament.
 - The FEA is linear, 2D and idealised. It has no contact, friction or print anisotropy, and its peaks sit at pixel-mesh corners. Treat it as a comparison between designs, not a guarantee.
 - Template boards come from the manufacturers' drawings; check yours. Imported part heights are only as good as the source (IDF and STEP are best).
-- A large board docked by one tongue feels a sizeable lever when you plug in a stiff cable at the far end: the Check step lists the tongue stress. Hold the holder while you plug in.
+- A large board docked by one tongue feels a sizeable lever when you plug in a stiff cable at the far end. The tongue is 14 × 4.5 mm at the socket mouth (a Raspberry Pi 4 holder: about 25 MPa for a 20 N push on its far edge, against PETG's ~45 MPa yield), and the Check step lists it for every board. Hold the holder while you plug in.
 - The frame holder's stiffness is from geometry, not tested: the board itself stiffens the frame once it is clipped in.
 - The rail release is reached with the holders out (they cover the lever). Taking a single board out is the button on the holder, which is always reachable.
 - The table stands' press fit, the dovetails and the cable combs' snap lips are sized from typical FDM tolerances, not from test prints. The sag and cap-stress numbers are hand calculations.

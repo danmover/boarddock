@@ -6,6 +6,12 @@ export const SHOE_TOP = 23.0;
 export const SOCKET_BOTTOM = -20.5;
 export const SOCKET_Z = SHOE_TOP - SOCKET_BOTTOM; // world Z of the socket top (43.5)
 export const SOCKET_HALF = { x: 9.0, y: 10.4 };
+// The holder's tongue, socket-local: 14 mm wide, back face on the socket's divider (y 0.5), front face at y 5.0, so
+// 14 x 4.5 mm at the socket mouth. (It was 12 x 4 mm; the wider, deeper section takes a push on the far edge of a
+// big holder with about a third less stress, inside the same socket outline.)
+export const TONGUE = { hx: 7.0, y0: 0.5, y1: 5.0 };
+/** Where the socket latch's nose ends: 1.05 mm into the tongue's groove (the same engagement as before). */
+export const NOSE_TIP = TONGUE.y1 - 1.05;
 
 // holder side, socket-local coordinates (holder A back face at y = 0.5)
 export const HD = {

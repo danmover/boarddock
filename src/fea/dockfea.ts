@@ -3,6 +3,7 @@
 // Linear, small displacement: each case is solved for a unit load and scaled to the travel it must reach.
 import type { Loop } from '../model/types';
 import { assemble2D, elementStrain, meshPolygons, nearestNode, pcg, q6Element, type Mesh2D } from './fea2d';
+import { NOSE_TIP } from '../cad/dockdims';
 
 export interface DockFeaCase { part: 'latch' | 'shoe'; name: string; force: number; target: string; peakStrain: number; p99Strain: number; notes: string[] }
 export interface DockField { name: string; x0: number; y0: number; h: number; nx: number; ny: number; elems: Int32Array; strain: Float32Array }
@@ -54,9 +55,10 @@ export function dockFea(latchLoops: Loop[], shoeLoops: Loop[], E: number, nu: nu
   onProgress?.('Meshing the latch');
   const L = model(latchLoops, h, E, nu, 18, (x, y) => y < -20.2 || x > 9.05);
   elements += L.m.elems.length;
-  const tip = nearestNode(L.m, 3.5, -7.2), ramp = nearestNode(L.m, 7.4, -1.7);
+  // the nose's tip and its 45 degree lead-in (dockdims: NOSE_TIP)
+  const tip = nearestNode(L.m, NOSE_TIP + 0.05, -7.2), ramp = nearestNode(L.m, 7.4, -1.7);
   onProgress?.('Solving: tongue pushes the latch open');
-  let u = solve(L, (x, y) => x < 4.9 && y > -6.7 && y < -5.1 && y - x > -10.05 - 0.2, [S2, -S2]);
+  let u = solve(L, (x, y) => x < NOSE_TIP + 1.45 && y > -6.7 && y < -5.1 && y - x > -6.55 - NOSE_TIP - 0.25, [S2, -S2]);
   let k = 1.3 / u[2 * tip];
   let s = stats(L.m, u, L.R, k);
   const latLat = k * S2;
