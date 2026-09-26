@@ -151,7 +151,7 @@ export function generatePanel(p: Project): GenResult {
   const placedIds = new Set(mounts.flatMap((mt) => mt.slots.map((s) => s.module)).filter(Boolean) as string[]);
   for (const id of [...placedIds]) for (const r of ridersOf(p, mods.get(id)!.m)) placedIds.add(r.id);
   const unplaced = p.modules.filter((m) => !placedIds.has(m.id)).map((m) => m.id);
-  if (unplaced.length) warnings.push(`${unplaced.length} board${unplaced.length > 1 ? 's are' : ' is'} not on a rail yet: drag ${unplaced.length > 1 ? 'them' : 'it'} onto a rail in the Panel step, or press Auto-arrange.`);
+  if (unplaced.length) warnings.push(`${unplaced.length} board${unplaced.length > 1 ? 's are' : ' is'} not on a rail yet: drag ${unplaced.length > 1 ? 'them' : 'it'} onto a rail in the Rails step, or press Auto-arrange.`);
 
   // ---- build every seated holder ----
   const failed: string[] = [];
@@ -237,7 +237,7 @@ export function generatePanel(p: Project): GenResult {
         if (P.rowDir === 'h') y = prev.y + prev.ylo - P.rowGap - yhi;
         else x = prev.x - prev.ylo + P.rowGap + yhi;
       }
-      const r: Rail = { id: `r${k + 1}`, x, y, dir: P.rowDir, length: round(len, 0) };
+      const r: Rail = { id: `r${k + 1}`, x, y, dir: P.rowDir, length: Math.ceil(len - 1e-6) };
       rails.push(r);
       rw.forEach((q, j) => { q.mt.rail = r.id; q.mt.id = `d${k + 1}.${j + 1}`; });
       prev = { x, y, ylo, yhi };
@@ -278,6 +278,8 @@ export function generatePanel(p: Project): GenResult {
         for (const pt of out.parts) boxOf(pt.mesh.pos, mul(M, pt.toAssembly), b);
         for (const g of out.ghosts) if (!g.name.startsWith('DIN rail')) boxOf(g.mesh.pos, M, b);
         const f = toPanel(r, o.mt.at!, b), me = [f[0], f[1], b[2], f[2], f[3], b[5]];
+        // the holder must stay on the rail and clear of the stands' end blocks, like any other spot
+        if (o.mt.at! + Math.min(o.lo, b[0]) < end0 - 0.01 || (r.length != null && o.mt.at! + Math.max(o.hi, b[3]) > r.length - end0 + 0.01)) continue;
         if (allBoxes(o).some((ob) => [0, 1, 2].every((j) => me[j] < ob[j + 3] - 0.3 && ob[j] < me[j + 3] - 0.3))) continue;
         o.seats.push({ ...s0, slot: k, edge: bd.edge, out, M });
         o.mt.slots = o.mt.slots.map((sl, j) => (j === k ? { module: s0.mod.id, edge: bd.edge } : sl));
@@ -316,7 +318,7 @@ export function generatePanel(p: Project): GenResult {
         // no gap: the first clear place past the end of a rail, on the rail that needs the least added
         const tail = (r: Rail) => spot(r, false) ?? Math.max(end0, ...placed.filter((o) => o !== q && o.mt.rail === r.id && o.mt.at != null).map((o) => o.mt.at! + o.hi + gap));
         const r = [...order].sort((a, b) => Number(liked.has(b.id)) - Number(liked.has(a.id)) || tail(a) + w - (a.length ?? 0) - (tail(b) + w - (b.length ?? 0)))[0];
-        const s = tail(r), need = round(s + w + end0, 0);
+        const s = tail(r), need = Math.ceil(s + w + end0 - 1e-6);
         if (r.length != null && need > r.length) { warnings.push(`There was no room on the rails for ${q.seats.map((x) => x.mod.board.name).join(' + ')}, so it went on the end of rail ${r.id.replace(/^r/, '')}, which now has to be ${need} mm long (it was ${r.length}). Cut a longer rail, or drag the board somewhere else in the Rails step.`); r.length = need; }
         chosen = { r, s };
       }
@@ -348,8 +350,9 @@ export function generatePanel(p: Project): GenResult {
     const on = placed.filter((q) => q.mt.rail === r.id);
     const need = on.length ? Math.max(...on.map((q) => q.mt.at! + q.hi)) + margin : 50;
     const start = on.length ? Math.min(...on.map((q) => q.mt.at! + q.lo)) : 0;
-    if (r.length == null) r.length = round(Math.max(need, 50), 0);
-    else if (need - margin > r.length + 0.5 || start < -0.5) warnings.push(`Rail ${r.id.replace(/^r/, '')}: the mounts run past the end of the ${r.length} mm rail (need ${round(need, 0)} mm).`);
+    if (r.length == null) r.length = Math.ceil(Math.max(need, 50) - 1e-6);
+    else if (start < -0.5) warnings.push(`Rail ${r.id.replace(/^r/, '')}: a mount hangs ${round(-start, 0)} mm off the start of the rail. Drag it along, or press Auto-arrange.`);
+    else if (need - margin > r.length + 0.5) warnings.push(`Rail ${r.id.replace(/^r/, '')}: the mounts run past the end of the ${r.length} mm rail (need ${Math.ceil(need)} mm).`);
     else if (P.stands !== false && on.length && (start < STAND.len - STAND.back + 1 || need - margin > r.length - (STAND.len - STAND.back + 1))) warnings.push(`Rail ${r.id.replace(/^r/, '')}: a mount sits within ${STAND.len - STAND.back + 1} mm of a rail end, where the table stand's end block goes. Move it in or lengthen the rail.`);
   }
 
@@ -362,13 +365,16 @@ export function generatePanel(p: Project): GenResult {
   const features: Feature[] = [];
   const frames: Record<string, number[]> = {};
   const ends = new Map<string, { p: number[]; d: number[]; cable: number }>();
-  const linked = new Set((p.links ?? []).flatMap((l) => [`${l.a.module}/${l.a.ref}`, `${l.b.module}/${l.b.ref}`]));
+  // only links whose two boards are on the rack and still have that plug get a cable (and hold back their plugs)
+  const hasRef = (id: string, ref: string) => !!mods.get(id)?.m.board.comps.some((c) => c.ref === baseRef(ref));
+  const live = (p.links ?? []).filter((l) => placedIds.has(l.a.module) && placedIds.has(l.b.module) && hasRef(l.a.module, l.a.ref) && hasRef(l.b.module, l.b.ref));
+  const linked = new Set(live.flatMap((l) => [`${l.a.module}/${l.a.ref}`, `${l.b.module}/${l.b.ref}`]));
   // assembly steps: stands 100-130, docks 200-210, each board 300 + 10k (+1 rod, +2 board, +3 stack, +4 into its dock),
   // cables CABLE_SEQ + kind (power first), then other plugs, then caps
   const steps: NonNullable<GenResult['steps']> = [];
   let seatNo = 0;
   const cableSeq = (k: Link['kind']) => CABLE_SEQ + CABLE_ORDER.indexOf(k ?? 'usb');
-  const plugSeq = new Map((p.links ?? []).flatMap((l) => [[`${l.a.module}/${l.a.ref}`, cableSeq(l.kind)], [`${l.b.module}/${l.b.ref}`, cableSeq(l.kind)]] as [string, number][]));
+  const plugSeq = new Map(live.flatMap((l) => [[`${l.a.module}/${l.a.ref}`, cableSeq(l.kind)], [`${l.b.module}/${l.b.ref}`, cableSeq(l.kind)]] as [string, number][]));
   try {
     const sh = docks.length ? (shoeRest ??= shoeRested()) : null;
     const so = docks.length ? (sockRest ??= rest(socket(), END_POSE.pose)) : null;

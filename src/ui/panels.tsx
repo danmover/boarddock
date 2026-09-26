@@ -3,7 +3,7 @@ import { zipSync, strToU8 } from 'fflate';
 import type { Board, BoxFace, BoxSpec, Comp, Hole, HoleRole, PartOut, Project, V2 } from '../model/types';
 import { applyHoleRoles, boltedOn, detectHoleRoles, ROLE_INFO } from '../model/holes';
 import { baseRef, compatible, KIND_COLOR, linkKind, linkOf, plugName, plugRole, plugsOf, portBudget, sameRef } from '../model/links';
-import { applyBox, BOX_PORT_TYPES, BOX_PRESETS, BOX_ROLES, boxProblems, FACE_NAME, inferBox, layoutPorts, makeBox } from '../model/boxes';
+import { applyBox, BOX_PORT_TYPES, BOX_PRESETS, BOX_ROLES, boxProblems, FACE_NAME, inferBox, layoutPorts, makeBox, tightFaces } from '../model/boxes';
 import { addLinks, removeLinks, setLink } from './linkOps';
 import { Icon, I } from './icons';
 import { CONNECTORS, DEFAULT_FEATURES, HOLDER_PRESETS, MATERIALS, PRINTERS, connById, connSetup } from '../model/library';
@@ -12,7 +12,7 @@ import { TEMPLATES } from '../model/templates';
 import { ACCEPT } from '../import';
 import { openFiles } from './importFlow';
 import { bbox, circleLoop, compRect, roundedRectLoop, round, uid } from '../geom/poly';
-import { activeModule, addBoard, closeProject, edit, editMod, isSel, putBoards, select, store, toast, useApp, type SelItem } from '../state';
+import { activeModule, addBoard, closeProject, dropModule, edit, editMod, isSel, putBoards, select, setActive, store, toast, useApp, type SelItem } from '../state';
 import { Check, Chip, Num, Pick, Section, Seg, Text, download, safeName } from './controls';
 import { estimate, packPlates, placedMesh, write3mf, writeStl } from '../cad/export';
 import { buildTestKit, runClipFea } from '../worker/client';
@@ -23,6 +23,7 @@ import { duplicateModule, markBuilt, placementNote, unmarkBuilt } from './panelO
 import { delta, partsFor, type Delta } from '../model/built';
 import { baseOf as stackBase, ridersOf } from '../model/holes';
 import { DockFeaSection } from './DockFea';
+import { GcodeSection } from './GcodeSection';
 
 // ============================================================================================ IMPORT
 export function ImportPanel() {
@@ -54,7 +55,7 @@ export function ImportPanel() {
       {hasProject && <RackSummary />}
       <div className={`drop ${over ? 'over' : ''}`} onClick={() => input.current?.click()}
         onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)}
-        onDrop={(e) => { e.preventDefault(); setOver(false); handle(e.dataTransfer.files); }}>
+        onDrop={(e) => { e.preventDefault(); e.stopPropagation(); setOver(false); handle(e.dataTransfer.files); }}>
         <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="8" y="14" width="32" height="22" rx="3" /><path d="M14 20h.01M34 20h.01M14 30h.01M34 30h.01M20 22h8v6h-8zM24 4v12M19 11l5 5 5-5" /></svg>
         <b>{busy ? 'Reading…' : 'Drop board files here'}</b>
         <p>KiCad · STEP · IDF · Eagle/Fusion · Gerber + drill + pick & place (zip is fine) · DXF · BoardDock project</p>
@@ -297,7 +298,12 @@ function BoxEditor() {
         ))}
       </div>
       <button className="btn small" style={{ marginTop: 8 }} onClick={() => set((s) => { const hub = s.groups.some((x) => x.role === 'hub-down'); s.groups.push({ id: uid('pg'), type: 'usb_a', count: 1, face: 'front', role: hub ? 'hub-down' : s.groups.some((x) => x.role === 'power-out') ? 'power-out' : 'hub-down' }); })}><Icon d={I.plus} /> Add ports</button>
-      {probs.length > 0 && <div className="warns" style={{ marginTop: 8 }}>{probs.map((x) => <div key={x}>{x}</div>)}</div>}
+      {probs.length > 0 && (
+        <div className="warns" style={{ marginTop: 8 }}>
+          {probs.map((x) => <div key={x}>{x}</div>)}
+          {tightFaces(spec).slice(0, 1).map((t) => <button key={t.face} className="btn small soft" style={{ marginTop: 6 }} onClick={() => set((s) => { s[t.dim] = Math.max(s[t.dim], ...tightFaces(s).filter((x) => x.dim === t.dim).map((x) => x.need)); })}>Make the box {Math.max(...tightFaces(spec).filter((x) => x.dim === t.dim).map((x) => x.need))} mm {t.dim === 'l' ? 'long' : 'wide'}</button>)}
+        </div>
+      )}
       <p className="hint">Front and back are the long sides; the box lies on its base in its holder, strapped down. Ports on top are fine: the strap loops move to miss them. Cables to ports you remove are removed too.</p>
     </Section>
   );
@@ -829,10 +835,18 @@ export function ExportPanel() {
   const parts = useMemo(() => (!res ? [] : onlyNew ? d!.parts : scope === 'pick' ? partsFor(res, pickSet, { docks: withDocks, stands: withStands }) : res.parts), [res, onlyNew, d, scope, pickSet, withDocks, withStands]);
   useEffect(() => { store.set({ printParts: scope === 'all' ? null : parts }); }, [parts, scope]);
   useEffect(() => () => store.set({ printParts: null }), []);
+  // the footer's Download button
+  const zipRef = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    const f = () => (zipRef.current ? zipRef.current() : toast('Still building: the download is ready in a moment.'));
+    window.addEventListener('boarddock:download', f);
+    return () => window.removeEventListener('boarddock:download', f);
+  }, []);
   const plates = useMemo(() => packPlates(parts, p.printer.bed, p.printer.spacing, copies), [parts, p.printer.bed[0], p.printer.bed[1], p.printer.spacing, copies]);
   const dens = MATERIALS[activeModule(p).holder.material].density;
   const est = useMemo(() => parts.map((x) => ({ part: x, ...estimate(x, dens) })), [parts, dens]);
   const tot = est.reduce((a, e) => ({ g: a.g + e.grams * e.part.qty * copies, m: a.m + e.minutes * e.part.qty * copies }), { g: 0, m: 0 });
+  zipRef.current = null;
   if (!res) return <div><p className="lede">Building…</p></div>;
   const base = safeName(p.modules.map((m) => m.board.name).join('+'));
   const plateMeshes = (i: number) => plates[i].items.map((it) => placedMesh(it, p.printer.bed, plates[i].used));
@@ -849,9 +863,10 @@ export function ExportPanel() {
     files['README.txt'] = strToU8(printNotes(p, res, plates.length, tot, shopping(p, res, onlyNew ? d : null, tot, scope === 'pick' ? pickSet : undefined)).replace('Print: 0.2 mm layers, 3 walls, 15% infill, NO supports. Parts are already in print orientation.', settings));
     download(`${base}_boarddock${onlyNew ? '_new-parts' : scope === 'pick' ? '_some-boards' : ''}.zip`, zipSync(files), 'application/zip');
   };
+  zipRef.current = zipAll;
   return (
     <div>
-      <BuildSection d={d} />
+      {p.built && <BuildSection d={d} />}
       <Section title="What to print" right={<span className="chip">{parts.reduce((a, x) => a + x.qty, 0)} parts</span>}>
         <Seg value={scope} options={[['all', 'Everything'], ...(p.built ? [['new', "What's new"] as ['new', string]] : []), ['pick', 'Some boards']]} onChange={setScope} />
         {scope === 'pick' && (
@@ -878,7 +893,7 @@ export function ExportPanel() {
       </div>
       <button className="btn primary" style={{ width: '100%', justifyContent: 'center', marginBottom: 10 }} onClick={() => zipAll()}><Icon d={I.download} /> {scope === 'all' ? 'Download everything' : scope === 'new' ? "Download what's new" : 'Download these'} (.zip)</button>
       <Section title="Printer">
-        <Pick label="Printer" value={p.printer.name} options={[...PRINTERS.map((x) => [x.name, x.name] as [string, string]), ['Custom', 'Custom']]} onChange={(v) => setP((x) => { const pr = PRINTERS.find((q) => q.name === v); if (pr) Object.assign(x, { ...pr, spacing: x.spacing }); else x.name = 'Custom'; })} />
+        <Pick label="Printer" value={p.printer.name} options={[...PRINTERS.map((x) => [x.name, x.name] as [string, string]), ['Custom', 'Custom']]} onChange={(v) => setP((x) => { const pr = PRINTERS.find((q) => q.name === v); delete x.gcodeStart; delete x.gcodeEnd; if (pr) Object.assign(x, { ...pr, spacing: x.spacing }); else x.name = 'Custom'; })} />
         <div className="row3" style={{ marginTop: 8 }}>
           <Num label="Bed X" value={p.printer.bed[0]} min={50} onChange={(v) => setP((x) => { x.bed = [v, x.bed[1]]; x.name = 'Custom'; })} />
           <Num label="Bed Y" value={p.printer.bed[1]} min={50} onChange={(v) => setP((x) => { x.bed = [x.bed[0], v]; x.name = 'Custom'; })} />
@@ -908,6 +923,7 @@ export function ExportPanel() {
         </div>
       </Section>
       <ShoppingList lines={shopping(p, res, onlyNew ? d : null, tot, scope === 'pick' ? pickSet : undefined)} />
+      {!p.built && <BuildSection d={d} />}
       {p.layout === 'panel' && <TestKitSection />}
       <Section title="Estimate">
         <table className="table"><tbody>
@@ -918,7 +934,7 @@ export function ExportPanel() {
         <p className="hint">Rough: 3 walls, 5 top/bottom layers, 15% infill, 0.2 mm layers, {activeModule(p).holder.material}. Your slicer's numbers are the real ones.</p>
       </Section>
       <PrintSettings parts={parts} />
-      <SlicerSection plates={plates.length} plate3mf={(i) => write3mf(plates[i].items.map((it, k) => ({ name: `${it.part.name} ${k + 1}`, mesh: placedMesh(it, p.printer.bed, plates[i].used) })))} base={base} />
+      <GcodeSection plates={plates.length} plateKey={plates} plateMeshes={plateMeshes} brim={tallness(parts, p.printer.maxZ ?? 250).tall.length > 0} plate3mf={(i) => write3mf(plates[i].items.map((it, k) => ({ name: `${it.part.name} ${k + 1}`, mesh: placedMesh(it, p.printer.bed, plates[i].used) })))} base={base} />
     </div>
   );
 }
@@ -956,30 +972,6 @@ function PrintSettings({ parts }: { parts: PartOut[] }) {
         <Seg value={where} options={[['orca', 'OrcaSlicer, Bambu Studio'], ['prusa', 'PrusaSlicer']]} onChange={setWhere} />
       </div>
       <p className="hint"><b>design</b>: the parts need it. <b>profile</b>: OrcaSlicer's generic {mat} profile or your printer's machine profile. <b>convention</b>: common practice, not a tested requirement. Nothing has been print-tested yet: print the test-fit kit first.</p>
-    </Section>
-  );
-}
-
-/** Getting G-code: the plates open in the user's own slicer, parts already placed. */
-function SlicerSection({ plates, plate3mf, base }: { plates: number; plate3mf: (i: number) => Uint8Array; base: string }) {
-  const desk = (window as any).boarddockDesktop as undefined | { slicers: () => Promise<string[]>; openInSlicer: (app: string | null, name: string, bytes: Uint8Array) => Promise<string> };
-  const [found, setFound] = useState<string[] | null>(null);
-  const [app, setApp] = useState<string>('');
-  useEffect(() => { desk?.slicers().then((l) => { setFound(l); setApp(l[0] ?? ''); }).catch(() => setFound([])); }, []);
-  const open = async (i: number) => {
-    const err = await desk!.openInSlicer(app || null, `${base}_plate${i + 1}.3mf`, plate3mf(i));
-    toast(err ? `Could not open it: ${err}` : `Plate ${i + 1} opened in ${app || 'your slicer'}. Pick the printer preset and the settings above, then slice.`);
-  };
-  return (
-    <Section title="G-code">
-      <p className="hint" style={{ marginTop: 0 }}>Your slicer makes the G-code: it has your printer's start code, calibration and firmware quirks. Each plate is a 3MF with every part already placed, so you only pick the settings above and press slice. Bambu Lab printers take the <code>.gcode.3mf</code> that Bambu Studio or OrcaSlicer sends.</p>
-      {desk ? (
-        <>
-          {found && found.length > 0 && <Pick label="Slicer" value={app} options={[...found.map((x) => [x, x] as [string, string]), ['', 'The app your system opens 3MF files with']]} onChange={setApp} />}
-          {found && !found.length && <p className="hint">No slicer found in the usual places; plates open in whatever your system uses for 3MF files. OrcaSlicer and PrusaSlicer are free and open source.</p>}
-          <div className="btns" style={{ marginTop: 8 }}>{[...Array(plates)].map((_, i) => <button key={i} className="btn small soft" onClick={() => open(i)}>Open plate {i + 1}</button>)}</div>
-        </>
-      ) : <p className="hint">Download a plate's <b>3MF</b> above and open it in OrcaSlicer, PrusaSlicer, Bambu Studio or Cura (all free). In the desktop app, one click opens it in your slicer.</p>}
     </Section>
   );
 }
@@ -1127,7 +1119,7 @@ function ModulePicker() {
   return (
     <div className="section" style={{ padding: '8px 10px', display: 'flex', alignItems: 'center', gap: 8 }}>
       <span className="hint" style={{ margin: 0, whiteSpace: 'nowrap' }}>Editing</span>
-      <select value={p.active} onChange={(e) => { edit((q) => { q.active = +e.target.value; }); select([]); }}>
+      <select value={p.active} onChange={(e) => { setActive(+e.target.value); select([]); }}>
         {p.modules.map((m, i) => <option key={m.id} value={i}>{i + 1}. {m.board.name}</option>)}
       </select>
       <span className="chip">{p.active + 1} / {p.modules.length}</span>
@@ -1144,11 +1136,11 @@ export function LayoutSection() {
     <Section title={`Boards (${p.modules.length})`} right={<button className="btn small" onClick={() => store.set({ step: 'import', replaceMode: false })}>+ Add board</button>}>
       <div className="list">
         {p.modules.map((m, i) => (
-          <div key={m.id} className={`item ${p.active === i ? 'sel' : ''}`} onClick={() => edit((q) => { q.active = i; })}>
+          <div key={m.id} className={`item ${p.active === i ? 'sel' : ''}`} onClick={() => setActive(i)}>
             <span className="grow"><b>{i + 1}.</b> {m.board.name} <small>{round(bbox(m.board.outline).x1 - bbox(m.board.outline).x0, 0)} × {round(bbox(m.board.outline).y1 - bbox(m.board.outline).y0, 0)} mm</small></span>
             {multi && i > 0 && <button className="btn small ghost" title="Move up" onClick={(e) => { e.stopPropagation(); edit((q) => { [q.modules[i - 1], q.modules[i]] = [q.modules[i], q.modules[i - 1]]; q.active = i - 1; }); }}>↑</button>}
             <button className="btn small ghost" title="Duplicate this board and its holder" onClick={(e) => { e.stopPropagation(); duplicateModule(i); }}>⧉</button>
-            {multi && <button className="btn small ghost danger" title="Remove" onClick={(e) => { e.stopPropagation(); edit((q) => { q.modules.splice(i, 1); q.active = Math.min(q.active, q.modules.length - 1); }); }}>✕</button>}
+            {multi && <button className="btn small ghost danger" title="Remove" onClick={(e) => { e.stopPropagation(); const nm = m.board.name; edit((q) => { dropModule(q, m.id); }); toast(`Removed ${nm}. ⌘Z brings it back.`); }}>✕</button>}
           </div>
         ))}
       </div>
@@ -1225,7 +1217,7 @@ function TestKitSection() {
   };
   return (
     <Section title="Test-fit kit · print this first">
-      <p className="hint" style={{ marginTop: 0 }}>One rail shoe, one socket and a small tongue key with its release rod: about 30 to 40 minutes. Clip the shoe on your rail, push the key in until it clicks, press its button and lift. If the key is tight, raise <b>Tongue fit</b> in the Panel step by 0.05 to 0.1 mm and print the kit again.</p>
+      <p className="hint" style={{ marginTop: 0 }}>One rail shoe, one socket and a small tongue key with its release rod: about 30 to 40 minutes. Clip the shoe on your rail, push the key in until it clicks, press its button and lift. If the key is tight, raise <b>Tongue fit</b> in the Rails step by 0.05 to 0.1 mm and print the kit again.</p>
       <div className="btns" style={{ marginTop: 8 }}><button className="btn" disabled={busy} onClick={get}>{busy ? 'Building…' : 'Download test-fit kit (3MF)'}</button></div>
     </Section>
   );
@@ -1273,7 +1265,7 @@ function HoleWizard() {
                   const on = isSel(sel, h.id);
                   return (
                     <div key={h.id} className={`holerow ${on ? 'sel' : ''}`} onClick={(e) => select([{ kind: 'hole', id: h.id }], e.shiftKey || e.metaKey ? 'toggle' : 'set')}>
-                      <div style={{ minWidth: 0 }}>Hole {i + 1} <span className="mono" style={{ color: 'var(--subtle)', fontSize: 11 }}>Ø{round(h.d, 2)} · {round(h.x, 1)}, {round(h.y, 1)}</span><small>{h.why ?? guess.get(h.id)?.why}</small></div>
+                      <div style={{ minWidth: 0 }}>Hole {i + 1} <span className="mono" style={{ color: 'var(--subtle)', fontSize: 11 }}>Ø{round(h.d, 2)} · {round(h.x, 1)}, {round(h.y, 1)}</span><small title={h.why ?? guess.get(h.id)?.why}>{h.why ?? guess.get(h.id)?.why}</small></div>
                       <select value={h.role ?? 'mount'} onClick={(e) => e.stopPropagation()} onChange={(e) => setRole(isSel(sel, h.id) ? sel.filter((s) => s.kind === 'hole').map((s) => s.id) : [h.id], e.target.value as HoleRole)}>
                         {ROLES.map((r) => <option key={r} value={r}>{ROLE_INFO[r].short}</option>)}
                       </select>

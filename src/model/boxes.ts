@@ -55,13 +55,20 @@ export function layoutPorts(s: BoxSpec): { group: BoxPortGroup; i: number; along
   return out;
 }
 
+/** Faces whose ports need more room than the face has, and which size of the box would give it to them. */
+export function tightFaces(s: BoxSpec): { face: BoxFace; need: number; have: number; dim: 'l' | 'w' }[] {
+  return (Object.keys(FACE_NAME) as BoxFace[]).flatMap((face) => {
+    const gs = s.groups.filter((x) => x.face === face && x.count > 0);
+    const need = Math.ceil(gs.reduce((a, x) => a + x.count * (portWidth(x.type) + 1.5), 0) + 3);
+    return gs.length && need > faceLen(s, face) ? [{ face, need, have: faceLen(s, face), dim: face === 'left' || face === 'right' ? 'w' as const : 'l' as const }] : [];
+  });
+}
+
 /** Ports that don't fit on their face. */
 export function boxProblems(s: BoxSpec): string[] {
-  const out: string[] = [];
+  const out: string[] = tightFaces(s).map((t) => `${FACE_NAME[t.face]}: the ports need about ${t.need} mm, the face is ${t.have} mm.`);
   for (const face of Object.keys(FACE_NAME) as BoxFace[]) {
     const gs = s.groups.filter((x) => x.face === face && x.count > 0);
-    const need = gs.reduce((a, x) => a + x.count * (portWidth(x.type) + 1.5), 0) + 3;
-    if (gs.length && need > faceLen(s, face)) out.push(`${FACE_NAME[face]}: the ports need about ${Math.ceil(need)} mm, the face is ${faceLen(s, face)} mm.`);
     const hMax = Math.max(0, ...gs.map((x) => connById(x.type).body.h));
     if (face !== 'top' && hMax > s.h - 1) out.push(`${FACE_NAME[face]}: a ${connById(gs.find((x) => connById(x.type).body.h === hMax)!.type).name} is taller than the box.`);
   }
@@ -71,15 +78,42 @@ export function boxProblems(s: BoxSpec): string[] {
 const PREFIX: Record<string, string> = { 'hub-down': 'P', 'hub-up': 'UP', 'power-out': 'OUT', 'power-in': 'PWR', host: 'USB', device: 'USB', net: 'LAN' };
 const prefixOf = (x: BoxPortGroup) => PREFIX[x.role] ?? (x.type === 'iec_c7' ? 'AC' : x.type === 'barrel' ? 'DC' : x.type === 'rj45' ? 'LAN' : 'J');
 
+/**
+ * Give every port a name that sticks to its group: a group keeps its names as ports are added to it or taken away,
+ * and new ports take the next free number, so cables plugged into other groups stay where they are. A spec with no
+ * names yet (older projects) is numbered in layout order, as it always was.
+ */
+export function nameBoxPorts(s: BoxSpec) {
+  const lay = layoutPorts(s);
+  if (s.groups.every((g) => !g.refs)) {
+    const count = new Map<string, number>(), total = new Map<string, number>();
+    for (const x of s.groups) total.set(prefixOf(x), (total.get(prefixOf(x)) ?? 0) + x.count);
+    for (const g of s.groups) g.refs = [];
+    for (const { group } of lay) {
+      const pre = prefixOf(group), n = (count.get(pre) ?? 0) + 1;
+      count.set(pre, n);
+      group.refs!.push(total.get(pre)! > 1 ? `${pre}${n}` : pre);
+    }
+    return;
+  }
+  const used = new Set<string>();
+  for (const g of s.groups) { g.refs = (g.refs ?? []).slice(0, Math.max(0, g.count)); for (const r of g.refs) used.add(r); }
+  for (const g of s.groups) {
+    const pre = prefixOf(g), alone = g.count === 1 && !s.groups.some((x) => x !== g && prefixOf(x) === pre);
+    while (g.refs!.length < g.count) {
+      let r = alone && !used.has(pre) ? pre : '';
+      for (let n = 1; !r; n++) if (!used.has(`${pre}${n}`)) r = `${pre}${n}`;
+      used.add(r);
+      g.refs!.push(r);
+    }
+  }
+}
+
 /** The port parts of a box (in board coordinates: x along its length, y across, the box standing on z = 0). */
 export function boxPorts(s: BoxSpec): Comp[] {
-  const count = new Map<string, number>();
-  const total = new Map<string, number>();
-  for (const x of s.groups) total.set(prefixOf(x), (total.get(prefixOf(x)) ?? 0) + x.count);
-  return layoutPorts(s).map(({ group, along }) => {
-    const pre = prefixOf(group), n = (count.get(pre) ?? 0) + 1;
-    count.set(pre, n);
-    const ref = total.get(pre)! > 1 ? `${pre}${n}` : pre;
+  nameBoxPorts(s);
+  return layoutPorts(s).map(({ group, i, along }) => {
+    const ref = group.refs![i];
     const t = connById(group.type);
     if (group.face === 'top') {
       return { id: uid('c'), ref, pkg: t.name, side: 'top', x: along, y: s.w / 2, rot: 0, w: t.body.w, l: t.body.l, h: 0.2, kind: 'connector', tht: false, role: group.role,
@@ -123,7 +157,7 @@ export function inferBox(b: Board, role: (c: Comp) => string): BoxSpec {
     const face: BoxFace = c.conn.entry === 'top' ? 'top' : a === 0 ? 'right' : a === 90 ? 'back' : a === 180 ? 'left' : 'front';
     const r = c.role ?? role(c);
     const same = groups.find((x) => x.face === face && x.type === c.conn!.type && x.role === r);
-    if (same) same.count++; else groups.push({ id: uid('pg'), type: c.conn.type, count: 1, face, role: r });
+    if (same) { same.count++; same.refs!.push(c.ref); } else groups.push({ id: uid('pg'), type: c.conn.type, count: 1, face, role: r, refs: [c.ref] });
   }
   return { l: Math.round(x1 - x0), w: Math.round(y1 - y0), h: b.thickness, groups };
 }

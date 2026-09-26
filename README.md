@@ -367,10 +367,13 @@ PETG results (E = 2100 MPa, strain limit 2%):
 
   **Copy** puts the list on the clipboard, and the download's README has it too.
 - **What to print:** everything, only what's new since you built the rack, or just the boards you tick (with or without their docks and the table stands). The plates, the estimate, the download and the plates view all follow the choice.
-- **G-code:** your slicer makes it, because it knows your printer's start code and calibration. Every plate is a 3MF with all its parts already placed. In the desktop app, **Open plate** hands it straight to OrcaSlicer, PrusaSlicer, Bambu Studio or Cura if one is installed, or else to whatever opens 3MF files. On the web, download the plate's 3MF. Bambu Lab printers take the `.gcode.3mf` that Bambu Studio or OrcaSlicer sends them.
+- **G-code, in the app:** press **Slice** next to a plate. [Kiri:Moto](https://grid.space/kiri/) (MIT, by Stewart Allen) slices it inside BoardDock with the settings above and your filament's temperatures, and shows the print time, the grams and each layer. You get a `.gcode` file, or a `.gcode.3mf` for Bambu Lab printers.
+  - **Start and end code** comes from Kiri:Moto's own profile where it has one (Bambu Lab P1S and A1, Prusa MK3S+ and MINI, Creality K1, which the K1C uses too). BoardDock swaps the A1 and K1 profiles' fixed PLA temperatures for your filament's. Other printers get a plain start (heat, home, purge line) for Marlin or Klipper, marked as such. You can paste your own under **Start and end G-code**. The A1 mini and the XL are left to their makers' slicers.
+  - Kiri:Moto is not the slicer the settings were written for. It has no first-layer (elephant-foot) compensation, and its speeds are set conservatively.
+- **G-code, in your own slicer:** every plate is also a 3MF with all its parts placed. In the desktop app, **Open plate** hands it to OrcaSlicer, PrusaSlicer, Bambu Studio or Cura if one is installed. Your printer maker's slicer knows its quirks best.
 - **Supports: none.** Overhangs are 45° chamfers or short bridges, round holes on their side are teardrops, and all springs flex within their print layers.
 - **Plates:** each plate becomes one STL or 3MF file with every part already placed. The estimate shows grams and print time per part.
-- **First print:** the **test-fit kit** in Export: a shoe, a socket and a small tongue key with its release rod, about 21 g. Clip it on your rail, plug the key in, press its button. If the key is tight, raise **Tongue fit** in the Panel step by 0.05–0.1 mm.
+- **First print:** the **test-fit kit** in Export: a shoe, a socket and a small tongue key with its release rod, about 21 g. Clip it on your rail, plug the key in, press its button. If the key is tight, raise **Tongue fit** in the Rails step by 0.05–0.1 mm.
 - **Check:** the Check step lists every part's overhangs and longest bridge. **Overhangs** on the print plates paints faces that would need support in red and bridges in amber. The generated parts need no supports; bridges are 5.4 mm at most.
 
 ## Honest limits
@@ -387,7 +390,8 @@ PETG results (E = 2100 MPa, strain limit 2%):
 - "Only what's new" recognises parts by their geometry. If you change a holder setting after marking the rack as built, that holder counts as new even if you would not reprint it.
 - A board that carries a stack is never put into another dock's empty slot automatically; place it by hand in the Rails step.
 - The desktop app's **Open plate** looks for slicers in their usual install folders. It has not been tried with every slicer and operating system. If nothing opens, download the plate's 3MF and open it by hand.
-- BoardDock does not make G-code itself. The one open-source slicer that runs in a browser under a compatible licence (Kiri:Moto, MIT) is not published as a package, and bundling CuraEngine's WebAssembly build would bring in the AGPL.
+- The in-app G-code has not been run on a printer. The start code comes from Kiri:Moto's community profiles or BoardDock's plain templates, not from the printer makers. Check the start of the first print, or use your own slicer.
+- Slicing a full plate in the app takes much longer than a desktop slicer: seconds to a minute or more, depending on the plate and the computer.
 - A board whose holes all carry the standoffs of a HAT has no pins; it needs room on its edges for two snap fingers, and the Check step says so when there isn't any.
 
 ## Development
@@ -427,6 +431,8 @@ npm run dist         # installers for the current OS in release/
   - `BoardEditor.tsx`, `PanelEditor.tsx` and `WiringView.tsx`: the 2D board editor, the Rails view and the Wiring view.
 - `src/worker/`: geometry and FEA run in web workers.
 - `src/model/printers.ts`: printers (from OrcaSlicer's machine profiles), filament settings (from its generic filament profiles) and the print settings list.
+- `src/slice/`: in-app slicing with Kiri:Moto: printer start code and settings (`profiles.ts`), running the engine, reading the G-code back and the Bambu `.gcode.3mf` (`kiri.ts`).
+- `vendor/kiri/`: how `public/kiri/` (the Kiri:Moto engine, its workers and printer profiles) is built from the grid-apps source.
 - `electron/`: desktop shell; `preload.cjs` exposes finding installed slicers and opening a plate in one.
 - `.github/workflows/`: CI, and a release job that builds installers for all three platforms and publishes the web app.
 

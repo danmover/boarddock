@@ -42,6 +42,15 @@ export interface State {
 
 const KEY = 'boarddock.project.v1';
 
+function savedTheme(): 'dark' | 'light' | null {
+  try {
+    const t = localStorage.getItem('boarddock.theme');
+    return t === 'dark' || t === 'light' ? t : null;
+  } catch {
+    return null;
+  }
+}
+
 function load(): Project | null {
   try {
     const s = localStorage.getItem(KEY);
@@ -66,7 +75,7 @@ let state: State = {
   layers: { holders: true, docks: true, caps: true, rails: true, boards: true, plugs: true, cables: true },
   toast: null,
   printParts: null,
-  theme: (typeof localStorage !== 'undefined' && (localStorage.getItem('boarddock.theme') as 'dark' | 'light')) || 'dark',
+  theme: savedTheme() ?? (typeof matchMedia !== 'undefined' && matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'),
 };
 // a saved project opens on Start, which shows the rack and the ways on (add a board, cables, what's new to print)
 const subs = new Set<() => void>();
@@ -89,16 +98,32 @@ export function useApp<T>(sel: (s: State) => T): T {
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
-function persist(p: Project | null) {
+let pending: { p: Project | null } | null = null;
+let saveFailed = false;
+function writeNow() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    try {
-      if (p) localStorage.setItem(KEY, JSON.stringify(p));
-      else localStorage.removeItem(KEY);
-    } catch {
-      /* storage full or unavailable */
-    }
-  }, 400);
+  if (!pending) return;
+  const { p } = pending;
+  pending = null;
+  try {
+    if (p) localStorage.setItem(KEY, JSON.stringify(p));
+    else localStorage.removeItem(KEY);
+    saveFailed = false;
+  } catch {
+    // storage full or unavailable: say so once, the project file still works
+    if (!saveFailed) toast('Autosave failed (browser storage is full or blocked). Save the project file with ⌘S to keep your work.');
+    saveFailed = true;
+  }
+}
+function persist(p: Project | null) {
+  pending = { p };
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(writeNow, 400);
+}
+// closing the tab or window keeps the last edit
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', writeNow);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') writeNow(); });
 }
 
 /** Change the project through a mutating function on a copy (undoable). */
@@ -129,8 +154,12 @@ export function setBoard(b: Board) {
   if (cur) {
     p = structuredClone(cur);
     const m = activeModule(p);
-    const nm = newModule(b, m.holder);
-    for (const mt of p.panel?.mounts ?? []) for (const sl of mt.slots) if (sl.module === m.id) { sl.module = nm.id; sl.edge = 'auto'; }
+    // the new board takes the old one's place and id: its dock, the boards stacked on it and its cables stay;
+    // only cables to plugs the new board doesn't have are dropped
+    const nm = { ...newModule(b, m.holder), id: m.id, on: m.on };
+    for (const mt of p.panel?.mounts ?? []) for (const sl of mt.slots) if (sl.module === m.id) sl.edge = 'auto';
+    const has = (ref: string) => b.comps.some((c) => c.ref === ref.replace(/:2$/, ''));
+    p.links = (p.links ?? []).filter((l) => (l.a.module !== m.id || has(l.a.ref)) && (l.b.module !== m.id || has(l.b.ref)));
     p.modules[p.active] = nm;
     p.mount = { ...p.mount, at: null };
   } else p = newProject(b);
@@ -168,10 +197,35 @@ export function putBoards(bs: Board[], replace: boolean) {
   persist(p);
 }
 
+/** Open a project file. The rack that was open stays one ⌘Z away. */
 export function loadProject(raw: unknown) {
   const p = migrate(raw);
-  store.set({ project: p, past: [], future: [], sel: [], step: 'board', result: null });
+  const cur = state.project;
+  store.set({ project: p, past: cur ? [...state.past.slice(-60), cur] : [], future: [], sel: [], step: 'import', result: null });
   persist(p);
+}
+
+/** Switch the board being edited: not an edit, so undo and redo are left alone. */
+export function setActive(i: number) {
+  const cur = state.project;
+  if (!cur || cur.active === i || i < 0 || i >= cur.modules.length) return;
+  const p = { ...cur, active: i };
+  store.set({ project: p });
+  persist(p);
+}
+
+/** Take a board out of a project (a draft being edited): its dock slot, its cables and its place in a stack go too. */
+export function dropModule(p: Project, id: string): boolean {
+  const i = p.modules.findIndex((x) => x.id === id);
+  if (i < 0 || p.modules.length <= 1) return false;
+  const m = p.modules[i];
+  p.modules.splice(i, 1);
+  for (const x of p.modules) if (x.on === m.id) x.on = m.on ?? null;
+  for (const mt of p.panel.mounts) for (const sl of mt.slots) if (sl.module === m.id) sl.module = null;
+  p.links = (p.links ?? []).filter((l) => l.a.module !== m.id && l.b.module !== m.id);
+  if (i < p.active) p.active--;
+  p.active = Math.max(0, Math.min(p.active, p.modules.length - 1));
+  return true;
 }
 
 export function undo() {
@@ -196,9 +250,12 @@ export function closeProject() {
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 /** When the current toast appeared (the toast shows how long it has left). */
 export let toastAt = 0;
+/** The undo depth when the toast appeared: its Undo button only shows while no other edit has happened since. */
+export let toastPast = -1;
 export function toast(msg: string) {
   clearTimeout(toastTimer);
   toastAt = Date.now();
+  toastPast = state.past.length;
   store.set({ toast: msg });
   toastTimer = setTimeout(() => store.set({ toast: null }), Math.min(9000, 3200 + msg.length * 30));
 }

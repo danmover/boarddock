@@ -66,7 +66,7 @@ export interface Comp {
 /** Where a box's ports sit: its long faces (front: y = 0, back: y = width), its ends (left: x = 0, right: x = length), or its top. */
 export type BoxFace = 'front' | 'back' | 'left' | 'right' | 'top';
 /** A row of identical ports on one face of a box. */
-export interface BoxPortGroup { id: string; type: string; count: number; face: BoxFace; role: string }
+export interface BoxPortGroup { id: string; type: string; count: number; face: BoxFace; role: string; refs?: string[] } // refs: the group's port names, kept as ports are added or removed
 export interface BoxSpec { l: number; w: number; h: number; groups: BoxPortGroup[] }
 
 export interface Board {
@@ -149,6 +149,8 @@ export interface PrinterSettings {
   bed: V2;
   spacing: number;
   maxZ?: number; // build height
+  gcodeStart?: string; // start/end G-code typed in for in-app slicing; empty uses the printer's profile
+  gcodeEnd?: string;
 }
 
 /** One board and the holder built around it. */

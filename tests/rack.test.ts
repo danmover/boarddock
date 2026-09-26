@@ -6,7 +6,7 @@ import { newModule, newProject } from '../src/model/library';
 import { autoLinks, plugRole, portBudget } from '../src/model/links';
 import { applyBox, boxProblems, inferBox, layoutPorts, makeBox } from '../src/model/boxes';
 import { bestRoute, hits, segInBox, type CableEnd, type Obstacle } from '../src/cad/cableroute';
-import { delta, partsFor, snapshot } from '../src/model/built';
+import { delta, partSig, partsFor, snapshot } from '../src/model/built';
 import { appendDock } from '../src/cad/dockplan';
 import type { GenResult, Project } from '../src/model/types';
 
@@ -167,5 +167,66 @@ describe('a rack you come back to', () => {
     expect(shoes?.qty).toBe(1);
     expect(withDock.some((x) => x.tag?.kind === 'railstand')).toBe(false);
     expect(partsFor(r, new Set([pi]), { docks: false, stands: true }).some((x) => x.tag?.kind === 'railstand')).toBe(true);
+  });
+});
+
+describe('fixes from review', () => {
+  it('a board dropped into an empty dock slot stays on the rail, clear of the stand end blocks', async () => {
+    await initKernel();
+    const p = newProject(T('rpi4'));
+    p.modules.push(newModule(T('uno')), newModule(T('usb_hub')));
+    freeze(p, generate(p));
+    for (const id of ['nano', 'relay4']) {
+      if (!TEMPLATES.some((t) => t.id === id)) continue;
+      const m = newModule(T(id));
+      p.modules.push(m);
+      appendDock(p, m.id);
+      const r = generate(p);
+      const w = r.report.warnings.join(' | ');
+      expect(w).not.toMatch(/within \d+ mm of a rail end|hangs .* off the start|run past the end/);
+      expect(r.report.panel!.collisions).toEqual([]);
+    }
+  });
+
+  it('a fresh one-board rack on stands has no end-block warning', async () => {
+    await initKernel();
+    const r = generate(newProject(T('pico')));
+    expect(r.report.warnings.join(' | ')).not.toMatch(/rail end/);
+  });
+
+  it('a part that moved without changing size still counts as changed', () => {
+    const n = 5000, pos = new Float32Array(n * 3).map((_, i) => (i % 7) * 3.1), idx = new Uint32Array([0, 1, 2]);
+    const moved = pos.map((v, i) => (i % 3 === 1 ? v + 5 : v));
+    const pt = (q: Float32Array) => ({ name: 'Holder', size: [10, 10, 10], mesh: { pos: q, idx } } as any);
+    expect(partSig(pt(pos))).not.toBe(partSig(pt(moved)));
+    expect(partSig(pt(pos))).toBe(partSig(pt(pos.slice())));
+  });
+
+  it("hub ports keep their names when another group grows, so cables don't move", () => {
+    const b = makeBox('hubc');
+    const before = new Map(b.comps.filter((c) => c.conn).map((c) => [c.ref, c.conn!.type]));
+    expect(before.get('P4')).toBe('usb_c');
+    const s = structuredClone(b.box!);
+    s.groups[0].count = 4; // one more USB-A
+    applyBox(b, s);
+    const after = new Map(b.comps.filter((c) => c.conn).map((c) => [c.ref, c.conn!.type]));
+    expect(after.get('P4')).toBe('usb_c'); // the USB-C port is still P4
+    expect([...after.entries()].filter(([, t]) => t === 'usb_a').length).toBe(4);
+    expect(new Set(after.keys()).size).toBe(b.comps.filter((c) => c.conn).length);
+  });
+
+  it('a cable to a board that is off the rack leaves no uncaptioned step', async () => {
+    await initKernel();
+    const p = newProject(T('rpi4'));
+    p.modules.push(newModule(T('uno')));
+    p.links = autoLinks(p);
+    freeze(p, generate(p));
+    const uno = p.modules[1].id;
+    for (const mt of p.panel.mounts) for (const sl of mt.slots) if (sl.module === uno) sl.module = null;
+    const r = generate(p);
+    const seqs = new Set<number>();
+    for (const x of [...r.parts, ...r.ghosts, ...(r.display ?? [])]) for (const a of [x.anim, ...(('anims' in x && x.anims) || [])]) if (a) { seqs.add(a.seq); if (a.show != null) seqs.add(a.show); for (const m of a.pre ?? []) seqs.add(m.seq); }
+    const captioned = new Set((r.steps ?? []).map((s) => s.seq));
+    expect([...seqs].filter((s) => !captioned.has(s))).toEqual([]);
   });
 });

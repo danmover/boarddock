@@ -4,7 +4,7 @@
 import { useState, type ReactNode } from 'react';
 import type { Access, EdgeName, Module, PanelReport, Turn } from '../model/types';
 import { baseOf, ridersOf, stackMode } from '../model/holes';
-import { edit, isSel, select, store, useApp } from '../state';
+import { edit, isSel, select, setActive, store, useApp } from '../state';
 import { Check, Chip, Num, Pick, Section, Seg } from './controls';
 import { accessCounts, MODULE_DRAG, PALETTE } from './PanelEditor';
 import { addDock, addRail, appendToRail, autoArrange, duplicateModule, newRailWith, placeMount, quickLayout, removeMounts, removeRails, seat, setKind, setLever, setRail, setSlot, setStackMode, stackOn, swapSlots, turnMounts, unseat } from './panelOps';
@@ -63,7 +63,7 @@ function BoardChip({ m, color, rider, children, acc }: { m: Module; color: strin
   return (
     <div className={`bchip ${rider ? 'rider' : ''} ${p.active === i ? 'sel' : ''} ${d.over ? 'over' : ''}`} draggable {...d.props}
       onDragStart={(e) => { e.dataTransfer.setData(MODULE_DRAG, m.id); e.dataTransfer.effectAllowed = 'move'; e.stopPropagation(); }}
-      onClick={(e) => { e.stopPropagation(); if (p.active !== i) edit((q) => { q.active = i; }); select([{ kind: 'module', id: m.id }]); }}
+      onClick={(e) => { e.stopPropagation(); setActive(i); select([{ kind: 'module', id: m.id }]); }}
       title="Drag onto a slot, a rail, or another board to stack it on top">
       <i style={{ background: color }} />
       <span className="grow">{m.board.name}{rider && <small style={{ color: 'var(--subtle)', fontWeight: 400 }}> · {stackMode(p, m) === 'bolted' ? 'bolted on top' : 'printed layer'}</small>}</span>

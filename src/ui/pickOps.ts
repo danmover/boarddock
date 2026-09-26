@@ -3,7 +3,7 @@
 import type { Feature, Project } from '../model/types';
 import { ROLE_INFO } from '../model/holes';
 import { KIND_COLOR, KIND_NAME } from '../model/links';
-import { edit, select, store, toast, type SelItem } from '../state';
+import { dropModule, edit, select, store, toast, type SelItem } from '../state';
 import { materialise } from './panelOps';
 
 export const FEATURE_NAME: Record<NonNullable<SelItem['fkind']>, string> = {
@@ -65,26 +65,26 @@ export function describe(p: Project, it: SelItem): { title: string; sub: string;
   }
 }
 
-/** Remove (or switch off) everything in the selection, as one undo step. */
+/** Remove (or switch off) everything in the selection, as one undo step. Nothing removable: no undo step at all. */
 export function removeItems(items: SelItem[]) {
-  const panelish = items.some((i) => i.kind === 'mount' || i.kind === 'rail' || (i.kind === 'feature' && i.fkind === 'dock'));
-  let n = 0;
-  edit((p) => {
-    if (panelish && p.layout === 'panel') materialise(p);
+  const cur = store.get().project;
+  if (!cur) return;
+  const p = structuredClone(cur);
+  let n = 0, fixed = false;
+  // the panel is written down (auto layout off) only when something on it actually goes
+  const onPanel = () => { if (!fixed && p.layout === 'panel') materialise(p); fixed = true; };
+  {
     for (const it of items) {
       const m = p.modules.find((x) => x.id === (it.kind === 'module' ? it.id : it.module));
       const comps = (refs?: string[]) => (m ? m.board.comps.filter((c) => refs?.includes(c.ref)) : []);
       if (it.kind === 'module' && m) {
-        if (p.modules.length <= 1) continue;
-        p.modules = p.modules.filter((x) => x !== m);
-        for (const x of p.modules) if (x.on === m.id) x.on = m.on ?? null;
-        for (const mt of p.panel.mounts) for (const sl of mt.slots) if (sl.module === m.id) sl.module = null;
-        p.active = Math.min(p.active, p.modules.length - 1);
-        n++;
+        if (dropModule(p, m.id)) n++;
       } else if (it.kind === 'link') {
         p.links = (p.links ?? []).filter((l) => l.id !== it.id);
         n++;
       } else if (it.kind === 'mount') {
+        if (!p.panel.mounts.some((x) => x.id === it.id)) continue;
+        onPanel();
         p.panel.mounts = p.panel.mounts.filter((x) => x.id !== it.id);
         n++;
       } else if (it.kind === 'railstand') {
@@ -92,6 +92,7 @@ export function removeItems(items: SelItem[]) {
         p.panel.stands = false;
         n++;
       } else if (it.kind === 'rail') {
+        onPanel();
         p.panel.rails = p.panel.rails.filter((r) => r.id !== it.id);
         p.panel.mounts = p.panel.mounts.filter((x) => x.rail !== it.id);
         n++;
@@ -108,15 +109,16 @@ export function removeItems(items: SelItem[]) {
           case 'label': H.label = ''; break;
           case 'notch': H.notches = false; break;
           case 'stand': p.stand.enabled = false; break;
-          case 'clip': if (p.layout === 'loose') p.mount.kind = 'none'; else p.panel.mounts = p.panel.mounts.filter((x) => !x.slots.some((s) => s.module === m.id)); break;
+          case 'clip': if (p.layout === 'loose') p.mount.kind = 'none'; else { onPanel(); p.panel.mounts = p.panel.mounts.filter((x) => !x.slots.some((s) => s.module === m.id)); } break;
           case 'tower': m.on = null; for (const x of p.modules) if (x.on === m.id) x.on = null; break;
-          case 'dock': for (const mt of p.panel.mounts) for (const sl of mt.slots) if (sl.module === m.id) sl.module = null; break;
+          case 'dock': onPanel(); for (const mt of p.panel.mounts) for (const sl of mt.slots) if (sl.module === m.id) sl.module = null; break;
           default: continue;
         }
         n++;
       }
     }
-  });
+  }
+  if (n) edit((q) => { Object.assign(q, p); });
   select([]);
   if (n) toast(`Removed ${n} item${n > 1 ? 's' : ''}. ⌘Z brings ${n > 1 ? 'them' : 'it'} back.`);
 }

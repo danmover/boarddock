@@ -50,10 +50,11 @@ function rigidInverse(m: number[]): number[] {
 const geoCache = new Map<string, { g: THREE.BufferGeometry; e: THREE.EdgesGeometry | null; used: number }>();
 let buildNo = 0;
 function meshKey(m: MeshData) {
+  // every coordinate: an edit that moves one hole must not reuse the old shape
   const p = m.pos, n = p.length;
-  let h = n * 31 + m.idx.length;
-  for (let k = 0; k < 24 && n; k++) h = (h * 33 + Math.round(p[Math.floor((k * n) / 24)] * 1000)) | 0;
-  return `${n}:${m.idx.length}:${h}`;
+  let h = 2166136261;
+  for (let i = 0; i < n; i++) { h ^= Math.round(p[i] * 1000); h = Math.imul(h, 16777619); }
+  return `${n}:${m.idx.length}:${h >>> 0}`;
 }
 function geom(m: MeshData, edges: boolean) {
   const key = meshKey(m);
@@ -536,7 +537,9 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
   const caption = (() => {
     if (!started || !ctx.current) return '';
     const seq = ctx.current.phases?.[stepIdx];
-    return result?.steps?.find((s) => s.seq === seq)?.text ?? 'the next parts go on';
+    const text = result?.steps?.find((s) => s.seq === seq)?.text;
+    if (!text && import.meta.env.DEV) console.warn('assembly step without a caption', seq);
+    return text ?? 'Fit the parts that are moving now.';
   })();
 
   return (
@@ -557,7 +560,7 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
             </>
           ) : (
             <>
-              <button className="stepbtn" title="Step through the assembly" onClick={nextStep}>›</button>
+              <button className="stepbtn wide" title="Step through the assembly one step at a time" onClick={nextStep}>Steps</button>
               <label title="Pull the parts apart along the way they go together">Explode<input type="range" min={0} max={1} step={0.01} value={explode} onChange={(e) => setExplode(+e.target.value)} /></label>
             </>
           )}

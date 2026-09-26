@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
-import { activeModule, edit, redo, select, store, undo, useApp, type Layer, type SelItem, type Step } from './state';
+import { activeModule, closeProject, redo, select, setActive, store, toastPast, undo, useApp, type Layer, type SelItem, type Step } from './state';
 import { generateProject } from './worker/client';
 import { Viewer3D } from './ui/Viewer3D';
 import { BoardEditor, type Tool } from './ui/BoardEditor';
@@ -39,6 +39,7 @@ export function App() {
   const layers = useApp((s) => s.layers);
   const toastMsg = useApp((s) => s.toast);
   const canUndo = useApp((s) => s.past.length > 0);
+  const pastLen = useApp((s) => s.past.length);
   const canRedo = useApp((s) => s.future.length > 0);
   const [tool, setTool] = useState<Tool>('select');
   const [cam, setCam] = useState<{ dir: [number, number, number]; n: number } | undefined>();
@@ -47,7 +48,11 @@ export function App() {
   const [dragging, setDragging] = useState(false);
   const [overhangs, setOverhangs] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { bodyRef.current?.scrollTo({ top: 0 }); }, [step]);
+  const navRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    bodyRef.current?.scrollTo({ top: 0 });
+    navRef.current?.querySelector('.on')?.scrollIntoView({ inline: 'center', block: 'nearest' });
+  }, [step]);
   const [dropErr, setDropErr] = useState<string | null>(null);
   const onDrop = async (e: React.DragEvent) => {
     e.preventDefault();
@@ -57,10 +62,7 @@ export function App() {
     try { await openFiles(e.dataTransfer.files); } catch (err: any) { setDropErr(err.message ?? String(err)); }
   };
 
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    try { localStorage.setItem('boarddock.theme', theme); } catch { /* ignore */ }
-  }, [theme]);
+  useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
 
   // rebuild whenever the project changes (debounced, latest wins; unchanged holders come from the worker's cache)
   useEffect(() => {
@@ -124,13 +126,13 @@ export function App() {
   const views: [typeof view, string][] = project ? [['assembly', '3D'], ...(project.layout === 'panel' ? [['panel', 'Rails'] as [typeof view, string]] : []), ['wiring', 'Wiring'], ['print', 'Plates'], ['editor', 'Board']] : [];
 
   return (
-    <div className="app" onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDragging(true); } }} onDragLeave={(e) => { if (!e.relatedTarget) setDragging(false); }} onDrop={onDrop}>
+    <div className={`app${project ? '' : ' empty'}`} onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDragging(true); } }} onDragLeave={(e) => { if (!e.relatedTarget) setDragging(false); }} onDrop={onDrop}>
       {dragging && <div className="dropveil"><div><b>Drop to import</b><span>{project ? (store.get().replaceMode ? 'replaces the board being edited' : 'adds to this project: one board per file (a Gerber set or zip is one board)') : 'KiCad · STEP · IDF · Eagle · Gerber zip · DXF · project'}</span></div></div>}
       {(dropErr || toastMsg) && (
         <div key={dropErr ?? toastMsg ?? ''} className={`toast ${dropErr ? 'err' : 'floating'}`} role="status">
           <span className="toast-ic">{dropErr ? '!' : <Icon d={I.check} />}</span>
-          <span className="toast-msg">{(dropErr ?? toastMsg ?? '').replace(/\s*⌘Z undoes (it|them)\.?/, '')}</span>
-          {!dropErr && /⌘Z undoes/.test(toastMsg ?? '') && <button className="btn small soft" onClick={() => { undo(); store.set({ toast: null }); }}>Undo</button>}
+          <span className="toast-msg">{(dropErr ?? toastMsg ?? '').replace(/\s*⌘Z (undoes|brings) (it|them)( back)?\.?/, '')}</span>
+          {!dropErr && /⌘Z (undoes|brings)/.test(toastMsg ?? '') && pastLen === toastPast && <button className="btn small soft" onClick={() => { undo(); store.set({ toast: null }); }}>Undo</button>}
           <button className="toast-x" title="Close" onClick={() => { setDropErr(null); store.set({ toast: null }); }}>×</button>
           {!dropErr && <i className="toast-time" style={{ animationDuration: `${Math.min(9000, 3200 + (toastMsg ?? '').length * 30)}ms` }} />}
         </div>
@@ -139,9 +141,9 @@ export function App() {
       <header className="topbar">
         <div className="brand"><Mark className="mark" /><span className="word">Board<b>Dock</b></span></div>
         {project && <span className="projname" title={activeModule(project).board.source}>{project.modules.length > 1 ? `${project.modules.length} boards` : activeModule(project).board.name}</span>}
-        <nav className="stepper">
+        <nav className="stepper" ref={navRef}>
           {STEPS.map((s, i) => (
-            <button key={s.id} className={`${step === s.id ? 'on' : i < si ? 'done' : ''} ${s.id === 'check' && badCount + warnCount > 0 ? 'flag' : ''}`} disabled={!project && s.id !== 'import'} onClick={() => goStep(s.id)} title={s.title}>
+            <button key={s.id} className={`${step === s.id ? 'on' : i < si ? 'done' : ''} ${s.id === 'check' && badCount > 0 ? 'flag bad' : s.id === 'check' && warnCount > 0 ? 'flag' : ''}`} disabled={!project && s.id !== 'import'} onClick={() => goStep(s.id)} title={s.title}>
               <span className="n">{i < si && step !== s.id ? <Icon d={I.check} /> : s.id === 'check' && badCount + warnCount > 0 && step !== s.id ? '!' : i + 1}</span>
               <span className="l">{s.label}</span>
             </button>
@@ -150,16 +152,17 @@ export function App() {
         <div className="acts">
           {project && (
             <>
-              <div className="status" title={error ?? ''}>
-                <span className={`dot ${error ? 'err' : building ? 'busy' : ''}`} />
-                {error ? 'build failed' : building ? 'building' : result ? `${result.report.timeMs} ms` : ''}
+              <div className="status" title={error ?? (result ? `Built in ${result.report.timeMs} ms` : '')}>
+                <span className={`dot ${error ? 'err' : building ? 'busy' : result ? 'ok' : ''}`} />
+                <span className="st">{error ? 'Build failed' : building ? 'Building…' : result ? 'Up to date' : ''}</span>
               </div>
               <button className="iconbtn" disabled={!canUndo} onClick={undo} title="Undo (⌘Z)"><Icon d={I.undo} /></button>
               <button className="iconbtn" disabled={!canRedo} onClick={redo} title="Redo (⇧⌘Z)"><Icon d={I.redo} /></button>
               <button className="iconbtn" onClick={saveProject} title="Save project (⌘S)"><Icon d={I.save} /></button>
+              <button className="iconbtn" onClick={() => { if (confirm('Start a new rack? This one stays only in the project file you saved (⌘S saves it now).')) closeProject(); }} title="New rack"><Icon d={I.newdoc} /></button>
             </>
           )}
-          <button className="iconbtn" onClick={() => store.set({ theme: theme === 'dark' ? 'light' : 'dark' })} title="Light / dark"><Icon d={theme === 'dark' ? I.sun : I.moon} /></button>
+          <button className="iconbtn" onClick={() => { const t = theme === 'dark' ? 'light' : 'dark'; store.set({ theme: t }); try { localStorage.setItem('boarddock.theme', t); } catch { /* private mode */ } }} title="Light / dark"><Icon d={theme === 'dark' ? I.sun : I.moon} /></button>
         </div>
       </header>
       <div className="main">
@@ -174,7 +177,12 @@ export function App() {
           {project && (
             <div className="foot">
               {si > 0 && <button className="btn back" onClick={() => goStep(STEPS[si - 1].id)}><Icon d={I.left} /> {STEPS[si - 1].label}</button>}
-              {si < STEPS.length - 1 ? <button className="btn primary" onClick={() => goStep(STEPS[si + 1].id)}>Next: {STEPS[si + 1].label} <Icon d={I.right} /></button> : <button className="btn primary" onClick={() => goStep('import')}>Add another board <Icon d={I.plus} /></button>}
+              {si < STEPS.length - 1 ? <button className="btn primary" onClick={() => goStep(STEPS[si + 1].id)}>Next: {STEPS[si + 1].label} <Icon d={I.right} /></button> : (
+                <>
+                  <button className="btn ghost" onClick={() => goStep('import')} title="Back to Start to add a board"><Icon d={I.plus} /> Board</button>
+                  <button className="btn primary" onClick={() => window.dispatchEvent(new Event('boarddock:download'))}><Icon d={I.download} /> Download .zip</button>
+                </>
+              )}
             </div>
           )}
         </aside>
@@ -225,7 +233,7 @@ export function App() {
                 <HeroArt />
                 <h1>Dock any PCB.<br /><span>No screws. No supports.</span></h1>
                 <p>Drop a KiCad, Altium, Eagle or Gerber export, or pick a board. BoardDock builds a light holder around every board, docks them on DIN rails on printed table stands with every plug reachable, routes and sizes the cables between them, and walks you through putting it all together.</p>
-                <div className="feats"><span>KiCad · STEP · IDF · Gerber</span><span>hole wizard</span><span>light frame holders</span><span>rails, docks, stacks</span><span>press-down rail lever</span><span>table stands</span><span>cables routed and sized</span><span>step-by-step assembly</span><span>FEA checked</span><span>STL + 3MF plates</span></div>
+                <div className="feats"><span>KiCad · STEP · IDF · Gerber</span><span>hole wizard</span><span>light frame holders</span><span>rails, docks, stacks</span><span>press-down rail lever</span><span>table stands</span><span>cables routed and sized</span><span>step-by-step assembly</span><span>FEA checked</span><span>STL + 3MF plates</span><span>G-code in the app</span></div>
                 <p className="hero-keys">Press <kbd>?</kbd> any time for keyboard shortcuts.</p>
               </div>
             </div>
@@ -248,7 +256,7 @@ function SelPanel({ items }: { items: SelItem[] }) {
     if (!one) return;
     const mid = one.kind === 'module' ? one.id : one.module;
     const mi = p.modules.findIndex((m) => m.id === mid);
-    if (mi >= 0 && mi !== p.active) edit((q) => { q.active = mi; });
+    if (mi >= 0 && mi !== p.active) setActive(mi);
     if (one.kind === 'mount' || one.kind === 'rail' || one.kind === 'railstand') store.set({ step: 'mount' });
     else if (one.kind === 'link') store.set({ step: 'plugs' });
     else if (one.kind === 'module') store.set({ step: 'holder' });

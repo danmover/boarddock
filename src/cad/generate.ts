@@ -2,6 +2,7 @@
 // (board, components, plugs, rail) and a report of checks. All parts come out in print orientation.
 import type { Anim, Board, Check, Comp, EdgeName, Feature, GenResult, Ghost, HolderSettings, Loop, MeshData, MountSettings, PartOut, PickTag, Project, V2 } from '../model/types';
 import { holeKeepout, isMountHole } from '../model/holes';
+import { boxProblems } from '../model/boxes';
 import { DEFAULT_FEATURES, MATERIALS } from '../model/library';
 import { bbox, centroid, compRect, extentAlong, inside, rad, rayExit, round, segDist } from '../geom/poly';
 import type { CS, MF } from './kernel';
@@ -170,6 +171,7 @@ function build(job: Job): ModuleOut {
   const warnings: string[] = [...b.notes];
   const checks: Check[] = [];
   const mat = MATERIALS[H.material];
+  if (b.box) for (const x of boxProblems(b.box)) checks.push({ group: 'Board', name: 'Box ports', value: "don't fit", status: 'bad', detail: `${x} Make the box bigger under Board › Box, or put fewer ports on that side.` });
 
   // ---- clearance under the board ----
   const keepouts: Ctx['keepouts'] = [];
@@ -1288,7 +1290,7 @@ function dockFeatures(C: Ctx, s: DockSite) {
   C.parts.push(part('rod', 'Release rod + button', r.m.transform(D as any), ID, '#ff5d6c', 1, { kind: 'rod', module: C.mid }, { seq: 3.5, dir: [-s.n[0], -s.n[1], 0] }));
   feat(C, 'dock', tsPoly(s, s.tc - HD.base.hx, s.tc + HD.base.hx, -14, s.ped + 1), 0, HD.spineY1);
   (C as any).spine = { a: tsPoly(s, s.tc, s.tc, 0, 0)[0], b: tsPoly(s, s.tc, s.tc, s.far, s.far)[0], hx: HD.spineHx };
-  if (s.conflicts.length) C.warnings.push(`Dock on the ${s.edge} edge: ${s.conflicts.join(', ')} ${s.conflicts.length > 1 ? 'are' : 'is'} in the way. Pick another dock edge in the Panel step.`);
+  if (s.conflicts.length) C.warnings.push(`Dock on the ${s.edge} edge: ${s.conflicts.join(', ')} ${s.conflicts.length > 1 ? 'are' : 'is'} in the way. Pick another dock edge in the Rails step.`);
   const eRatio = mat.E / MATERIALS.PETG.E;
   const F = 20, Mo = F * s.far, sig = Mo / 32; // tongue root 12 x 4 mm, out-of-plane push on the far edge
   C.checks.push({ group: 'Dock', name: 'Release', value: `press the button, ${HD.stroke} mm`, status: 'info', detail: `thumb on the button at the ${({ bottom: 'top', top: 'bottom', left: 'right', right: 'left' } as Record<EdgeName, string>)[s.edge]} edge, two fingers under the grip bar, squeeze and lift. About ${(4.0 * eRatio).toFixed(1)} N (${H.material}); the latch spring returns the button. Rod: ${round(r.len, 0)} mm, printed flat.` });

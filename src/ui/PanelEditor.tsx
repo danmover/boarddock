@@ -213,6 +213,17 @@ export function PanelEditor() {
   };
 
   const fs = (n: number) => n * px;
+  // dock labels already drawn this render (panel frame boxes), so later ones slide along their rail instead of overlapping
+  const taken: number[][] = [];
+  const claim = (cx: number, cy: number, hw: number, hh: number, alongX: boolean): [number, number] | null => {
+    const step = alongX ? hw * 1.1 : hh * 1.1;
+    for (const k of [0, 1, -1, 2, -2, 3, -3]) {
+      const x = alongX ? cx + k * step : cx, y = alongX ? cy : cy + k * step;
+      const b = [x - hw, y - hh, x + hw, y + hh];
+      if (!taken.some((t) => b[0] < t[2] && t[0] < b[2] && b[1] < t[3] && t[1] < b[3])) { taken.push(b); return [x, y]; }
+    }
+    return null;
+  };
   const selMounts = sel.filter((s) => s.kind === 'mount').map((s) => s.id);
   const offsetOf = (id: string, railDir: 'h' | 'v'): V2 => {
     if (!ghost || !ghost.ids.includes(id)) return [0, 0];
@@ -316,6 +327,9 @@ export function PanelEditor() {
                 const sub = `${q.edge} edge in · ◉${cnt.front} ✓${cnt.good - cnt.front}${cnt.side ? ` ⚠${cnt.side}` : ''}${cnt.blocked ? ` ✕${cnt.blocked}` : ''}`;
                 const tw = Math.max(Math.min(name.length, 26) * fsz * 0.6, sub.length * 9.5 * 0.62) + 16;
                 const dirs = ['up', 'down', 'left', 'right'] as const;
+                // slide along the rail if another label is there; with no room, just the name, faint
+                const spot = claim(cx, cy, fs(vertical ? 17 : tw / 2), fs(vertical ? tw / 2 : 17), h);
+                const [lx, ly] = spot ?? [cx, cy];
                 return (
                   <g key={q.id}>
                     {dirs.map((d) => {
@@ -326,10 +340,10 @@ export function PanelEditor() {
                       const ay = d === 'up' ? f[3] + o[1] + fs(11) : d === 'down' ? f[1] + o[1] - fs(11) : (f[1] + f[3]) / 2 + o[1];
                       return <text key={d} x={ax} y={-ay} fontSize={fs(12)} textAnchor="middle" dominantBaseline="central" fill={col} className="mono">{`${ARROW[d]}${list.length > 1 ? list.length : ''}`}</text>;
                     })}
-                    <g transform={vertical ? `rotate(-90 ${cx} ${-cy})` : undefined}>
-                      <rect x={cx - fs(tw / 2)} y={-cy - fs(17)} width={fs(tw)} height={fs(34)} rx={fs(8)} fill="var(--panel)" fillOpacity={0.92} stroke={c} strokeWidth={fs(1.2)} />
-                      <text x={cx} y={-cy - fs(6)} fontSize={fs(fsz)} textAnchor="middle" dominantBaseline="central" fill="var(--fg)" fontWeight={600}>{name.slice(0, 26)}</text>
-                      <text x={cx} y={-cy + fs(8)} fontSize={fs(9.5)} textAnchor="middle" dominantBaseline="central" className="mono" fill="var(--muted)">{sub}</text>
+                    <g transform={vertical ? `rotate(-90 ${lx} ${-ly})` : undefined} opacity={spot ? 1 : 0.55}>
+                      <rect x={lx - fs(tw / 2)} y={-ly - fs(17)} width={fs(tw)} height={fs(34)} rx={fs(8)} fill="var(--surface)" fillOpacity={0.94} stroke={c} strokeWidth={fs(1.2)} />
+                      <text x={lx} y={-ly - (spot ? fs(6) : 0)} fontSize={fs(fsz)} textAnchor="middle" dominantBaseline="central" fill="var(--fg)" fontWeight={600}>{name.slice(0, 26)}</text>
+                      {spot && <text x={lx} y={-ly + fs(8)} fontSize={fs(9.5)} textAnchor="middle" dominantBaseline="central" className="mono" fill="var(--muted)">{sub}</text>}
                     </g>
                   </g>
                 );
@@ -379,11 +393,11 @@ export function PanelEditor() {
       )}
 
       <div className="hud floating mono">
-        <span>{building && !rep ? 'building the panel…' : rep ? `${rep.rails.length} rail${rep.rails.length === 1 ? '' : 's'} · ${rep.mounts.length} mount${rep.mounts.length === 1 ? '' : 's'} · ${Math.round(rep.height ?? rep.depth)} mm tall${rep.stands?.length ? ` · ${rep.stands.length} table stands` : ''}${project.panel.auto ? ' · auto' : ' · manual'}` : project.layout === 'panel' ? '' : 'Loose holders: switch the Panel step to DIN rails'}</span>
+        <span>{building && !rep ? 'building the panel…' : rep ? `${rep.rails.length} rail${rep.rails.length === 1 ? '' : 's'} · ${rep.mounts.length} mount${rep.mounts.length === 1 ? '' : 's'} · ${Math.round(rep.height ?? rep.depth)} mm tall${rep.stands?.length ? ` · ${rep.stands.length} table stands` : ''}${project.panel.auto ? ' · auto' : ' · manual'}` : project.layout === 'panel' ? '' : 'Loose holders: choose DIN rails in the Rails step'}</span>
         <span>drag docks along or between rails · R turn · F swap · drag boards from the list onto a rail</span>
         {cursor && <span className="xy">{cursor[0].toFixed(0)}, {cursor[1].toFixed(0)}</span>}
       </div>
-      {!rep && !building && <div className="empty-note">{project.layout === 'panel' ? 'Nothing on the panel yet.' : 'This project uses loose holders. Choose “DIN rail panel” in the Panel step.'}</div>}
+      {!rep && !building && <div className="empty-note">{project.layout === 'panel' ? 'Nothing on the panel yet.' : 'This project uses loose holders. Choose DIN rails in the Rails step.'}</div>}
     </div>
   );
 }

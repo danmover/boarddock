@@ -17,6 +17,18 @@ Space Grotesk (font)                               SIL Open Font License 1.1   h
 JetBrains Mono (font)                              SIL Open Font License 1.1   https://github.com/JetBrains/JetBrainsMono
 Electron (desktop app only)                        MIT                  https://github.com/electron/electron
 
+In-app slicing (public/kiri/, built from source by vendor/kiri/build.mjs; loaded only when you slice):
+Kiri:Moto 4.7.0 (grid-apps, Stewart Allen)         MIT                  https://github.com/GridSpace/grid-apps
+  its license text ships as public/kiri/KIRI-LICENSE.md; printer start/end code from its device profiles
+  bundled with it:
+  three.js, three-mesh-bvh                         MIT
+  Clipper (Angus Johnson), JSPoly (Boost.Polygon)  Boost Software License 1.0
+  manifold-3d                                      Apache License 2.0
+  QuickJS (quickjs-emscripten), pngjs, tween.js    MIT
+  JSZip                                            MIT (dual-licensed MIT or GPLv3; used under MIT)
+  earcut                                           ISC
+  @gridspace/raster-path, @tracespace/parser, base64-js   MIT
+
 Build and test tools (Vite, TypeScript, Vitest, electron-builder, happy-dom) are MIT licensed and are not
 shipped in the app.
 

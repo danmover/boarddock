@@ -43,15 +43,21 @@ const installed = () => slicerPaths().filter(([, p]) => fs.existsSync(p));
 ipcMain.handle('slicers', () => [...new Set(installed().map(([n]) => n))]);
 ipcMain.handle('open-in-slicer', async (_e, name, file, bytes) => {
   try {
+    // only print files, only a sensible size: the page can't make this write and open anything else
+    const base = path.basename(String(file)).replace(/[^\w.+-]/g, '_');
+    if (!/\.(3mf|stl)$/i.test(base)) return 'only 3MF and STL files open in a slicer';
+    if (!bytes || bytes.length > 200 * 1024 * 1024) return 'the file is empty or too large';
     const dir = path.join(app.getPath('temp'), 'BoardDock');
     fs.mkdirSync(dir, { recursive: true });
-    const out = path.join(dir, path.basename(String(file)).replace(/[^\w.+-]/g, '_'));
+    const out = path.join(dir, base);
     fs.writeFileSync(out, Buffer.from(bytes));
     const hit = name ? installed().find(([n]) => n === name) : null;
     if (!hit) return await shell.openPath(out); // '' on success
-    const child = process.platform === 'darwin' ? spawn('open', ['-a', hit[1], out], { detached: true, stdio: 'ignore' }) : spawn(hit[1], [out], { detached: true, stdio: 'ignore' });
-    child.unref();
-    return '';
+    return await new Promise((resolve) => {
+      const child = process.platform === 'darwin' ? spawn('open', ['-a', hit[1], out], { detached: true, stdio: 'ignore' }) : spawn(hit[1], [out], { detached: true, stdio: 'ignore' });
+      child.once('error', (e) => resolve(String(e && e.message ? e.message : e)));
+      child.once('spawn', () => { child.unref(); resolve(''); });
+    });
   } catch (e) {
     return String(e && e.message ? e.message : e);
   }
@@ -61,7 +67,8 @@ app.whenReady().then(() => {
   protocol.handle('app', (req) => {
     const { pathname } = new URL(req.url);
     const file = path.normalize(path.join(DIST, decodeURIComponent(pathname)));
-    if (!file.startsWith(DIST)) return new Response('Not found', { status: 404 });
+    const rel = path.relative(DIST, file);
+    if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return new Response('Not found', { status: 404 });
     return net.fetch(pathToFileURL(file).toString());
   });
   if (process.platform === 'darwin') Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'fileMenu' }, { role: 'editMenu' }, { role: 'viewMenu' }, { role: 'windowMenu' }]));

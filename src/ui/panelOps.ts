@@ -21,6 +21,20 @@ export function materialise(p: Project) {
 /** Fix the position of every mount on these rails, so moving one doesn't make the rest re-pack. */
 function pin(p: Project, rails: string[]) {
   const r = rep();
+  // a board added to a laid-out rack lands where the generator found room (maybe on another rail, maybe in another
+  // dock's empty slot): write that down first, so it stays there once anything else moves
+  for (const m of [...p.panel.mounts]) if (m.place === 'free' && m.at == null && r) {
+    const x = r.mounts.find((q) => q.id === m.id);
+    if (x) { m.rail = x.rail; m.at = round(x.at, 1); delete m.place; continue; }
+    const mod = m.slots.find((sl) => sl.module)?.module;
+    const host = mod ? r.mounts.find((q) => q.slots.some((sl) => sl.module === mod)) : null;
+    const into = host && p.panel.mounts.find((q) => q.id === host.id);
+    if (into && mod) {
+      const k = host!.slots.findIndex((sl) => sl.module === mod);
+      into.slots[k] = { module: mod, edge: host!.slots[k].edge };
+      p.panel.mounts.splice(p.panel.mounts.indexOf(m), 1);
+    }
+  }
   for (const m of p.panel.mounts) if (rails.includes(m.rail) && m.at == null) {
     const at = r?.mounts.find((x) => x.id === m.id)?.at;
     if (at != null) m.at = round(at, 1);
@@ -251,8 +265,10 @@ export function setStackMode(moduleId: string, mode: 'bolted' | 'towers', gap?: 
  * and Export can list only what's new.
  */
 export function markBuilt() {
-  const { project, result } = store.get();
+  const { project, result, building } = store.get();
   if (!project || !result) return;
+  // the result must be the one for the project as it is now, or an older layout would be written back
+  if (building) { toast('Still building your last change: try again in a moment.'); return; }
   const r = result.report.panel;
   edit((p) => {
     if (p.layout === 'panel' && r) {

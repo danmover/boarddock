@@ -8,11 +8,12 @@ const placements = (pt: PartOut) => [pt.toAssembly, ...(pt.instances ?? [])].sli
 
 /** Stable signature of a printed part: its name, size and a hash of its mesh. */
 export function partSig(pt: PartOut): string {
-  const a = pt.mesh.pos;
+  const a = pt.mesh.pos, ix = pt.mesh.idx;
   let h = 2166136261;
-  const n = a.length, step = Math.max(1, Math.floor(n / 4096));
-  for (let i = 0; i < n; i += step) { h ^= Math.round(a[i] * 20); h = Math.imul(h, 16777619); }
-  h ^= n; h = Math.imul(h, 16777619);
+  // every coordinate (to 0.05 mm, so float noise between builds doesn't count) and the triangle count
+  for (let i = 0; i < a.length; i++) { h ^= Math.round(a[i] * 20); h = Math.imul(h, 16777619); }
+  h ^= a.length; h = Math.imul(h, 16777619);
+  h ^= ix.length; h = Math.imul(h, 16777619);
   return `${pt.name}|${pt.size.map((v) => v.toFixed(1)).join('x')}|${(h >>> 0).toString(36)}`;
 }
 

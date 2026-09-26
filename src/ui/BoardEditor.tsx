@@ -193,7 +193,7 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
 
   return (
     <div className="editor" style={{ position: 'absolute', inset: 0 }} onContextMenu={(e) => e.preventDefault()}>
-      <svg ref={svg} viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`} onWheel={onWheel} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp}
+      <svg ref={svg} viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`} onWheel={onWheel} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onLostPointerCapture={onUp}
         style={{ cursor: space || tool === 'pan' ? 'grab' : tool === 'select' ? 'default' : 'crosshair' }}>
         <defs>
           <pattern id="g1" width="1" height="1" patternUnits="userSpaceOnUse"><path d="M1 0H0V1" fill="none" stroke="var(--grid-fine)" strokeWidth={fs(0.6)} /></pattern>
@@ -324,7 +324,7 @@ function DimLine({ a, b, off, px, label, vertical }: { a: V2; b: V2; off: number
       <line x1={ax} y1={-ay} x2={bx} y2={-by} stroke="var(--muted)" strokeWidth={px * 1.2} />
       <path d={vertical ? `M${ax - t},${-ay - t}L${ax + t},${-ay + t}M${bx - t},${-by - t}L${bx + t},${-by + t}` : `M${ax - t},${-ay + t}L${ax + t},${-ay - t}M${bx - t},${-by + t}L${bx + t},${-by - t}`} stroke="var(--muted)" strokeWidth={px * 1.2} />
       <g transform={`translate(${mx},${-my})${vertical ? ' rotate(-90)' : ''}`}>
-        <rect x={-label.length * 3.6 * px - 7 * px} y={-9 * px} width={label.length * 7.2 * px + 14 * px} height={18 * px} rx={9 * px} fill="var(--panel)" stroke="var(--line)" strokeWidth={px} />
+        <rect x={-label.length * 3.6 * px - 7 * px} y={-9 * px} width={label.length * 7.2 * px + 14 * px} height={18 * px} rx={9 * px} fill="var(--surface)" stroke="var(--line)" strokeWidth={px} />
         <text x={0} y={0} fontSize={11 * px} textAnchor="middle" dominantBaseline="central" className="mono" fill="var(--fg)">{label}</text>
       </g>
     </>
