@@ -1,5 +1,5 @@
 // Rail dock: the screwless "DIN hub" (din_hub_v2) ported to manifold.
-//  - rail shoe: clips on the rail, thumb lever on top releases it (6.5 N in PETG, built-in stop)
+//  - rail shoe: clips on the rail; pinch its tall ear toward the socket (or pull the ear's lip) to release it, built-in stop
 //  - socket: snaps into the shoe in any of four 90 degree turns, two print-in-place tongue latches
 //  - holder side: tongue, pedestal, spine with a release-rod tunnel, grip bar
 //  - release rod: its head is the button on the holder's far (top) edge; pressing it wedges the latch open
@@ -111,14 +111,19 @@ export function socket(): MF {
 // A pull away from the wall therefore runs straight down the leaf (tension) instead of prying the jaw open, so the
 // hold does not depend on friction. Push the thumb pad toward the socket: the jaw swings out about the leaf and the
 // lip slides sideways off the flange; the post meets the body shelf just past the needed travel (built-in stop).
+// Pulling the ear's top lip away from the wall also opens it: the lip is 8 mm outboard of the leaf, so the pull
+// turns the jaw open before it can lift the dock.
 const SHOE_BODY = [[-20.3, 3.9], [-15.9, 3.9], [-15.4, 4.4], [-15.4, 5.7], [-15.9, 6.2], [-17.5, 6.2], [-17.783, 6.317], [-17.9, 6.6],
   [-17.9, 7.5], [15.1, 7.5], [15.1, 19.6], [15.8, 20.3], [17.9, 20.3], [17.9, 22.5], [17.4, 23.0], [-19.6, 23.0], [-20.3, 22.3]];
 // hinge leaf 16.3..17.2 (0.9 mm = two 0.45 mm lines), z 10.4..19.8, flared roots
 const HINGE = [[15.8, 9.9], [17.7, 9.9], [17.2, 10.4], [17.2, 19.8], [17.7, 20.3], [15.8, 20.3], [16.3, 19.8], [16.3, 10.4]];
 // jaw: lip under the flange (engages 1.7 mm, 48 deg lead-in), pocket round the flange edge, top bar, lever post, ridged pad
-const SHOE_JAW = [[17.7, 3.9], [20.6, 3.9], [21.9, 5.2], [21.9, 26.6], [24.9, 27.1], [24.5, 27.55], [24.9, 28.0], [24.5, 28.45], [24.9, 28.9],
-  [24.4, 29.5], [20.4, 29.5], [19.9, 29.0], [19.9, 9.9], [15.9, 9.9], [15.9, 8.0], [18.0, 8.0], [18.0, 6.2], [16.0, 6.2], [15.8, 6.0]];
-export const SHOE_LEVER = { pad: [21.9, 24.9], z: [26.6, 29.5], stopGap: 2.0 };
+// v4: the lever post rises into a tall "pinch ear" whose top sits just under the socket top (43.5), so with the
+// holders out you pinch the ear toward the socket (or hook the top lip and pull it off the wall) in one hand.
+const SHOE_JAW = [[17.7, 3.9], [20.6, 3.9], [21.9, 5.2], [21.9, 33.6], [24.4, 34.1], [24.0, 34.6], [24.4, 35.1], [24.0, 35.6], [24.4, 36.1],
+  [24.0, 36.6], [24.4, 37.1], [24.0, 37.6], [24.4, 38.1], [24.4, 39.6], [25.3, 40.1], [25.3, 40.6], [20.4, 40.6], [19.9, 40.1],
+  [19.9, 9.9], [15.9, 9.9], [15.9, 8.0], [18.0, 8.0], [18.0, 6.2], [16.0, 6.2], [15.8, 6.0]];
+export const SHOE_LEVER = { pad: [21.9, 25.3], z: [34.1, 40.6], stopGap: 2.0 };
 const HOOK_TIP = [[9.15, 20.33], [8.35, 20.47], [8.35, 20.8], [8.65, 21.1], [9.15, 21.1]];
 const mir = (pts: number[][]) => pts.map(([y, z]) => [-y, z]).reverse();
 

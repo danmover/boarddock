@@ -7,7 +7,7 @@ import type { Access, PanelReport, V2 } from '../model/types';
 import { isSel, select, store, useApp, type SelItem } from '../state';
 import { addDock, addRail, autoArrange, moveRail, nudge, placeMount, removeMounts, removeRails, seat, swapSlots, turnMounts } from './panelOps';
 
-export const PALETTE = ['#3ddc97', '#6cb6ff', '#ffc857', '#ff8fa3', '#b69cff', '#5eead4', '#fdba74', '#a3e635'];
+export const PALETTE = ['#ff7a2f', '#5aa9ff', '#46d58b', '#f5c542', '#c084fc', '#2dd4bf', '#fb7185', '#a3e635'];
 export const MODULE_DRAG = 'application/x-boarddock-module';
 
 const ARROW: Record<string, string> = { up: '↑', down: '↓', left: '←', right: '→', front: '◉', wall: '✕' };

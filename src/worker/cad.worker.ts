@@ -14,11 +14,9 @@ self.onmessage = async (e: MessageEvent) => {
   try {
     await ready;
     if (type === 'generate') {
+      // meshes stay cached in this worker (unchanged holders are not rebuilt), so they are copied, not transferred
       const res = generate(payload as Project);
-      const transfer: ArrayBuffer[] = [];
-      for (const p of res.parts) transfer.push(p.mesh.pos.buffer as ArrayBuffer, p.mesh.idx.buffer as ArrayBuffer);
-      for (const g of res.ghosts) transfer.push(g.mesh.pos.buffer as ArrayBuffer, g.mesh.idx.buffer as ArrayBuffer);
-      (self as any).postMessage({ id, ok: true, result: res }, transfer);
+      (self as any).postMessage({ id, ok: true, result: res });
     } else if (type === 'clipProfile') {
       const p = payload as { W: number; tf: number; tabExt: number; HA?: number };
       const loops = csLoops(clipProfile(p).cs);

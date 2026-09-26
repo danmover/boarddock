@@ -6,6 +6,14 @@ import { bbox, compRect, extentAlong, rad } from '../geom/poly';
 import { basis, dir, I4, inv, mul, rotZ, tr, type M4 } from '../geom/mat';
 import { DOCK_MIN_ZB, gripSpan, HD, headSpan, SOCKET_Z, SPINE_TOP } from './dockdims';
 import { computeLevels } from './levels';
+import { baseOf, ridersOf } from '../model/holes';
+
+/** A module plus the plugs of every board stacked on it: what orientation scoring should look at. */
+export function withRiders(p: Project, m: Module): Module {
+  const up = ridersOf(p, m);
+  if (!up.length) return m;
+  return { ...m, board: { ...m.board, comps: [...m.board.comps, ...up.flatMap((r) => r.board.comps)] } };
+}
 
 export const EDGES: EdgeName[] = ['bottom', 'top', 'left', 'right'];
 export const TURNS: Turn[] = [0, 90, 180, 270];
@@ -156,7 +164,7 @@ export function dockSite(b: Board, H: HolderSettings, edge: EdgeName): DockSite 
     const conflicts: string[] = [];
     if (isUnder) {
       for (const p of posts) if (Math.abs(p.t - tc) < p.r + 3.3) pen += 1000;
-      pen += 1.2 * Math.max(0, DOCK_MIN_ZB - zbLow);
+      pen += ((H.style ?? 'frame') === 'frame' ? 2.6 : 1.2) * Math.max(0, DOCK_MIN_ZB - zbLow); // a raised board makes every post and wall taller
       for (const k of under) if (ov(k.t0, k.t1, tc - spineW, tc + spineW)) pen += 3 * k.need;
     }
     for (const q of plugs) {
@@ -220,7 +228,8 @@ export function slotAccess(m: Module, mt: Pick<RailMount, 'kind' | 'turn'>, slot
  */
 export function autoAssign(p: Project): RailMount[] {
   const railDir = p.panel.rowDir;
-  const mods = p.modules;
+  // stacked boards ride on the board below them; score each stack with all of its plugs
+  const mods = p.modules.filter((m) => baseOf(p, m) === m).map((m) => withRiders(p, m));
   const best = mods.map((m) => bestDock(m, railDir, 0));
   const used = new Set<number>();
   const out: RailMount[] = [];
@@ -265,8 +274,9 @@ export function turnLabel(turn: number, railDir: 'h' | 'v', kind: 'dock' | 'flat
 export function appendDock(p: Project, moduleId: string) {
   const P = p.panel;
   for (const mt of P.mounts) for (const sl of mt.slots) if (sl.module === moduleId) sl.module = null;
-  const m = p.modules.find((x) => x.id === moduleId);
-  if (!m) return;
+  const m0 = p.modules.find((x) => x.id === moduleId);
+  if (!m0) return;
+  const m = withRiders(p, m0);
   let rail = P.rails[P.rails.length - 1];
   if (!rail) { rail = { id: 'r1', x: 0, y: 0, dir: P.rowDir, length: null }; P.rails.push(rail); }
   const o = bestDock(m, rail.dir, 0);

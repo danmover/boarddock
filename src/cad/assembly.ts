@@ -1,10 +1,10 @@
 // Multi-board assemblies: one holder per board, combined by stacking (corner towers with press-fit pegs),
 // side by side (bosses + printed link bars), or back to back (bases together, printed snap rivets).
-import type { Check, GenResult, Ghost, PartOut, Project, V2 } from '../model/types';
+import type { Check, Feature, GenResult, Ghost, PartOut, Project, V2 } from '../model/types';
 import { bbox, round } from '../geom/poly';
 import { buildModule, computeLevels, transformMesh, type ArrangeHooks, type Job } from './generate';
 import { box, cyl, freeAll, poly, rect2, toMesh, unionMF } from './kernel';
-import { generatePanel } from './panelgen';
+import { generatePanel, moveAnim } from './panelgen';
 import { printability } from './export';
 
 type M4 = number[];
@@ -17,15 +17,18 @@ export function mul(a: M4, b: M4): M4 {
 const tr = (x: number, y: number, z: number): M4 => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, y, z, 1];
 const rotX180: M4 = [1, 0, 0, 0, 0, -1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1];
 
+const printCache = new WeakMap<object, ReturnType<typeof printability>>();
+
 export function generate(p: Project): GenResult {
   const r = p.layout === 'panel' ? generatePanel(p) : generateLoose(p);
-  // printability of every distinct part, in its print pose
+  // printability of every distinct part, in its print pose (cached with the mesh)
   const seen = new Set<string>();
   for (const pt of r.parts) {
     const key = pt.id.replace(/^m\d+_/, '') === 'holder' ? pt.id : pt.name;
     if (seen.has(key)) continue;
     seen.add(key);
-    const q = printability(pt.mesh);
+    let q = printCache.get(pt.mesh.pos);
+    if (!q) { q = printability(pt.mesh); printCache.set(pt.mesh.pos, q); }
     const bad = q.slope > 8, long = q.span > 25;
     r.report.checks.push({ group: 'Printability', name: pt.name, value: bad ? `${round(q.slope, 0)} mm² overhang` : long ? `${round(q.span, 0)} mm bridge` : 'no supports', status: bad || long ? 'warn' : 'ok', detail: `downward faces steeper than 45°: ${round(q.slope, 1)} mm² sloped${q.flat > 0.5 ? `, ${round(q.flat, 0)} mm² of bridges (longest span ${round(q.span, 1)} mm)` : ''}. Show them on the print plates with "Overhangs".` });
   }
@@ -112,12 +115,18 @@ function generateLoose(p: Project): GenResult {
   });
   if (mode === 'side') placeSide(p, facts, outs, T, extra, checks, warnings0);
   const parts: PartOut[] = [], ghosts: Ghost[] = [];
+  const features: Feature[] = [];
+  const frames: Record<string, number[]> = {};
   const warnings: string[] = [...notes, ...warnings0];
   outs.forEach((o, i) => {
     if (!o) return;
     const tag = multi ? `${mods[i].board.name}: ` : '';
-    for (const pt of o.parts) parts.push({ ...pt, toAssembly: mul(T[i], pt.toAssembly) });
-    for (const g of o.ghosts) ghosts.push({ ...g, mesh: transformMesh(g.mesh, T[i]) });
+    // stacked layers come in one after another from above
+    const lift = (a: PartOut['anim']) => (a && mode === 'stack' ? { ...a, seq: a.seq + 2 * i } : a);
+    for (const pt of o.parts) parts.push({ ...pt, toAssembly: mul(T[i], pt.toAssembly), anim: lift(moveAnim(pt.anim, T[i])) });
+    for (const g of o.ghosts) ghosts.push({ ...g, mesh: transformMesh(g.mesh, T[i]), anim: lift(moveAnim(g.anim, T[i])) });
+    features.push(...o.features);
+    frames[mods[i].id] = T[i];
     warnings.push(...o.warnings.map((w) => tag + w));
     checks.push(...o.checks.map((c) => ({ ...c, group: multi ? `${mods[i].board.name} · ${c.group}` : c.group })));
   });
@@ -139,6 +148,8 @@ function generateLoose(p: Project): GenResult {
       clipAt: act?.clipAt ?? null,
       clipFrame: clipIdx >= 0 ? mul(T[clipIdx], outs[clipIdx]!.clipT!) : null,
       timeMs: Date.now() - t0,
+      features,
+      frames,
     },
   };
 }
@@ -153,7 +164,7 @@ function linkPart(hb: number, wallGap: number, qty: number): PartOut {
       rect2(-half + 1.5, -1.12, half - 1.5, 1.12).extrude(hb - 1.5),
     ]);
     const m = toMesh(prof);
-    return { id: `link_${Math.round(wallGap * 10)}`, name: `Link bar (${wallGap.toFixed(1)} mm gap)`, qty: Math.max(1, qty), mesh: m, toAssembly: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -400, 1], volume: prof.volume(), size: [2 * half, 4.9, hb - 1.5], color: '#9d8cff' };
+    return { id: `link_${Math.round(wallGap * 10)}`, name: `Link bar (${wallGap.toFixed(1)} mm gap)`, qty: Math.max(1, qty), mesh: m, toAssembly: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -400, 1], volume: prof.volume(), size: [2 * half, 4.9, hb - 1.5], color: '#9d8cff', tag: { kind: 'link' } };
   } finally {
     freeAll();
   }
@@ -170,7 +181,7 @@ function rivetPart(grip: number, qty: number): PartOut {
     const mesh = toMesh(m);
     const bb = m.boundingBox();
     void poly;
-    return { id: 'rivet', name: 'Snap rivet (back to back)', qty, mesh, toAssembly: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -400, 1], volume: m.volume(), size: [bb.max[0] - bb.min[0], bb.max[1] - bb.min[1], bb.max[2] - bb.min[2]], color: '#9d8cff' };
+    return { id: 'rivet', name: 'Snap rivet (back to back)', qty, mesh, toAssembly: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -400, 1], volume: m.volume(), size: [bb.max[0] - bb.min[0], bb.max[1] - bb.min[1], bb.max[2] - bb.min[2]], color: '#9d8cff', tag: { kind: 'rivet' } };
   } finally {
     freeAll();
   }

@@ -2,7 +2,8 @@
 // exactly where they are, so nothing jumps.
 import type { EdgeName, Project, RailMount, Turn } from '../model/types';
 import { round, uid } from '../geom/poly';
-import { appendDock, bestDock } from '../cad/dockplan';
+import { appendDock, bestDock, withRiders } from '../cad/dockplan';
+import { baseOf, refreshStandoffs } from '../model/holes';
 import { edit, select, store } from '../state';
 
 const rep = () => store.get().result?.report.panel ?? null;
@@ -177,5 +178,68 @@ export function duplicateModule(i: number) {
     q.modules.splice(i + 1, 0, copy);
     q.active = i + 1;
     if (q.layout === 'panel' && !q.panel.auto) appendDock(q, copy.id);
+  });
+}
+
+/** Put a board in a new dock at the end of a rail. */
+export function appendToRail(moduleId: string, railId: string) {
+  panelEdit((p) => {
+    for (const mt of p.panel.mounts) for (const sl of mt.slots) if (sl.module === moduleId) sl.module = null;
+    const m = p.modules.find((x) => x.id === moduleId);
+    const rail = p.panel.rails.find((r) => r.id === railId);
+    if (!m || !rail) return;
+    m.on = null;
+    pin(p, [rail.id]);
+    const o = bestDock(withRiders(p, m), rail.dir, 0);
+    p.panel.mounts.push({ id: uid('d'), rail: rail.id, at: null, kind: 'dock', turn: o.turn, slots: [{ module: moduleId, edge: o.edge }, { module: null, edge: 'auto' }] });
+  });
+}
+
+/** A new rail with this board docked on it. */
+export function newRailWith(moduleId: string, dir: 'h' | 'v') {
+  addRail(dir);
+  const r = store.get().project!.panel.rails;
+  appendToRail(moduleId, r[r.length - 1].id);
+}
+
+/** Stack a board on top of another (null: back onto its own dock). Refuses loops. */
+export function stackOn(moduleId: string, baseId: string | null) {
+  const p0 = store.get().project!;
+  const m0 = p0.modules.find((x) => x.id === moduleId), b0 = baseId ? p0.modules.find((x) => x.id === baseId) : null;
+  if (!m0 || (baseId && (!b0 || baseOf(p0, b0) === m0 || b0 === m0))) return false;
+  const apply = (p: Project) => {
+    const m = p.modules.find((x) => x.id === moduleId)!;
+    // whatever sat on the target goes on top of the new board, so the stack stays a single column
+    if (baseId) for (const x of p.modules) if (x.on === baseId && x.id !== moduleId) x.on = moduleId;
+    for (const x of p.modules) if (x.on === moduleId && !baseId) x.on = m.on ?? null;
+    const oldBelow = m.on;
+    m.on = baseId;
+    if (baseId) for (const mt of p.panel.mounts) for (const sl of mt.slots) if (sl.module === moduleId) sl.module = null;
+    for (const id of [oldBelow, baseId]) { const x = p.modules.find((q) => q.id === id); if (x) refreshStandoffs(p, x); }
+  };
+  if (p0.panel.auto) edit(apply);
+  else panelEdit((p) => { apply(p); if (!baseId && !p.panel.mounts.some((mt) => mt.slots.some((s) => s.module === moduleId))) appendDock(p, moduleId); });
+  return true;
+}
+
+/** Quick automatic layouts. */
+export function quickLayout(kind: 'row' | 'rows' | 'cols') {
+  edit((p) => {
+    p.panel.auto = true;
+    p.panel.rowDir = kind === 'cols' ? 'v' : 'h';
+    p.panel.maxRail = kind === 'row' ? 2000 : p.panel.maxRail >= 2000 ? 400 : p.panel.maxRail;
+  });
+  select([]);
+}
+
+/** How a stacked board is held, and its standoff length. */
+export function setStackMode(moduleId: string, mode: 'bolted' | 'towers', gap?: number) {
+  edit((p) => {
+    const m = p.modules.find((x) => x.id === moduleId);
+    if (!m) return;
+    m.onMode = mode;
+    if (gap != null) m.onGap = gap;
+    const below = p.modules.find((x) => x.id === m.on);
+    if (below) refreshStandoffs(p, below);
   });
 }

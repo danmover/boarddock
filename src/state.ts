@@ -1,13 +1,24 @@
 // App state: the project (undoable, autosaved) plus UI state. Tiny external store + useSyncExternalStore.
 import { useSyncExternalStore } from 'react';
-import type { Board, GenResult, Module, Project } from './model/types';
+import type { Board, Feature, GenResult, Module, Project } from './model/types';
 import { activeModule, migrate, newModule, newProject } from './model/library';
 import { appendDock } from './cad/dockplan';
 
 export { activeModule };
 
 export type Step = 'import' | 'board' | 'plugs' | 'holder' | 'mount' | 'check' | 'export';
-export type SelItem = { kind: 'hole' | 'comp' | 'mount' | 'rail'; id: string };
+/**
+ * Something selected: a hole or part in the board editor, a dock or rail on the panel, or anything picked in the
+ * 3D view (a whole board and its holder, or one feature of a holder such as a plug cradle).
+ */
+export type SelItem = {
+  kind: 'hole' | 'comp' | 'mount' | 'rail' | 'module' | 'feature';
+  id: string;
+  module?: string; // feature: the board it belongs to
+  fkind?: Feature['kind'] | 'plug' | 'clip'; // feature kind
+  refs?: string[]; // feature: connector refs or hole ids
+};
+export type Layer = 'holders' | 'docks' | 'caps' | 'rails' | 'boards' | 'plugs';
 export type Sel = SelItem[];
 export type View = 'assembly' | 'print' | 'editor' | 'panel';
 
@@ -24,6 +35,8 @@ export interface State {
   showGhosts: boolean;
   theme: 'dark' | 'light';
   addMode: boolean; // next import adds a board instead of replacing
+  layers: Record<Layer, boolean>; // what the 3D view shows
+  toast: string | null;
 }
 
 const KEY = 'boarddock.project.v1';
@@ -49,6 +62,8 @@ let state: State = {
   error: null,
   showGhosts: true,
   addMode: false,
+  layers: { holders: true, docks: true, caps: true, rails: true, boards: true, plugs: true },
+  toast: null,
   theme: (typeof localStorage !== 'undefined' && (localStorage.getItem('boarddock.theme') as 'dark' | 'light')) || 'dark',
 };
 if (state.project) state.step = 'board';
@@ -156,6 +171,13 @@ export function redo() {
 export function closeProject() {
   store.set({ project: null, past: [], future: [], result: null, sel: [], step: 'import' });
   persist(null);
+}
+
+let toastTimer: ReturnType<typeof setTimeout> | undefined;
+export function toast(msg: string) {
+  clearTimeout(toastTimer);
+  store.set({ toast: msg });
+  toastTimer = setTimeout(() => store.set({ toast: null }), 4200);
 }
 
 /** Selection helpers: set, toggle (Shift/Cmd-click) or add to the selection. */

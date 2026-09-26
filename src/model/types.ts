@@ -5,6 +5,11 @@ export type V2 = [number, number];
 export type Loop = V2[];
 export type Side = 'top' | 'bottom';
 export type HoleUse = 'auto' | 'snap' | 'pin' | 'none'; // auto: locating pin, or snap pin when the wall fingers can't hold the board
+/**
+ * What a hole is for (hole wizard). Only mounting holes get holder pins; the others are kept clear underneath:
+ * plug = a connector's pegs or shell tabs, lead = a part's pins, standoff = hardware for a board stacked on top.
+ */
+export type HoleRole = 'mount' | 'standoff' | 'plug' | 'lead' | 'free';
 
 export interface Hole {
   id: string;
@@ -13,6 +18,8 @@ export interface Hole {
   d: number;
   plated: boolean;
   use: HoleUse;
+  role?: HoleRole; // undefined = mount (older projects)
+  why?: string; // why the wizard picked the role
 }
 
 export type CompKind = 'connector' | 'header' | 'switch' | 'led' | 'module' | 'hot' | 'antenna' | 'generic';
@@ -89,6 +96,7 @@ export interface HolderSettings {
   material: Material;
   color?: string; // preview colour of the printed holder
   feat?: HolderFeatures; // global switches over the per-connector options
+  style?: 'frame' | 'tray'; // frame: rim, corner guards and ribs (fast to print); tray: full base and wall
 }
 
 /** Whole-holder switches: turn a kind of feature off for every connector at once (per-connector choices are kept). */
@@ -135,6 +143,9 @@ export interface Module {
   board: Board;
   holder: HolderSettings;
   original?: Board; // the board as imported, for "revert to import"
+  on?: string | null; // stacked on top of this module
+  onMode?: 'bolted' | 'towers'; // bolted: screwed to the board below on standoffs (HAT, shield); towers: its own printed layer
+  onGap?: number; // bolted: gap between the boards (standoff length), mm
 }
 
 /** How several holders combine into one assembly. */
@@ -204,6 +215,18 @@ export interface MeshData {
   idx: Uint32Array;
 }
 
+/** What a part or ghost belongs to, for picking in the 3D view. */
+export interface PickTag {
+  kind: 'holder' | 'cap' | 'rod' | 'clip' | 'shoe' | 'socket' | 'link' | 'rivet' | 'board' | 'parts' | 'plug' | 'rail' | 'stand';
+  module?: string;
+  mount?: string;
+  rail?: string;
+  refs?: string[];
+}
+
+/** Assembly animation: the part flies in from `dir` (assembly frame, unit) at step `seq`. */
+export interface Anim { seq: number; dir: [number, number, number] }
+
 export interface PartOut {
   id: string;
   name: string;
@@ -214,6 +237,10 @@ export interface PartOut {
   size: [number, number, number];
   color: string;
   instances?: number[][]; // further assembly placements of the same part (qty > 1)
+  tag?: PickTag; // first placement
+  tags?: PickTag[]; // one per further placement (instances)
+  anim?: Anim;
+  anims?: Anim[]; // one per further placement
 }
 
 export interface Ghost {
@@ -221,6 +248,16 @@ export interface Ghost {
   mesh: MeshData;
   color: string;
   opacity: number;
+  tag?: PickTag;
+  anim?: Anim;
+}
+
+/** A pickable feature fused into a holder (cradle, pin, finger...), as a box in the holder frame. */
+export interface Feature {
+  kind: 'cradle' | 'cap' | 'guard' | 'tie' | 'finger' | 'label' | 'pin' | 'seat' | 'dock' | 'tower' | 'stand' | 'notch' | 'rim';
+  module: string;
+  refs?: string[]; // connector refs or hole ids
+  box: [number, number, number, number, number, number];
 }
 
 export interface Check {
@@ -240,6 +277,8 @@ export interface GenReport {
   /** clip frame -> assembly, for the "as installed" view */
   clipFrame: number[] | null;
   panel?: PanelReport | null;
+  features?: Feature[];
+  frames?: Record<string, number[]>; // module id -> holder frame to assembly
 }
 
 export type AccessDir = 'front' | 'up' | 'down' | 'left' | 'right' | 'wall';

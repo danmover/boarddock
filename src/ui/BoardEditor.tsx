@@ -6,6 +6,7 @@ import type { Board, Comp, Project, V2 } from '../model/types';
 import { bbox, compRect, deg, extentAlong, nearestEdge, rad, uid } from '../geom/poly';
 import { CONNECTORS, connById, connSetup } from '../model/library';
 import { activeModule, commitFrom, editMod, isSel, select, store, useApp, type SelItem } from '../state';
+import { ROLE_INFO } from '../model/holes';
 
 export type Tool = 'select' | 'pan' | 'hole' | 'connector' | 'part';
 
@@ -88,7 +89,7 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
     const panning = e.button === 1 || e.button === 2 || space || tool === 'pan';
     if (panning) { drag.current = { kind: 'pan', start: w, client: [e.clientX, e.clientY], vb0: vb }; return; }
     if (tool === 'hole') {
-      editMod((m) => { m.board.holes.push({ id: uid('h'), x: snap(w[0]), y: snap(w[1]), d: 3.2, plated: false, use: 'auto' }); });
+      editMod((m) => { m.board.holes.push({ id: uid('h'), x: snap(w[0]), y: snap(w[1]), d: 3.2, plated: false, use: 'auto', role: 'mount', why: 'added by hand' }); });
       const h = activeModule(store.get().project!).board.holes.at(-1)!;
       select([{ kind: 'hole', id: h.id }], e.shiftKey ? 'add' : 'set');
       return;
@@ -233,11 +234,13 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
         })}
         {b.holes.map((h) => {
           const on = isSel(sel, h.id);
-          const col = h.use === 'none' ? 'var(--subtle)' : h.use === 'snap' ? 'var(--coral)' : 'var(--copper)';
+          const role = h.role ?? 'mount';
+          const col = ROLE_INFO[role].color;
           return (
             <g key={h.id} data-id={h.id} data-kind="hole" style={{ cursor: 'move' }}>
-              <circle cx={h.x} cy={-h.y} r={h.d / 2 + 1.1} fill={col} fillOpacity={0.92} stroke={on ? 'var(--accent)' : 'none'} strokeWidth={fs(2.5)} filter={on ? 'url(#glow)' : undefined} />
+              <circle cx={h.x} cy={-h.y} r={h.d / 2 + 1.1} fill={col} fillOpacity={role === 'free' ? 0.5 : 0.92} stroke={on ? 'var(--accent)' : 'none'} strokeWidth={fs(2.5)} filter={on ? 'url(#glow)' : undefined} />
               <circle cx={h.x} cy={-h.y} r={h.d / 2} fill="var(--viewer)" />
+              {role === 'mount' && h.use === 'snap' && <path d={`M${h.x - h.d / 2},${-h.y}H${h.x + h.d / 2}`} stroke={col} strokeWidth={fs(1.5)} />}
             </g>
           );
         })}
@@ -296,6 +299,11 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
         </div>
       )}
 
+      {b.holes.length > 0 && (
+        <div className="legend2 floating">
+          {(['mount', 'standoff', 'plug', 'lead', 'free'] as const).filter((r) => b.holes.some((h) => (h.role ?? 'mount') === r)).map((r) => <span key={r}><i style={{ background: ROLE_INFO[r].color }} />{ROLE_INFO[r].name}</span>)}
+        </div>
+      )}
       <div className="hud floating mono">
         <span>{tool === 'hole' ? 'click to place holes · Shift keeps the tool' : tool === 'connector' ? 'click near an edge to add the connector there' : tool === 'part' ? 'click to drop a keep-out box' : 'box-drag selects · Shift-click adds · right-drag pans · wheel zooms · ⌘A  R  ⌘D  Del'}</span>
         {cursor && <span className="xy">{cursor[0].toFixed(1)}, {cursor[1].toFixed(1)}</span>}

@@ -75,14 +75,25 @@ export function dockFea(latchLoops: Loop[], shoeLoops: Loop[], E: number, nu: nu
   onProgress?.('Meshing the rail shoe');
   const Sh = model(shoeLoops, hs, E, nu, 14, (x, y) => (x < 14.6 && y > 7.0) || (y > 21.0 && x < 17.95));
   elements += Sh.m.elems.length;
-  const lip = nearestNode(Sh.m, 16.3, 6.0), pad = nearestNode(Sh.m, 23.5, 28.5), post = nearestNode(Sh.m, 19.95, 21.3);
-  onProgress?.('Solving: thumb lever released');
-  u = solve(Sh, (x, y) => x > 21.5 && y > 26.8, [-1, 0]);
+  const lip = nearestNode(Sh.m, 16.3, 6.0), pad = nearestNode(Sh.m, 23.8, 37.0), post = nearestNode(Sh.m, 19.95, 21.3);
+  onProgress?.('Solving: ear pinched toward the socket');
+  u = solve(Sh, (x, y) => x > 21.5 && y > 33.8 && y < 39.8, [-1, 0]);
   k = 1.7 / u[2 * lip];
   s = stats(Sh.m, u, Sh.R, k);
   const stopAt = (2.0 / Math.abs(u[2 * post] * k)) * 1.7; // lip travel when the post meets the body shelf (2.0 mm gap, SHOE_LEVER.stopGap)
-  cases.push({ part: 'shoe', name: 'Rail shoe: lever pushed (jaw off the flange)', force: Math.abs(k), target: 'jaw lip moves 1.7 mm clear of the rail flange', peakStrain: s.peak, p99Strain: s.p99, notes: [`lever pad travel ${Math.abs(u[2 * pad] * k).toFixed(2)} mm`, `stop engages at ${stopAt.toFixed(2)} mm lip travel`, s.where] });
-  fields.push(field('Rail shoe, lever pushed', Sh.m, hs, s.eps));
+  cases.push({ part: 'shoe', name: 'Rail shoe: ear pinched (jaw off the flange)', force: Math.abs(k), target: 'jaw lip moves 1.7 mm clear of the rail flange', peakStrain: s.peak, p99Strain: s.p99, notes: [`ear travel ${Math.abs(u[2 * pad] * k).toFixed(2)} mm`, `stop engages at ${stopAt.toFixed(2)} mm lip travel`, s.where] });
+  fields.push(field('Rail shoe, ear pinched', Sh.m, hs, s.eps));
+  onProgress?.('Solving: ear lip pulled off the wall');
+  {
+    // fingertip under the top lip, pulling straight away from the wall
+    const up = solve(Sh, (x, y) => x > 24.45 && x < 25.3 && Math.abs(y - 40.1) < hs * 1.3, [0, 1]);
+    const kp = 1.7 / up[2 * lip];
+    const sp = stats(Sh.m, up, Sh.R, kp);
+    // the dock pivots on the lip, which then carries the pull; friction there (d below the leaf) fights the ear's
+    // lever (a outboard of it): opening moment F (a - mu d)
+    const a = 24.85 - 16.75, d = 15.1 - 6.2;
+    cases.push({ part: 'shoe', name: 'Rail shoe: ear lip pulled off the wall', force: Math.abs(kp) / (1 - MU * d / a), target: 'jaw lip moves 1.7 mm clear, with friction 0.3 on the flange', peakStrain: sp.peak, p99Strain: sp.p99, notes: [`${Math.abs(kp).toFixed(1)} N without friction; it opens by pulling while flange friction stays below ${(a / d).toFixed(2)}`, sp.where] });
+  }
   onProgress?.('Solving: clipping onto the rail');
   const a = [15.8, 6.0], b = [17.7, 3.9];
   const Lab = Math.hypot(b[0] - a[0], b[1] - a[1]);

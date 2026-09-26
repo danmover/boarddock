@@ -1,56 +1,58 @@
-// Brand mark and the hero illustration (a board docking into its holder on a DIN rail).
+// Brand mark and the hero illustration (boards docking onto a DIN rail).
 export function Mark({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 32 32" fill="none">
-      <rect x="1" y="1" width="30" height="30" rx="9" fill="#0c4a30" stroke="#3ddc97" strokeWidth="1.5" />
-      <rect x="7" y="8" width="18" height="12" rx="2" fill="#3ddc97" />
-      <circle cx="9.8" cy="10.8" r="1.2" fill="#0c4a30" />
-      <circle cx="22.2" cy="10.8" r="1.2" fill="#0c4a30" />
-      <rect x="13" y="11.5" width="6" height="5" rx="0.8" fill="#0c4a30" />
-      <path d="M5 24h22" stroke="#e8a15a" strokeWidth="2.4" strokeLinecap="round" />
-      <path d="M9 20v4M23 20v4" stroke="#3ddc97" strokeWidth="1.6" />
+      <rect x="1" y="1" width="30" height="30" rx="8.5" fill="var(--accent)" />
+      <rect x="8" y="6.5" width="16" height="12" rx="2" fill="var(--accent-ink)" />
+      <circle cx="10.7" cy="9.2" r="1.1" fill="var(--accent)" />
+      <circle cx="21.3" cy="9.2" r="1.1" fill="var(--accent)" />
+      <rect x="13.2" y="10.4" width="5.6" height="4.4" rx="0.8" fill="var(--accent)" />
+      <path d="M16 18.5v4" stroke="var(--accent-ink)" strokeWidth="2.6" />
+      <path d="M5.5 24.5h21" stroke="var(--accent-ink)" strokeWidth="2.4" strokeLinecap="round" />
     </svg>
   );
 }
 
 export function HeroArt() {
+  const board = (x: number, y: number, w: number, h: number, k: string) => (
+    <g key={k}>
+      <rect x={x} y={y} width={w} height={h} rx="5" fill="#1f8a57" stroke="#46d58b" strokeOpacity="0.5" />
+      <circle cx={x + 8} cy={y + 8} r="3" fill="#e0a060" /><circle cx={x + w - 8} cy={y + 8} r="3" fill="#e0a060" />
+      <rect x={x + w * 0.32} y={y + h * 0.3} width={w * 0.26} height={h * 0.34} rx="2" fill="#141a20" />
+      <rect x={x + w - 26} y={y + h - 18} width="20" height="11" rx="2" fill="#cfd6dd" />
+    </g>
+  );
   return (
-    <svg className="art" viewBox="0 0 560 250" fill="none">
+    <svg className="art" viewBox="0 0 560 260" fill="none">
       <defs>
-        <linearGradient id="hrail" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="#9fb0bf" /><stop offset="1" stopColor="#4b5b69" /></linearGradient>
-        <linearGradient id="htray" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="#3ddc97" /><stop offset="1" stopColor="#1fae70" /></linearGradient>
+        <linearGradient id="hrail" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="#aab6c2" /><stop offset="1" stopColor="#5a6674" /></linearGradient>
       </defs>
-      {/* DIN rail */}
-      <rect x="10" y="176" width="540" height="12" rx="2" fill="url(#hrail)" />
-      <rect x="10" y="168" width="540" height="6" rx="2" fill="#6d7e8c" opacity="0.7" />
-      {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => <rect key={i} x={40 + i * 66} y="179" width="22" height="6" rx="3" fill="#2d3a45" />)}
-      {/* neighbour holders */}
-      <g opacity="0.55">
-        <rect x="38" y="84" width="110" height="88" rx="10" fill="#1fae70" opacity="0.25" stroke="#3ddc97" strokeOpacity="0.4" />
-        <rect x="412" y="72" width="120" height="100" rx="10" fill="#1fae70" opacity="0.25" stroke="#3ddc97" strokeOpacity="0.4" />
+      <ellipse cx="280" cy="236" rx="250" ry="12" fill="#000" opacity="0.18" />
+      {/* rail */}
+      <rect x="20" y="200" width="520" height="12" rx="2" fill="url(#hrail)" />
+      <rect x="20" y="194" width="520" height="5" rx="2" fill="#7b8794" opacity="0.8" />
+      {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => <rect key={i} x={46 + i * 64} y="203" width="22" height="6" rx="3" fill="#2a323b" />)}
+      {/* docks */}
+      {[92, 280, 468].map((x, i) => (
+        <g key={i} opacity={i === 1 ? 1 : 0.55}>
+          <rect x={x - 26} y="170" width="52" height="28" rx="5" fill="var(--accent)" />
+          <rect x={x + 20} y="160" width="7" height="30" rx="2" fill="var(--accent)" />
+          <rect x={x - 14} y="150" width="28" height="22" rx="4" fill="#5a86ff" />
+        </g>
+      ))}
+      {/* neighbours */}
+      <g opacity="0.5">
+        <rect x="52" y="60" width="80" height="90" rx="9" fill="none" stroke="var(--muted)" strokeWidth="2" strokeDasharray="5 5" />
+        <rect x="428" y="52" width="80" height="98" rx="9" fill="none" stroke="var(--muted)" strokeWidth="2" strokeDasharray="5 5" />
       </g>
-      {/* tray */}
-      <rect x="176" y="92" width="208" height="84" rx="12" fill="url(#htray)" />
-      <rect x="186" y="100" width="188" height="68" rx="7" fill="#0b1a14" opacity="0.45" />
-      {[0, 1, 2, 3, 4, 5].map((i) => <path key={i} d={`M${205 + i * 30} 120l9-5 9 5v10l-9 5-9-5z`} fill="#0b1a14" opacity="0.55" />)}
-      {/* clip + pull tab */}
-      <rect x="262" y="176" width="36" height="16" rx="3" fill="#ff6b5b" />
-      <rect x="258" y="200" width="44" height="12" rx="6" fill="#ff6b5b" />
-      <rect x="276" y="190" width="8" height="12" fill="#ff6b5b" />
-      <path d="M314 206h26" stroke="#ff6b5b" strokeWidth="2" strokeDasharray="4 4" className="blink" />
-      <text x="346" y="210" fontFamily="JetBrains Mono, monospace" fontSize="11" fill="#ff8b7d">pull</text>
-      {/* board sliding in */}
+      {/* frame holder sliding into the socket */}
       <g className="slide">
-        <rect x="192" y="60" width="176" height="60" rx="5" fill="#0c4a30" stroke="#3ddc97" strokeWidth="1.5" />
-        <circle cx="203" cy="71" r="4" fill="#e8a15a" /><circle cx="357" cy="71" r="4" fill="#e8a15a" />
-        <circle cx="203" cy="109" r="4" fill="#e8a15a" /><circle cx="357" cy="109" r="4" fill="#e8a15a" />
-        <rect x="250" y="74" width="34" height="30" rx="3" fill="#1a232c" />
-        <rect x="296" y="80" width="22" height="10" rx="2" fill="#c9d3dd" />
-        <rect x="222" y="96" width="16" height="10" rx="2" fill="#ffd166" opacity="0.9" />
-        <path d="M210 88h30M300 100h40" stroke="#3ddc97" strokeOpacity="0.6" strokeWidth="1.2" />
-        {/* USB plug in its cradle */}
-        <rect x="368" y="84" width="40" height="18" rx="4" fill="#e8a15a" opacity="0.9" />
-        <path d="M408 93h40" stroke="#e8a15a" strokeWidth="5" strokeLinecap="round" opacity="0.7" />
+        <rect x="206" y="46" width="148" height="104" rx="10" fill="none" stroke="#e9e6df" strokeWidth="6" />
+        <rect x="272" y="140" width="16" height="14" rx="2" fill="#e9e6df" />
+        {board(214, 54, 132, 88, 'b')}
+        <rect x="266" y="30" width="28" height="9" rx="3" fill="#ff4d5e" />
+        <rect x="276" y="38" width="8" height="10" fill="#ff4d5e" />
+        <path d="M280 12v12" stroke="#ff4d5e" strokeWidth="2" strokeDasharray="3 3" className="blink" />
       </g>
     </svg>
   );

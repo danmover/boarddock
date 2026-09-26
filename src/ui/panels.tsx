@@ -1,6 +1,8 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { zipSync, strToU8 } from 'fflate';
-import type { Board, Comp, Hole, Project, V2 } from '../model/types';
+import type { Board, Comp, Hole, HoleRole, Project, V2 } from '../model/types';
+import { applyHoleRoles, boltedOn, detectHoleRoles, ROLE_INFO } from '../model/holes';
+import { Icon, I } from './icons';
 import { CONNECTORS, DEFAULT_FEATURES, HOLDER_PRESETS, MATERIALS, PRINTERS, connById, connSetup } from '../model/library';
 import { TEMPLATES } from '../model/templates';
 import { ACCEPT } from '../import';
@@ -12,7 +14,7 @@ import { estimate, packPlates, placedMesh, write3mf, writeStl } from '../cad/exp
 import { buildTestKit, runClipFea } from '../worker/client';
 import type { ClipFeaResult } from '../fea/clipfea';
 import { clipDims } from '../cad/dinclip';
-import { PanelSide } from './PanelSide';
+import { RackBuilder } from './RackBuilder';
 import { duplicateModule } from './panelOps';
 import { DockFeaSection } from './DockFea';
 
@@ -43,8 +45,6 @@ export function ImportPanel() {
 
   return (
     <div>
-      <h2>Start with your board</h2>
-      <p className="lede">Drop a board file and BoardDock builds a screwless holder around it: supports, snap fingers, openings and cradles for every plug, a DIN-rail clip or a stand socket. Everything is editable afterwards.</p>
       <div className={`drop ${over ? 'over' : ''}`} onClick={() => input.current?.click()}
         onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)}
         onDrop={(e) => { e.preventDefault(); setOver(false); handle(e.dataTransfer.files); }}>
@@ -53,12 +53,19 @@ export function ImportPanel() {
         <p>KiCad · STEP · IDF · Eagle/Fusion · Gerber + drill + pick & place (zip is fine) · DXF · BoardDock project</p>
         <input ref={input} type="file" multiple accept={ACCEPT} hidden onChange={(e) => e.target.files && handle(e.target.files)} />
       </div>
-      {hasProject && <div style={{ marginTop: 8 }}><Check label="Add as another board (it joins the panel)" value={addMode} onChange={setAddMode} /></div>}
-      {busy && <div className="progress" style={{ marginTop: 8 }}><div /></div>}
-      {err && <div className="err" style={{ marginTop: 10 }}>{err}</div>}
-
-      <Section title="From your EDA tool">
-        <ul className="fmt">
+      {hasProject && <div className="section" style={{ marginTop: 10, padding: '6px 12px' }}><Check label="Add as another board (it joins the rails)" value={addMode} onChange={setAddMode} /></div>}
+      {busy && <div className="progress" style={{ margin: '8px 0' }}><div /></div>}
+      {err && <div className="err" style={{ margin: '10px 0' }}>{err}</div>}
+      <div style={{ height: 10 }} />
+      <Section title="Start from a known board">
+        <div className="tiles">
+          {TEMPLATES.map((t) => { const [n, sz] = t.name.split(' ('); return <button key={t.id} className="tile" onClick={() => put(t.make())}><span>{n}</span>{sz && <small>{sz.replace(')', '')}</small>}</button>; })}
+        </div>
+      </Section>
+      <ManualBoard put={put} />
+      <details className="section">
+        <summary style={{ cursor: 'pointer', fontWeight: 650, fontSize: 12.5 }}>Exporting from your EDA tool</summary>
+        <ul className="fmt" style={{ marginTop: 10 }}>
           <li><b>KiCad</b>: drop the <code>.kicad_pcb</code>. Outline, holes, courtyards and 3D model names are read.</li>
           <li><b>Altium Designer</b>: File › Export › <b>STEP 3D</b> (best, real part heights). Or zip the fab outputs: Gerbers with the board outline layer, NC Drill, Pick and Place.</li>
           <li><b>Eagle / Fusion Electronics</b>: drop the <code>.brd</code>, or export STEP.</li>
@@ -66,15 +73,7 @@ export function ImportPanel() {
           <li><b>OrCAD, Allegro, PADS, DipTrace, Proteus</b>: export IDF (<code>.emn</code> + <code>.emp</code>) or STEP, or Gerber + drill + centroid.</li>
         </ul>
         <p className="hint">Files never leave your computer: everything runs locally.</p>
-      </Section>
-
-      <Section title="No design files?">
-        <p className="hint" style={{ marginTop: 0, marginBottom: 8 }}>Start from a known board, or draw your own outline and holes.</p>
-        <div className="tiles">
-          {TEMPLATES.map((t) => { const [n, sz] = t.name.split(' ('); return <button key={t.id} className="tile" onClick={() => put(t.make())}><span>{n}</span>{sz && <small>{sz.replace(')', '')}</small>}</button>; })}
-        </div>
-      </Section>
-      <ManualBoard put={put} />
+      </details>
       {hasProject && <div className="btns" style={{ marginTop: 12 }}><button className="btn danger small" onClick={() => { if (confirm('Close this project? Unsaved changes are kept only in this browser until you start a new one.')) closeProject(); }}>Close project</button></div>}
     </div>
   );
@@ -94,7 +93,7 @@ function ManualBoard({ put }: { put: (b: Board) => void }) {
     put({ name: 'My board', outline, cutouts: [], thickness: t, holes, comps: [], source: 'drawn', notes: [] });
   };
   return (
-    <Section title="Draw a board">
+    <Section title="Or draw one">
       <Seg value={shape} options={[['rect', 'Rectangle'], ['round', 'Rounded'], ['circle', 'Round']]} onChange={setShape} />
       <div className="row" style={{ marginTop: 10 }}>
         <Num label={shape === 'circle' ? 'Diameter' : 'Width'} value={w} onChange={setW} step={0.5} min={5} />
@@ -145,9 +144,7 @@ export function BoardPanel() {
   const hidden = b.comps.filter((c) => c.hidden).length;
   return (
     <div>
-      <h2>Board</h2>
       <ModulePicker />
-      <p className="lede">Check what was read. Holes become supports; parts under the board and through-hole leads set the clearance; tall parts near edges are kept clear of the snap fingers. Select several things at once to edit them together.</p>
       <Section title="Summary">
         <Text label="Name" value={b.name} onChange={(v) => editMod((q) => { q.board.name = v; })} />
         <div className="row" style={{ marginTop: 8 }}>
@@ -157,20 +154,9 @@ export function BoardPanel() {
         <p className="hint">{b.source}. {b.holes.length} holes, {b.comps.filter((c) => !c.hidden).length} parts, {b.comps.filter((c) => c.conn).length} connectors.</p>
         {b.notes.length > 0 && <div className="warns">{b.notes.map((n, i) => <div key={i}>{n}</div>)}</div>}
       </Section>
-      <CleanUp />
       {sel.length > 0 && <Inspector />}
-      <Section title={`Holes · ${b.holes.length}`} right={<span className="btns"><AllBox items={b.holes.map((h) => ({ kind: 'hole' as const, id: h.id }))} /><button className="btn small" onClick={() => { editMod((q) => { q.board.holes.push({ id: uid('h'), x: (bb.x0 + bb.x1) / 2, y: (bb.y0 + bb.y1) / 2, d: 3.2, plated: false, use: 'auto' }); }); store.set({ view: 'editor' }); }}>+ Add</button></span>}>
-        <div className="list">
-          {b.holes.map((h, i) => (
-            <SelRow key={h.id} it={{ kind: 'hole', id: h.id }}>
-              <span className="grow">Hole {i + 1} <small className="mono">Ø{round(h.d, 2)} · {round(h.x, 1)}, {round(h.y, 1)}</small></span>
-              <Chip status={h.use === 'none' ? undefined : h.use === 'snap' ? 'warn' : 'ok'}>{h.use}</Chip>
-            </SelRow>
-          ))}
-          {!b.holes.length && <p className="hint">No holes: the board is held by snap fingers in the wall.</p>}
-        </div>
-        <p className="hint"><b>auto</b>: locating pin, or a split snap pin when there's no room for wall fingers. <b>snap</b>: always a snap pin. <b>none</b>: ignore.</p>
-      </Section>
+      <HoleWizard />
+      <CleanUp />
       <Section title="Parts" right={<span className="btns"><AllBox items={comps.map((c) => ({ kind: 'comp' as const, id: c.id }))} /><Seg value={filter} options={[['key', 'Key'], ['all', 'All']]} onChange={setFilter} /></span>}>
         <div className="list" style={{ maxHeight: 340, overflowY: 'auto' }}>
           {comps.map((c) => (
@@ -188,9 +174,10 @@ export function BoardPanel() {
           {hidden > 0 && <button className="btn small ghost" onClick={() => editMod((q) => { q.board.comps.forEach((c) => { c.hidden = false; }); })}>Show {hidden} hidden</button>}
         </div>
       </Section>
-      <Section title="Reshape outline">
-        <ReshapeOutline b={b} />
-      </Section>
+      <details className="section">
+        <summary style={{ cursor: 'pointer', fontWeight: 650, fontSize: 12.5 }}>Reshape the outline</summary>
+        <div style={{ marginTop: 10 }}><ReshapeOutline b={b} /></div>
+      </details>
     </div>
   );
 }
@@ -273,9 +260,8 @@ export function PlugsPanel() {
   const chosen = conns.filter((c) => isSel(sel, c.id));
   return (
     <div>
-      <h2>Connectors & plugs</h2>
       <ModulePicker />
-      <p className="lede">Every connector gets an opening sized for its plug. Plugs that enter through the edge can sit in a <b>cradle</b> with a snap-on <b>cap</b>, so a knock on the cable goes into the holder instead of the connector's solder joints. Tick several to set them all at once.</p>
+      <p className="lede">Every connector gets an opening sized for its plug. Edge plugs can sit in a <b>cradle</b> with a snap-on <b>cap</b>. Tick several to set them together, or click a cradle in the 3D view.</p>
       <Section title={`Connectors · ${conns.length}`} right={<span className="btns"><AllBox items={conns.map((c) => ({ kind: 'comp' as const, id: c.id }))} /><button className="btn small" onClick={() => store.set({ view: 'editor' })}>+ Add</button></span>}>
         <div className="list">
           {conns.map((c) => (
@@ -353,21 +339,20 @@ export function HolderPanel() {
   const lv = useApp((s) => s.result?.report.levels);
   return (
     <div>
-      <h2>Holder</h2>
       <ModulePicker />
-      <p className="lede">A tray that follows your board's outline, with a low wall, supports under every hole, snap fingers that clip the board edge, and a lightweight base pattern.</p>
+      <HolderStyle />
       <Section title="Material">
         <Seg value={H.material} options={(Object.keys(MATERIALS) as (keyof typeof MATERIALS)[]).map((m) => [m, m])} onChange={(v) => set((h) => { h.material = v; })} />
         <p className="hint">{H.material === 'PLA' ? 'PLA works but is stiff and brittle for springs and softens around 55 °C. PETG is the default.' : `${H.material}: E ≈ ${MATERIALS[H.material].E} MPa, spring strain limit ${(MATERIALS[H.material].strainAllow * 100).toFixed(1)}%.`}</p>
       </Section>
-      <Section title="Preset" right={<span className="hint" style={{ margin: 0 }}>sets walls, base and pattern</span>}>
+      <Section title="Preset">
         <div className="presets">
-          {([['sturdy', 'Sturdy', 'thicker walls and base, fine pattern'], ['balanced', 'Balanced', 'the default'], ['lean', 'Lean', 'fastest print, least filament']] as const).map(([k, n, d]) => {
+          {([['sturdy', 'Sturdy', 'full tray, thick walls'], ['balanced', 'Balanced', 'frame, the default'], ['lean', 'Lean', 'thin frame, fastest print']] as const).map(([k, n, d]) => {
             const on = Object.entries(HOLDER_PRESETS[k]).every(([key, v]) => (H as any)[key] === v);
             return <button key={k} className={`preset ${on ? 'on' : ''}`} onClick={() => set((h) => { Object.assign(h, HOLDER_PRESETS[k]); })}><b>{n}</b><small>{d}</small></button>;
           })}
         </div>
-        {p.modules.length > 1 && <div className="btns" style={{ marginTop: 8 }}><button className="btn small ghost" onClick={() => edit((q) => { for (const m of q.modules) Object.assign(m.holder, { wall: H.wall, base: H.base, pattern: H.pattern, cell: H.cell, rib: H.rib, wallAbove: H.wallAbove, chamfer: H.chamfer, material: H.material, feat: H.feat }); })}>Use these settings for every board</button></div>}
+        {p.modules.length > 1 && <div className="btns" style={{ marginTop: 8 }}><button className="btn small ghost" onClick={() => edit((q) => { for (const m of q.modules) Object.assign(m.holder, { style: H.style, wall: H.wall, base: H.base, pattern: H.pattern, cell: H.cell, rib: H.rib, wallAbove: H.wallAbove, chamfer: H.chamfer, material: H.material, feat: H.feat }); })}><Icon d={I.copy} /> Use these settings for every board</button></div>}
       </Section>
       <Section title="Features">
         {(() => {
@@ -381,16 +366,16 @@ export function HolderPanel() {
                 <Check label="Cable-tie anchors" value={F.ties} onChange={(v) => setF('ties', v)} />
                 <Check label="Receptacle guards" value={F.guards} onChange={(v) => setF('guards', v)} />
                 <Check label="Wall snap fingers" value={H.tabs !== 'off'} onChange={(v) => set((h) => { h.tabs = v ? 'auto' : 'off'; })} />
-                <Check label="Finger notches" value={H.notches} onChange={(v) => set((h) => { h.notches = v; })} />
+                {(H.style ?? 'frame') === 'tray' && <Check label="Finger notches" value={H.notches} onChange={(v) => set((h) => { h.notches = v; })} />}
                 <Check label="Engraved label" value={!!H.label.trim()} onChange={(v) => set((h) => { h.label = v ? activeModule(p).board.name.slice(0, 24) : ''; })} />
-                <Check label="Base pattern" value={H.pattern !== 'none'} onChange={(v) => set((h) => { h.pattern = v ? 'hex' : 'none'; })} />
+                {(H.style ?? 'frame') === 'tray' && <Check label="Base pattern" value={H.pattern !== 'none'} onChange={(v) => set((h) => { h.pattern = v ? 'hex' : 'none'; })} />}
               </div>
               <p className="hint">Switch a feature off for the whole holder here; the Plugs step still remembers each connector's own choice for when you switch it back on.</p>
             </>
           );
         })()}
       </Section>
-      <Section title="Tray">
+      <Section title={(H.style ?? 'frame') === 'frame' ? 'Frame' : 'Tray'}>
         <div className="row">
           <Num label="Wall" value={H.wall} min={1.2} max={4} onChange={(v) => set((h) => { h.wall = v; })} />
           <Num label="Base" value={H.base} min={1.2} max={5} onChange={(v) => set((h) => { h.base = v; })} />
@@ -415,13 +400,13 @@ export function HolderPanel() {
         <Check label="Finger notches to lift the board out" value={H.notches} onChange={(v) => set((h) => { h.notches = v; })} />
       </Section>
       <Section title="Look">
-        <Pick label="Base pattern" value={H.pattern} options={[['hex', 'Hexagons'], ['slots', 'Slots'], ['circles', 'Circles'], ['none', 'Solid']]} onChange={(v) => set((h) => { h.pattern = v; })} />
-        {H.pattern !== 'none' && <div className="row" style={{ marginTop: 8 }}><Num label="Cell size" value={H.cell} min={5} max={30} step={0.5} onChange={(v) => set((h) => { h.cell = v; })} /><Num label="Rib" value={H.rib} min={1.2} max={5} onChange={(v) => set((h) => { h.rib = v; })} /></div>}
+        {(H.style ?? 'frame') === 'tray' && <Pick label="Base pattern" value={H.pattern} options={[['hex', 'Hexagons'], ['slots', 'Slots'], ['circles', 'Circles'], ['none', 'Solid']]} onChange={(v) => set((h) => { h.pattern = v; })} />}
+        {(H.style ?? 'frame') === 'tray' && H.pattern !== 'none' && <div className="row" style={{ marginTop: 8 }}><Num label="Cell size" value={H.cell} min={5} max={30} step={0.5} onChange={(v) => set((h) => { h.cell = v; })} /><Num label="Rib" value={H.rib} min={1.2} max={5} onChange={(v) => set((h) => { h.rib = v; })} /></div>}
         <div style={{ marginTop: 8 }}><Text label="Engraved label" value={H.label} placeholder="e.g. SENSOR HUB" onChange={(v) => set((h) => { h.label = v; })} /></div>
         <div className="field" style={{ marginTop: 10 }}><span>Filament colour (preview)</span>
           <div className="swatches">
-            {[['#e4ebe6', 'Bone'], ['#3ddc97', 'Mint'], ['#2a3138', 'Charcoal'], ['#ff8a3d', 'Signal orange'], ['#4f8cff', 'Blue'], ['#f5d547', 'Yellow']].map(([c, n]) => (
-              <button key={c} title={n} className={(H.color ?? '#e4ebe6') === c ? 'on' : ''} style={{ background: c }} onClick={() => set((h) => { h.color = c; })} />
+            {[['#e9e6df', 'Bone'], ['#3a4048', 'Graphite'], ['#ff7a2f', 'Signal orange'], ['#46d58b', 'Mint'], ['#4f8cff', 'Blue'], ['#f5c542', 'Yellow']].map(([c, n]) => (
+              <button key={c} title={n} className={(H.color ?? '#e9e6df') === c ? 'on' : ''} style={{ background: c }} onClick={() => set((h) => { h.color = c; })} />
             ))}
           </div>
         </div>
@@ -436,20 +421,17 @@ export function MountPanel() {
   const M = p.mount, S = p.stand;
   const setM = (fn: (m: Project['mount']) => void) => edit((q) => fn(q.mount));
   const setS = (fn: (s: Project['stand']) => void) => edit((q) => fn(q.stand));
-  const pick = <Seg value={p.layout} options={[['panel', 'DIN rail panel'], ['loose', 'Loose holders']]} onChange={(v) => { edit((q) => { q.layout = v; }); store.set({ view: v === 'panel' ? 'panel' : 'assembly' }); }} />;
+  const pick = <Seg value={p.layout} options={[['panel', 'On DIN rails'], ['loose', 'Loose holders']]} onChange={(v) => { edit((q) => { q.layout = v; }); store.set({ view: 'assembly' }); }} />;
   if (p.layout === 'panel') return (
     <div>
-      <h2>Panel</h2>
-      <p className="lede">Rails on the wall, horizontal or vertical. Each dock clips onto a rail, turns four ways and takes two boards back to back; press the button on top of a holder to lift it out. BoardDock turns every board so its plugs stay reachable.</p>
-      {pick}
-      <PanelSide />
+      <div style={{ marginBottom: 10 }}>{pick}</div>
+      <RackBuilder />
     </div>
   );
   return (
     <div>
-      <h2>Loose holders</h2>
-      <p className="lede">Holders without a rail dock: stack them, set them side by side or back to back, clip one flat onto a DIN rail, or give it a stand socket.</p>
-      {pick}
+      <div style={{ marginBottom: 10 }}>{pick}</div>
+      <p className="lede">Holders without rail docks: stack them, set them side by side or back to back, clip one flat onto a DIN rail, or give it a stand socket.</p>
       <LayoutSection />
       <Section title="DIN rail clip" right={<Check label="" value={M.kind === 'din'} onChange={(v) => setM((m) => { m.kind = v ? 'din' : 'none'; })} />}>
         {M.kind === 'din' ? (
@@ -528,18 +510,20 @@ export function CheckPanel() {
   };
   return (
     <div>
-      <h2>Checks & FEA</h2>
-      <p className="lede">Hand calculations for every spring and snap, plus a finite-element model of the DIN clip. Linear and idealised: print one test part before a batch.</p>
+      <div className="bigstat">
+        <div><b style={{ color: 'var(--good)' }}>{res?.report.checks.filter((c) => c.status === 'ok').length ?? 0}</b><span>passing</span></div>
+        <div><b style={{ color: 'var(--warn)' }}>{(res?.report.checks.filter((c) => c.status === 'warn').length ?? 0) + (res?.report.warnings.length ?? 0)}</b><span>to look at</span></div>
+        <div><b style={{ color: 'var(--bad)' }}>{res?.report.checks.filter((c) => c.status === 'bad').length ?? 0}</b><span>failing</span></div>
+      </div>
       {res?.report.warnings.length ? <div className="warns">{res.report.warnings.map((w, i) => <div key={i}>{w}</div>)}</div> : null}
       {groups.map(([g, list]) => (
         <Section key={g} title={g}>
-          <table className="table"><tbody>
-            {list.map((c, i) => (
-              <tr key={i}><td>{c.name}{c.detail && <div className="hint" style={{ marginTop: 2 }}>{c.detail}</div>}</td><td className="num"><Chip status={c.status}>{c.value}</Chip></td></tr>
-            ))}
-          </tbody></table>
+          {list.map((c, i) => (
+            <div key={i} className="checkrow"><div className="grow">{c.name}{c.detail && <div className="hint">{c.detail}</div>}</div><Chip status={c.status}>{c.value}</Chip></div>
+          ))}
         </Section>
       ))}
+      <p className="hint">Hand calculations for every spring and snap, plus finite-element models of the clips. Linear and idealised: print the test-fit kit before a batch.</p>
       {p.layout === 'panel' && <DockFeaSection />}
       {(p.layout === 'loose' ? p.mount.kind === 'din' : !!res?.report.panel?.mounts.some((m) => m.kind === 'flat')) && (
         <Section title="Flat DIN clip FEA">
@@ -614,7 +598,7 @@ export function ExportPanel() {
   const dens = MATERIALS[activeModule(p).holder.material].density;
   const est = useMemo(() => (res ? res.parts.map((x) => ({ part: x, ...estimate(x, dens) })) : []), [res, dens]);
   const tot = est.reduce((a, e) => ({ g: a.g + e.grams * e.part.qty * copies, m: a.m + e.minutes * e.part.qty * copies }), { g: 0, m: 0 });
-  if (!res) return <div><h2>Export</h2><p className="lede">Building…</p></div>;
+  if (!res) return <div><p className="lede">Building…</p></div>;
   const base = safeName(p.modules.map((m) => m.board.name).join('+'));
   const plateMeshes = (i: number) => plates[i].items.map((it) => placedMesh(it, p.printer.bed, plates[i].used));
   const zipAll = () => {
@@ -630,8 +614,12 @@ export function ExportPanel() {
   };
   return (
     <div>
-      <h2>Export</h2>
-      <p className="lede">Parts are laid out on as few build plates as possible, already in their print orientation. One file per plate: load it and print, no supports.</p>
+      <div className="bigstat">
+        <div><b>{plates.length}</b><span>plate{plates.length > 1 ? 's' : ''}</span></div>
+        <div><b>{tot.g.toFixed(0)} g</b><span>{activeModule(p).holder.material}</span></div>
+        <div><b>{fmtMin(tot.m)}</b><span>print time, rough</span></div>
+      </div>
+      <button className="btn primary" style={{ width: '100%', justifyContent: 'center', marginBottom: 10 }} onClick={() => zipAll()}><Icon d={I.download} /> Download everything (.zip)</button>
       <Section title="Printer">
         <Pick label="Printer" value={p.printer.name} options={[...PRINTERS.map((x) => [x.name, x.name] as [string, string]), ['Custom', 'Custom']]} onChange={(v) => setP((x) => { const pr = PRINTERS.find((q) => q.name === v); if (pr) Object.assign(x, pr); else x.name = 'Custom'; })} />
         <div className="row3" style={{ marginTop: 8 }}>
@@ -654,7 +642,6 @@ export function ExportPanel() {
           ))}
         </div>
         <div className="btns" style={{ marginTop: 10 }}>
-          <button className="btn primary" onClick={zipAll}>Download everything (.zip)</button>
           <button className="btn" onClick={() => download(`${base}.boarddock.json`, JSON.stringify(p, null, 1), 'application/json')}>Save project</button>
           <button className="btn ghost" onClick={() => store.set({ view: 'print' })}>Show plates in 3D</button>
         </div>
@@ -728,8 +715,12 @@ function ModulePicker() {
   const p = useApp((s) => s.project)!;
   if (p.modules.length < 2) return null;
   return (
-    <div style={{ margin: '4px 0 10px' }}>
-      <Seg value={p.active} options={p.modules.map((m, i) => [i, `${i + 1}. ${m.board.name.slice(0, 14)}`] as [number, string])} onChange={(i) => { edit((q) => { q.active = i; }); select([]); }} />
+    <div className="section" style={{ padding: '8px 10px', display: 'flex', alignItems: 'center', gap: 8 }}>
+      <span className="hint" style={{ margin: 0, whiteSpace: 'nowrap' }}>Editing</span>
+      <select value={p.active} onChange={(e) => { edit((q) => { q.active = +e.target.value; }); select([]); }}>
+        {p.modules.map((m, i) => <option key={m.id} value={i}>{i + 1}. {m.board.name}</option>)}
+      </select>
+      <span className="chip">{p.active + 1} / {p.modules.length}</span>
     </div>
   );
 }
@@ -826,6 +817,99 @@ function TestKitSection() {
     <Section title="Test-fit kit · print this first">
       <p className="hint" style={{ marginTop: 0 }}>One rail shoe, one socket and a small tongue key with its release rod: about 30 to 40 minutes. Clip the shoe on your rail, push the key in until it clicks, press its button and lift. If the key is tight, raise <b>Tongue fit</b> in the Panel step by 0.05 to 0.1 mm and print the kit again.</p>
       <div className="btns" style={{ marginTop: 8 }}><button className="btn" disabled={busy} onClick={get}>{busy ? 'Building…' : 'Download test-fit kit (3MF)'}</button></div>
+    </Section>
+  );
+}
+
+// ============================================================================================ HOLE WIZARD
+const ROLES: HoleRole[] = ['mount', 'standoff', 'plug', 'lead', 'free'];
+
+/**
+ * Hole wizard: every hole sorted by what it is for. Mounting holes get pins; connector pegs, part leads and the
+ * standoffs of a board stacked on top are left free with clearance underneath. Detected automatically on import,
+ * changeable per hole or per group.
+ */
+function HoleWizard() {
+  const p = useApp((s) => s.project)!;
+  const sel = useApp((s) => s.sel);
+  const m = activeModule(p);
+  const b = m.board;
+  const above = boltedOn(p, m).map((x) => x.board);
+  const guess = useMemo(() => new Map(detectHoleRoles(b, above).map((g) => [g.id, g])), [b, above.length]);
+  const bb = bbox(b.outline);
+  const byRole = ROLES.map((r) => ({ r, holes: b.holes.filter((h) => (h.role ?? 'mount') === r) })).filter((g) => g.holes.length);
+  const differs = b.holes.filter((h) => (h.role ?? 'mount') !== guess.get(h.id)?.role).length;
+  const setRole = (ids: string[], role: HoleRole) => editMod((q) => { for (const h of q.board.holes) if (ids.includes(h.id)) { h.role = role; h.why = 'set by hand'; } });
+  const mountHoles = b.holes.filter((h) => (h.role ?? 'mount') === 'mount');
+  const useAll = common(mountHoles, (h) => h.use);
+  return (
+    <Section title={`Hole wizard · ${b.holes.length}`} right={<span className="btns">
+      <button className="btn small ghost" title="Sort every hole again from the parts and the stack" onClick={() => editMod((q) => applyHoleRoles(q.board, above, true))}><Icon d={I.wand} /> Detect{differs ? ` (${differs})` : ''}</button>
+      <button className="btn small ghost icon" title="Add a hole" onClick={() => { editMod((q) => { q.board.holes.push({ id: uid('h'), x: (bb.x0 + bb.x1) / 2, y: (bb.y0 + bb.y1) / 2, d: 3.2, plated: false, use: 'auto', role: 'mount', why: 'added by hand' }); }); store.set({ view: 'editor' }); }}><Icon d={I.plus} /></button>
+    </span>}>
+      {!b.holes.length ? <p className="hint" style={{ marginTop: 0 }}>No holes: the board sits on edge seats and snap fingers hold it.</p> : (
+        <>
+          <div className="rolebar">{byRole.map((g) => <i key={g.r} style={{ width: `${(g.holes.length / b.holes.length) * 100}%`, background: ROLE_INFO[g.r].color }} title={`${g.holes.length} ${ROLE_INFO[g.r].name}`} />)}</div>
+          {byRole.map((g) => (
+            <div key={g.r} className="rolegrp">
+              <header>
+                <i style={{ background: ROLE_INFO[g.r].color }} />
+                <b>{ROLE_INFO[g.r].name} · {g.holes.length}</b>
+                <span>{g.r === 'mount' ? 'pins' : g.r === 'free' ? 'ignored' : 'kept clear'}</span>
+              </header>
+              <div className="holes">
+                {g.holes.map((h) => {
+                  const i = b.holes.indexOf(h);
+                  const on = isSel(sel, h.id);
+                  return (
+                    <div key={h.id} className={`holerow ${on ? 'sel' : ''}`} onClick={(e) => select([{ kind: 'hole', id: h.id }], e.shiftKey || e.metaKey ? 'toggle' : 'set')}>
+                      <div style={{ minWidth: 0 }}>Hole {i + 1} <span className="mono" style={{ color: 'var(--subtle)', fontSize: 11 }}>Ø{round(h.d, 2)} · {round(h.x, 1)}, {round(h.y, 1)}</span><small>{h.why ?? guess.get(h.id)?.why}</small></div>
+                      <select value={h.role ?? 'mount'} onClick={(e) => e.stopPropagation()} onChange={(e) => setRole(isSel(sel, h.id) ? sel.filter((s) => s.kind === 'hole').map((s) => s.id) : [h.id], e.target.value as HoleRole)}>
+                        {ROLES.map((r) => <option key={r} value={r}>{ROLE_INFO[r].short}</option>)}
+                      </select>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+          {mountHoles.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <div className="field"><span>Pins in the mounting holes</span></div>
+              <div style={{ marginTop: 5 }}><Seg value={useAll ?? ('' as Hole['use'])} options={[['auto', 'Auto'], ['snap', 'Snap pins'], ['pin', 'Locating pins']]} onChange={(v) => editMod((q) => { for (const h of q.board.holes) if ((h.role ?? 'mount') === 'mount') h.use = v; })} /></div>
+            </div>
+          )}
+          <p className="hint">{ROLE_INFO.plug.name}s, {ROLE_INFO.lead.name.toLowerCase()}s and {ROLE_INFO.standoff.name.toLowerCase()}s never get a pin: pegs, pins and screw heads stick out under the board, so the holder leaves room there. Pick several holes (Shift-click) and change one to change them all.</p>
+        </>
+      )}
+    </Section>
+  );
+}
+
+// ============================================================================================ HOLDER STYLE
+function HolderStyle() {
+  const p = useApp((s) => s.project)!;
+  const res = useApp((s) => s.result);
+  const m = activeModule(p);
+  const style = m.holder.style ?? 'frame';
+  const holder = res?.parts.find((x) => x.tag?.kind === 'holder' && x.tag.module === m.id);
+  const g = holder ? estimate(holder, MATERIALS[m.holder.material].density) : null;
+  const card = (k: 'frame' | 'tray', name: string, text: string, art: ReactNode) => (
+    <button className={`stylecard ${style === k ? 'on' : ''}`} onClick={() => editMod((q) => { q.holder.style = k; })}>
+      {art}
+      <b>{name}</b>
+      <small>{text}</small>
+    </button>
+  );
+  const board = <rect x="26" y="15" width="68" height="34" rx="3" fill="#1f8a57" opacity="0.9" />;
+  return (
+    <Section title="Holder style" right={g ? <span className="chip acc">{g.grams.toFixed(0)} g · {fmtMin(g.minutes)}</span> : undefined}>
+      <div className="styles">
+        {card('frame', 'Frame', 'Rim, corner guards and ribs to every pin. 25 to 50% less plastic than the tray, quicker to print.',
+          <svg viewBox="0 0 120 64"><rect x="18" y="9" width="84" height="46" rx="5" fill="none" stroke="var(--fg)" strokeOpacity="0.8" strokeWidth="4" />{board}<path d="M18 22V14a5 5 0 015-5h8M102 22v-8a5 5 0 00-5-5h-8M18 42v8a5 5 0 005 5h8M102 42v8a5 5 0 01-5 5h-8" stroke="var(--accent)" strokeWidth="4" fill="none" /></svg>)}
+        {card('tray', 'Tray', 'Full base with a hex pattern and a wall all round. Stiffest, most plastic.',
+          <svg viewBox="0 0 120 64"><rect x="16" y="7" width="88" height="50" rx="6" fill="var(--fg)" fillOpacity="0.14" stroke="var(--fg)" strokeOpacity="0.8" strokeWidth="3" />{[0, 1, 2, 3, 4].map((i) => <path key={i} d={`M${28 + i * 16} 53l5-3 5 3`} stroke="var(--fg)" strokeOpacity="0.3" fill="none" />)}{board}</svg>)}
+      </div>
     </Section>
   );
 }

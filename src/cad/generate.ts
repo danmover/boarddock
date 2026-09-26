@@ -1,10 +1,11 @@
 // Builds every printable part for a project: the board holder (tray), DIN clip, plug caps, plus display ghosts
 // (board, components, plugs, rail) and a report of checks. All parts come out in print orientation.
-import type { Board, Check, EdgeName, GenResult, Ghost, HolderSettings, Loop, MeshData, MountSettings, PartOut, Project, V2 } from '../model/types';
+import type { Anim, Board, Check, EdgeName, Feature, GenResult, Ghost, HolderSettings, Loop, MeshData, MountSettings, PartOut, PickTag, Project, V2 } from '../model/types';
+import { holeKeepout, isMountHole } from '../model/holes';
 import { DEFAULT_FEATURES, MATERIALS } from '../model/library';
-import { bbox, centroid, compRect, extentAlong, inside, rad, rayExit, round } from '../geom/poly';
+import { bbox, centroid, compRect, extentAlong, inside, rad, rayExit, round, segDist } from '../geom/poly';
 import type { CS, MF } from './kernel';
-import { box, circle2, cyl, ext, extCh, freeAll, K, orientedBox, poly, rect2, roundCS, sweepTZ, toMesh, unionCS, unionMF } from './kernel';
+import { box, circle2, csLoops, cyl, ext, extCh, freeAll, K, orientedBox, poly, rect2, roundCS, sweepTZ, toMesh, unionCS, unionMF } from './kernel';
 import { buildClip, clipDims, clipSlots, hookOffset4, railProfile } from './dinclip';
 import { textCS, textWidth } from './font';
 import { computeLevels } from './levels';
@@ -23,6 +24,8 @@ export interface ArrangeHooks {
 
 export interface Job {
   p: Project; mi: number; b: Board; H: HolderSettings; din: boolean; stand: boolean; hooks: ArrangeHooks; name: string;
+  level?: number; // 0 = bottom of a stack (default), 1 = the board above it...
+  bolted?: { b: Board; dx: number; dy: number; dz: number; mid: string }[]; // boards screwed on top on standoffs (shown, no holder of their own)
   mount?: MountSettings; // overrides p.mount (panel flat clips)
   dock?: { edge: EdgeName; fit?: number }; // holder plugs into a rail dock with this board edge
 }
@@ -52,6 +55,11 @@ interface Ctx {
   standoffs: { x: number; y: number; r: number }[];
   keepouts: { rect: Loop; need: number; why: string }[];
   dock: DockSite | null;
+  mid: string; // module id
+  frame: boolean; // frame style: rim, corner guards and ribs instead of a full base and wall
+  rimH: number; // frame rim height
+  ribNodes: { p: V2; r: number }[]; // points the frame's ribs must reach (pins, pads)
+  features: Feature[];
 }
 
 const dirOf = (a: number): V2 => [Math.cos(rad(a)), Math.sin(rad(a))];
@@ -96,7 +104,7 @@ function meshFrom(m: MF): MeshData {
   return toMesh(m);
 }
 
-function part(id: string, name: string, m: MF, toAssembly: number[], color: string, qty = 1): PartOut {
+function part(id: string, name: string, m: MF, toAssembly: number[], color: string, qty = 1, tag?: PickTag, anim?: Anim): PartOut {
   // rest on the bed: translate so min z = 0, keep xy
   const bb = m.boundingBox();
   const moved = m.translate([0, 0, -bb.min[2]]);
@@ -105,18 +113,43 @@ function part(id: string, name: string, m: MF, toAssembly: number[], color: stri
   T[12] += toAssembly[8] * bb.min[2];
   T[13] += toAssembly[9] * bb.min[2];
   T[14] += toAssembly[10] * bb.min[2];
-  return { id, name, qty, mesh: meshFrom(moved), toAssembly: T, volume: m.volume(), size: [bb.max[0] - bb.min[0], bb.max[1] - bb.min[1], bb.max[2] - bb.min[2]], color };
+  return { id, name, qty, mesh: meshFrom(moved), toAssembly: T, volume: m.volume(), size: [bb.max[0] - bb.min[0], bb.max[1] - bb.min[1], bb.max[2] - bb.min[2]], color, tag, anim };
+}
+
+/** Record a pickable feature: a plan-view loop (holder frame) and a height range. */
+function feat(C: Ctx, kind: Feature['kind'], loop: Loop, z0: number, z1: number, refs?: string[]) {
+  const b = bbox(loop);
+  C.features.push({ kind, module: C.mid, refs, box: [b.x0, b.y0, z0, b.x1, b.y1, z1] });
+}
+
+/** Solid wall band over a stretch of the outline (frame style has no continuous wall). */
+function wallPiece(C: Ctx, q: V2, d: V2, s0: number, s1: number, z1: number) {
+  if (!C.frame) return;
+  const H = C.H;
+  C.pos.push(orientedBox(q, d, s0, s1, -(H.gap + H.wall), -H.gap + 0.01, 0, z1));
 }
 
 // ---------------------------------------------------------------------------------------------
 
 export { computeLevels } from './levels';
 
-export interface ModuleOut { parts: PartOut[]; ghosts: Ghost[]; warnings: string[]; checks: Check[]; levels: GenResult['report']['levels']; clipAt: V2 | null; clipT: number[] | null; dockM: M4 | null }
+export interface ModuleOut { parts: PartOut[]; ghosts: Ghost[]; warnings: string[]; checks: Check[]; levels: GenResult['report']['levels']; clipAt: V2 | null; clipT: number[] | null; dockM: M4 | null; features: Feature[] }
+
+// Built modules are cached by their inputs: moving, turning or re-pairing docks does not rebuild holders.
+const cache = new Map<string, ModuleOut>();
+const CACHE_MAX = 48;
 
 export function buildModule(job: Job): ModuleOut {
+  const { p } = job;
+  const key = JSON.stringify([job.mi, p.modules[job.mi]?.id, job.b, job.H, job.din, job.stand, job.hooks, job.name, job.level ?? 0, job.mount ?? null, job.dock ?? null, job.bolted ?? null,
+    job.din ? p.mount : null, job.stand ? p.stand : null, p.printer.bed]);
+  const hit = cache.get(key);
+  if (hit) { cache.delete(key); cache.set(key, hit); return hit; }
   try {
-    return build(job);
+    const out = build(job);
+    cache.set(key, out);
+    if (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value!);
+    return out;
   } finally {
     freeAll();
   }
@@ -134,23 +167,33 @@ function build(job: Job): ModuleOut {
     if (c.side === 'bottom' && c.h > 0) keepouts.push({ rect: compRect(c, 0.5), need: c.h + 0.5, why: `${c.ref} (bottom, ${round(c.h, 1)} mm)` });
     if (c.side === 'top' && c.tht) keepouts.push({ rect: compRect(c, 0.6), need: H.leadLen + 0.4, why: `${c.ref} leads` });
   }
+  // holes the wizard marked as connector pegs, part leads or stacking standoffs stay free and clear underneath
+  for (const h of b.holes) {
+    const k = holeKeepout(h, H.leadLen);
+    if (k) keepouts.push({ rect: [[h.x - k.r, h.y - k.r], [h.x + k.r, h.y - k.r], [h.x + k.r, h.y + k.r], [h.x - k.r, h.y + k.r]], need: k.need, why: `${h.role} hole at ${round(h.x, 1)}, ${round(h.y, 1)}` });
+  }
   const site = job.dock ? dockSite(b, H, job.dock.edge) : null;
   const { needMax, base, s, zb, zt, zw } = computeLevels(b, H, site?.minZb ?? 0);
   const O = poly(b.outline);
   const inner = O.offset(H.gap, 'Round');
   const outer = O.offset(H.gap + H.wall, 'Round');
-  const C: Ctx = { p, job, H, b, base, s, zb, zt, zw, O, inner, outer, warnings, checks, pos: [], neg: [], late: [], keep: [], blocked: [], parts: [], ghosts: [], standoffs: [], keepouts, dock: site };
+  const frame = (H.style ?? 'frame') === 'frame';
+  const C: Ctx = { p, job, H, b, base, s, zb, zt, zw, O, inner, outer, warnings, checks, pos: [], neg: [], late: [], keep: [], blocked: [], parts: [], ghosts: [], standoffs: [], keepouts, dock: site,
+    mid: p.modules[job.mi]?.id ?? `m${job.mi}`, frame, rimH: Math.min(zb - 0.3, base + 1.2), ribNodes: [], features: [] };
   checks.push({ group: 'Board', name: 'Clearance under the board', value: `${round(s, 1)} mm`, status: 'info', detail: needMax ? `tallest underside item needs ${round(needMax, 1)} mm (${keepouts.sort((a, c) => c.need - a.need)[0].why}); deeper items get pockets in the base` : 'nothing under the board' });
 
   // ---- base and wall ----
-  C.pos.push(extCh(outer, 0, base, 0, H.chamfer ? 0.4 : 0));
-  const ring = outer.subtract(inner);
-  const wallParts: MF[] = [ext(ring, 0, zw - (H.chamfer ? 0.6 : 0))];
-  if (H.chamfer) for (let i = 1; i <= 3; i++) {
-    const r = outer.offset(-i * 0.2, 'Round').subtract(inner.offset(Math.min(i, 2) * 0.2, 'Round'));
-    wallParts.push(ext(r, zw - 0.6 + (i - 1) * 0.2, zw - 0.6 + i * 0.2));
+  if (frame) frameBody(C);
+  else {
+    C.pos.push(extCh(outer, 0, base, 0, H.chamfer ? 0.4 : 0));
+    const ring = outer.subtract(inner);
+    const wallParts: MF[] = [ext(ring, 0, zw - (H.chamfer ? 0.6 : 0))];
+    if (H.chamfer) for (let i = 1; i <= 3; i++) {
+      const r = outer.offset(-i * 0.2, 'Round').subtract(inner.offset(Math.min(i, 2) * 0.2, 'Round'));
+      wallParts.push(ext(r, zw - 0.6 + (i - 1) * 0.2, zw - 0.6 + i * 0.2));
+    }
+    C.pos.push(unionMF(wallParts));
   }
-  C.pos.push(unionMF(wallParts));
 
   connectors(C);
   overhangs(C);
@@ -159,19 +202,22 @@ function build(job: Job): ModuleOut {
   const mark = { pos: C.pos.length, neg: C.neg.length, late: C.late.length, blocked: C.blocked.length, warn: C.warnings.length, checks: C.checks.length };
   const labelled = H.label.trim() ? label(C) : false;
   let tabsUsed = tabs(C);
-  if (labelled && tabsUsed.length < 2 && (H.tabs === 'on' || (H.tabs === 'auto' && !C.b.holes.some((h) => h.use === 'snap')))) {
+  if (labelled && tabsUsed.length < 2 && (H.tabs === 'on' || (H.tabs === 'auto' && !C.b.holes.some((h) => h.use === 'snap' && isMountHole(h))))) {
     C.pos.length = mark.pos; C.neg.length = mark.neg; C.late.length = mark.late; C.blocked.length = mark.blocked; C.warnings.length = mark.warn; C.checks.length = mark.checks;
+    C.features = C.features.filter((f) => f.kind !== 'label');
     tabsUsed = tabs(C);
     C.checks.push({ group: 'Holder', name: 'Label', value: 'left off', status: 'info', detail: 'it would take the wall the snap fingers need; shorten it to fit both' });
   }
   standoffs(C, tabsUsed.length >= 2);
+  seats(C);
   pockets(C);
   if (job.din && (job.mount ?? p.mount).kind === 'din') mountDin(C);
   if (site) dockFeatures(C, site);
   if (job.stand && p.stand.enabled) stand(C);
   arrangeFeatures(C);
-  if (H.notches) notches(C, tabsUsed);
-  pattern(C);
+  if (H.notches && !frame) notches(C, tabsUsed);
+  if (frame) frameRibs(C);
+  else pattern(C);
 
   // ---- assemble the holder ----
   let holder = unionMF(C.pos);
@@ -185,11 +231,14 @@ function build(job: Job): ModuleOut {
     if (lost > 1) warnings.push(`${pieces.length - 1} loose piece(s) (${round(lost, 0)} mm³) were dropped from the holder. Check features near the board edge.`);
     holder = main;
   }
-  C.parts.unshift(part('holder', `Holder: ${job.name}`, holder, ID, H.color ?? '#e4ebe6'));
+  const lv = job.level ?? 0;
+  const inDir: [number, number, number] = site ? [-site.n[0], -site.n[1], 0] : [0, 0, 1];
+  C.parts.unshift(part('holder', `Holder: ${job.name}`, holder, ID, H.color ?? '#e4ebe6', 1, { kind: 'holder', module: C.mid }, { seq: 3 + 2 * lv, dir: inDir }));
   for (const pt of C.parts) pt.id = `m${job.mi}_${pt.id}`;
 
   // ---- ghosts ----
   boardGhosts(C);
+  for (const bo of job.bolted ?? []) boltedGhosts(C, bo);
 
   // ---- summary checks ----
   for (const pt of C.parts) {
@@ -198,7 +247,7 @@ function build(job: Job): ModuleOut {
   }
   checks.push({ group: 'Print', name: 'Material', value: H.material, status: H.material === 'PLA' ? 'warn' : 'ok', detail: H.material === 'PLA' ? `PLA is stiff and brittle for springs and softens at ~${mat.tg} °C. PETG, ASA or PA are better for clips.` : `strain limit used for springs: ${(mat.strainAllow * 100).toFixed(1)}%` });
   const clip = C.parts.find((x) => x.id.endsWith('_clip'));
-  return { parts: C.parts, ghosts: C.ghosts, warnings, checks, levels: { base, boardBottom: zb, boardTop: zt, wallTop: zw }, clipAt: (C as any).clipAt ?? null, clipT: clip ? clip.toAssembly : null, dockM: site ? dockFrame(site.edge, site.tc, site.L0) : null };
+  return { parts: C.parts, ghosts: C.ghosts, warnings, checks, levels: { base, boardBottom: zb, boardTop: zt, wallTop: zw }, clipAt: (C as any).clipAt ?? null, clipT: clip ? clip.toAssembly : null, dockM: site ? dockFrame(site.edge, site.tc, site.L0) : null, features: C.features };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -212,18 +261,21 @@ function standoffs(C: Ctx, fingersHold: boolean) {
   const H = C.H;
   let snaps = 0;
   for (const h of b.holes) {
-    if (h.use === 'none') continue;
+    if (!isMountHole(h)) continue;
     const at: V2 = [h.x, h.y];
     let rMax = h.d / 2 + 2.2;
     for (const k of C.keepouts) { const d = rectDist(at, k.rect); if (d > 0) rMax = Math.min(rMax, d - 0.2); }
     const r = Math.max(h.d / 2 + 0.6, rMax);
     if (rMax < h.d / 2 + 0.6) C.warnings.push(`Standoff at hole (${round(h.x, 1)}, ${round(h.y, 1)}) touches a part under the board; it was kept at the minimum size.`);
     C.standoffs.push({ x: h.x, y: h.y, r });
+    C.ribNodes.push({ p: at, r });
     C.keep.push(circle2(h.x, h.y, r + 1.4));
+    feat(C, 'pin', [[h.x - r, h.y - r], [h.x + r, h.y + r]], 0, zt + 1.5, [h.id]);
     C.pos.push(cyl(h.x, h.y, base - 0.01, zb, r));
     C.pos.push(cyl(h.x, h.y, base - 0.01, base + 0.4, r + 0.5), cyl(h.x, h.y, base + 0.39, base + 0.8, r + 0.25));
     const rp = h.d / 2 - H.pinClear;
     const snap = h.use === 'snap' || (h.use === 'auto' && !fingersHold && h.d >= 2.0);
+    if (C.frame) C.pos.push(cyl(h.x, h.y, 0, base + 0.01, r + 1.2)); // pad on the rib under the post
     if (snap && h.d >= 1.8) {
       snaps++;
       const barb = Math.min(0.3, Math.max(0.2, 0.08 * h.d));
@@ -242,7 +294,7 @@ function standoffs(C: Ctx, fingersHold: boolean) {
       C.pos.push(cyl(h.x, h.y, zb - 0.01, zt + 0.5, rp), cyl(h.x, h.y, zt + 0.49, zt + 0.5 + rp * 0.5, rp, rp * 0.5));
     }
   }
-  if (!fingersHold && !snaps && C.b.holes.length) C.warnings.push('Neither wall fingers nor snap pins hold this board: it sits loose in the tray. Enable fingers or set holes to snap.');
+  if (!fingersHold && !snaps && C.b.holes.some(isMountHole)) C.warnings.push('Neither wall fingers nor snap pins hold this board: it sits loose in the holder. Enable fingers or set holes to snap.');
 }
 
 // ------------------------------- connectors ------------------------------------------------------
@@ -255,7 +307,7 @@ function connectors(C: Ctx) {
     const cn = c.conn;
     if (!cn || c.hidden) continue;
     if (cn.entry === 'top') {
-      if (cn.tie && F.ties) tieAnchor(C, [c.x, c.y], null);
+      if (cn.tie && F.ties) tieAnchor(C, [c.x, c.y], null, c.ref);
       continue;
     }
     const d = dirOf(cn.angle);
@@ -270,7 +322,7 @@ function connectors(C: Ctx) {
     C.neg.push(orientedBox(mouth, d, Math.min(-0.6, sEdge - 0.5), toOut + 4, -(pw / 2 + cl), pw / 2 + cl, zLo, zHi + 20));
     C.blocked.push({ poly: orientedRect(mouth, d, -2, toOut + 2, -(pw / 2 + cl + 3), pw / 2 + cl + 3), why: c.ref });
     // plug ghost
-    C.ghosts.push({ name: `plug ${c.ref}`, mesh: meshFrom(orientedBox(mouth, d, 0.4, 0.4 + pl, -pw / 2, pw / 2, zAx - ph / 2, zAx + ph / 2)), color: '#e8a15a', opacity: 0.33 });
+    C.ghosts.push({ name: `plug ${c.ref}`, mesh: meshFrom(orientedBox(mouth, d, 0.4, 0.4 + pl, -pw / 2, pw / 2, zAx - ph / 2, zAx + ph / 2)), color: '#e8a15a', opacity: 0.33, tag: { kind: 'plug', module: C.mid, refs: [c.ref] }, anim: { seq: 30, dir: [d[0], d[1], 0] } });
     if (cn.cradle && F.cradles && ph > 0.5) {
       specs.push({ ref: c.ref, mouth, d, sEdge, toOut, zAx, pw, ph, pl, cap: cn.cap && F.caps, angle: cn.angle });
     } else if (cn.guard && F.guards) {
@@ -278,8 +330,10 @@ function connectors(C: Ctx) {
       const ow = pw + 2 * cl, oh = ph + 2 * cl;
       const frame = roundCS(rect2(-(ow / 2 + 1.8), 0, ow / 2 + 1.8, zAx + oh / 2 + 1.8), 0.8).subtract(rect2(-ow / 2, zLo, ow / 2, zAx + oh / 2)).intersect(rect2(-50, 0, 50, 200));
       C.late.push(sweepTZ(mouth, d, frame, toOut - 0.6, toOut + 2.5));
+      wallPiece(C, add(add(mouth, d, sEdge), left(d), -(ow / 2 + 4)), left(d), 0, ow + 8, zw); // frame style: a wall to carry the collar
+      feat(C, 'guard', orientedRect(mouth, d, toOut - 0.6, toOut + 2.5, -(ow / 2 + 1.8), ow / 2 + 1.8), 0, zAx + oh / 2 + 1.8, [c.ref]);
     }
-    if (cn.tie && F.ties) tieAnchor(C, mouth, { d, half: pw / 2 + cl });
+    if (cn.tie && F.ties) tieAnchor(C, mouth, { d, half: pw / 2 + cl }, c.ref);
   }
   buildCradles(C, specs);
 }
@@ -330,7 +384,7 @@ function cradleGroup(C: Ctx, g: CradleSpec[], H: HolderSettings) {
     const zf = sp.zAx - sp.ph / 2 - CC;
     const halfIn = sp.pw / 2 + CC, halfOut = halfIn + CW;
     const zs = Math.min(sp.zAx + sp.ph * 0.2, sp.zAx + sp.ph / 2 - 0.5);
-    const len = Math.min(26, Math.max(12, 0.55 * sp.pl));
+    const len = Math.min(18, Math.max(10, 0.45 * sp.pl)); // carries the plug body's root, where knocks lever it
     const s0 = si + Math.min(0.3, sp.sEdge + H.gap + 0.3), s1 = si + Math.max(sp.toOut, 0) + len;
     sMin = Math.min(sMin, s0); sMax = Math.max(sMax, s1);
     capS0 = Math.max(capS0, si + Math.max(sp.toOut, 0.5) + 1.5);
@@ -365,6 +419,7 @@ function cradleGroup(C: Ctx, g: CradleSpec[], H: HolderSettings) {
   }
   C.late.push(unionMF(bodies).subtract(unionMF(cuts)));
   C.blocked.push({ poly: orientedRect(o, d, sMin, sMax, tL - 2, tR + 2), why: 'cradle' });
+  feat(C, 'cradle', orientedRect(o, d, sMin, sMax, tL, tR), 0, Math.max(...m.map((k) => k.zs)), g.map((sp) => sp.ref));
   for (const k of m) {
     const F = 20, hW = Math.max(0.5, k.zs - k.zf), Lw = k.s1 - k.s0;
     const sigma = (6 * F * hW) / (Lw * CW * CW);
@@ -388,11 +443,11 @@ function cradleGroup(C: Ctx, g: CradleSpec[], H: HolderSettings) {
   const L = zPlate - zHook;
   const eps = (3 * legT * (hook + 0.1)) / (2 * L * L);
   const refs = g.map((sp) => sp.ref).join(' + ');
-  C.parts.push(part(`cap_${C.parts.length}`, `Plug cap (${refs})`, mesh, Tm, '#ffc857'));
+  C.parts.push(part(`cap_${C.parts.length}`, `Plug cap (${refs})`, mesh, Tm, '#ffc857', 1, { kind: 'cap', module: C.mid, refs: g.map((sp) => sp.ref) }, { seq: 20 + (C.job.level ?? 0), dir: [0, 0, 1] }));
   C.checks.push({ group: 'Plugs', name: `Cap legs (${refs})`, value: `${(eps * 100).toFixed(2)}% strain`, status: strainStatus(C, eps), detail: `${round(L, 1)} mm legs, ${hook} mm hooks under the cradle ledges; they flex within the layers` });
 }
 
-function tieAnchor(C: Ctx, at: V2, edgeConn: { d: V2; half: number } | null) {
+function tieAnchor(C: Ctx, at: V2, edgeConn: { d: V2; half: number } | null, ref: string) {
   // find the nearest wall point and its outward normal
   const b = C.b, H = C.H;
   let q: V2, n: V2;
@@ -421,7 +476,9 @@ function tieAnchor(C: Ctx, at: V2, edgeConn: { d: V2; half: number } | null) {
   // block with a vertical tunnel for a 2.5-3.6 mm zip tie; tie wraps the cable against the block
   const blk = orientedBox(o, n, 0, 4.2, -3.2, 3.2, 0, hgt).subtract(orientedBox(o, n, 1.2, 2.9, -2.0, 2.0, -1, hgt + 1));
   C.late.push(blk);
+  wallPiece(C, add(q, left(n), -5), left(n), 0, 10, Math.min(C.zw, hgt));
   C.blocked.push({ poly: orientedRect(o, n, -2, 5, -5, 5), why: 'tie anchor' });
+  feat(C, 'tie', orientedRect(o, n, 0, 4.2, -3.2, 3.2), 0, hgt, [ref]);
 }
 
 function overhangs(C: Ctx) {
@@ -487,7 +544,7 @@ function pickSpread(sites: Site[], count: number, center: V2): Site[] {
 
 function tabs(C: Ctx): Site[] {
   const H = C.H;
-  const snaps = C.b.holes.filter((h) => h.use === 'snap').length;
+  const snaps = C.b.holes.filter((h) => h.use === 'snap' && isMountHole(h)).length;
   const want = H.tabs === 'on' || (H.tabs === 'auto' && snaps < 2);
   if (!want) return [];
   const bb = bbox(C.b.outline);
@@ -495,7 +552,7 @@ function tabs(C: Ctx): Site[] {
   const Lf = small ? 10 : 14;
   const sites = edgeSites(C, Lf + 1);
   const chosen = pickSpread(sites, 4, centroid(C.b.outline));
-  const pinsCanHold = C.b.holes.filter((h) => (h.use === 'auto' || h.use === 'snap') && h.d >= 1.8).length >= 2;
+  const pinsCanHold = C.b.holes.filter((h) => isMountHole(h) && (h.use === 'auto' || h.use === 'snap') && h.d >= 1.8).length >= 2;
   if (chosen.length < 2) {
     if (pinsCanHold) C.checks.push({ group: 'Board', name: 'Wall snap fingers', value: 'no room', status: 'info', detail: 'plugs and the dock take the free wall; snap pins in the mounting holes hold the board instead' });
     else C.warnings.push('Could not find room for two wall snap fingers: the board is held by the wall only. Add holes or free up an edge.');
@@ -509,6 +566,8 @@ function tabs(C: Ctx): Site[] {
   for (const st of chosen) {
     const { q, d } = st;
     const tw0 = -(H.gap + H.wall), tw1 = -H.gap; // wall band in local t (inward positive)
+    wallPiece(C, q, d, -3, Lf + 2.5, zw);
+    feat(C, 'finger', orientedRect(q, d, 0, Lf, tw0 - 1, tw1 + lip), 0, zTop);
     C.pos.push(orientedBox(q, d, 0, Lf, tw0, tw1, Math.max(zw - 0.3, zt - 0.5), zTop));
     C.neg.push(orientedBox(q, d, 0, Lf + 0.6, tw0 - 0.1, tw1 + 0.05, zt - 1.0, zt - 0.4)); // slot under the finger
     C.neg.push(orientedBox(q, d, Lf, Lf + 0.6, tw0 - 0.1, tw1 + 0.05, zt - 1.0, zTop + 1)); // free end
@@ -539,6 +598,113 @@ function notches(C: Ctx, used: Site[]) {
     C.neg.push(cyl(o[0], o[1], C.zt - 2.2, C.zw + 5, 5.5).intersect(ringMF));
     C.blocked.push({ poly: orientedRect(st.q, st.d, 0, 12, -6, 3), why: 'notch' });
   }
+}
+
+// ------------------------------- frame style -----------------------------------------------------
+// The "frame" holder merges the lean spine-and-rib carrier with the tray: a rim runs round the board (under its
+// edge and out to the wall line), short wall guards at the corners locate it, a ledge carries the board edge, and
+// ribs laid out as a minimum spanning tree tie every pin to the rim or the dock spine. About half the plastic of
+// a full tray and far fewer layers with large areas, so it prints much faster.
+const RIM_IN = 1.6; // how far the rim reaches under the board edge
+
+/** Outline points nearest the bounding-box corners (and the middle of long sides): where the guards go. */
+function guardPoints(ol: Loop): V2[] {
+  const bb = bbox(ol);
+  const want: V2[] = [[bb.x0, bb.y0], [bb.x1, bb.y0], [bb.x1, bb.y1], [bb.x0, bb.y1]];
+  if (bb.x1 - bb.x0 > 90) want.push([(bb.x0 + bb.x1) / 2, bb.y0], [(bb.x0 + bb.x1) / 2, bb.y1]);
+  if (bb.y1 - bb.y0 > 90) want.push([bb.x0, (bb.y0 + bb.y1) / 2], [bb.x1, (bb.y0 + bb.y1) / 2]);
+  const out: V2[] = [];
+  for (const w of want) {
+    let best = { d: Infinity, q: w };
+    for (let i = 0; i < ol.length; i++) { const r = segDist(w, ol[i], ol[(i + 1) % ol.length]); if (r.d < best.d) best = { d: r.d, q: r.q }; }
+    if (!out.some((o) => Math.hypot(o[0] - best.q[0], o[1] - best.q[1]) < 8)) out.push(best.q);
+  }
+  return out;
+}
+
+function frameBody(C: Ctx) {
+  const { H, O, outer, inner } = C;
+  const rim = outer.subtract(O.offset(-RIM_IN, 'Round'));
+  C.pos.push(extCh(rim, 0, C.rimH, H.chamfer ? 0.4 : 0, 0));
+  const ring = outer.subtract(inner);
+  const guards = ring.intersect(unionCS(guardPoints(C.b.outline).map(([x, y]) => circle2(x, y, 7, 32))));
+  if (!guards.isEmpty()) C.pos.push(extCh(guards, 0, C.zw, H.chamfer ? 0.4 : 0, 0));
+}
+
+/**
+ * Seat posts under the board edge carry it where no pin is near (both styles): at the corners and along long
+ * edges, never on a part or lead under the board.
+ */
+function seats(C: Ctx) {
+  const { b, zb } = C;
+  const ol = b.outline;
+  const supports: V2[] = C.standoffs.map((so) => [so.x, so.y]);
+  const cand: V2[] = [...guardPoints(ol)];
+  let run = 0;
+  for (let i = 0; i < ol.length; i++) {
+    const a = ol[i], c = ol[(i + 1) % ol.length];
+    const L = Math.hypot(c[0] - a[0], c[1] - a[1]);
+    for (let t = (25 - run) % 25; t < L; t += 25) cand.push([a[0] + ((c[0] - a[0]) * t) / L, a[1] + ((c[1] - a[1]) * t) / L]);
+    run = (run + L) % 25;
+  }
+  const clear = (q: V2) => !C.keepouts.some((k) => rectDist(q, k.rect) < 3.2) && !b.comps.some((c) => !c.hidden && c.side === 'bottom' && inside(q, compRect(c, 3)));
+  const band = C.O.offset(-0.02, 'Round').subtract(C.O.offset(-RIM_IN - 1.0, 'Round'));
+  const pads: CS[] = [];
+  for (const q of cand) {
+    if (supports.some((s2) => Math.hypot(s2[0] - q[0], s2[1] - q[1]) < 20) || !clear(q)) continue;
+    supports.push(q);
+    pads.push(circle2(q[0], q[1], 3.2, 24));
+  }
+  if (!pads.length) return;
+  const pad = unionCS(pads).intersect(band.add(C.outer.subtract(C.inner)));
+  C.pos.push(ext(pad, C.frame ? 0.01 : C.base - 0.01, zb));
+  C.checks.push({ group: 'Board', name: 'Edge seats', value: `${pads.length}`, status: 'info', detail: 'posts under the board edge where no pin is close, clear of parts and leads under the board' });
+}
+
+function frameRibs(C: Ctx) {
+  const nodes = C.ribNodes;
+  const w = 2.4, h = C.rimH;
+  const loops = O_inner(C);
+  const spine = (C as any).spine as { a: V2; b: V2; hx: number } | undefined;
+  const toFrame = (p: V2) => {
+    let best = { d: Infinity, q: p as V2 };
+    for (const L of loops) for (let i = 0; i < L.length; i++) { const r = segDist(p, L[i], L[(i + 1) % L.length]); if (r.d < best.d) best = { d: r.d, q: r.q }; }
+    if (spine) { const r = segDist(p, spine.a, spine.b); if (r.d - spine.hx < best.d) best = { d: r.d - spine.hx, q: r.q }; }
+    return best;
+  };
+  // Prim's minimum spanning tree with the frame (rim + spine) as one node
+  const n = nodes.length;
+  const best = nodes.map((nd) => toFrame(nd.p));
+  const par: V2[] = best.map((b) => b.q);
+  const done = new Array(n).fill(false);
+  const ribs: [V2, V2, number][] = [];
+  for (let k = 0; k < n; k++) {
+    let i = -1;
+    for (let j = 0; j < n; j++) if (!done[j] && (i < 0 || best[j].d < best[i].d)) i = j;
+    done[i] = true;
+    ribs.push([nodes[i].p, par[i], nodes[i].r]);
+    for (let j = 0; j < n; j++) {
+      if (done[j]) continue;
+      const d = Math.hypot(nodes[j].p[0] - nodes[i].p[0], nodes[j].p[1] - nodes[i].p[1]) - nodes[i].r;
+      if (d < best[j].d) { best[j] = { d, q: nodes[i].p }; par[j] = nodes[i].p; }
+    }
+  }
+  const cs: CS[] = [];
+  for (const [a, b, r] of ribs) {
+    const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (L < r * 0.6) continue;
+    const d: V2 = [(b[0] - a[0]) / L, (b[1] - a[1]) / L];
+    cs.push(poly(orientedRect(a, d, 0, L + 0.8, -w / 2, w / 2), 'NonZero'));
+  }
+  if (cs.length) C.pos.push(ext(unionCS(cs), 0, h));
+  // parts under the board sink into the ribs where they need more room than the ribs leave
+  for (const k of C.keepouts) if (k.need > C.zb - h) C.neg.push(ext(poly(k.rect).offset(0.3, 'Round'), Math.max(0.6, C.zb - k.need - 0.3), C.zb + 0.1));
+  C.checks.push({ group: 'Holder', name: 'Frame', value: `${ribs.length} rib${ribs.length === 1 ? '' : 's'}`, status: 'info', detail: `rim ${round(RIM_IN + C.H.gap + C.H.wall, 1)} × ${round(h, 1)} mm round the board, ${guardPoints(C.b.outline).length} corner guards, ribs tie ${n} pin${n === 1 ? '' : 's'} and pads to the rim${spine ? ' or the dock spine' : ''}` });
+}
+
+/** Loops a rib may end on: just inside the rim's inner edge. */
+function O_inner(C: Ctx): Loop[] {
+  return csLoops(C.O.offset(-RIM_IN + 0.6, 'Round'));
 }
 
 // ------------------------------- pockets & pattern -----------------------------------------------
@@ -651,7 +817,9 @@ function mountDin(C: Ctx) {
     (C as any).clipAt = at;
     const sl = clipSlots(W, cfg.HA);
     for (const r of slotRects(at, er, ev, sl, cfg.four)) C.neg.push(ext(poly(r), -1, C.base + 0.02));
-    C.keep.push(poly(orientedRect(at, er, -(sl.outer + 2.5), sl.outer + 2.5, -(sl.outer + 2.5), sl.outer + 2.5)));
+    const pad = orientedRect(at, er, -(sl.outer + 2.5), sl.outer + 2.5, -(sl.outer + 2.5), sl.outer + 2.5);
+    C.keep.push(poly(pad));
+    if (C.frame) { C.pos.push(ext(roundCS(poly(pad), 2), 0, C.base)); C.ribNodes.push({ p: at, r: sl.outer + 2.5 }); }
     const tabExt = tabNeed(at);
     const d = clipDims({ W, tf: M.railT, tabExt, HA: cfg.HA });
     const clip = buildClip({ W, tf: M.railT, tabExt, HA: cfg.HA });
@@ -659,7 +827,7 @@ function mountDin(C: Ctx) {
     const Wd: V2 = [-ev[1], ev[0]]; // z x ev
     const o = add(add(at, ev, -d.vc), Wd, -W / 2);
     const T = matFromBasis([0, 0, 1], [ev[0], ev[1], 0], [Wd[0], Wd[1], 0], [o[0], o[1], -d.uF]);
-    C.parts.push(part('clip', 'DIN rail clip (pull tab)', clip, T, '#ff6b5b'));
+    C.parts.push(part('clip', 'DIN rail clip (pull tab)', clip, T, '#ff6b5b', 1, { kind: 'clip', module: C.mid }, { seq: 2, dir: [0, 0, -1] }));
     railGhost(C, T, W);
     clipChecks(C, d, tabExt);
   } else {
@@ -704,7 +872,7 @@ function mountDin(C: Ctx) {
     const Wd = [U[1] * Vv[2] - U[2] * Vv[1], U[2] * Vv[0] - U[0] * Vv[2], U[0] * Vv[1] - U[1] * Vv[0]];
     const o = [face[0] - U[0] * d.uF - Vv[0] * d.vc - Wd[0] * (W / 2), face[1] - U[1] * d.uF - Vv[1] * d.vc - Wd[1] * (W / 2), zc - U[2] * d.uF - Vv[2] * d.vc - Wd[2] * (W / 2)];
     const T = matFromBasis(U, Vv, Wd, o);
-    C.parts.push(part('clip', 'DIN rail clip (pull tab)', clip, T, '#ff6b5b'));
+    C.parts.push(part('clip', 'DIN rail clip (pull tab)', clip, T, '#ff6b5b', 1, { kind: 'clip', module: C.mid }, { seq: 2, dir: [n[0], n[1], 0] }));
     (C as any).clipAt = c0;
     railGhost(C, T, W);
     clipChecks(C, d, tabExt);
@@ -722,7 +890,8 @@ function clipChecks(C: Ctx, d: ReturnType<typeof clipDims>, tabExt: number) {
 function railGhost(C: Ctx, T: number[], W: number) {
   const L = Math.max(80, W + 60);
   const rail = unionMF(railProfile().map((l) => poly(l, 'NonZero').extrude(L).translate([0, 0, -(L - W) / 2])));
-  C.ghosts.push({ name: 'DIN rail', mesh: transformMesh(meshFrom(rail), T), color: '#94a3b8', opacity: 0.55 });
+  const u = [T[0], T[1], T[2]]; // clip u axis: from the rail towards the holder
+  C.ghosts.push({ name: 'DIN rail', mesh: transformMesh(meshFrom(rail), T), color: '#94a3b8', opacity: 0.55, tag: { kind: 'rail' }, anim: { seq: 0, dir: [-u[0], -u[1], -u[2]] } });
 }
 
 export function transformMesh(m: MeshData, T: number[]): MeshData {
@@ -794,6 +963,9 @@ function stand(C: Ctx) {
   }
   C.late.push(boss.subtract(hole));
   C.blocked.push({ poly: orientedRect(c0, n, -3, S.depth + 5, -outerW / 2 - 2, outerW / 2 + 2), why: 'stand socket' });
+  feat(C, 'stand', orientedRect(c0, n, -1, S.depth + 3, -outerW / 2, outerW / 2), 0, Math.max(C.zw, outerW + 0.5));
+  const post = C.ghosts[C.ghosts.length - 1];
+  if (post?.name === 'stand post') { post.tag = { kind: 'stand', module: C.mid }; post.anim = { seq: 30, dir: axis === 'edge' ? [n[0], n[1], 0] : [0, 0, -1] }; }
   C.checks.push({ group: 'Stand', name: 'Stand socket', value: `${S.shape === 'tripod' ? '1/4"-20 nut trap' : `${S.shape} ${round(size, 2)} mm`}`, status: 'info', detail: `${S.fit === 'press' ? 'press fit with crush ribs' : `slip fit, +${round(clr, 2)} mm`}; ${round(S.depth, 1)} mm deep, axis ${axis === 'edge' ? 'out of the ' + S.edge + ' edge' : 'downwards'}` });
 }
 
@@ -818,6 +990,8 @@ function label(C: Ctx): boolean {
   const a = C.b.outline[st.seg];
   const o = add(add(a, st.d, sMid), st.n, H.gap + H.wall);
   // text reads along d when seen from outside (for a CCW outline); depth axis = outward normal
+  wallPiece(C, add(a, st.d, sMid - tw / 2 - 2.5), st.d, 0, tw + 5, C.zw);
+  feat(C, 'label', orientedRect(add(a, st.d, sMid - tw / 2 - 1), st.d, 0, tw + 2, -(H.gap + H.wall + 0.5), 0), 0, C.zw);
   const glyphs = textCS(text, hgt).translate([-tw / 2, 0]);
   const m = glyphs.extrude(1.2).translate([0, 0, -0.6]);
   const zc = C.base + 0.8 + (C.zw - C.base - 1.6 - hgt) / 2;
@@ -834,7 +1008,9 @@ function boardGhosts(C: Ctx) {
   let bcs = C.O;
   for (const cu of b.cutouts) bcs = bcs.subtract(poly(cu));
   for (const h of b.holes) bcs = bcs.subtract(circle2(h.x, h.y, h.d / 2, 24));
-  C.ghosts.push({ name: 'board', mesh: meshFrom(ext(bcs, zb, zt)), color: '#17804f', opacity: 0.92 });
+  const lv = C.job.level ?? 0;
+  const tag: PickTag = { kind: 'board', module: C.mid }, anim: Anim = { seq: 4 + 2 * lv, dir: [0, 0, 1] };
+  C.ghosts.push({ name: 'board', mesh: meshFrom(ext(bcs, zb, zt)), color: '#17804f', opacity: 0.92, tag, anim });
   const col: Record<string, string> = { connector: '#e2e8f0', header: '#1f2937', switch: '#475569', led: '#fde047', module: '#64748b', hot: '#ef4444', antenna: '#60a5fa', generic: '#334155' };
   const boxes: Record<string, MF[]> = {};
   for (const c of b.comps) {
@@ -842,9 +1018,45 @@ function boardGhosts(C: Ctx) {
     const z0 = c.side === 'top' ? zt : zb - c.h, z1 = c.side === 'top' ? zt + c.h : zb;
     (boxes[c.kind] ??= []).push(ext(poly(compRect(c)), z0, z1));
   }
-  for (const [k, list] of Object.entries(boxes)) C.ghosts.push({ name: `parts ${k}`, mesh: meshFrom(unionMF(list)), color: col[k] ?? '#334155', opacity: 0.9 });
+  for (const [k, list] of Object.entries(boxes)) C.ghosts.push({ name: `parts ${k}`, mesh: meshFrom(unionMF(list)), color: col[k] ?? '#334155', opacity: 0.9, tag: { kind: 'parts', module: C.mid }, anim });
 }
 
+
+/** A board screwed on top on standoffs: its slab, parts and plugs, plus the standoffs, all as ghosts. */
+function boltedGhosts(C: Ctx, bo: NonNullable<Job['bolted']>[number]) {
+  const { b, dx, dy, dz, mid } = bo;
+  const z0 = C.zt + dz, z1 = z0 + b.thickness;
+  let bcs = poly(b.outline);
+  for (const cu of b.cutouts) bcs = bcs.subtract(poly(cu));
+  for (const h of b.holes) bcs = bcs.subtract(circle2(h.x, h.y, h.d / 2, 24));
+  const tag: PickTag = { kind: 'board', module: mid }, anim: Anim = { seq: 4.5 + 2 * (C.job.level ?? 0), dir: [0, 0, 1] };
+  const T = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, dx, dy, 0, 1];
+  C.ghosts.push({ name: 'board', mesh: transformMesh(meshFrom(ext(bcs, z0, z1)), T), color: '#1f8a57', opacity: 0.92, tag, anim });
+  const boxes: MF[] = [];
+  for (const c of b.comps) {
+    if (c.hidden || c.h <= 0.05) continue;
+    const a0 = c.side === 'top' ? z1 : z0 - c.h, a1 = c.side === 'top' ? z1 + c.h : z0;
+    boxes.push(ext(poly(compRect(c)), a0, a1));
+  }
+  if (boxes.length) C.ghosts.push({ name: 'parts bolted', mesh: transformMesh(meshFrom(unionMF(boxes)), T), color: '#3b4654', opacity: 0.9, tag: { kind: 'parts', module: mid }, anim });
+  // standoffs where the holes line up with the board below
+  const posts: MF[] = [];
+  for (const h of b.holes) {
+    const x = h.x + dx, y = h.y + dy;
+    if (C.b.holes.some((q) => Math.hypot(q.x - x, q.y - y) < 0.8)) posts.push(cyl(x, y, C.zt, z0, 2.5, 2.5, 6));
+  }
+  if (posts.length) C.ghosts.push({ name: 'standoffs', mesh: meshFrom(unionMF(posts)), color: '#c8ced6', opacity: 0.95, tag, anim });
+  for (const c of b.comps) {
+    const cn = c.conn;
+    if (!cn || c.hidden || cn.entry !== 'edge') continue;
+    const d = dirOf(cn.angle);
+    const mouth = add([c.x + dx, c.y + dy], d, extentAlong(c, cn.angle));
+    const zAx = c.side === 'top' ? z1 + cn.zc : z0 - cn.zc;
+    const { w: pw, h: ph, len: pl } = cn.plug;
+    C.ghosts.push({ name: `plug ${c.ref}`, mesh: meshFrom(orientedBox(mouth, d, 0.4, 0.4 + pl, -pw / 2, pw / 2, zAx - ph / 2, zAx + ph / 2)), color: '#e8a15a', opacity: 0.33, tag: { kind: 'plug', module: mid, refs: [c.ref] }, anim: { seq: 30, dir: [d[0], d[1], 0] } });
+  }
+  C.checks.push({ group: 'Stack', name: `${b.name} bolted on top`, value: `${round(dz, 1)} mm standoffs`, status: 'info', detail: `sits on standoffs screwed into the holes it shares with ${C.b.name}; those holes get no holder pins and the holder leaves room under them for screw heads or nuts. Its plugs get no cradles of their own.` });
+}
 
 // ------------------------------- multi-board arrangement features --------------------------------
 function arrangeFeatures(C: Ctx) {
@@ -869,6 +1081,7 @@ function arrangeFeatures(C: Ctx) {
       const arm = orientedBox(q, u, 0, L, -2.5, 2.5, 0, Math.min(C.zw, 6)).subtract(ext(C.inner, -1, 100));
       C.late.push(tw, arm);
       C.blocked.push({ poly: orientedRect(q, u, -4, 8, -5, 5), why: 'tower' });
+      feat(C, 'tower', [[q[0] - 3.5, q[1] - 3.5], [q[0] + 3.5, q[1] + 3.5]], 0, height + (peg ? 4 : 0));
     }
     C.checks.push({ group: 'Layout', name: 'Stacking towers', value: `${round(height, 1)} mm`, status: 'info', detail: `${pts.length} corner towers${peg ? ', Ø4 pegs on top' : ''}${socket ? ', press-fit sockets underneath (crush ribs)' : ''}` });
   }
@@ -884,6 +1097,7 @@ function arrangeFeatures(C: Ctx) {
   }
   if (A.rivets) {
     for (const q of A.rivets) {
+      if (C.frame) { C.pos.push(cyl(q[0], q[1], 0, C.base, 4.5)); C.ribNodes.push({ p: q, r: 4.5 }); }
       C.neg.push(cyl(q[0], q[1], -1, C.base + 1, 1.75));
       C.keep.push(circle2(q[0], q[1], 5));
     }
@@ -909,7 +1123,9 @@ function dockFeatures(C: Ctx, s: DockSite) {
   C.neg.push(f.cut.transform(D as any));
   C.keep.push(poly(tsPoly(s, s.tc - HD.spineHx - 1.2, s.tc + HD.spineHx + 1.2, -1, s.far + 1)), poly(tsPoly(s, s.tc - HD.base.hx - 1.2, s.tc + HD.base.hx + 1.2, -1, s.ped + 1.5)));
   const r = rod(f.zg1, s.side);
-  C.parts.push(part('rod', 'Release rod + button', r.m.transform(D as any), ID, '#ff5d6c'));
+  C.parts.push(part('rod', 'Release rod + button', r.m.transform(D as any), ID, '#ff5d6c', 1, { kind: 'rod', module: C.mid }, { seq: 3.5, dir: [-s.n[0], -s.n[1], 0] }));
+  feat(C, 'dock', tsPoly(s, s.tc - HD.base.hx, s.tc + HD.base.hx, -14, s.ped + 1), 0, HD.spineY1);
+  (C as any).spine = { a: tsPoly(s, s.tc, s.tc, 0, 0)[0], b: tsPoly(s, s.tc, s.tc, s.far, s.far)[0], hx: HD.spineHx };
   if (s.conflicts.length) C.warnings.push(`Dock on the ${s.edge} edge: ${s.conflicts.join(', ')} ${s.conflicts.length > 1 ? 'are' : 'is'} in the way. Pick another dock edge in the Panel step.`);
   const eRatio = mat.E / MATERIALS.PETG.E;
   const F = 20, Mo = F * s.far, sig = Mo / 32; // tongue root 12 x 4 mm, out-of-plane push on the far edge

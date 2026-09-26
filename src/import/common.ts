@@ -3,6 +3,7 @@
 import type { Board, Comp } from '../model/types';
 import { bbox, ccw, compRect, deg, inside, nearestEdge } from '../geom/poly';
 import { classify } from '../model/library';
+import { applyHoleRoles } from '../model/holes';
 
 export function finishBoard(b: Board, opts: { sizesKnown: boolean; heightsKnown?: boolean }): Board {
   b.outline = ccw(b.outline);
@@ -21,6 +22,7 @@ export function finishBoard(b: Board, opts: { sizesKnown: boolean; heightsKnown?
   });
   // components sitting on a mounting hole (mounting-hole footprints that slipped through) are removed
   b.comps = b.comps.filter((c) => c.w > 0.05 && c.l > 0.05 && !b.holes.some((h) => Math.hypot(h.x - c.x, h.y - c.y) < 0.3 && c.w < h.d + 3));
+  applyHoleRoles(b);
   return b;
 }
 

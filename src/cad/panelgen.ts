@@ -1,19 +1,56 @@
 // Panel mode: boards in docks (or flat clips) on DIN rails. Builds every holder, places each mount on its rail
 // with the real 3D extents (so plugs and cradles never collide), starts new rows when a rail is full, and
 // reports plug access, collisions, rail lengths and the parts list.
-import type { Check, EdgeName, GenResult, Ghost, MeshData, Module, PanelReport, PartOut, Project, Rail, RailMount } from '../model/types';
+import type { Anim, Check, EdgeName, Feature, GenResult, Ghost, MeshData, Module, PanelReport, PartOut, Project, Rail, RailMount, V2 } from '../model/types';
 import { MATERIALS } from '../model/library';
-import { round } from '../geom/poly';
+import { bbox, round } from '../geom/poly';
 import { basis, dir, I4, inv, mul, rotZ, tr, type M4 } from '../geom/mat';
-import { buildModule, transformMesh, type ModuleOut } from './generate';
+import { buildModule, computeLevels, transformMesh, type ArrangeHooks, type ModuleOut } from './generate';
+import { baseOf, ridersOf, stackLayers, type StackLayer } from '../model/holes';
 import { freeAll, toMesh, type MF } from './kernel';
 import { END_POSE, LEN_X, rail as railSolid, shoe, socket, SOCKET_Z } from './dock';
-import { autoAssign, bestDock, classify, clipToRail, plugDirs, railMatrix, slotMatrix } from './dockplan';
+import { autoAssign, bestDock, classify, clipToRail, dockSite, plugDirs, railMatrix, slotMatrix, withRiders } from './dockplan';
 
-const SHOE_BOX = { x: [-LEN_X / 2, LEN_X / 2], y: [-25.1, 25.1], z: [0, 29.5] };
+const SHOE_BOX = { x: [-LEN_X / 2, LEN_X / 2], y: [-25.4, 25.4], z: [0, 40.6] };
 
-interface Seat { mod: Module; mi: number; slot: number; edge: EdgeName; out: ModuleOut; M: M4 }
+interface Layer { mod: Module; mi: number; out: ModuleOut; T: M4 } // a board stacked on the seat's board: T = its holder -> base holder frame
+interface Seat { mod: Module; mi: number; slot: number; edge: EdgeName; out: ModuleOut; M: M4; above: Layer[]; riders: Module[] }
 interface Placed { mt: RailMount; seats: Seat[]; lo: number; hi: number; ylo: number; yhi: number; zhi: number; boxes: { id: string; b: number[] }[]; lever: 1 | -1 }
+
+/** Move a part's animation into another frame. */
+export const moveAnim = (a: Anim | undefined, T: M4): Anim | undefined => (a ? { seq: a.seq, dir: dir(T, a.dir) } : undefined);
+
+/** Stack towers: corner points round every printed layer (each in its own frame) and the layer heights. The two
+ * towers on a docked base's dock side are pulled back inside the dock face. */
+function stackPlan(p: Project, layers: StackLayer[], dockEdge: EdgeName | null) {
+  const facts = layers.map((L) => {
+    const m = L.mod, bb = bbox(m.board.outline), gw = m.holder.gap + m.holder.wall, lv = computeLevels(m.board, m.holder);
+    let top = lv.topMax;
+    for (const bo of L.bolted) top = Math.max(top, lv.zt + bo.dz + bo.mod.board.thickness + Math.max(0, ...bo.mod.board.comps.filter((c) => !c.hidden && c.side === 'top').map((c) => c.h)));
+    return { bb, gw, lv, top };
+  });
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  layers.forEach((L, i) => { const f = facts[i]; x0 = Math.min(x0, L.dx + f.bb.x0 - f.gw); y0 = Math.min(y0, L.dy + f.bb.y0 - f.gw); x1 = Math.max(x1, L.dx + f.bb.x1 + f.gw); y1 = Math.max(y1, L.dy + f.bb.y1 + f.gw); });
+  let common: V2[] = [[x0 - 3.3, y0 - 3.3], [x1 + 3.3, y0 - 3.3], [x1 + 3.3, y1 + 3.3], [x0 - 3.3, y1 + 3.3]];
+  if (dockEdge) {
+    const n = ({ bottom: [0, -1], top: [0, 1], left: [-1, 0], right: [1, 0] } as Record<EdgeName, V2>)[dockEdge];
+    const b0 = layers[0].mod.board, face = Math.max(...b0.outline.map((q) => q[0] * n[0] + q[1] * n[1])) + facts[0].gw;
+    common = common.map((c) => { const over = c[0] * n[0] + c[1] * n[1] - (face - 4); return over > 0 ? [c[0] - n[0] * over, c[1] - n[1] * over] as V2 : c; });
+  }
+  let z = 0;
+  return layers.map((L, i) => {
+    const f = facts[i];
+    const height = Math.max(f.top + p.arrange.stackGap, f.lv.zw + 1);
+    const hooks: ArrangeHooks = { towers: { pts: common.map(([x, y]) => [x - L.dx, y - L.dy] as V2), height, peg: i < layers.length - 1, socket: i > 0 } };
+    const T = tr(L.dx, L.dy, z);
+    z += height;
+    return { hooks, T };
+  });
+}
+
+const boltedOf = (L: StackLayer) => L.bolted.map((bo) => ({ b: bo.mod.board, dx: bo.dx, dy: bo.dy, dz: bo.dz, mid: bo.mod.id }));
+
+let shoeRest: ReturnType<typeof rest> | null = null, sockRest: ReturnType<typeof rest> | null = null;
 
 function rest(m: MF, pose: M4): { mesh: MeshData; back: M4; volume: number; size: [number, number, number] } {
   const pm = m.transform(pose as any);
@@ -32,6 +69,12 @@ function boxOf(pos: Float32Array, M: M4, b: number[]) {
   }
 }
 const emptyBox = () => [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+const railCache = new Map<number, MeshData>();
+function railMesh(len: number): MeshData {
+  let m = railCache.get(len);
+  if (!m) { m = toMesh(railSolid(len)); railCache.set(len, m); if (railCache.size > 32) railCache.delete(railCache.keys().next().value!); }
+  return m;
+}
 
 /** Rail-frame box (x along, y across, z out) -> panel-frame box [x0, y0, x1, y1] and z1. */
 function toPanel(r: Rail, at: number, b: number[]): [number, number, number, number] {
@@ -53,7 +96,11 @@ export function generatePanel(p: Project): GenResult {
     for (const mt of mounts) if (!railOf(mt)) warnings.push(`A ${mt.kind === 'dock' ? 'dock' : 'flat clip'} sits on a rail that no longer exists; it was left out.`);
     mounts = mounts.filter((mt) => railOf(mt));
   }
+  // boards stacked on another board ride with it: they never take a slot of their own
+  const rider = (id: string | null) => { const m = id ? mods.get(id)?.m : null; return !!m && baseOf(p, m) !== m; };
+  for (const mt of mounts) for (const sl of mt.slots) if (rider(sl.module)) sl.module = null;
   const placedIds = new Set(mounts.flatMap((mt) => mt.slots.map((s) => s.module)).filter(Boolean) as string[]);
+  for (const id of [...placedIds]) for (const r of ridersOf(p, mods.get(id)!.m)) placedIds.add(r.id);
   const unplaced = p.modules.filter((m) => !placedIds.has(m.id)).map((m) => m.id);
   if (unplaced.length) warnings.push(`${unplaced.length} board${unplaced.length > 1 ? 's are' : ' is'} not on a rail yet: drag ${unplaced.length > 1 ? 'them' : 'it'} onto a rail in the Panel step, or press Auto-arrange.`);
 
@@ -68,15 +115,23 @@ export function generatePanel(p: Project): GenResult {
       const hit = mods.get(sl.module);
       if (!hit) return;
       const { m, i } = hit;
-      const edge: EdgeName = sl.edge === 'auto' ? bestDock(m, railDir, slot, [mt.turn]).edge : sl.edge;
+      const edge: EdgeName = sl.edge === 'auto' ? bestDock(withRiders(p, m), railDir, slot, [mt.turn]).edge : sl.edge;
       try {
+        const layers = stackLayers(p, m);
+        const riders = ridersOf(p, m);
+        const plan = layers.length > 1 ? stackPlan(p, layers, mt.kind === 'dock' ? edge : null) : null;
         const out = buildModule({
-          p, mi: i, b: m.board, H: m.holder, din: mt.kind === 'flat', stand: false, hooks: {}, name: m.board.name,
+          p, mi: i, b: m.board, H: m.holder, din: mt.kind === 'flat', stand: false, hooks: plan?.[0].hooks ?? {}, name: m.board.name, bolted: boltedOf(layers[0]),
           dock: mt.kind === 'dock' ? { edge, fit: P.fit ?? 0 } : undefined,
           mount: mt.kind === 'flat' ? { ...p.mount, kind: 'din', mode: 'flat', rotation: mt.turn, at: null } : undefined,
         });
         const M = mt.kind === 'dock' ? slotMatrix(mt.turn, slot, out.dockM!) : mul(clipToRail(p.mount.clipWidth), inv(out.clipT ?? I4));
-        seats.push({ mod: m, mi: i, slot, edge, out, M });
+        const above: Layer[] = layers.slice(1).map((L, k) => {
+          const r = L.mod, ri = mods.get(r.id)!.i;
+          return { mod: r, mi: ri, T: plan![k + 1].T, out: buildModule({ p, mi: ri, b: r.board, H: r.holder, din: false, stand: false, hooks: plan![k + 1].hooks, name: r.board.name, level: k + 1, bolted: boltedOf(L) }) };
+        });
+        if (mt.kind === 'dock' && riders.length && dockSite(m.board, m.holder, edge).side === 0 && Math.min(...[m, ...riders].map((x) => { const b = bbox(x.board.outline); return Math.min(b.x1 - b.x0, b.y1 - b.y0); })) < 30) warnings.push(`${m.board.name}: the stack's corner towers are close to the dock's release button; check them in 3D.`);
+        seats.push({ mod: m, mi: i, slot, edge, out, M, above, riders });
       } catch (e: any) {
         failed.push(`${m.board.name}: ${e?.message ?? e}`);
       }
@@ -93,6 +148,10 @@ export function generatePanel(p: Project): GenResult {
       const b = emptyBox();
       for (const pt of s.out.parts) boxOf(pt.mesh.pos, mul(s.M, pt.toAssembly), b);
       for (const g of s.out.ghosts) if (!g.name.startsWith('DIN rail')) boxOf(g.mesh.pos, s.M, b);
+      for (const L of s.above) {
+        for (const pt of L.out.parts) boxOf(pt.mesh.pos, mul(s.M, L.T, pt.toAssembly), b);
+        for (const g of L.out.ghosts) boxOf(g.mesh.pos, mul(s.M, L.T), b);
+      }
       boxes.push({ id: s.mod.id, b });
       for (let k = 0; k < 3; k++) { all[k] = Math.min(all[k], b[k]); all[k + 3] = Math.max(all[k + 3], b[k + 3]); }
     }
@@ -177,28 +236,44 @@ export function generatePanel(p: Project): GenResult {
   const access: PanelReport['modules'] = [];
   const mountOut: PanelReport['mounts'] = [];
   const docks = placed.filter((q) => q.mt.kind === 'dock');
-  const shoeInst: M4[] = [], sockInst: M4[] = [];
+  const shoeInst: M4[] = [], sockInst: M4[] = [], dockIds: string[] = [];
+  const features: Feature[] = [];
+  const frames: Record<string, number[]> = {};
   try {
-    const sh = docks.length ? rest(shoe(), END_POSE.pose) : null;
-    const so = docks.length ? rest(socket(), END_POSE.pose) : null;
+    const sh = docks.length ? (shoeRest ??= rest(shoe(), END_POSE.pose)) : null;
+    const so = docks.length ? (sockRest ??= rest(socket(), END_POSE.pose)) : null;
     for (const q of placed) {
       const r = railOf(q.mt)!;
       const R = mul(railMatrix(r), tr(q.mt.at!, 0, 0));
       if (q.mt.kind === 'dock') {
         shoeInst.push(mul(R, rotZ(q.lever > 0 ? 0 : 180), sh!.back));
         sockInst.push(mul(R, tr(0, 0, SOCKET_Z), rotZ(q.mt.turn), so!.back));
+        dockIds.push(q.mt.id);
       }
       for (const s of q.seats) {
         const T = mul(R, s.M);
-        for (const pt of s.out.parts) parts.push({ ...pt, toAssembly: mul(T, pt.toAssembly) });
-        for (const g of s.out.ghosts) if (!g.name.startsWith('DIN rail')) ghosts.push({ ...g, mesh: transformMesh(g.mesh, T) });
+        const layers = [{ mod: s.mod, out: s.out, T }, ...s.above.map((L) => ({ mod: L.mod, out: L.out, T: mul(T, L.T) }))];
+        for (const L of layers) {
+          for (const pt of L.out.parts) {
+            const a = pt.id.endsWith('_clip') ? { seq: 2, dir: dir(R, [0, 0, 1]) } : moveAnim(pt.anim, L.T);
+            parts.push({ ...pt, toAssembly: mul(L.T, pt.toAssembly), anim: a });
+          }
+          for (const g of L.out.ghosts) if (!g.name.startsWith('DIN rail')) ghosts.push({ ...g, mesh: transformMesh(g.mesh, L.T), anim: moveAnim(g.anim, L.T) });
+          features.push(...L.out.features);
+          frames[L.mod.id] = L.T;
+        }
         const bx = q.boxes.find((b) => b.id === s.mod.id)!.b;
-        const acc = plugDirs(s.mod.board).map((d) => ({ ref: d.ref, type: d.type, ...classify(dir(T, d.v), r.dir) }));
+        const accOf = (b: Module['board']) => plugDirs(b).map((d) => ({ ref: d.ref, type: d.type, ...classify(dir(T, d.v), r.dir) }));
+        const acc = [s.mod, ...s.riders].flatMap((mm) => accOf(mm.board).map((a) => (mm === s.mod ? a : { ...a, ref: `${a.ref}·${mm.board.name.slice(0, 10)}` })));
         access.push({ id: s.mod.id, mount: q.mt.id, slot: s.slot, edge: s.edge, turn: q.mt.turn, foot: toPanel(r, q.mt.at!, bx), z1: bx[5], access: acc });
+        for (const mm of s.riders) access.push({ id: mm.id, mount: q.mt.id, slot: s.slot, edge: s.edge, turn: q.mt.turn, foot: toPanel(r, q.mt.at!, bx), z1: bx[5], access: accOf(mm.board) });
         const blocked = acc.filter((a) => a.ok === 'blocked');
         if (blocked.length) warnings.push(`${s.mod.board.name}: ${blocked.map((a) => a.ref).join(', ')} face${blocked.length > 1 ? '' : 's'} the wall. Turn the dock or pick another dock edge.`);
-        warnings.push(...s.out.warnings.map((w) => `${s.mod.board.name}: ${w}`));
-        checks.push(...s.out.checks.map((c) => ({ ...c, group: `${s.mod.board.name} · ${c.group}` })));
+        for (const L of layers) {
+          warnings.push(...L.out.warnings.map((w) => `${L.mod.board.name}: ${w}`));
+          checks.push(...L.out.checks.map((c) => ({ ...c, group: `${L.mod.board.name} · ${c.group}` })));
+        }
+        if (s.riders.length) checks.push({ group: `${s.mod.board.name} · Stack`, name: `${s.riders.length + 1} boards stacked`, value: [s.mod, ...s.riders].map((x) => x.board.name).join(' < '), status: 'info', detail: `${s.above.length ? `${s.above.length} printed layer${s.above.length > 1 ? 's press' : ' presses'} onto the corner pegs of the one below; ` : ''}${s.riders.length - s.above.length ? `${s.riders.length - s.above.length} bolted on standoffs; ` : ''}the bottom holder carries the dock` });
       }
       const all = [q.lo, q.ylo, 0, q.hi, q.yhi, q.zhi];
       const f = toPanel(r, q.mt.at!, all);
@@ -207,12 +282,16 @@ export function generatePanel(p: Project): GenResult {
     }
     const base = { toAssembly: I4, color: '' };
     if (sh && so) {
-      parts.push({ ...base, id: 'dock_shoe', name: 'Rail shoe (thumb-lever release)', qty: docks.length, mesh: sh.mesh, toAssembly: shoeInst[0], instances: shoeInst.slice(1), volume: sh.volume, size: sh.size, color: '#f59e42' });
-      parts.push({ ...base, id: 'dock_socket', name: 'Dock socket (turns 4 ways, 2 slots)', qty: docks.length, mesh: so.mesh, toAssembly: sockInst[0], instances: sockInst.slice(1), volume: so.volume, size: so.size, color: '#5b8def' });
+      const out: [number, number, number] = [0, 0, 1];
+      const tags = (kind: 'shoe' | 'socket') => dockIds.map((id) => ({ kind, mount: id }));
+      parts.push({ ...base, id: 'dock_shoe', name: 'Rail shoe (pinch-ear release)', qty: docks.length, mesh: sh.mesh, toAssembly: shoeInst[0], instances: shoeInst.slice(1), volume: sh.volume, size: sh.size, color: '#f59e42',
+        tag: tags('shoe')[0], tags: tags('shoe').slice(1), anim: { seq: 1, dir: out }, anims: dockIds.slice(1).map(() => ({ seq: 1, dir: out })) });
+      parts.push({ ...base, id: 'dock_socket', name: 'Dock socket (turns 4 ways, 2 slots)', qty: docks.length, mesh: so.mesh, toAssembly: sockInst[0], instances: sockInst.slice(1), volume: so.volume, size: so.size, color: '#5b8def',
+        tag: tags('socket')[0], tags: tags('socket').slice(1), anim: { seq: 2, dir: out }, anims: dockIds.slice(1).map(() => ({ seq: 2, dir: out })) });
     }
     for (const r of rails) {
-      const m = toMesh(railSolid(r.length!));
-      ghosts.push({ name: `DIN rail ${r.id}`, mesh: transformMesh(m, mul(railMatrix(r), tr(r.length! / 2, 0, 0))), color: '#94a3b8', opacity: 0.6 });
+      const m = railMesh(r.length!);
+      ghosts.push({ name: `DIN rail ${r.id}`, mesh: transformMesh(m, mul(railMatrix(r), tr(r.length! / 2, 0, 0))), color: '#94a3b8', opacity: 0.6, tag: { kind: 'rail', rail: r.id }, anim: { seq: 0, dir: [0, 0, 1] } });
     }
   } finally {
     freeAll();
@@ -224,7 +303,7 @@ export function generatePanel(p: Project): GenResult {
   const st = (eps: number): Check['status'] => (eps <= allow * 0.85 ? 'ok' : eps <= allow * 1.1 ? 'warn' : 'bad');
   if (docks.length) {
     // PETG numbers from the in-app 2D FEA (0.06 mm mesh), scaled by stiffness; the Check tab reruns it for your material
-    checks.push({ group: 'Panel', name: 'Rail shoe release', value: `${(2.7 * eR).toFixed(1)} N push`, status: 'info', detail: 'lift the boards out first, then push the ridged lever pad beside the socket toward it (about 3.3 mm) and tilt the dock off the rail. A stop meets the post at 2.1 mm of jaw travel (1.7 needed), so the hinge cannot be over-bent. Each dock puts its lever on the side with the most room.' });
+    checks.push({ group: 'Panel', name: 'Rail shoe release', value: `${(1.6 * eR).toFixed(1)} N pinch`, status: 'info', detail: `lift the boards out, then pinch the tall ridged ear beside the socket toward it (about 5 mm) and tilt the dock off the rail, one hand. Or hook a fingertip under the ear's top lip and pull it off the wall (about ${(6.1 * eR).toFixed(0)} N). A stop meets the post at 2.3 mm of jaw travel (1.7 needed), so the hinge cannot be over-bent. Each dock puts its ear on the side with the most room.` });
     checks.push({ group: 'Panel', name: 'Rail shoe hinge', value: '1.9% peak', status: st(0.019), detail: 'uniform 0.9 mm leaf above the lip, at its root fillet; 99% of the shoe stays under 0.6%. Clipping on: 4.3 N (PETG) at the jaw ramp.' });
     checks.push({ group: 'Panel', name: 'Socket latch (per board)', value: `${(9.8 * eR).toFixed(1)} N to plug in`, status: st(0.018), detail: `1.8% peak at the spring root while the tongue goes in, 1.3% while the button releases it; the nose clears the groove after 1.9 mm of the 3.1 mm button stroke; a stop post prevents over-bending` });
     checks.push({ group: 'Panel', name: 'Rail shoe pull-off', value: `~${Math.round(90 * (allow / 0.02))} N`, status: 'ok', detail: 'the hinge leaf stands above the lip, so a pull straight off the wall runs down the leaf and cannot pry the jaw open, friction or not; this is where the hinge reaches its strain limit.' });
@@ -255,6 +334,8 @@ export function generatePanel(p: Project): GenResult {
       clipFrame: basis([0, 0, 1], [0, 1, 0], [-1, 0, 0], [cx, cy, 0]),
       timeMs: Date.now() - t0,
       panel,
+      features,
+      frames,
     },
   };
 }

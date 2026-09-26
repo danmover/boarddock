@@ -1,57 +1,29 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { activeModule, redo, store, undo, useApp, type Step } from './state';
+import { activeModule, edit, redo, select, store, undo, useApp, type Layer, type SelItem, type Step } from './state';
 import { generateProject } from './worker/client';
 import { Viewer3D } from './ui/Viewer3D';
 import { BoardEditor, type Tool } from './ui/BoardEditor';
 import { PanelEditor } from './ui/PanelEditor';
 import { BoardPanel, CheckPanel, ExportPanel, HolderPanel, ImportPanel, MountPanel, PlugsPanel } from './ui/panels';
-import { Seg, download, safeName } from './ui/controls';
+import { download, safeName } from './ui/controls';
 import { HeroArt, Mark } from './ui/art';
 import { MATERIALS } from './model/library';
 import { estimate, packPlates } from './cad/export';
 import { openFiles } from './ui/importFlow';
+import { describe, removeItems } from './ui/pickOps';
+import { Icon, I } from './ui/icons';
 
-const STEPS: { id: Step; label: string; icon: string; hue: string; tag: string }[] = [
-  { id: 'import', label: 'Start', icon: 'M4 15v4h16v-4M12 4v11m0 0l-4-4m4 4l4-4', hue: '#ff9f43', tag: 'bring a board in' },
-  { id: 'board', label: 'Board', icon: 'M4 6h16v12H4zM7.5 9.5h.01M16.5 9.5h.01M7.5 14.5h.01M16.5 14.5h.01M10 10h4v4h-4z', hue: '#3ddc97', tag: 'check what was read' },
-  { id: 'plugs', label: 'Plugs', icon: 'M9 3v5M15 3v5M6 8h12v3a6 6 0 01-12 0zM12 17v4', hue: '#ffc857', tag: 'protect every connector' },
-  { id: 'holder', label: 'Holder', icon: 'M3 9l2 10h14l2-10M3 9h18M8 13l1 3M16 13l-1 3M12 13v3', hue: '#e9dfc4', tag: 'shape the tray' },
-  { id: 'mount', label: 'Panel', icon: 'M3 8h18M3 12h18M6 8v11M10 8v11M14 8v11M18 8v11M3 5h18', hue: '#6cb6ff', tag: 'dock it on the rails' },
-  { id: 'check', label: 'Check', icon: 'M4 18l5-6 4 3 7-9M15 6h5v5', hue: '#b69cff', tag: 'forces, strain, printability' },
-  { id: 'export', label: 'Export', icon: 'M12 3v12m0 0l-4-4m4 4l4-4M4 17v4h16v-4', hue: '#5eead4', tag: 'plates ready to print' },
+const STEPS: { id: Step; label: string; title: string; text: string }[] = [
+  { id: 'import', label: 'Start', title: 'Bring a board in', text: 'Drop a KiCad, Altium, Eagle or Gerber export, or start from a known board.' },
+  { id: 'board', label: 'Board', title: 'Check the board', text: 'What was read, what each hole is for, and tools to clean up the import.' },
+  { id: 'plugs', label: 'Plugs', title: 'Protect the plugs', text: 'Cradles, caps and guards so a knock on a cable goes into the holder, not the solder joints.' },
+  { id: 'holder', label: 'Holder', title: 'Shape the holder', text: 'A light frame or a full tray, the features you want, and the fit.' },
+  { id: 'mount', label: 'Rails', title: 'Rails, docks and stacks', text: 'Which board goes where: automatic, or dragged by hand. Turn docks so every plug stays reachable.' },
+  { id: 'check', label: 'Check', title: 'Check the design', text: 'Forces, strain and printability, with the finite-element model of the clips.' },
+  { id: 'export', label: 'Export', title: 'Print it', text: 'Parts packed onto as few plates as possible, already in print orientation.' },
 ];
 
-/** Banner at the top of each step: outlined number, name, tagline, progress trace, big line icon. */
-function StepBanner({ step }: { step: Step }) {
-  const i = STEPS.findIndex((s) => s.id === step);
-  const s = STEPS[i];
-  return (
-    <div className="stepbanner" style={{ ['--hue' as string]: s.hue }}>
-      <svg className="traces" viewBox="0 0 320 90" preserveAspectRatio="none" aria-hidden="true">
-        <path d="M-10 70 H70 L92 48 H170 L188 30 H330" />
-        <path d="M-10 82 H110 L128 64 H236 L252 80 H330" />
-        <circle cx="92" cy="48" r="3" /><circle cx="188" cy="30" r="3" /><circle cx="252" cy="80" r="3" />
-      </svg>
-      <div className="num">{String(i + 1).padStart(2, '0')}</div>
-      <div className="txt">
-        <small>step {i + 1} of {STEPS.length}</small>
-        <b>{s.label}</b>
-        <span>{s.tag}</span>
-        <div className="ticks">{STEPS.map((x, k) => <i key={x.id} className={k < i ? 'done' : k === i ? 'on' : ''} />)}</div>
-      </div>
-      <svg className="big" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"><path d={s.icon} /></svg>
-    </div>
-  );
-}
-
-const I = {
-  undo: 'M9 14L4 9l5-5M4 9h11a5 5 0 010 10h-3',
-  redo: 'M15 14l5-5-5-5M20 9H9a5 5 0 000 10h3',
-  save: 'M5 3h11l3 3v15H5zM8 3v6h8V3M8 21v-7h8v7',
-  sun: 'M12 4V2M12 22v-2M4 12H2M22 12h-2M5.6 5.6L4.2 4.2M19.8 19.8l-1.4-1.4M5.6 18.4l-1.4 1.4M19.8 4.2l-1.4 1.4M12 8a4 4 0 100 8 4 4 0 000-8z',
-  moon: 'M20 14.5A8 8 0 019.5 4 8 8 0 1020 14.5z',
-};
-const Icon = ({ d }: { d: string }) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={d} /></svg>;
+const LAYERS: [Layer, string, string][] = [['holders', 'Holders', '#e9e6df'], ['docks', 'Docks', '#ff7a2f'], ['caps', 'Plug caps', '#ffc043'], ['boards', 'Boards', '#1f8a57'], ['plugs', 'Plugs', '#e0a060'], ['rails', 'Rails', '#94a3b8']];
 
 export function App() {
   const project = useApp((s) => s.project);
@@ -60,20 +32,23 @@ export function App() {
   const result = useApp((s) => s.result);
   const building = useApp((s) => s.building);
   const error = useApp((s) => s.error);
-  const showGhosts = useApp((s) => s.showGhosts);
   const theme = useApp((s) => s.theme);
+  const sel = useApp((s) => s.sel);
+  const layers = useApp((s) => s.layers);
+  const toastMsg = useApp((s) => s.toast);
   const canUndo = useApp((s) => s.past.length > 0);
   const canRedo = useApp((s) => s.future.length > 0);
   const [tool, setTool] = useState<Tool>('select');
   const [cam, setCam] = useState<{ dir: [number, number, number]; n: number } | undefined>();
   const look = (dir: [number, number, number]) => setCam((c) => ({ dir, n: (c?.n ?? 0) + 1 }));
   const [installed, setInstalled] = useState<'h' | 'v' | null>(null);
+  const [showLayers, setShowLayers] = useState(false);
   const layout = project?.layout;
   useEffect(() => { setInstalled(layout === 'panel' ? 'h' : null); }, [layout]);
   const [dragging, setDragging] = useState(false);
   const [overhangs, setOverhangs] = useState(false);
-  const panelRef = useRef<HTMLElement>(null);
-  useEffect(() => { panelRef.current?.scrollTo({ top: 0 }); }, [step]);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { bodyRef.current?.scrollTo({ top: 0 }); }, [step]);
   const [dropErr, setDropErr] = useState<string | null>(null);
   const onDrop = async (e: React.DragEvent) => {
     e.preventDefault();
@@ -88,7 +63,7 @@ export function App() {
     try { localStorage.setItem('boarddock.theme', theme); } catch { /* ignore */ }
   }, [theme]);
 
-  // rebuild whenever the project changes (debounced, latest wins)
+  // rebuild whenever the project changes (debounced, latest wins; unchanged holders come from the worker's cache)
   useEffect(() => {
     if (!project) return;
     store.set({ building: true });
@@ -99,17 +74,25 @@ export function App() {
       } catch (e: any) {
         store.set({ building: false, error: e.message ?? String(e) });
       }
-    }, 200);
+    }, 120);
     return () => clearTimeout(t);
   }, [project]);
 
+  const picks = sel.filter((s) => s.kind === 'module' || s.kind === 'mount' || s.kind === 'rail' || s.kind === 'feature');
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement).tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); }
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's' && project) { e.preventDefault(); saveProject(); }
+      const cmd = e.metaKey || e.ctrlKey;
+      if (cmd && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
+      if (cmd && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); }
+      if (cmd && e.key.toLowerCase() === 's' && project) { e.preventDefault(); saveProject(); }
+      const v = store.get().view;
+      if (v === 'assembly') {
+        const p3 = store.get().sel.filter((s) => s.kind === 'module' || s.kind === 'mount' || s.kind === 'rail' || s.kind === 'feature');
+        if ((e.key === 'Delete' || e.key === 'Backspace') && p3.length) { e.preventDefault(); removeItems(p3); }
+        if (e.key === 'Escape') select([]);
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -123,94 +106,116 @@ export function App() {
   const stats = useMemo(() => {
     if (!result || !project) return null;
     const dens = MATERIALS[activeModule(project).holder.material].density;
-    const g = result.parts.reduce((s, p) => s + estimate(p, dens).grams * p.qty, 0);
+    let g = 0, min = 0;
+    for (const p of result.parts) { const e = estimate(p, dens); g += e.grams * p.qty; min += e.minutes * p.qty; }
     const n = result.parts.reduce((s, p) => s + p.qty, 0);
     const plates = packPlates(result.parts, project.printer.bed, project.printer.spacing).length;
-    return { g, n, plates };
+    return { g, n, plates, min };
   }, [result, project?.printer.bed[0], project?.printer.bed[1]]);
 
   const panel = { import: <ImportPanel />, board: <BoardPanel />, plugs: <PlugsPanel />, holder: <HolderPanel />, mount: <MountPanel />, check: <CheckPanel />, export: <ExportPanel /> }[step];
   const warnCount = result?.report.warnings.length ?? 0;
   const badCount = result?.report.checks.filter((c) => c.status === 'bad').length ?? 0;
+  const si = STEPS.findIndex((s) => s.id === step);
+  const S = STEPS[si];
+  const goStep = (id: Step) => store.set({ step: id, ...(id === 'mount' && project?.layout === 'panel' && view === 'editor' ? { view: 'assembly' as const } : {}) });
+  const views: [typeof view, string][] = project ? [['assembly', '3D'], ...(project.layout === 'panel' ? [['panel', 'Wall'] as [typeof view, string]] : []), ['print', 'Plates'], ['editor', 'Board']] : [];
 
   return (
     <div className="app" onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDragging(true); } }} onDragLeave={(e) => { if (!e.relatedTarget) setDragging(false); }} onDrop={onDrop}>
       {dragging && <div className="dropveil"><div><b>Drop to import</b><span>{store.get().addMode ? 'adds another board' : project ? 'replaces the current board (tick "add as another board" on Start to add)' : 'KiCad · STEP · IDF · Eagle · Gerber zip · DXF · project'}</span></div></div>}
-      {dropErr && <div className="toast err" onClick={() => setDropErr(null)}>{dropErr}</div>}
+      {(dropErr || toastMsg) && <div className={`toast ${dropErr ? 'err' : 'floating'}`} style={{ padding: '9px 14px', fontSize: 12.5 }} onClick={() => { setDropErr(null); store.set({ toast: null }); }}>{dropErr ?? toastMsg}</div>}
       <header className="topbar">
-        <div className="brand"><Mark className="mark" /><span className="word">Board<b>Dock</b></span><small>v0.1 · screwless PCB mounts</small></div>
-        {project && <span className="projchip" title={activeModule(project).board.source}>{project.modules.length > 1 ? `${project.modules.length} boards · ${project.modules.map((m) => m.board.name).join(' + ')}` : activeModule(project).board.name}</span>}
-        <div className="spacer" />
-        {project && (
-          <>
-            <div className="status" title={error ?? ''}>
-              <span className={`dot ${error ? 'err' : building ? 'busy' : ''}`} />
-              {error ? 'build failed' : building ? 'building…' : result ? `built · ${result.report.timeMs} ms` : ''}
-            </div>
-            <button className="iconbtn" disabled={!canUndo} onClick={undo} title="Undo (⌘Z)"><Icon d={I.undo} /></button>
-            <button className="iconbtn" disabled={!canRedo} onClick={redo} title="Redo (⇧⌘Z)"><Icon d={I.redo} /></button>
-            <button className="iconbtn" onClick={saveProject} title="Save project (⌘S)"><Icon d={I.save} /></button>
-          </>
-        )}
-        <button className="iconbtn" onClick={() => store.set({ theme: theme === 'dark' ? 'light' : 'dark' })} title="Light / dark"><Icon d={theme === 'dark' ? I.sun : I.moon} /></button>
-      </header>
-      <div className="main">
-        <nav className="rail" style={{ ['--progress' as string]: `${(STEPS.findIndex((s) => s.id === step) / (STEPS.length - 1)) * 100}%`, ['--hue' as string]: STEPS.find((s) => s.id === step)?.hue }}>
+        <div className="brand"><Mark className="mark" /><span className="word">Board<b>Dock</b></span></div>
+        {project && <span className="projname" title={activeModule(project).board.source}>{project.modules.length > 1 ? `${project.modules.length} boards` : activeModule(project).board.name}</span>}
+        <nav className="stepper">
           {STEPS.map((s, i) => (
-            <button key={s.id} className={step === s.id ? 'on' : i < STEPS.findIndex((x) => x.id === step) ? 'done' : ''} style={{ ['--hue' as string]: s.hue }} disabled={!project && s.id !== 'import'} onClick={() => store.set({ step: s.id, ...(s.id === 'mount' && project?.layout === 'panel' ? { view: 'panel' as const } : view === 'panel' && s.id !== 'mount' ? { view: 'assembly' as const } : {}) })}>
-              <span className="pad"><Icon d={s.icon} /><i>{s.id === 'check' && (badCount || warnCount) ? '!' : i + 1}</i></span>
-              <span>{s.label}</span>
+            <button key={s.id} className={`${step === s.id ? 'on' : i < si ? 'done' : ''} ${s.id === 'check' && badCount + warnCount > 0 ? 'flag' : ''}`} disabled={!project && s.id !== 'import'} onClick={() => goStep(s.id)} title={s.title}>
+              <span className="n">{i < si && step !== s.id ? <Icon d={I.check} /> : s.id === 'check' && badCount + warnCount > 0 && step !== s.id ? '!' : i + 1}</span>
+              <span className="l">{s.label}</span>
             </button>
           ))}
         </nav>
-        <aside ref={panelRef} className="panel" style={{ ['--hue' as string]: STEPS.find((s) => s.id === step)?.hue }}><StepBanner step={step} />{panel}</aside>
+        <div className="acts">
+          {project && (
+            <>
+              <div className="status" title={error ?? ''}>
+                <span className={`dot ${error ? 'err' : building ? 'busy' : ''}`} />
+                {error ? 'build failed' : building ? 'building' : result ? `${result.report.timeMs} ms` : ''}
+              </div>
+              <button className="iconbtn" disabled={!canUndo} onClick={undo} title="Undo (⌘Z)"><Icon d={I.undo} /></button>
+              <button className="iconbtn" disabled={!canRedo} onClick={redo} title="Redo (⇧⌘Z)"><Icon d={I.redo} /></button>
+              <button className="iconbtn" onClick={saveProject} title="Save project (⌘S)"><Icon d={I.save} /></button>
+            </>
+          )}
+          <button className="iconbtn" onClick={() => store.set({ theme: theme === 'dark' ? 'light' : 'dark' })} title="Light / dark"><Icon d={theme === 'dark' ? I.sun : I.moon} /></button>
+        </div>
+      </header>
+      <div className="main">
+        <aside className="side">
+          <div className="head">
+            <small>Step {si + 1} of {STEPS.length} · {S.label}</small>
+            <h1>{S.title}</h1>
+            <p>{S.text}</p>
+          </div>
+          <div className="body" ref={bodyRef}>{panel}</div>
+          {project && (
+            <div className="foot">
+              {si > 0 && <button className="btn back" onClick={() => goStep(STEPS[si - 1].id)}><Icon d={I.left} /> {STEPS[si - 1].label}</button>}
+              {si < STEPS.length - 1 ? <button className="btn primary" onClick={() => goStep(STEPS[si + 1].id)}>Next: {STEPS[si + 1].label} <Icon d={I.right} /></button> : <button className="btn primary" onClick={() => goStep('import')}>Add another board <Icon d={I.plus} /></button>}
+            </div>
+          )}
+        </aside>
         <section className="stage">
           {project ? (
             <>
-              <div className="tabs">
-                <Seg value={view} options={[['assembly', '3D assembly'], ...(project.layout === 'panel' ? [['panel', 'Panel'] as ['panel', string]] : []), ['print', 'Print plates'], ['editor', 'Board editor']]} onChange={(v) => store.set({ view: v })} />
-              </div>
+              <div className="tabs"><div className="seg">{views.map(([k, l]) => <button key={k} className={view === k ? 'on' : ''} onClick={() => store.set({ view: k })}>{l}</button>)}</div></div>
               {view === 'editor' ? <BoardEditor tool={tool} setTool={setTool} /> : view === 'panel' && project.layout === 'panel' ? <PanelEditor /> : (
                 <>
-                  <Viewer3D result={result} mode={view === 'print' ? 'print' : 'assembly'} showGhosts={showGhosts} bed={project.printer.bed} spacing={project.printer.spacing} theme={theme} camera={cam} installed={view === 'assembly' ? installed : null} overhangs={view === 'print' && overhangs} />
+                  <Viewer3D result={result} mode={view === 'print' ? 'print' : 'assembly'} bed={project.printer.bed} spacing={project.printer.spacing} theme={theme} camera={cam} installed={view === 'assembly' ? installed : null} overhangs={view === 'print' && overhangs}
+                    layers={layers} sel={sel} onPick={(it, add) => (it ? select([it], add ? 'toggle' : 'set') : !add && select([]))} label={(it) => describe(store.get().project!, it)} />
                   <div className="tools">
-                    <span className="seg">
-                      <button onClick={() => look([0.55, -0.75, 0.62])}>Iso</button>
-                      <button onClick={() => look([0, -0.02, 1])}>Top</button>
-                      <button onClick={() => look([0, -1, 0.25])}>Front</button>
-                      <button onClick={() => look([-0.5, 0.6, -0.65])}>Under</button>
-                    </span>
+                    <div className="tgroup floating">
+                      <button onClick={() => look([0.6, -0.8, 0.62])} title="Isometric"><Icon d={I.cube} /></button>
+                      <button onClick={() => look([0, -0.02, 1])} title="From above">Top</button>
+                      <button onClick={() => look([0, -1, 0.22])} title="From the front">Front</button>
+                      <button onClick={() => look([1, 0, 0.22])} title="From the side">Side</button>
+                      <button onClick={() => look([-0.5, 0.6, -0.65])} title="From below">Under</button>
+                    </div>
                     {view === 'assembly' && result?.report.panel && (
-                      <span className="seg" title="The panel as it hangs on the wall, or lying flat">
+                      <div className="tgroup floating" title="The panel as it hangs on the wall, or lying flat">
                         <button className={installed ? 'on' : ''} onClick={() => setInstalled('h')}>On the wall</button>
-                        <button className={!installed ? 'on' : ''} onClick={() => setInstalled(null)}>Lying flat</button>
-                      </span>
+                        <button className={!installed ? 'on' : ''} onClick={() => setInstalled(null)}>Flat</button>
+                      </div>
                     )}
                     {view === 'assembly' && result?.report.clipFrame && !result.report.panel && (
-                      <span className="seg" title="See it installed on a DIN rail">
+                      <div className="tgroup floating" title="See it installed on a DIN rail">
                         <button className={!installed ? 'on' : ''} onClick={() => setInstalled(null)}>Holder</button>
-                        <button className={installed === 'h' ? 'on' : ''} onClick={() => setInstalled('h')}>On rail ⟷</button>
-                        <button className={installed === 'v' ? 'on' : ''} onClick={() => setInstalled('v')}>On rail ↕</button>
-                      </span>
+                        <button className={installed === 'h' ? 'on' : ''} onClick={() => setInstalled('h')}>Rail ⟷</button>
+                        <button className={installed === 'v' ? 'on' : ''} onClick={() => setInstalled('v')}>Rail ↕</button>
+                      </div>
                     )}
-                    {view === 'assembly' && <span className="seg"><button className={showGhosts ? 'on' : ''} onClick={() => store.set({ showGhosts: !showGhosts })}>Board & rail</button></span>}
-                    {view === 'print' && <span className="seg" title="Red: faces that would need support. Amber: bridges (fine when short)."><button className={overhangs ? 'on' : ''} onClick={() => setOverhangs(!overhangs)}>Overhangs</button></span>}
+                    {view === 'assembly' && <div className="tgroup floating"><button className={showLayers ? 'on' : ''} onClick={() => setShowLayers(!showLayers)} title="Show or hide kinds of parts"><Icon d={I.layers} /> Layers</button></div>}
+                    {view === 'print' && <div className="tgroup floating" title="Red: faces that would need support. Amber: bridges (fine when short)."><button className={overhangs ? 'on' : ''} onClick={() => setOverhangs(!overhangs)}>Overhangs</button></div>}
                   </div>
-                  {view === 'assembly' && result && (
-                    <div className="legend floating">
-                      {result.parts.filter((p, i, a) => a.findIndex((q) => q.color === p.color) === i).map((p) => <span key={p.id} style={{ color: p.color }}><i style={{ background: p.color }} /><span style={{ color: 'var(--muted)' }}>{p.id.includes('cap') ? 'Plug caps' : p.id.includes('clip') ? 'DIN clip' : p.id.includes('link') || p.id.includes('rivet') ? 'Joiners' : p.id === 'dock_shoe' ? 'Rail shoes' : p.id === 'dock_socket' ? 'Sockets' : p.id.endsWith('_rod') ? 'Release buttons' : 'Holders'}</span></span>)}
-                      {showGhosts && <><span style={{ color: '#17804f' }}><i style={{ background: '#17804f' }} /><span style={{ color: 'var(--muted)' }}>Board</span></span><span style={{ color: '#e8a15a' }}><i style={{ background: '#e8a15a' }} /><span style={{ color: 'var(--muted)' }}>Plugs</span></span></>}
+                  {view === 'assembly' && showLayers && (
+                    <div className="layers floating">
+                      {LAYERS.map(([k, n, col]) => (
+                        <label key={k}><input type="checkbox" checked={layers[k]} onChange={(e) => store.set({ layers: { ...layers, [k]: e.target.checked } })} /><i style={{ background: col }} />{n}</label>
+                      ))}
                     </div>
                   )}
+                  {view === 'assembly' && picks.length > 0 && <SelPanel items={picks} />}
                   {stats && (
-                    <div className="stats floating">
+                    <div className="stats floating" style={{ position: 'absolute', right: 12, bottom: 12, zIndex: 6 }}>
                       <span><b>{stats.n}</b>parts</span>
                       <span><b>{stats.plates}</b>plate{stats.plates > 1 ? 's' : ''}</span>
                       <span><b>{stats.g.toFixed(0)}</b>g</span>
-                      {(warnCount > 0 || badCount > 0) && <span style={{ color: badCount ? 'var(--bad)' : 'var(--warn)', cursor: 'pointer' }} onClick={() => store.set({ step: 'check' })}><b style={{ color: 'inherit' }}>{badCount + warnCount}</b>notes</span>}
+                      <span title="Rough estimate, slicer numbers are the real ones"><b>{fmtTime(stats.min)}</b></span>
+                      {(warnCount > 0 || badCount > 0) && <span className="warn" onClick={() => store.set({ step: 'check' })}><b>{badCount + warnCount}</b>notes</span>}
                     </div>
                   )}
-                  {error && <div className="legend floating" style={{ bottom: 64, color: 'var(--bad)' }}>{error}</div>}
+                  {error && <div className="floating err" style={{ position: 'absolute', left: '50%', top: 60, transform: 'translateX(-50%)', zIndex: 7 }}>{error}</div>}
                 </>
               )}
             </>
@@ -219,13 +224,57 @@ export function App() {
               <div className="hero">
                 <HeroArt />
                 <h1>Dock any PCB.<br /><span>No screws. No supports.</span></h1>
-                <p>Drop a KiCad, Altium, Eagle or Gerber export, or pick a board. BoardDock builds a holder around every board (plug cradles, snap fingers, no screws), docks them onto DIN rails, horizontal or vertical, turned so every plug stays reachable, with a push-button release on top. FEA-checked and packed onto as few print plates as possible.</p>
-                <div className="feats"><span>KiCad · STEP · IDF · Gerber</span><span>DIN rail docks · top release</span><span>auto-arranged for plug access</span><span>drag, turn, pair back to back</span><span>FEA checked</span><span>STL + 3MF plates</span></div>
+                <p>Drop a KiCad, Altium, Eagle or Gerber export, or pick a board. BoardDock builds a light holder around every board with cradles for its plugs, docks them on DIN rails turned so every plug stays reachable, and packs the parts onto as few print plates as possible.</p>
+                <div className="feats"><span>KiCad · STEP · IDF · Gerber</span><span>hole wizard</span><span>light frame holders</span><span>rails, docks, stacks</span><span>pinch-ear rail release</span><span>FEA checked</span><span>STL + 3MF plates</span></div>
               </div>
             </div>
           )}
         </section>
       </div>
+    </div>
+  );
+}
+
+function fmtTime(m: number) { return m < 60 ? `${Math.round(m)} min` : `${Math.floor(m / 60)} h ${String(Math.round(m % 60)).padStart(2, '0')}`; }
+
+/** What is picked in the 3D view, with the actions that apply to it. */
+function SelPanel({ items }: { items: SelItem[] }) {
+  const p = useApp((s) => s.project)!;
+  const ds = items.map((it) => ({ it, d: describe(p, it) }));
+  const removable = ds.filter((x) => x.d.removable);
+  const one = items.length === 1 ? items[0] : null;
+  const edit1 = () => {
+    if (!one) return;
+    const mid = one.kind === 'module' ? one.id : one.module;
+    const mi = p.modules.findIndex((m) => m.id === mid);
+    if (mi >= 0 && mi !== p.active) edit((q) => { q.active = mi; });
+    if (one.kind === 'mount' || one.kind === 'rail') store.set({ step: 'mount' });
+    else if (one.kind === 'module') store.set({ step: 'holder' });
+    else if (one.fkind === 'pin') store.set({ step: 'board' });
+    else if (one.fkind === 'cradle' || one.fkind === 'cap' || one.fkind === 'guard' || one.fkind === 'tie' || one.fkind === 'plug') {
+      const comps = p.modules[mi]?.board.comps.filter((c) => one.refs?.includes(c.ref)) ?? [];
+      store.set({ step: 'plugs' });
+      select(comps.map((c) => ({ kind: 'comp' as const, id: c.id })));
+    } else store.set({ step: 'holder' });
+  };
+  return (
+    <div className="selpanel floating" style={{ position: 'absolute', left: '50%', bottom: 64, transform: 'translateX(-50%)', zIndex: 6, width: 'min(640px, calc(100% - 24px))' }}>
+      <div className="top">
+        <b>{one ? ds[0].d.title : `${items.length} selected`}</b>
+        <span className="grow hint" style={{ margin: 0 }}>{one ? ds[0].d.sub : 'Shift-click adds or removes · Del removes · Esc clears'}</span>
+        <div className="acts">
+          {one && <button className="btn small" onClick={edit1}>Edit <Icon d={I.right} /></button>}
+          {removable.length > 0 && <button className="btn small danger" onClick={() => removeItems(removable.map((x) => x.it))}><Icon d={I.trash} /> {one ? ds[0].d.removable : `Remove ${removable.length}`}</button>}
+          <button className="btn small ghost icon" onClick={() => select([])} title="Clear (Esc)"><Icon d={I.x} /></button>
+        </div>
+      </div>
+      {!one && (
+        <div className="picks">
+          {ds.map(({ it, d }) => (
+            <span key={it.id} className="pick"><i style={{ background: d.color }} />{d.title}<small>{d.sub}</small><button onClick={() => select([it], 'toggle')} title="Take out of the selection">×</button></span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
