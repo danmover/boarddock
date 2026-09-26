@@ -19,18 +19,35 @@ const rotX180: M4 = [1, 0, 0, 0, 0, -1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1];
 
 const printCache = new WeakMap<object, ReturnType<typeof printability>>();
 
+/** "Pi 4B: note", "Pi 4B 2: note", "Pi 4B 3: note" become one line naming all three. */
+export function mergeNotes(warnings: string[], names: string[]): string[] {
+  const byText = new Map<string, string[]>(), order: string[] = [];
+  const known = [...names].sort((a, b) => b.length - a.length);
+  for (const w of warnings) {
+    const who = known.find((n) => w.startsWith(`${n}: `));
+    const key = who ? w.slice(who.length + 2) : `\u0000${w}`;
+    if (!byText.has(key)) { byText.set(key, []); order.push(key); }
+    if (who) byText.get(key)!.push(who);
+  }
+  return order.map((k) => {
+    const who = byText.get(k)!;
+    if (!who.length) return k.slice(1);
+    const list = who.length > 1 ? `${who.slice(0, -1).join(', ')} and ${who[who.length - 1]}` : who[0];
+    return `${list}: ${k}`;
+  });
+}
+
 export function generate(p: Project): GenResult {
   const r = p.layout === 'panel' ? generatePanel(p) : generateLoose(p);
+  r.report.warnings = mergeNotes(r.report.warnings, p.modules.map((m) => m.board.name));
   // printability of every distinct part, in its print pose (cached with the mesh)
   const seen = new Set<string>();
   for (const pt of r.parts) {
     const key = pt.id.replace(/^m\d+_/, '') === 'holder' ? pt.id : pt.name;
     if (seen.has(key)) continue;
     seen.add(key);
-    let q = printCache.get(pt.mesh.pos);
-    if (!q) { q = printability(pt.mesh); printCache.set(pt.mesh.pos, q); }
-    const bad = q.slope > 8, long = q.span > 25;
-    r.report.checks.push({ group: 'Printability', name: pt.name, value: bad ? `${round(q.slope, 0)} mm² overhang` : long ? `${round(q.span, 0)} mm bridge` : 'no supports', status: bad || long ? 'warn' : 'ok', detail: `downward faces steeper than 45°: ${round(q.slope, 1)} mm² sloped${q.flat > 0.5 ? `, ${round(q.flat, 0)} mm² of bridges (longest span ${round(q.span, 1)} mm)` : ''}. Show them on the print plates with "Overhangs".` });
+    // the facet check paints overhangs on the print plates; the Check step slices every part (printcheck.ts)
+    if (!printCache.get(pt.mesh.pos)) printCache.set(pt.mesh.pos, printability(pt.mesh));
   }
   return r;
 }
@@ -147,7 +164,7 @@ function generateLoose(p: Project): GenResult {
     features.push(...o.features);
     frames[mods[i].id] = T[i];
     warnings.push(...o.warnings.map((w) => tag + w));
-    checks.push(...o.checks.map((c) => ({ ...c, group: multi ? `${mods[i].board.name} · ${c.group}` : c.group })));
+    checks.push(...o.checks.map((c) => ({ ...c, module: mods[i].id, group: multi ? `${mods[i].board.name} · ${c.group}` : c.group })));
   });
   parts.push(...extra);
   if (ghosts.some((g) => g.tag?.kind === 'rail')) steps.push({ seq: 0, text: 'Your DIN rail: each holder hooks over its top edge and clicks in at the bottom; pull the tab to take it off.' });

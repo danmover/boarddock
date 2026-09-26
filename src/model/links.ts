@@ -118,3 +118,31 @@ export function portBudget(p: Project) {
   const powerIns = free(['power-in']), powerOuts = free(['power-out']);
   return { devices, usbPorts, powerIns, powerOuts, short: Math.max(0, devices.length + Math.max(0, powerIns.length - powerOuts.length) - usbPorts.length) };
 }
+
+
+/** Every cable keeps the number it was given; cables without one get the next free numbers, in order. */
+export function cableNumbers(links: Link[] = []): Map<string, number> {
+  let n = Math.max(0, ...links.map((l) => l.no ?? 0));
+  return new Map(links.map((l) => [l.id, l.no ?? ++n]));
+}
+/** The links with their numbers written in (so a printed tag keeps matching its cable after others change). */
+export const numberLinks = (links: Link[] = []): Link[] => { const no = cableNumbers(links); return links.map((l) => (l.no ? l : { ...l, no: no.get(l.id)! })); };
+
+/** A board's name without its maker: "Raspberry Pi 4B" -> "Pi 4B", "Arduino Uno R3" -> "Uno R3". */
+export const shortName = (n: string) => n.replace(/^(Raspberry|Arduino|Adafruit|SparkFun|Espressif|Seeed(?: Studio)?)\s+/i, '');
+
+const SOURCE: PlugRole[] = ['power-out', 'hub-down', 'host'];
+/** What a cable is for, from the plugs' roles, pointing from the end that gives (power, a port) to the end that takes. */
+export function cablePurpose(p: Project, l: Link): { from: string; to: string; text: string } {
+  const end = (r: PlugRef) => {
+    const m = p.modules.find((x) => x.id === r.module);
+    const c = m?.board.comps.find((x) => x.ref === baseRef(r.ref));
+    return { name: m?.board.name ?? '?', ref: r.ref, role: m && c ? plugRole(m, c) : ('other' as PlugRole) };
+  };
+  let a = end(l.a), b = end(l.b);
+  if (SOURCE.indexOf(b.role) >= 0 && SOURCE.indexOf(a.role) < 0) [a, b] = [b, a];
+  if (a.role === 'hub-up' || (b.role === 'host' && a.role !== 'host')) [a, b] = [b, a];
+  const kind = l.kind ?? 'usb';
+  const what = kind === 'power' || a.role === 'power-out' ? 'Power' : a.role === 'hub-down' && b.role === 'hub-up' ? 'Hub link' : b.role === 'hub-up' ? 'Hub uplink' : KIND_NAME[kind].replace(/^./, (c) => c.toUpperCase());
+  return { from: a.name, to: b.name, text: `${what}: ${shortName(a.name)} → ${shortName(b.name)}` };
+}

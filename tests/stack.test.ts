@@ -83,6 +83,7 @@ describe('frame holders', () => {
         p.mount.kind = 'none';
         p.modules[0].holder.style = style;
         p.modules[0].holder.feat = { cradles: false, caps: false, ties: false, guards: false };
+        p.modules[0].holder.label = ''; // the structure only: a label brings a solid wall stretch to engrave into
         const r = generate(p);
         const h = r.parts.find((x) => x.tag?.kind === 'holder')!;
         vol[style] = h.volume;

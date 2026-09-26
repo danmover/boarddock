@@ -213,14 +213,23 @@ function build(job: Job): ModuleOut {
   overhangs(C);
   if (site) dockBlocks(C, site);
   // label first so it gets a long free wall; if that leaves no room for two fingers, drop the label
-  const mark = { pos: C.pos.length, neg: C.neg.length, late: C.late.length, blocked: C.blocked.length, warn: C.warnings.length, checks: C.checks.length };
+  const mark = { pos: C.pos.length, neg: C.neg.length, late: C.late.length, blocked: C.blocked.length, warn: C.warnings.length, checks: C.checks.length, feat: C.features.length };
+  const reset = () => { C.pos.length = mark.pos; C.neg.length = mark.neg; C.late.length = mark.late; C.blocked.length = mark.blocked; C.warnings.length = mark.warn; C.checks.length = mark.checks; C.features.length = mark.feat; };
   const labelled = H.label.trim() ? label(C) : false;
   let tabsUsed = tabs(C);
-  if (labelled && tabsUsed.length < 2 && (H.tabs === 'on' || (H.tabs === 'auto' && !C.b.holes.some((h) => h.use === 'snap' && isMountHole(h))))) {
-    C.pos.length = mark.pos; C.neg.length = mark.neg; C.late.length = mark.late; C.blocked.length = mark.blocked; C.warnings.length = mark.warn; C.checks.length = mark.checks;
-    C.features = C.features.filter((f) => f.kind !== 'label');
-    tabsUsed = tabs(C);
-    C.checks.push({ group: 'Holder', name: 'Label', value: 'left off', status: 'info', detail: 'it would take the wall the snap fingers need; shorten it to fit both' });
+  const pinsHold = C.b.holes.filter((h) => isMountHole(h) && (h.use === 'auto' || h.use === 'snap') && h.d >= 1.8).length >= 2;
+  if (labelled && tabsUsed.length < 2 && (H.tabs === 'on' || (H.tabs === 'auto' && !pinsHold))) {
+    // the fingers are short of a wall: try without the label, and keep that only if it really gives them room
+    reset();
+    const without = tabs(C);
+    if (without.length > tabsUsed.length) {
+      tabsUsed = without;
+      C.checks.push({ group: 'Holder', name: 'Label', value: 'left off', status: 'info', detail: 'it would take the wall the snap fingers need to hold the board; shorten it to fit both' });
+    } else {
+      reset();
+      label(C);
+      tabsUsed = tabs(C);
+    }
   }
   standoffs(C, tabsUsed.length >= 2);
   seats(C);
@@ -614,13 +623,13 @@ function tabs(C: Ctx): Site[] {
   const pinsCanHold = C.b.holes.filter((h) => isMountHole(h) && (h.use === 'auto' || h.use === 'snap') && h.d >= 1.8).length >= 2;
   let Lf = small ? 10 : 14;
   let chosen = pickSpread(edgeSites(C, Lf + 1), 4, centroid(C.b.outline));
-  if (chosen.length < 2 && !pinsCanHold) {
+  if (chosen.length < 2 && (!pinsCanHold || H.tabs === 'on')) {
     // crowded edges: shorter fingers fit in the gaps between plugs (stiffer, so a smaller lip)
     const short = pickSpread(edgeSites(C, 9), 4, centroid(C.b.outline));
     if (short.length > chosen.length) { chosen = short; Lf = 8; }
   }
   if (chosen.length < 2) {
-    if (pinsCanHold) C.checks.push({ group: 'Board', name: 'Wall snap fingers', value: 'no room', status: 'info', detail: 'plugs and the dock take the free edges; snap pins in the mounting holes hold the board instead' });
+    if (pinsCanHold) C.checks.push({ group: 'Board', name: 'Wall snap fingers', value: chosen.length ? 'only one fits' : 'no room', status: 'info', detail: `plugs${C.job.dock ? ', the dock' : ''} and the label take the free edges${H.tabs === 'on' ? ', even for short fingers' : ''}; snap pins in the mounting holes hold the board instead` });
     else C.warnings.push(`Nothing clips this board in: no mounting holes for snap pins${C.b.holes.some((h) => h.role === 'standoff') ? ' (they carry the standoffs of the board on top)' : ''} and no free edge for two snap fingers. Free an edge (turn off a cradle or the label), or set two holes to "mount" in the hole wizard.`);
   }
   const { zt, zw } = C;
@@ -635,9 +644,12 @@ function tabs(C: Ctx): Site[] {
     wallPiece(C, q, d, -3, Lf + 2.5, zw);
     feat(C, 'finger', orientedRect(q, d, 0, Lf, tw0 - 1, tw1 + lip), 0, zTop);
     C.pos.push(orientedBox(q, d, 0, Lf, tw0, tw1, Math.max(zw - 0.3, zt - 0.5), zTop));
-    C.neg.push(orientedBox(q, d, 0, Lf + 0.6, tw0 - 0.1, tw1 + 0.05, zt - 1.0, zt - 0.4)); // slot under the finger
-    C.neg.push(orientedBox(q, d, Lf, Lf + 0.6, tw0 - 0.1, tw1 + 0.05, zt - 1.0, zTop + 1)); // free end
-    C.neg.push(orientedBox(q, d, 1.5, Lf + 0.6, tw0 - 0.1, tw1 - tf, zt - 1.0, zTop + 1)); // thin the finger
+    // slot under the finger, deep enough that its first layer (a short overhang over the slot) can droop a little
+    // without touching the wall below and welding to it
+    const slotBot = Math.max(C.base + 0.6, zt - 2.4);
+    C.neg.push(orientedBox(q, d, 0, Lf + 0.6, tw0 - 0.1, tw1 + 0.05, slotBot, zt - 0.4));
+    C.neg.push(orientedBox(q, d, Lf, Lf + 0.6, tw0 - 0.1, tw1 + 0.05, slotBot, zTop + 1)); // free end
+    C.neg.push(orientedBox(q, d, 1.5, Lf + 0.6, tw0 - 0.1, tw1 - tf, slotBot, zTop + 1)); // thin the finger
     const lipProf = poly([[tw1 - 0.01, zt + 0.1], [lip, zt + 0.1], [lip, zt + 0.4], [tw1 - 0.01, zt + 0.4 + lip + H.gap]], 'NonZero');
     C.late.push(sweepTZ(q, d, lipProf, Lf * 0.55, Lf - 0.4));
     // pull nub on the outside of the free end
@@ -1163,18 +1175,36 @@ function stand(C: Ctx) {
 }
 
 // ------------------------------- label -----------------------------------------------------------
+const MAKER_WORDS = new Set(['raspberry', 'pi', 'arduino', 'adafruit', 'sparkfun', 'espressif', 'board', 'dev', 'module', 'kit']);
+/**
+ * Shorter forms of a board's own name, longest first, that still say which board it is: runs of its words, never
+ * just maker words or a stub ("Raspberry Pi Zero 2 W" -> "Pi Zero 2 W", "Zero 2 W", ... "Zero"; never "2 W").
+ */
+export function labelForms(label: string, boardName: string): string[] {
+  const t = label.trim().slice(0, 40);
+  if (t !== boardName.trim()) return [t]; // the user's own words are never cut
+  const w = t.split(/\s+/), out: string[] = [];
+  for (let n = w.length; n >= 1; n--) for (let i = w.length - n; i >= 0; i--) {
+    const run = w.slice(i, i + n);
+    if (run.every((x) => MAKER_WORDS.has(x.toLowerCase())) || run.join('').length < 3 || !run.some((x) => /[a-z]{2}/i.test(x))) continue;
+    out.push(run.join(' '));
+  }
+  return [...new Set(out)];
+}
+
 function label(C: Ctx): boolean {
   const H = C.H;
-  const text = H.label.trim().slice(0, 40);
   const hmax = Math.min(5, C.zw - C.base - 1.6);
-  if (hmax < 2.4) { C.warnings.push('Walls too low for an engraved label.'); return false; }
-  let hgt = hmax, tw = 0, sites: Site[] = [];
-  for (hgt = hmax; hgt >= 2.4; hgt -= 0.4) {
-    tw = textWidth(text, hgt);
+  if (hmax < 2.4) { C.checks.push({ group: 'Holder', name: 'Label', value: 'left off', status: 'info', detail: 'the walls are too low for engraved text; raise "Wall above board"' }); return false; }
+  const forms = labelForms(H.label, C.b.name);
+  let hgt = hmax, tw = 0, sites: Site[] = [], text = forms[0];
+  found: for (const f of forms) for (hgt = hmax; hgt >= 2.4; hgt -= 0.4) {
+    tw = textWidth(f, hgt);
     sites = edgeSites(C, tw + 4, [], false);
-    if (sites.length) break;
+    if (sites.length) { text = f; break found; }
   }
-  if (!sites.length) { C.checks.push({ group: 'Holder', name: 'Label', value: 'left off', status: 'info', detail: 'no free straight wall is long enough; shorten the label to fit it' }); return false; }
+  if (!sites.length) { C.checks.push({ group: 'Holder', name: 'Label', value: 'left off', status: 'info', detail: 'no free straight wall is long enough; plugs, fingers and the dock take them. A shorter label may fit.' }); return false; }
+  C.checks.push({ group: 'Holder', name: 'Label', value: `"${text}"`, status: 'info', detail: `engraved ${round(hgt, 1)} mm high, 0.6 mm deep${text !== forms[0] ? `; "${forms[0]}" did not fit a free wall` : ''}` });
   // longest free stretch, prefer bottom-facing edges (the front when mounted)
   sites.sort((a, b) => (b.len - a.len) + (a.n[1] - b.n[1]) * 5);
   const st = sites[0];
@@ -1301,6 +1331,9 @@ function dockFeatures(C: Ctx, s: DockSite) {
   feat(C, 'dock', tsPoly(s, s.tc - HD.base.hx, s.tc + HD.base.hx, -14, s.ped + 1), 0, HD.spineY1);
   (C as any).spine = { a: tsPoly(s, s.tc, s.tc, 0, 0)[0], b: tsPoly(s, s.tc, s.tc, s.far, s.far)[0], hx: HD.spineHx };
   if (s.conflicts.length) C.warnings.push(`Dock on the ${s.edge} edge: ${s.conflicts.join(', ')} ${s.conflicts.length > 1 ? 'are' : 'is'} in the way. Pick another dock edge in the Rails step.`);
+  const rl = s.release;
+  C.checks.push({ group: 'Holder', name: 'Release button', value: rl.got === 'centre' ? 'centred' : 'beside the board', status: 'info',
+    detail: rl.want !== 'auto' && rl.want !== rl.got ? `${rl.want === 'side' ? 'beside the board' : 'centred'} would block ${rl.blocked.join(', ') || 'a plug'}, so it went ${rl.got === 'centre' ? 'in the middle' : 'beside the board'}` : rl.got === 'centre' ? 'the spine runs under the board' : 'the spine runs beside the board, which sits lower' });
   const eRatio = mat.E / MATERIALS.PETG.E;
   // tongue root at the socket mouth, bending under an out-of-plane push on the far edge
   const tb = 2 * TONGUE.hx, th = TONGUE.y1 - TONGUE.y0, F = 20, Mo = F * s.far, sig = Mo / ((tb * th * th) / 6);

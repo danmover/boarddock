@@ -2,7 +2,7 @@
 // connect them; click a cable to select it (Del removes). Cards are laid out by rail, boxes (hubs, chargers) last.
 import { useEffect, useMemo, useState } from 'react';
 import type { Link, Module, PlugRef } from '../model/types';
-import { compatible, KIND_COLOR, KIND_NAME, linkKind, plugsOf, sameRef, type PlugInfo } from '../model/links';
+import { compatible, KIND_COLOR, KIND_NAME, linkKind, numberLinks, plugsOf, sameRef, type PlugInfo } from '../model/links';
 import { edit, isSel, select, store, toast, useApp } from '../state';
 import { Icon, I } from './icons';
 import { addLinks, removeLinks } from './linkOps';
@@ -83,7 +83,7 @@ export function WiringView() {
     if (!compatible(pending.role, q.role)) { toast(`${pending.label} (${ROLE_TEXT[pending.role] || pending.role}) does not plug into ${q.label} (${ROLE_TEXT[q.role] || q.role}).`); setPending(null); return; }
     edit((pp) => {
       pp.links = (pp.links ?? []).filter((l) => !sameRef(l.a, pending.ref) && !sameRef(l.b, pending.ref) && !sameRef(l.a, q.ref) && !sameRef(l.b, q.ref));
-      pp.links.push({ id: `l${Math.random().toString(36).slice(2, 8)}`, a: pending.ref, b: q.ref, kind: linkKind(pending.role, q.role) });
+      pp.links = numberLinks([...pp.links, { id: `l${Math.random().toString(36).slice(2, 8)}`, a: pending.ref, b: q.ref, kind: linkKind(pending.role, q.role) }]);
     });
     setPending(null);
   };
@@ -111,7 +111,7 @@ export function WiringView() {
             <g key={l.id} style={{ cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); select([{ kind: 'link', id: l.id }], e.shiftKey ? 'toggle' : 'set'); }} onMouseEnter={() => setHover(l.id)} onMouseLeave={() => setHover(null)}>
               <path d={lp.d} fill="none" stroke="transparent" strokeWidth={12} />
               <path d={lp.d} fill="none" stroke={wire(l.kind ?? 'usb')} strokeWidth={on ? 4 : 2.6} strokeLinecap="round" opacity={on ? 1 : 0.85} />
-              {c && <g transform={`translate(${lp.mid.x},${lp.mid.y})`}><rect x={-28} y={-10} width={56} height={20} rx={10} fill="var(--surface)" stroke={wire(l.kind ?? 'usb')} /><text textAnchor="middle" y={4} fontSize={11} className="mono" fill="var(--fg)">{c.buy} m</text></g>}
+              {c && <g transform={`translate(${lp.mid.x},${lp.mid.y})`}><title>{`Cable ${c.no}: ${c.label ?? ''}`}</title><rect x={-38} y={-11} width={76} height={22} rx={11} fill="var(--surface)" stroke={wire(l.kind ?? 'usb')} /><circle cx={-26} cy={0} r={8.5} fill={wire(l.kind ?? 'usb')} /><text x={-26} y={3.8} textAnchor="middle" fontSize={10.5} fontWeight={700} className="mono" fill="#fff">{c.no}</text><text x={8} textAnchor="middle" y={4} fontSize={11} className="mono" fill="var(--fg)">{c.buy} m</text></g>}
             </g>
           );
         })}

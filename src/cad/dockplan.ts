@@ -115,6 +115,8 @@ export interface DockSite {
   under: boolean; // spine runs under the board (else beside it)
   side: number; // 0 under; +1 / -1 beside the board on its +e / -e side
   conflicts: string[];
+  /** what the release setting asked for and what it got; `blocked` names the plugs that stopped the wanted spot */
+  release: { want: 'centre' | 'side' | 'auto'; got: 'centre' | 'side'; blocked: string[] };
 }
 
 const dirOf = (a: number): V2 => [Math.cos(rad(a)), Math.sin(rad(a))];
@@ -154,6 +156,8 @@ export function dockSite(b: Board, H: HolderSettings, edge: EdgeName): DockSite 
   // a board without snap-capable holes needs its side walls for the snap fingers: a spine beside it takes one
   const fingerHeld = b.holes.filter((h) => (h.use === 'auto' || h.use === 'snap') && h.d >= 1.8).length < 2 && H.tabs !== 'off';
   let best = { pen: Infinity, tc: tMid, conflicts: [] as string[], under: true, side: 0 };
+  let bestWanted = { pen: Infinity, conflicts: [] as string[] };
+  const wanted = H.release ?? 'centre';
   // candidates: under the board, or just outside either side wall (spine fused to it)
   const lo = bt0 - gw - HD.spineHx + 0.4, hi = bt1 + gw + HD.spineHx - 0.4;
   for (let tc = lo; tc <= hi + 1e-9; tc += 0.5) {
@@ -175,6 +179,7 @@ export function dockSite(b: Board, H: HolderSettings, edge: EdgeName): DockSite 
       if (!isUnder && ov(q.t0, q.t1, tc - spineW, tc + spineW) && ov(q.s0, q.s1, -1, far + 1)) { pen += 500; conflicts.push(`${q.ref} (beside the spine)`); }
     }
     if (pen < best.pen) best = { pen, tc, conflicts, under: isUnder, side };
+    if ((wanted === 'centre' ? isUnder : wanted === 'side' ? !isUnder : true) && pen < bestWanted.pen) bestWanted = { pen, conflicts };
   }
   const tc = best.tc;
   let minZb = 0;
@@ -195,7 +200,9 @@ export function dockSite(b: Board, H: HolderSettings, edge: EdgeName): DockSite 
     }
     if (hit > -Infinity) inset = Math.max(inset, L0 - gw - hit);
   }
-  return { edge, n, e, tc, L0, far, ped: Math.min(HD.base.t + inset, 30), minZb, under: best.under, side: best.side, conflicts: [...new Set(best.conflicts)] };
+  const got = best.under ? 'centre' as const : 'side' as const;
+  const blocked = wanted !== 'auto' && wanted !== got ? [...new Set(bestWanted.conflicts.map((c) => c.replace(/ \(.*$/, '')))] : [];
+  return { edge, n, e, tc, L0, far, ped: Math.min(HD.base.t + inset, 30), minZb, under: best.under, side: best.side, conflicts: [...new Set(best.conflicts)], release: { want: wanted, got, blocked } };
 }
 
 /** Best dock edge and socket turn for a board in dock slot `slot`, optionally with the turn fixed. */

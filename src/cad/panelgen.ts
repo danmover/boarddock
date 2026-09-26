@@ -5,12 +5,13 @@ import type { Anim, Check, EdgeName, Feature, GenResult, Ghost, Link, MeshData, 
 
 const CABLE_ORDER: NonNullable<Link['kind']>[] = ['power', 'usb', 'net', 'video', 'audio', 'wire'];
 // assembly steps after every board's (boards use 300 + 10 per seat): cables, the other plugs, caps
-const CABLE_SEQ = 1e6, PLUG_SEQ = 1e6 + 90, CAP_SEQ = 1e6 + 100;
+const CABLE_SEQ = 1e6, PLUG_SEQ = 1e6 + 90, CAP_SEQ = 1e6 + 100, TAG_SEQ = 1e6 + 110;
 import { MATERIALS } from '../model/library';
 import { bbox, round } from '../geom/poly';
 import { basis, dir, I4, inv, mul, pt as ptM, rotZ, tr, type M4 } from '../geom/mat';
 import { smooth, sphereMesh, tubeMesh } from './boardviz';
-import { baseRef, cableToBuy, KIND_COLOR, KIND_NAME } from '../model/links';
+import { baseRef, cableNumbers, cablePurpose, cableToBuy, KIND_COLOR, KIND_NAME } from '../model/links';
+import { cableTag } from './cabletag';
 import { buildModule, computeLevels, transformMesh, type ArrangeHooks, type ModuleOut } from './generate';
 import { baseOf, ridersOf, stackLayers, type StackLayer } from '../model/holes';
 import { freeAll, toMesh, type MF } from './kernel';
@@ -164,16 +165,32 @@ export function generatePanel(p: Project): GenResult {
       const hit = mods.get(sl.module);
       if (!hit) return;
       const { m, i } = hit;
-      const edge: EdgeName = sl.edge === 'auto' ? bestDock(withRiders(p, m), railDir, slot, [mt.turn]).edge : sl.edge;
+      let edge: EdgeName = sl.edge === 'auto' ? bestDock(withRiders(p, m), railDir, slot, [mt.turn]).edge : sl.edge;
       try {
         const layers = stackLayers(p, m);
         const riders = ridersOf(p, m);
         const plan = layers.length > 1 ? stackPlan(p, layers, mt.kind === 'dock' ? edge : null) : null;
-        const out = buildModule({
-          p, mi: i, b: m.board, H: m.holder, din: mt.kind === 'flat', stand: false, hooks: plan?.[0].hooks ?? {}, name: m.board.name, bolted: boltedOf(layers[0]),
-          dock: mt.kind === 'dock' ? { edge, fit: P.fit ?? 0 } : undefined,
+        const build = (e: EdgeName, H = m.holder) => buildModule({
+          p, mi: i, b: m.board, H, din: mt.kind === 'flat', stand: false, hooks: plan?.[0].hooks ?? {}, name: m.board.name, bolted: boltedOf(layers[0]),
+          dock: mt.kind === 'dock' ? { edge: e, fit: P.fit ?? 0 } : undefined,
           mount: mt.kind === 'flat' ? { ...p.mount, kind: 'din', mode: 'flat', rotation: mt.turn, at: null } : undefined,
         });
+        let out = build(edge);
+        // an automatic dock edge that leaves nothing to clip the board in (a small board with no pin holes, its
+        // fingers' walls taken by plugs and the dock) gives way to the next best edge that does hold it
+        const loose = (o: ModuleOut) => o.warnings.some((w) => /^Nothing clips this board in/.test(w));
+        if ((sl.edge === 'auto' || P.auto) && mt.kind === 'dock' && layers.length === 1 && loose(out)) {
+          const others = (['bottom', 'top', 'left', 'right'] as EdgeName[]).filter((e) => e !== edge)
+            .map((e) => ({ e, o: bestDock(withRiders(p, m), railDir, slot, [mt.turn], [e]) }))
+            .filter((c) => !c.o.access.some((a) => a.ok === 'blocked')).sort((a, b) => b.o.score - a.o.score);
+          let found = false;
+          for (const c of others) { const o = build(c.e); if (!loose(o)) { edge = c.e; out = o; found = true; break; } }
+          // with the release button left at its default, a button beside the board frees the far edge for fingers
+          if (!found && m.holder.release == null) for (const e of [edge, ...others.map((c) => c.e)]) {
+            const o = build(e, { ...m.holder, release: 'side' });
+            if (!loose(o)) { edge = e; out = { ...o, checks: o.checks.map((c) => (c.name === 'Release button' ? { ...c, detail: 'beside the board, so the far edge is free for the snap fingers that hold it (it has no holes for pins)' } : c)) }; break; }
+          }
+        }
         const M = mt.kind === 'dock' ? slotMatrix(mt.turn, slot, out.dockM!) : mul(clipToRail(p.mount.clipWidth), inv(out.clipT ?? I4));
         const above: Layer[] = layers.slice(1).map((L, k) => {
           const r = L.mod, ri = mods.get(r.id)!.i;
@@ -439,7 +456,7 @@ export function generatePanel(p: Project): GenResult {
         if (blocked.length) warnings.push(`${s.mod.board.name}: ${blocked.map((a) => a.ref).join(', ')} point${blocked.length > 1 ? '' : 's'} down into the table. Turn the dock or pick another dock edge.`);
         for (const L of layers) {
           warnings.push(...L.out.warnings.map((w) => `${L.mod.board.name}: ${w}`));
-          checks.push(...L.out.checks.map((c) => ({ ...c, group: `${L.mod.board.name} · ${c.group}` })));
+          checks.push(...L.out.checks.map((c) => ({ ...c, module: L.mod.id, group: `${L.mod.board.name} · ${c.group}` })));
         }
         if (s.riders.length) checks.push({ group: `${s.mod.board.name} · Stack`, name: `${s.riders.length + 1} boards stacked`, value: [s.mod, ...s.riders].map((x) => x.board.name).join(' < '), status: 'info', detail: `${s.above.length ? `${s.above.length} printed layer${s.above.length > 1 ? 's press' : ' presses'} onto the corner pegs of the one below; ` : ''}${s.riders.length - s.above.length ? `${s.riders.length - s.above.length} bolted on standoffs; ` : ''}the bottom holder carries the dock` });
       }
@@ -541,6 +558,8 @@ export function generatePanel(p: Project): GenResult {
       const pitch = Math.max(0, ...rs.map((x) => x.q.d)) + 2.9;
       rs.forEach((x, i) => laneOf.set(x.q.l.id, c + (i - (rs.length - 1) / 2) * pitch));
     });
+    const nos = cableNumbers(p.links);
+    const tagMeshes = new Map<string, { mesh: MeshData; volume: number; size: [number, number, number] }>();
     for (const q of routes) {
       const { l, A, B, ch, d, zc } = q;
       const vl = laneOf.get(l.id)!;
@@ -555,7 +574,38 @@ export function generatePanel(p: Project): GenResult {
       ghosts.push({ name: `cable ${l.id}`, mesh: tubeMesh(path, d / 2, 10), color: KIND_COLOR[kind], opacity: 1, tag: { kind: 'cable', refs: [l.id] }, anim: { seq: cableSeq(kind), dir: [0, 0, 1], dist: 0, grow: true }, mat: 'cable' });
       const clash = [...new Set(hit.map((h) => h.ob.label))];
       for (const h of hit.slice(0, 3)) ghosts.push({ name: `clash ${l.id}`, mesh: sphereMesh(xy(h.at), Math.max(3, d * 0.9)), color: '#ff3b3b', opacity: 0.55, tag: { kind: 'cable', refs: [l.id] }, anim: { seq: cableSeq(kind), dir: [0, 0, 1], dist: 0 } });
-      cables.push({ id: l.id, a: `${nameOf2(l.a.module)} ${l.a.ref}`, b: `${nameOf2(l.b.module)} ${l.b.ref}`, ends: `${l.a.module}/${l.a.ref}|${l.b.module}/${l.b.ref}`, kind, length: round(len, 0), buy: cableToBuy(len), ...(clash.length ? { clash: clash.join(', ') } : {}) });
+      // a point and direction s mm along the cable
+      const along = (s: number) => {
+        let acc = 0;
+        for (let i = 1; i < path.length; i++) {
+          const a = path[i - 1], b = path[i], sl = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+          if (acc + sl >= s || i === path.length - 1) { const f = sl ? Math.min(1, (s - acc) / sl) : 0; return { p: [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f], t: sl ? [(b[0] - a[0]) / sl, (b[1] - a[1]) / sl, (b[2] - a[2]) / sl] : [1, 0, 0] }; }
+          acc += sl;
+        }
+        return { p: path[0], t: [1, 0, 0] };
+      };
+      const no = nos.get(l.id)!, purpose = cablePurpose(p, l);
+      const m0 = along(len / 2);
+      cables.push({ id: l.id, a: `${nameOf2(l.a.module)} ${l.a.ref}`, b: `${nameOf2(l.b.module)} ${l.b.ref}`, ends: `${l.a.module}/${l.a.ref}|${l.b.module}/${l.b.ref}`, kind, length: round(len, 0), buy: cableToBuy(len), no, label: purpose.text, mid: [m0.p[0], m0.p[1], m0.p[2] + d / 2 + 2], ...(clash.length ? { clash: clash.join(', ') } : {}) });
+      // numbered tags, a hand-width from each plug: ring round the cable, flag standing up
+      if (P.cableTags !== false) {
+        const key = `${no}:${d.toFixed(1)}`;
+        let tm = tagMeshes.get(key);
+        if (!tm) { const s = cableTag(no, d); const bb = s.boundingBox(); tm = { mesh: toMesh(s), volume: s.volume(), size: [bb.max[0] - bb.min[0], bb.max[1] - bb.min[1], bb.max[2] - bb.min[2]] as [number, number, number] }; tagMeshes.set(key, tm); }
+        const spot = (s: number) => {
+          const { p: o, t } = along(s);
+          const up = Math.abs(t[2]) > 0.9 ? [1, 0, 0] : [0, 0, 1];
+          const k = up[0] * t[0] + up[1] * t[1] + up[2] * t[2];
+          let x = [up[0] - k * t[0], up[1] - k * t[1], up[2] - k * t[2]];
+          const xl = Math.hypot(x[0], x[1], x[2]); x = x.map((v) => v / xl);
+          const y = [t[1] * x[2] - t[2] * x[1], t[2] * x[0] - t[0] * x[2], t[0] * x[1] - t[1] * x[0]];
+          return basis(x, y, t, [o[0] - t[0] * 1.5, o[1] - t[1] * 1.5, o[2] - t[2] * 1.5]);
+        };
+        const s1 = Math.min(90, len * 0.3);
+        const T1 = spot(s1), T2 = spot(len - s1);
+        parts.push({ id: `ctag_${no}`, name: `Cable tag ${no}`, qty: 2, mesh: tm.mesh, toAssembly: T1, instances: [T2], volume: tm.volume, size: tm.size, color: '#f4f1e8',
+          tag: { kind: 'cabletag', refs: [l.id] }, tags: [{ kind: 'cabletag', refs: [l.id] }], anim: { seq: TAG_SEQ, dir: [T1[0], T1[1], T1[2]] as [number, number, number], dist: 25 }, anims: [{ seq: TAG_SEQ, dir: [T2[0], T2[1], T2[2]] as [number, number, number], dist: 25 }] });
+      }
       const si = route.kinds.indexOf('street');
       const su = si >= 0 ? [route.pts[si][0], route.pts[si + 1][0]] : [route.pts[0][0], route.pts[route.pts.length - 1][0]];
       lanes.push({ street: ch.street, y: vl, d: Math.round(d * 10) / 10, u0: Math.min(...su), u1: Math.max(...su) });
@@ -653,10 +703,11 @@ export function generatePanel(p: Project): GenResult {
     const cs = cables.filter((c) => c.kind === k);
     if (!cs.length) continue;
     const combed = pieces.some((x) => /comb/.test(x.name));
-    steps.push({ seq: cableSeq(k), text: `Plug in the ${KIND_NAME[k]} cable${cs.length > 1 ? 's' : ''}: ${cs.map((c) => `${c.a} to ${c.b} (${c.buy} m)`).join(', ')}${combed ? '. Press each one into its comb slot as you go' : ''}.` });
+    steps.push({ seq: cableSeq(k), text: `Plug in the ${KIND_NAME[k]} cable${cs.length > 1 ? 's' : ''}: ${cs.map((c) => `${c.no ? `#${c.no} ` : ''}${c.a} to ${c.b} (${c.buy} m)`).join(', ')}${combed ? '. Press each one into its comb slot as you go' : ''}.` });
   }
   if (ghosts.some((g) => g.tag?.kind === 'plug' && g.anim?.seq === PLUG_SEQ)) steps.push({ seq: PLUG_SEQ, text: 'Plug in the cables that leave the rack (power supplies, screens, your computer).' });
   if (parts.some((x) => x.tag?.kind === 'cap')) steps.push({ seq: CAP_SEQ, text: 'Snap the caps over the plugs to lock them in.' });
+  if (parts.some((x) => x.tag?.kind === 'cabletag')) steps.push({ seq: TAG_SEQ, text: 'Snap a numbered tag round each end of every cable, a hand-width from the plug: the numbers match the Wiring view and the shopping list.' });
 
   const panel: PanelReport = { rails: rails as PanelReport['rails'], mounts: mountOut, modules: access, unplaced, depth, height: round(depth + (standOut?.length ? STAND.H : 0), 1), collisions, stands: standOut };
   return {

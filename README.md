@@ -61,7 +61,7 @@ The desktop builds are not code-signed yet:
 
 ## Quick start
 
-1. **Start:** drop your board files (several at once is fine: each becomes a board) anywhere in the window, or pick templates, hubs and chargers. Once you have a project, everything you drop or pick is added to it.
+1. **Start:** drop your board files (several at once is fine: each becomes a board) anywhere in the window, or pick templates, hubs and chargers. Once you have a project, everything you drop or pick is added to it. Later, **+ Board** in the top bar (or the **A** key) adds a board from any step without leaving it; a second Pi 4B is named "Raspberry Pi 4B 2", so every list, label and cable says which one.
 2. **Board:** check the outline, parts and the hole wizard; fix anything in the board editor.
 3. **Plugs:** pick the plug type and size for each connector, and what each one is cabled to (or press **Auto-connect**).
 4. **Holder:** frame or tray, a preset, where the release button goes, and the features you want.
@@ -73,6 +73,8 @@ The desktop builds are not code-signed yet:
 Every step has **Back** and **Next** at the bottom of the sidebar.
 
 ![Start screen](docs/images/start.png)
+
+![Adding a board from any step](docs/images/addboard.png)
 
 ## The dock
 
@@ -110,7 +112,17 @@ Plugs always win: if the button would block one, it moves.
 - ribs, laid out as a minimum spanning tree, tie every pin to the rim or to the dock's spine;
 - plug cradles, caps, guards, tie anchors, snap fingers and the label each bring only the bit of wall they need.
 
-**Tray** is the full base with a hex pattern and a wall all round: stiffer, and more plastic.
+**Tray** is the full base with a hex pattern and a wall all round: stiffer, and more plastic. The style cards show your own board's holder in each style, in 3D.
+
+![Holder features, each with what it did](docs/images/features.png)
+
+**Features** has one row per feature with what this holder actually got, so a switch never just silently does nothing:
+- plug cradles, caps, receptacle guards and cable-tie anchors, with how many (caps clip onto cradles, so they need them);
+- **wall snap fingers**, Auto / Always / Off. Auto uses fingers where the wall is free and snap pins in the mounting holes otherwise; Always also tries shorter fingers between the plugs. When none fit it says why (plugs, the dock or the label take the free edges; pins hold the board);
+- **engraved label**: the board's name by default. If it doesn't fit a free wall it is shortened to a form that still says which board it is ("Raspberry Pi 4B" becomes "Pi 4B", "Raspberry Pi Zero 2 W" becomes "Pi Zero", never just "2 W"). Your own words are never cut. It only gives way to snap fingers if that actually gives them room, and never on a board held by pins;
+- finger notches on trays (a frame is open underneath: push the board out from below).
+
+The **release button** section says where the button went: when a plug would be in the way of the place you asked for, it names the plug.
 
 Plastic in a holder with no cradles or clip:
 
@@ -264,6 +276,15 @@ On table stands the streets run under the rails' level. Wherever a street crosse
 
 Every cable's length is measured along its route and rounded up to a standard length to buy (10% slack). Auto-arrange keeps cabled boards next to each other, so the cables stay short.
 
+![Cable numbers and tags](docs/images/cables.png)
+
+**Every cable has a number**, and it keeps it: adding or removing other cables never renumbers it. The number and what the cable is for ("Power: USB charger → Pi 4B", "Hub uplink: Pi 4B → USB hub", "USB: USB hub → Uno R3") show:
+- on a badge on the cable in the 3D view (on a busy rack just the number; hover for the rest; **Layers › Cable numbers** hides them);
+- in the Wiring view, next to the length to buy;
+- in the Plugs step's cable list, the shopping list and the assembly steps.
+
+**Numbered cable tags** print with the rack, two per cable: a C-ring that snaps round the cable (sized for it) with a flag carrying the number, raised so a second colour or a marker picks it out. In 3D they sit a hand-width from each plug, where they go. Switch them off in the Plugs step.
+
 ## The 3D view
 
 ![The 3D view](docs/images/rack.png)
@@ -278,7 +299,7 @@ Every cable's length is measured along its route and rounded up to a standard le
 | Fly to a part | double-click it |
 | Watch it go together | the play button. It goes step by step, the way you would build it, with an instruction for each step: saddles on the table, rails in, end blocks on, spacers in, shoes clipped on, sockets in; then for each board, its release rod into the spine, the board into its holder, anything stacked on it, and the holder into its dock; then the cables (power first), and the caps. **‹ ›** step back and forward; **✕** shows it assembled. |
 | Pull it apart | the **Explode** slider |
-| Show or hide holders, docks, caps, boards, plugs, rails or cables | **Layers** |
+| Show or hide holders, docks, caps, boards, plugs, cables, cable numbers or rails | **Layers** |
 | See every keyboard shortcut | **?** |
 
 ![Stepping through the assembly](docs/images/steps.png)
@@ -333,6 +354,17 @@ Each holder can also have a flat pull-tab DIN clip or a **stand socket** (round,
 
 ## Checks and FEA
 
+### Printability, layer by layer
+
+![Printability, sliced](docs/images/printcheck.png)
+
+The Check step slices every distinct part into 0.2 mm layers in the pose it prints in and compares each layer with the one under it, the way a slicer sees it (in a background worker, once per part shape):
+- **In mid-air:** anything with nothing under it would need support. No BoardDock part has any; the test suite checks every part of a mixed rack (holders in both styles, caps, rods, shoes, sockets, stands and combs, clips, cable tags, the test-fit kit).
+- **Bridges and overhangs:** how far each layer reaches past the one below, split into bridges (held at both ends) and one-sided overhangs. The longest bridge is the roof of a wide plug cradle (about 15 mm over a Pi 4's USB stack), which PETG bridges fine with the part fan on. Snap-finger undersides are one-sided overhangs by design: each finger floats over a 2 mm slot, so a first layer that droops can't weld the finger to the wall below.
+- **Thin walls:** anything under 0.4 mm wide. A slicer without thin-wall detection leaves those out; in BoardDock parts they are only details of the engraved label and the button's chevrons.
+- **Narrow slots:** gaps under 0.3 mm print closed. That matters only where something moves: the rail shoe's lever (0.35 mm round its pin) and the socket's latch nose, which now has 0.45 mm round it in its window (it had 0.2 mm, which could have welded it to the socket wall).
+
+
 ![Dock FEA](docs/images/fea.png)
 
 The FEA is 2D plane stress:
@@ -344,7 +376,7 @@ PETG results (E = 2100 MPa, strain limit 2%):
 
 | Case | Force | Peak strain | 99% of the part below |
 |---|---|---|---|
-| Latch: holder pushed in (nose moves out 1.3 mm) | about 10 N push | 1.6% | 1.0% |
+| Latch: holder pushed in (nose moves out 1.3 mm) | about 9 N push | 1.6% | 1.0% |
 | Latch: button pressed (nose clears the groove after 1.9 of 3.1 mm) | 3.2 N | 1.2% | 0.8% |
 | Rail shoe: lever pad pressed down (jaw opens 1.7 mm for about 8 mm of pad travel; the stop engages at 2.2 mm of jaw travel) | 1.4 N | 1.6% | 0.55% |
 | Rail shoe: pressed onto the rail | 4.3 N | 1.7–1.9% | 0.5% |
@@ -371,7 +403,12 @@ PETG results (E = 2100 MPa, strain limit 2%):
   - **Start and end code** comes from Kiri:Moto's own profile where it has one (Bambu Lab P1S and A1, Prusa MK3S+ and MINI, Creality K1, which the K1C uses too). BoardDock swaps the A1 and K1 profiles' fixed PLA temperatures for your filament's. Other printers get a plain start (heat, home, purge line) for Marlin or Klipper, marked as such. You can paste your own under **Start and end G-code**. The A1 mini and the XL are left to their makers' slicers.
   - Kiri:Moto is not the slicer the settings were written for. It has no first-layer (elephant-foot) compensation, and its speeds are set conservatively.
 - **G-code, in your own slicer:** every plate is also a 3MF with all its parts placed. In the desktop app, **Open plate** hands it to OrcaSlicer, PrusaSlicer, Bambu Studio or Cura if one is installed. Your printer maker's slicer knows its quirks best.
-- **Supports: none.** Overhangs are 45° chamfers or short bridges, round holes on their side are teardrops, and all springs flex within their print layers.
+- **Supports: none.** Overhangs are 45° chamfers or short bridges, round holes on their side are teardrops, and all springs flex within their print layers. The Check step proves it layer by layer (see Printability, layer by layer). Leave supports off in any slicer.
+- **What the slicers do with it:**
+  - *The tongue hole.* The socket prints standing on its end, so the tongue's pocket lies on its side with its opening facing sideways. Its roof is chamfered at 45° and the centre divider halves it, so the longest bridge in the socket is about 2.3 mm. The pocket leaves 0.2 mm all round the 14 × 4.5 mm tongue. If yours prints tight (a sagging roof, or elephant's foot), raise **Tongue fit** in the Rails step.
+  - *Print-in-place parts.* The rail shoe's lever prints round its pin, 0.35 mm clear, and every slicer keeps the ring and the pin as separate loops. The socket's latch nose has 0.45 mm round it in its window. Don't lower the line width or raise the flow for these parts.
+  - *Bridges.* OrcaSlicer and PrusaSlicer spot bridges, slow down, and lay the lines across the gap with the fan up. Kiri:Moto (in the app) prints them as ordinary solid layers, so expect a little more sag on the widest cradle roofs. That is cosmetic: nothing rests on them.
+  - *Thin walls.* With thin-wall detection off (the setting BoardDock asks for, so the 0.9 mm hinge stays two full lines), walls under about 0.4 mm are left out. In BoardDock parts that is only fine label detail.
 - **Plates:** each plate becomes one STL or 3MF file with every part already placed. The estimate shows grams and print time per part.
 - **First print:** the **test-fit kit** in Export: a shoe, a socket and a small tongue key with its release rod, about 21 g. Clip it on your rail, plug the key in, press its button. If the key is tight, raise **Tongue fit** in the Rails step by 0.05–0.1 mm.
 - **Check:** the Check step lists every part's overhangs and longest bridge. **Overhangs** on the print plates paints faces that would need support in red and bridges in amber. The generated parts need no supports; bridges are 5.4 mm at most.
@@ -393,6 +430,9 @@ PETG results (E = 2100 MPa, strain limit 2%):
 - The in-app G-code has not been run on a printer. The start code comes from Kiri:Moto's community profiles or BoardDock's plain templates, not from the printer makers. Check the start of the first print, or use your own slicer.
 - Slicing a full plate in the app takes much longer than a desktop slicer: seconds to a minute or more, depending on the plate and the computer.
 - A board whose holes all carry the standoffs of a HAT has no pins; it needs room on its edges for two snap fingers, and the Check step says so when there isn't any.
+- A small board with no holes for pins (an Arduino Nano) is held by two snap fingers, which need two free stretches of wall. When the first-choice dock edge leaves room for only one, the automatic layout docks it by another edge, and if the release button is at its default it goes beside the board to free the far edge. If you set the button to the middle yourself, the Check step says "Nothing clips this board in".
+- The printability check works on the parts' shapes, not on a real slicer's toolpaths. Kiri:Moto has no bridge detection, so the widest cradle roofs sag a little more there than in OrcaSlicer or PrusaSlicer.
+- Cable tags are sized from typical cable diameters (USB 4 mm, Ethernet 6 mm, HDMI 7 mm); a thicker or thinner cable may need the tag printed from a custom diameter.
 
 ## Development
 

@@ -14,6 +14,7 @@ import type { Anim, Feature, GenResult, Ghost, MeshData, PickTag, V2 } from '../
 import { packPlates, placedMesh, printability, type Plate } from '../cad/export';
 import type { Layer, SelItem } from '../state';
 import { featureItem } from './pickOps';
+import { KIND_COLOR } from '../model/links';
 
 interface Props {
   result: GenResult | null;
@@ -32,7 +33,7 @@ interface Props {
 
 const LAYER: Record<PickTag['kind'], Layer> = {
   holder: 'holders', rod: 'holders', clip: 'holders', link: 'holders', rivet: 'holders', stand: 'boards',
-  shoe: 'docks', socket: 'docks', cap: 'caps', rail: 'rails', board: 'boards', parts: 'boards', plug: 'plugs', cable: 'cables', railstand: 'rails',
+  shoe: 'docks', socket: 'docks', cap: 'caps', rail: 'rails', board: 'boards', parts: 'boards', plug: 'plugs', cable: 'cables', railstand: 'rails', cabletag: 'cables',
 };
 
 interface Obj { mesh: THREE.Mesh; tag?: PickTag; anim?: Anim; rank: number; base: THREE.Matrix4; ghost: boolean; moves: { rank: number; dir: number[]; dist?: number }[]; show: number }
@@ -107,7 +108,7 @@ function backdrop(theme: 'dark' | 'light') {
 const ease = (x: number) => 1 - Math.pow(1 - x, 3);
 
 /** Physically based look per surface kind (boards, pads, connector shells, plastics). */
-function surface(mat: Ghost['mat'] | undefined, color: string, opacity: number, ghost: boolean, board: boolean): THREE.MeshStandardMaterial {
+export function surface(mat: Ghost['mat'] | undefined, color: string, opacity: number, ghost: boolean, board: boolean): THREE.MeshStandardMaterial {
   const base = { color, flatShading: true, transparent: opacity < 1, opacity, depthWrite: opacity >= 0.9, side: THREE.DoubleSide, emissive: new THREE.Color(0x4c8dff), emissiveIntensity: 0 };
   switch (mat) {
     case 'mask': return new THREE.MeshPhysicalMaterial({ ...base, roughness: 0.42, metalness: 0, clearcoat: 0.6, clearcoatRoughness: 0.3 });
@@ -223,6 +224,7 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
       if (!c.dirty && !moved) return;
       c.dirty = false;
       composer.render();
+      c.placeLabels?.();
     };
     raf = requestAnimationFrame(loop);
 
@@ -486,6 +488,56 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
   }, [result, mode, bed[0], bed[1], spacing, theme, installed, overhangs]);
 
   useEffect(() => { const c = ctx.current; if (c) { applyLayers(c, layers); c.invalidate(); } }, [layers]);
+
+  // ---------------------------------------------------------------- cable numbers: a badge on every cable
+  const labelsEl = useRef<HTMLDivElement>(null);
+  const showLabels = mode === 'assembly' && layers.labels !== false && layers.cables !== false && (!Number.isFinite(play.t) || play.t >= play.n);
+  useEffect(() => {
+    const c = ctx.current, host = labelsEl.current;
+    if (!c || !host) return;
+    host.replaceChildren();
+    const list = showLabels ? (result?.report.cables ?? []).filter((x) => x.mid && x.no) : [];
+    const compact = list.length > 8; // a busy rack shows the numbers; the words come on hover
+    const items = list.map((x) => {
+      const el = document.createElement('button');
+      el.className = `clabel${compact ? ' compact' : ''}`;
+      el.style.setProperty('--k', KIND_COLOR[x.kind]);
+      el.title = `Cable ${x.no}: ${x.label ?? ''} · ${Math.round(x.length / 10)} cm, buy ${x.buy} m`;
+      el.innerHTML = `<b>${x.no}</b><span></span>`;
+      (el.lastChild as HTMLElement).textContent = (x.label ?? '').replace(/^([^:]+): /, '$1 · ');
+      el.onclick = (e) => { e.stopPropagation(); cb.current.onPick({ kind: 'link', id: x.id }, e.shiftKey || e.metaKey); };
+      host.appendChild(el);
+      return { el, p: new THREE.Vector3(x.mid![0], x.mid![1], x.mid![2]) };
+    });
+    const v = new THREE.Vector3();
+    c.placeLabels = () => {
+      const w = host.clientWidth, h = host.clientHeight;
+      const at = items.map((it) => {
+        v.copy(it.p).applyMatrix4(c.world.matrixWorld).project(c.camera);
+        const vis = v.z < 1 && v.z > -1 && Math.abs(v.x) < 1.05 && Math.abs(v.y) < 1.05;
+        return { it, vis, x: ((v.x + 1) / 2) * w, y: ((1 - v.y) / 2) * h, bw: it.el.offsetWidth || 120, bh: it.el.offsetHeight || 22 };
+      });
+      // nearest labels first keep their spot; the others step down (or up) until they are clear
+      const placed: number[][] = [];
+      for (const a of at.filter((q) => q.vis).sort((p, q) => p.y - q.y)) {
+        let y = a.y;
+        for (let k = 0; k < 8; k++) {
+          const r = [a.x - a.bw / 2 - 3, y - a.bh / 2 - 2, a.x + a.bw / 2 + 3, y + a.bh / 2 + 2];
+          const hit = placed.find((q) => r[0] < q[2] && q[0] < r[2] && r[1] < q[3] && q[1] < r[3]);
+          if (!hit) break;
+          y = hit[3] + a.bh / 2 + 3;
+        }
+        placed.push([a.x - a.bw / 2 - 3, y - a.bh / 2 - 2, a.x + a.bw / 2 + 3, y + a.bh / 2 + 2]);
+        a.y = y;
+      }
+      for (const a of at) {
+        a.it.el.style.display = a.vis ? '' : 'none';
+        if (a.vis) a.it.el.style.transform = `translate(${a.x}px, ${a.y}px) translate(-50%, -50%)`;
+      }
+    };
+    c.invalidate();
+    return () => { c.placeLabels = undefined; host.replaceChildren(); };
+  }, [result, showLabels]);
   useEffect(() => { const c = ctx.current; if (c) { applySel(c, sel); c.invalidate(); } }, [sel, result]);
 
   // ---------------------------------------------------------------- animation and explode
@@ -545,6 +597,7 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
   return (
     <div style={{ position: 'absolute', inset: 0 }}>
       <div ref={host} style={{ position: 'absolute', inset: 0 }} />
+      <div ref={labelsEl} className="clabels" />
       <div ref={tip} className="hovertip floating" style={{ display: 'none' }} />
       {mode === 'assembly' && result && (
         <div className="player floating" style={{ position: 'absolute', left: 12, bottom: 12, zIndex: 6 }}>

@@ -613,3 +613,70 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 .startcode textarea { font-size: 11px; line-height: 1.45; white-space: pre; }
 .ownslicer { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--line); }
 .ownslicer h4 { margin: 0 0 4px; font-size: 12.5px; }
+
+/* Holder › Features: one row per feature with what the holder got */
+.featrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line); }
+.featrow:last-of-type { border-bottom: 0; }
+.featrow-l { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.featrow-l b { font-size: 12.5px; font-weight: 600; }
+.featrow-l small { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.featrow-l small em { font-style: normal; color: var(--subtle); }
+.featrow-r { flex: none; }
+.featrow-r .seg { min-width: 170px; }
+.featsub { padding: 2px 0 8px; border-bottom: 1px solid var(--line); }
+.switch { position: relative; display: inline-block; width: 34px; height: 20px; cursor: pointer; }
+.switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+.switch i { position: absolute; inset: 0; border-radius: 99px; background: var(--surface-4); transition: background 0.15s; }
+.switch i::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgb(0 0 0 / 0.3); transition: transform 0.15s; }
+.switch input:checked + i { background: var(--accent); }
+.switch input:checked + i::after { transform: translateX(14px); }
+.switch input:disabled + i { opacity: 0.4; }
+.switch input:focus-visible + i { box-shadow: 0 0 0 3px var(--accent-soft); }
+
+/* cable numbers in 3D */
+.clabels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 4; }
+.clabel { position: absolute; left: 0; top: 0; pointer-events: auto; display: flex; align-items: center; gap: 5px; max-width: 190px; padding: 2px 8px 2px 2px; border-radius: 99px; border: 1px solid color-mix(in srgb, var(--k) 60%, var(--line)); background: color-mix(in srgb, var(--surface) 90%, transparent); box-shadow: 0 2px 8px rgb(0 0 0 / 0.18); font: inherit; font-size: 10.5px; color: var(--fg); cursor: pointer; white-space: nowrap; backdrop-filter: blur(4px); }
+.clabel b { display: grid; place-items: center; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 99px; background: var(--k); color: #fff; font-family: var(--mono); font-size: 10.5px; }
+.clabel span { overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
+.clabel:hover { z-index: 2; max-width: 360px; }
+.clabel:hover span { color: var(--fg); }
+
+.cno { display: grid; place-items: center; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 99px; color: #fff; font-family: var(--mono); font-size: 11px; font-weight: 700; flex: none; }
+.cpurpose { display: block; color: var(--muted); font-size: 11px; margin-top: 1px; }
+
+/* board chips: which board the step is about, and + Add */
+.boardchips { display: flex; flex-wrap: wrap; gap: 5px; margin: 0 0 10px; }
+.bchip { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px 0 7px; border-radius: 99px; border: 1px solid var(--line-2); background: var(--surface); color: var(--muted); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; max-width: 160px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bchip i { width: 9px; height: 9px; border-radius: 3px; flex: none; }
+.bchip:hover { color: var(--fg); border-color: var(--accent-line); }
+.bchip.on { color: var(--fg); border-color: var(--accent); background: var(--accent-soft); }
+.bchip.add { color: var(--accent); border-style: dashed; }
+.bchip.add svg { width: 13px; height: 13px; }
+.addboard { margin-left: 8px; }
+.addboard svg { width: 14px; height: 14px; }
+/* Add a board sheet */
+.sheet-veil { position: fixed; inset: 0; z-index: 70; background: rgb(8 10 14 / 0.45); display: grid; place-items: center; padding: 16px; animation: rise 0.18s ease-out; }
+.sheet { width: min(760px, 100%); max-height: min(86vh, 900px); display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 24px 60px rgb(0 0 0 / 0.35); overflow: hidden; }
+.sheet-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 16px 18px 12px; border-bottom: 1px solid var(--line); }
+.sheet-head b { font-size: 17px; letter-spacing: -0.3px; display: block; }
+.sheet-head small { color: var(--muted); font-size: 12.5px; }
+.sheet-body { padding: 14px 18px 18px; overflow-y: auto; }
+.sheet-body h4 { margin: 14px 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--subtle); font-family: var(--mono); font-weight: 600; }
+.sheet-body .tiles { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.sheet-search { margin-top: 12px; height: 36px !important; font-size: 13.5px !important; }
+.drop.small { display: flex; align-items: center; gap: 12px; padding: 12px 14px; text-align: left; }
+.drop.small > svg { width: 26px; height: 26px; flex: none; color: var(--accent); }
+.drop.small b { font-size: 13px; }
+.drop.small p { margin: 2px 0 0; font-size: 11.5px; }
+@media (max-width: 860px) { .addboard { display: none; } .sheet { max-height: 92vh; } .sheet-body .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* 3D pictures on tiles and style cards */
+.thumb.pic { width: 100%; height: auto; aspect-ratio: 14 / 9; object-fit: contain; display: block; }
+.stylepic { width: 100%; height: auto; aspect-ratio: 30 / 19; object-fit: contain; display: block; margin-bottom: 4px; }
+.tile .thumb.pic { height: 96px; width: 100%; object-fit: contain; margin-bottom: 4px; }
+.stylepic { background: radial-gradient(ellipse at 50% 58%, var(--surface-3), transparent 72%); border-radius: 8px; }
+
+.clabel.compact { padding: 2px; gap: 0; }
+.clabel.compact span { max-width: 0; transition: max-width 0.15s; }
+.clabel.compact:hover { padding-right: 8px; gap: 5px; }
+.clabel.compact:hover span { max-width: 320px; }

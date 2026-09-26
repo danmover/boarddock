@@ -2,6 +2,7 @@
 // Dimensions are typical catalogue values; every one is editable in the app because real parts vary.
 import { PRINTERS_DB, printerByName } from './printers';
 import { applyHoleRoles } from './holes';
+import { numberLinks } from './links';
 import type { ArrangeSettings, Board, Comp, CompKind, ConnSetup, HolderSettings, Material, Module, MountSettings, PanelSettings, PlugSpec, PrinterSettings, Project, StandSettings } from './types';
 
 export interface ConnType {
@@ -205,6 +206,7 @@ export function migrate(p: any): Project {
     panel: { ...structuredClone(DEFAULT_PANEL), ...(p.panel ?? {}) },
     arrange: { ...DEFAULT_ARRANGE, ...(p.arrange ?? {}) },
     active: Math.min(p.active ?? 0, p.modules.length - 1),
+    links: numberLinks(p.links ?? []),
     // printers saved under an older combined name get the matching one from the list, with its build height
     printer: ((pr) => (pr ? { ...p.printer, name: pr.name, maxZ: pr.maxZ } : p.printer ?? { ...PRINTERS[0] }))(printerByName(p.printer?.name ?? '')),
   };

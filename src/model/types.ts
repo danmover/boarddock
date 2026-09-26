@@ -211,13 +211,14 @@ export interface PanelSettings {
   rowGap: number; // auto: space between rows of rails
   fit?: number; // tongue made this much smaller on every face (mm): raise it if holders are hard to plug in
   stands?: boolean; // printed table stands under the rails, with cable combs (default on)
+  cableTags?: boolean; // numbered clip-on tags for every cable, two each (default on)
   rails: Rail[]; // manual layout
   mounts: RailMount[];
 }
 
 /** A cable between two plugs (connectors on two boards, or a board and a box such as a hub). */
 export interface PlugRef { module: string; ref: string }
-export interface Link { id: string; a: PlugRef; b: PlugRef; kind?: 'usb' | 'power' | 'video' | 'net' | 'audio' | 'wire' }
+export interface Link { id: string; a: PlugRef; b: PlugRef; kind?: 'usb' | 'power' | 'video' | 'net' | 'audio' | 'wire'; no?: number } // no: the cable's number, kept for good
 
 /** What was printed, cut and bought when the rack was built: what Export compares against to list only what's new. */
 export interface Built {
@@ -251,7 +252,7 @@ export interface MeshData {
 
 /** What a part or ghost belongs to, for picking in the 3D view. */
 export interface PickTag {
-  kind: 'holder' | 'cap' | 'rod' | 'clip' | 'shoe' | 'socket' | 'link' | 'rivet' | 'board' | 'parts' | 'plug' | 'rail' | 'stand' | 'cable' | 'railstand';
+  kind: 'holder' | 'cap' | 'rod' | 'clip' | 'shoe' | 'socket' | 'link' | 'rivet' | 'board' | 'parts' | 'plug' | 'rail' | 'stand' | 'cable' | 'railstand' | 'cabletag';
   module?: string;
   mount?: string;
   rail?: string;
@@ -310,6 +311,7 @@ export interface Check {
   value: string;
   status: 'ok' | 'warn' | 'bad' | 'info';
   detail?: string;
+  module?: string; // the board it is about, when it is about one
 }
 
 export interface GenReport {
@@ -323,7 +325,7 @@ export interface GenReport {
   panel?: PanelReport | null;
   features?: Feature[];
   frames?: Record<string, number[]>; // module id -> holder frame to assembly
-  cables?: { id: string; a: string; b: string; ends?: string; kind: NonNullable<Link['kind']>; length: number; buy: number; clash?: string }[]; // ends: "module/ref|module/ref"
+  cables?: { id: string; a: string; b: string; ends?: string; kind: NonNullable<Link['kind']>; length: number; buy: number; clash?: string; no?: number; label?: string; mid?: number[] }[]; // ends: "module/ref|module/ref"; no: cable number; label: what it is for; mid: where its number shows (assembly frame)
 }
 
 export type AccessDir = 'front' | 'up' | 'down' | 'left' | 'right' | 'wall';

@@ -39,7 +39,7 @@ export function rail(len: number): MF {
 // ---------------- socket ----------------
 const S = {
   hx: 9.0, coreY: 6.2, halfY: 10.4, bottom: -20.5, floor: -14.5, anchorTop: -19.0, bossHalf: 9.0, bossBottom: -25.3, bossCh: 1.0,
-  cavHalf: TONGUE.hx + 0.2, cavFullY: TONGUE.y1 - 1.8, cavFrontY: TONGUE.y1 + 0.2, dividerHalf: 0.35, dividerTop: -1.0, windowZ: [-8.15, -5.05], windowX: [-5.0, 5.2], mouthCh: 0.6,
+  cavHalf: TONGUE.hx + 0.2, cavFullY: TONGUE.y1 - 1.8, cavFrontY: TONGUE.y1 + 0.2, dividerHalf: 0.35, dividerTop: -1.0, windowZ: [-8.4, -4.8], windowX: [-5.2, 5.2], mouthCh: 0.6, // window: 0.45 / 0.4 mm round the nose, so it prints free of the wall
 };
 // shoe hook notch on all four boss faces; 10 degree retaining face so a pull draws the hooks in
 const BOSS_NOTCH = [[8.2, -23.11], [9.3, -23.3], [9.3, -21.2], [8.2, -22.3]];

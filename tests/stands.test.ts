@@ -55,10 +55,10 @@ describe('table stands', () => {
     expect(st.length).toBeGreaterThan(1);
     expect(new Set(pr.rails.map((x) => x.length)).size).toBe(1);
     expect(r.report.checks.find((c) => c.name === 'Rail sag between sleepers')!.status).toBe('ok');
-    // nothing but the stands and cables goes below the rail base
+    // nothing but the stands, the cables and their tags goes below the rail base
     const minZ = (pos: Float32Array, M: number[]) => { let z = Infinity; for (let k = 0; k < pos.length; k += 3) z = Math.min(z, M[2] * pos[k] + M[6] * pos[k + 1] + M[10] * pos[k + 2] + M[14]); return z; };
     for (const x of st) for (const M of [x.toAssembly, ...(x.instances ?? [])]) expect(minZ(x.mesh.pos, M)).toBeGreaterThan(-STAND.H - 0.01);
-    for (const x of r.parts.filter((q) => q.tag?.kind !== 'railstand')) expect(minZ(x.mesh.pos, x.toAssembly)).toBeGreaterThan(-0.5);
+    for (const x of r.parts.filter((q) => q.tag?.kind !== 'railstand' && q.tag?.kind !== 'cabletag')) expect(minZ(x.mesh.pos, x.toAssembly)).toBeGreaterThan(-0.5); // cable tags ride on the cables
   });
 });
 

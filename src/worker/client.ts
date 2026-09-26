@@ -1,5 +1,6 @@
 // Promise wrappers around the workers. Generation is "latest wins": stale requests are dropped.
-import type { GenResult, PartOut, Project } from '../model/types';
+import type { Board, GenResult, HolderSettings, MeshData, PartOut, Project } from '../model/types';
+import type { Expected, LayerReport } from '../cad/printcheck';
 import type { ClipFeaResult } from '../fea/clipfea';
 import type { DockFeaResult } from '../fea/dockfea';
 
@@ -47,6 +48,25 @@ export async function runDockFea(E: number, nu: number, h: number, onProgress?: 
   fea ??= makeWorker(new Worker(new URL('./fea.worker.ts', import.meta.url), { type: 'module' }));
   const res = await fea.call<DockFeaResult>('dock', { latch, shoe, E, nu, h }, onProgress);
   return { ...res, latch, shoe };
+}
+
+let printer: ReturnType<typeof makeWorker> | null = null;
+const side = () => (printer ??= makeWorker(new Worker(new URL('./print.worker.ts', import.meta.url), { type: 'module' })));
+export type PicPart = { mesh: MeshData; color: string; mat?: string; opacity: number; M?: number[] };
+/** Meshes for a picture of a board on its own. */
+export const boardPicture = (b: Board) => side().call<PicPart[]>('board', b);
+/** Meshes for a picture of a board in its holder with these settings (loose, no mount). */
+export const holderPicture = (board: Board, holder: HolderSettings) => side().call<PicPart[]>('holder', { board, holder });
+const layerCache = new Map<string, Promise<LayerReport | null>>();
+/** Slice one part layer by layer (cached by its signature, so an unchanged part is checked once). */
+export function checkLayers(key: string, mesh: MeshData, expect: Expected[]): Promise<LayerReport | null> {
+  const hit = layerCache.get(key);
+  if (hit) return hit;
+  const p = side().call<LayerReport | null>('layers', { mesh, expect });
+  layerCache.set(key, p);
+  p.catch(() => layerCache.delete(key));
+  if (layerCache.size > 200) layerCache.delete(layerCache.keys().next().value!);
+  return p;
 }
 
 export function buildTestKit(fit: number): Promise<PartOut[]> {

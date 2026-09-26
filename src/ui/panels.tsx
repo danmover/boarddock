@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { zipSync, strToU8 } from 'fflate';
 import type { Board, BoxFace, BoxSpec, Comp, Hole, HoleRole, PartOut, Project, V2 } from '../model/types';
 import { applyHoleRoles, boltedOn, detectHoleRoles, ROLE_INFO } from '../model/holes';
-import { baseRef, compatible, KIND_COLOR, linkKind, linkOf, plugName, plugRole, plugsOf, portBudget, sameRef } from '../model/links';
+import { baseRef, cableNumbers, cablePurpose, shortName, compatible, KIND_COLOR, linkKind, linkOf, plugName, plugRole, plugsOf, portBudget, sameRef } from '../model/links';
 import { applyBox, BOX_PORT_TYPES, BOX_PRESETS, BOX_ROLES, boxProblems, FACE_NAME, inferBox, layoutPorts, makeBox, tightFaces } from '../model/boxes';
 import { addLinks, removeLinks, setLink } from './linkOps';
 import { Icon, I } from './icons';
@@ -23,7 +23,10 @@ import { duplicateModule, markBuilt, placementNote, unmarkBuilt } from './panelO
 import { delta, partsFor, type Delta } from '../model/built';
 import { baseOf as stackBase, ridersOf } from '../model/holes';
 import { DockFeaSection } from './DockFea';
+import { picture } from './snapshot';
+import { boardPicture, holderPicture, type PicPart } from '../worker/client';
 import { GcodeSection } from './GcodeSection';
+import { PrintCheckSection } from './PrintCheck';
 
 // ============================================================================================ IMPORT
 export function ImportPanel() {
@@ -126,9 +129,28 @@ function RackSummary() {
 
 const thumbCache = new Map<string, Board>();
 /** A small top view of a template: outline, holes, parts, and the connectors picked out. */
-function BoardThumb({ id }: { id: string }) {
+/** A 3D picture of a template board (rendered once, then kept); the sketch below shows until it is ready. */
+function usePicture(key: string, make: () => Promise<PicPart[]>, w?: number, h?: number, view?: [number, number, number]): string | null {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    setUrl(null);
+    picture(key, make, w, h, view).then((u) => live && setUrl(u)).catch(() => {});
+    return () => { live = false; };
+  }, [key]);
+  return url;
+}
+
+export function BoardThumb({ id }: { id: string }) {
   let b = thumbCache.get(id);
   if (!b) { b = TEMPLATES.find((t) => t.id === id)!.make(); thumbCache.set(id, b); }
+  const board = b;
+  const pic = usePicture(`board:${id}:v2`, () => boardPicture(board), 280, 180, [0.5, -1, 0.8]);
+  if (pic) return <img className="thumb pic" src={pic} alt="" draggable={false} />;
+  return <BoardSketch b={b} />;
+}
+
+function BoardSketch({ b }: { b: Board }) {
   const bb = bbox(b.outline), pad = 3, w = bb.x1 - bb.x0 + 2 * pad, h = bb.y1 - bb.y0 + 2 * pad;
   const tx = (x: number) => x - bb.x0 + pad, ty = (y: number) => bb.y1 - y + pad;
   const path = (l: V2[]) => 'M' + l.map((q) => `${tx(q[0]).toFixed(1)},${ty(q[1]).toFixed(1)}`).join('L') + 'Z';
@@ -145,7 +167,7 @@ function BoardThumb({ id }: { id: string }) {
   );
 }
 
-function ManualBoard({ put }: { put: (b: Board) => void }) {
+export function ManualBoard({ put }: { put: (b: Board) => void }) {
   const [shape, setShape] = useState<'rect' | 'round' | 'circle'>('rect');
   const [w, setW] = useState(60), [h, setH] = useState(40), [r, setR] = useState(2), [t, setT] = useState(1.6);
   const [holesOn, setHolesOn] = useState(true), [inset, setInset] = useState(3.5), [hd, setHd] = useState(3.2);
@@ -434,12 +456,13 @@ function CablesSection() {
   const sel = useApp((s) => s.sel);
   const links = p.links ?? [];
   const nm = (r: { module: string; ref: string }) => `${p.modules.find((m) => m.id === r.module)?.board.name ?? '?'} ${r.ref}`;
-  const buy = new Map<string, number>();
+  const nos = cableNumbers(links);
+  const buy = new Map<string, number[]>();
   for (const l of links) {
     const c = cables.find((x) => x.id === l.id);
     const A = p.modules.find((m) => m.id === l.a.module)?.board.comps.find((x) => x.ref === baseRef(l.a.ref)), B = p.modules.find((m) => m.id === l.b.module)?.board.comps.find((x) => x.ref === baseRef(l.b.ref));
     const key = `${c ? `${c.buy} m ` : ''}${plugName(A?.conn?.type ?? '')} to ${plugName(B?.conn?.type ?? '')}`;
-    buy.set(key, (buy.get(key) ?? 0) + 1);
+    buy.set(key, [...(buy.get(key) ?? []), nos.get(l.id)!]);
   }
   const budget = portBudget(p);
   return (
@@ -455,8 +478,8 @@ function CablesSection() {
               const c = cables.find((x) => x.id === l.id);
               return (
                 <div key={l.id} className={`item ${isSel(sel, l.id) ? 'sel' : ''}`} onClick={() => select([{ kind: 'link', id: l.id }])}>
-                  <span className="dot" style={{ background: KIND_COLOR[l.kind ?? 'usb'], borderRadius: 99 }} />
-                  <span className="grow"><b>{nm(l.a)}</b> <small>to</small> <b>{nm(l.b)}</b></span>
+                  <span className="cno" style={{ background: KIND_COLOR[l.kind ?? 'usb'] }}>{nos.get(l.id)}</span>
+                  <span className="grow"><b>{nm(l.a)}</b> <small>to</small> <b>{nm(l.b)}</b><small className="cpurpose">{cablePurpose(p, l).text}</small></span>
                   {c ? <span className="chip">{Math.round(c.length / 10)} cm</span> : <span className="chip">not on the rails</span>}
                   <button className="btn small ghost icon" title="Remove the cable" onClick={(e) => { e.stopPropagation(); removeLinks([l.id]); }}><Icon d={I.x} /></button>
                 </div>
@@ -465,7 +488,8 @@ function CablesSection() {
           </div>
           <div className="divider" />
           <div className="field"><span>Cables to buy (route + 10%, next standard length)</span></div>
-          <ul className="fmt" style={{ marginTop: 4 }}>{[...buy.entries()].map(([k, n]) => <li key={k}>{n} × {k}</li>)}</ul>
+          <ul className="fmt" style={{ marginTop: 4 }}>{[...buy.entries()].map(([k, ns]) => <li key={k}>{ns.length} × {k} <small>(cable{ns.length > 1 ? 's' : ''} {ns.sort((a, b) => a - b).join(', ')})</small></li>)}</ul>
+          {p.layout === 'panel' && <Check label="Print a numbered tag for each end of every cable" value={p.panel.cableTags !== false} onChange={(v) => edit((q) => { q.panel.cableTags = v; })} />}
         </>
       )}
     </Section>
@@ -583,27 +607,7 @@ export function HolderPanel() {
         </div>
         {p.modules.length > 1 && <div className="btns" style={{ marginTop: 8 }}><button className="btn small ghost" onClick={() => edit((q) => { for (const m of q.modules) Object.assign(m.holder, { style: H.style, wall: H.wall, base: H.base, pattern: H.pattern, cell: H.cell, rib: H.rib, wallAbove: H.wallAbove, chamfer: H.chamfer, material: H.material, feat: H.feat }); })}><Icon d={I.copy} /> Use these settings for every board</button></div>}
       </Section>
-      <Section title="Features">
-        {(() => {
-          const F = { ...DEFAULT_FEATURES, ...(H.feat ?? {}) };
-          const setF = (k: keyof typeof F, v: boolean) => set((h) => { h.feat = { ...DEFAULT_FEATURES, ...(h.feat ?? {}), [k]: v }; });
-          return (
-            <>
-              <div className="featgrid">
-                <Check label="Plug cradles" value={F.cradles} onChange={(v) => setF('cradles', v)} />
-                <Check label="Snap-on plug caps" value={F.caps} onChange={(v) => setF('caps', v)} />
-                <Check label="Cable-tie anchors" value={F.ties} onChange={(v) => setF('ties', v)} />
-                <Check label="Receptacle guards" value={F.guards} onChange={(v) => setF('guards', v)} />
-                <Check label="Wall snap fingers" value={H.tabs !== 'off'} onChange={(v) => set((h) => { h.tabs = v ? 'auto' : 'off'; })} />
-                {(H.style ?? 'frame') === 'tray' && <Check label="Finger notches" value={H.notches} onChange={(v) => set((h) => { h.notches = v; })} />}
-                <Check label="Engraved label" value={!!H.label.trim()} onChange={(v) => set((h) => { h.label = v ? activeModule(p).board.name.slice(0, 24) : ''; })} />
-                {(H.style ?? 'frame') === 'tray' && <Check label="Base pattern" value={H.pattern !== 'none'} onChange={(v) => set((h) => { h.pattern = v ? 'hex' : 'none'; })} />}
-              </div>
-              <p className="hint">Switch a feature off for the whole holder here; the Plugs step still remembers each connector's own choice for when you switch it back on.</p>
-            </>
-          );
-        })()}
-      </Section>
+      <HolderFeatures />
       <Section title={(H.style ?? 'frame') === 'frame' ? 'Frame' : 'Tray'}>
         <div className="row">
           <Num label="Wall" value={H.wall} min={1.2} max={4} onChange={(v) => set((h) => { h.wall = v; })} />
@@ -622,16 +626,9 @@ export function HolderPanel() {
         <p className="hint">Automatic clearance clears the tallest part under the board; deeper parts get pockets in the base.</p>
         <div className="row" style={{ marginTop: 8 }}><Num label="Pin clearance in holes" value={H.pinClear} min={0} max={0.5} step={0.05} onChange={(v) => set((h) => { h.pinClear = v; })} /></div>
       </Section>
-      <Section title="Holding the board">
-        <Seg value={H.tabs} options={[['auto', 'Auto'], ['on', 'Always'], ['off', 'Off']]} onChange={(v) => set((h) => { h.tabs = v; })} />
-        <div className="row" style={{ marginTop: 8 }}><Num label="Finger lip" value={H.tabLip} min={0.3} max={1.2} step={0.05} onChange={(v) => set((h) => { h.tabLip = v; })} /></div>
-        <p className="hint">Snap fingers are cut into the wall and bend sideways, within the print layers, so they don't snap off. Auto: fingers unless you set holes to snap pins.</p>
-        <Check label="Finger notches to lift the board out" value={H.notches} onChange={(v) => set((h) => { h.notches = v; })} />
-      </Section>
       <Section title="Look">
         {(H.style ?? 'frame') === 'tray' && <Pick label="Base pattern" value={H.pattern} options={[['hex', 'Hexagons'], ['slots', 'Slots'], ['circles', 'Circles'], ['none', 'Solid']]} onChange={(v) => set((h) => { h.pattern = v; })} />}
         {(H.style ?? 'frame') === 'tray' && H.pattern !== 'none' && <div className="row" style={{ marginTop: 8 }}><Num label="Cell size" value={H.cell} min={5} max={30} step={0.5} onChange={(v) => set((h) => { h.cell = v; })} /><Num label="Rib" value={H.rib} min={1.2} max={5} onChange={(v) => set((h) => { h.rib = v; })} /></div>}
-        <div style={{ marginTop: 8 }}><Text label="Engraved label" value={H.label} placeholder="e.g. SENSOR HUB" onChange={(v) => set((h) => { h.label = v; })} /></div>
         <div className="field" style={{ marginTop: 10 }}><span>Filament colour (preview)</span>
           <div className="swatches">
             {[['#e9e6df', 'Bone'], ['#3a4048', 'Graphite'], ['#4c8dff', 'Blue'], ['#46d58b', 'Mint'], ['#c084fc', 'Violet'], ['#f5c542', 'Yellow']].map(([c, n]) => (
@@ -641,6 +638,59 @@ export function HolderPanel() {
         </div>
       </Section>
     </div>
+  );
+}
+
+/**
+ * Every holder feature in one place, each with what this holder actually got: a switch that can't do anything here
+ * (no free wall for a label, plugs where fingers would go) says why instead of silently changing nothing.
+ */
+function HolderFeatures() {
+  const p = useApp((s) => s.project)!;
+  const res = useApp((s) => s.result);
+  const building = useApp((s) => s.building);
+  const m = activeModule(p), H = m.holder;
+  const set = (fn: (h: Project['modules'][number]['holder']) => void) => editMod((q) => fn(q.holder));
+  const F = { ...DEFAULT_FEATURES, ...(H.feat ?? {}) };
+  const setF = (k: keyof typeof F, v: boolean) => set((h) => { h.feat = { ...DEFAULT_FEATURES, ...(h.feat ?? {}), [k]: v }; });
+  const frame = (H.style ?? 'frame') === 'frame';
+  const box = m.board.kind === 'box';
+  const checks = (res?.report.checks ?? []).filter((c) => c.module === m.id);
+  const check = (re: RegExp) => checks.find((c) => re.test(c.name));
+  const count = (k: string) => (res?.report.features ?? []).filter((f) => f.module === m.id && f.kind === k).length;
+  const caps = (res?.parts ?? []).filter((x) => x.tag?.module === m.id && x.tag?.kind === 'cap').reduce((a, x) => a + x.qty, 0);
+  const conns = m.board.comps.filter((c) => c.conn && !c.hidden).length;
+  const st = (on: boolean, n: number, what: string, none: string) => (!res || building ? '…' : !on ? 'off' : n ? `${n} ${what}${n > 1 ? 's' : ''}` : none);
+  const fingers = check(/^Wall snap fingers/), pins = check(/^Snap pins/), lab = check(/^Label$/);
+  const Row = ({ title, status, why, children }: { title: string; status: string; why?: string; children: ReactNode }) => (
+    <div className="featrow">
+      <div className="featrow-l"><b>{title}</b><small title={why}>{status}{why ? <em> · {why}</em> : null}</small></div>
+      <div className="featrow-r">{children}</div>
+    </div>
+  );
+  const toggle = (v: boolean, on: (v: boolean) => void, disabled = false) => <label className="switch"><input type="checkbox" checked={v} disabled={disabled} onChange={(e) => on(e.target.checked)} /><i /></label>;
+  return (
+    <Section title="Features">
+      {!box && (
+        <>
+          <Row title="Plug cradles" status={st(F.cradles, count('cradle'), 'cradle', conns ? 'none needed' : 'no plugs')}>{toggle(F.cradles, (v) => setF('cradles', v))}</Row>
+          <Row title="Snap-on plug caps" status={F.cradles ? st(F.caps, caps, 'cap', 'none needed') : 'need the cradles'} why={!F.cradles ? 'caps clip onto the cradles' : undefined}>{toggle(F.caps && F.cradles, (v) => setF('caps', v), !F.cradles)}</Row>
+          <Row title="Receptacle guards" status={st(F.guards, count('guard'), 'guard', 'none needed')}>{toggle(F.guards, (v) => setF('guards', v))}</Row>
+          <Row title="Cable-tie anchors" status={st(F.ties, count('tie'), 'anchor', 'none needed')}>{toggle(F.ties, (v) => setF('ties', v))}</Row>
+          <Row title="Wall snap fingers" status={!res || building ? '…' : H.tabs === 'off' ? 'off' : fingers ? (fingers.value.includes('strain') ? `${count('finger')} finger${count('finger') === 1 ? '' : 's'}` : fingers.value) : 'not needed'} why={fingers && !fingers.value.includes('strain') ? (pins ? 'snap pins in the holes hold it' : fingers.detail) : undefined}>
+            <Seg value={H.tabs} options={[['auto', 'Auto'], ['on', 'Always'], ['off', 'Off']]} onChange={(v) => set((h) => { h.tabs = v; })} />
+          </Row>
+          {H.tabs !== 'off' && <div className="featsub"><Num label="Finger lip" value={H.tabLip} min={0.3} max={1.2} step={0.05} onChange={(v) => set((h) => { h.tabLip = v; })} /><p className="hint">Fingers are cut into the wall and bend sideways, within the print layers. Auto: fingers where there is room, snap pins in the mounting holes otherwise.</p></div>}
+          {!frame && <Row title="Finger notches" status={st(H.notches, count('notch'), 'notch', 'no free wall')}>{toggle(H.notches, (v) => set((h) => { h.notches = v; }))}</Row>}
+          <Row title="Engraved label" status={!res || building ? '…' : !H.label.trim() ? 'off' : lab ? lab.value : '…'} why={lab && lab.value === 'left off' ? lab.detail : lab?.detail?.includes('did not fit') ? 'the full name did not fit' : undefined}>
+            {toggle(!!H.label.trim(), (v) => set((h) => { h.label = v ? m.board.name.slice(0, 40) : ''; }))}
+          </Row>
+          {!!H.label.trim() && <div className="featsub"><Text label="Label text" value={H.label} placeholder="e.g. SENSOR HUB" onChange={(v) => set((h) => { h.label = v; })} /></div>}
+          <p className="hint">Switching a kind of feature off here keeps each plug's own choice in the Plugs step for when you switch it back on.{frame ? ' Frame holders are open underneath: push the board out from below, no notches needed.' : ''}</p>
+        </>
+      )}
+      {box && <p className="hint" style={{ marginTop: 0 }}>A box sits in low guards and is strapped down, so it has no fingers, notches or label. Set its ports under Board › Box.</p>}
+    </Section>
   );
 }
 
@@ -753,6 +803,7 @@ export function CheckPanel() {
         </Section>
       ))}
       <p className="hint">Hand calculations for every spring and snap, plus finite-element models of the clips. Linear and idealised: print the test-fit kit before a batch.</p>
+      <PrintCheckSection />
       {p.layout === 'panel' && <DockFeaSection />}
       {(p.layout === 'loose' ? p.mount.kind === 'din' : !!res?.report.panel?.mounts.some((m) => m.kind === 'flat')) && (
         <Section title="Flat DIN clip FEA">
@@ -1039,7 +1090,11 @@ function shopping(p: Project, res: Res, d: Delta | null, tot: { g: number; m: nu
   if (rails.length) out.push({ head: 'Rails', items: count(rails.map((l) => `TS35 × 7.5 top-hat rail, cut to ${Math.round(l)} mm`)) });
   const cables = d ? d.cables : res.report.cables ?? [];
   const typeOf = (id: string, end: 'a' | 'b') => { const l = (p.links ?? []).find((x) => x.id === id); const r = l?.[end]; return plugName(p.modules.find((m) => m.id === r?.module)?.board.comps.find((c) => c.ref === baseRef(r?.ref ?? ''))?.conn?.type ?? ''); };
-  if (cables.length) out.push({ head: 'Cables', items: count(cables.map((c) => `${c.buy} m ${typeOf(c.id, 'a')} to ${typeOf(c.id, 'b')} cable`)) });
+  if (cables.length) {
+    const g = new Map<string, number[]>();
+    for (const c of cables) { const k = `${c.buy} m ${typeOf(c.id, 'a')} to ${typeOf(c.id, 'b')} cable`; g.set(k, [...(g.get(k) ?? []), c.no ?? 0]); }
+    out.push({ head: 'Cables', items: [...g.entries()].map(([k, ns]) => `${ns.length} × ${k} (number${ns.length > 1 ? 's' : ''} ${ns.sort((a, b) => a - b).join(', ')})`) });
+  }
   const newIds = new Set(p.built ? p.modules.filter((m) => !p.built!.boards.includes(m.id)).map((m) => m.id) : p.modules.map((m) => m.id));
   const mods = p.modules.filter((m) => !d || newIds.has(m.id));
   const other: string[] = [];
@@ -1113,16 +1168,17 @@ function printNotes(p: Project, res: Res, nPlates: number, tot: { g: number; m: 
 
 // ============================================================================================ BOARDS & LAYOUT
 /** Switch which board the Board / Plugs / Holder panels edit (only shown with several boards). */
+/** Which board the step is about: one chip per board, and + to add another without leaving the step. */
 function ModulePicker() {
   const p = useApp((s) => s.project)!;
-  if (p.modules.length < 2) return null;
   return (
-    <div className="section" style={{ padding: '8px 10px', display: 'flex', alignItems: 'center', gap: 8 }}>
-      <span className="hint" style={{ margin: 0, whiteSpace: 'nowrap' }}>Editing</span>
-      <select value={p.active} onChange={(e) => { setActive(+e.target.value); select([]); }}>
-        {p.modules.map((m, i) => <option key={m.id} value={i}>{i + 1}. {m.board.name}</option>)}
-      </select>
-      <span className="chip">{p.active + 1} / {p.modules.length}</span>
+    <div className="boardchips" role="tablist" aria-label="Boards">
+      {p.modules.map((m, i) => (
+        <button key={m.id} role="tab" aria-selected={p.active === i} className={`bchip ${p.active === i ? 'on' : ''}`} title={m.board.name} onClick={() => { setActive(i); select([]); }}>
+          <i style={{ background: m.board.kind === 'box' ? '#3a3f47' : m.board.color ?? 'var(--mask)' }} />{shortName(m.board.name)}
+        </button>
+      ))}
+      <button className="bchip add" title="Add a board (A)" onClick={() => store.set({ addSheet: true })}><Icon d={I.plus} /> Add</button>
     </div>
   );
 }
@@ -1296,9 +1352,12 @@ function HolderStyle() {
   const style = m.holder.style ?? 'frame';
   const holder = res?.parts.find((x) => x.tag?.kind === 'holder' && x.tag.module === m.id);
   const g = holder ? estimate(holder, MATERIALS[m.holder.material].density) : null;
+  const keyOf = (k: string) => { let h = 2166136261; for (const ch of JSON.stringify([m.board.name, m.board.outline.length, m.board.comps.length, m.board.holes.length, { ...m.holder, style: k }])) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); } return `holder:${(h >>> 0).toString(36)}`; };
+  const picFrame = usePicture(keyOf('frame') + ':v2', () => holderPicture(m.board, { ...m.holder, style: 'frame' }), 300, 190, [0.55, -1, 1.1]);
+  const picTray = usePicture(keyOf('tray') + ':v2', () => holderPicture(m.board, { ...m.holder, style: 'tray' }), 300, 190, [0.55, -1, 1.1]);
   const card = (k: 'frame' | 'tray', name: string, text: string, art: ReactNode) => (
     <button className={`stylecard ${style === k ? 'on' : ''}`} onClick={() => editMod((q) => { q.holder.style = k; })}>
-      {art}
+      {(k === 'frame' ? picFrame : picTray) ? <img className="stylepic" src={(k === 'frame' ? picFrame : picTray)!} alt="" draggable={false} /> : art}
       <b>{name}</b>
       <small>{text}</small>
     </button>

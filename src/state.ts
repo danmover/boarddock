@@ -18,7 +18,7 @@ export type SelItem = {
   fkind?: Feature['kind'] | 'plug' | 'clip'; // feature kind
   refs?: string[]; // feature: connector refs or hole ids
 };
-export type Layer = 'holders' | 'docks' | 'caps' | 'rails' | 'boards' | 'plugs' | 'cables';
+export type Layer = 'holders' | 'docks' | 'caps' | 'rails' | 'boards' | 'plugs' | 'cables' | 'labels';
 export type Sel = SelItem[];
 export type View = 'assembly' | 'print' | 'editor' | 'panel' | 'wiring';
 
@@ -37,6 +37,8 @@ export interface State {
   replaceMode: boolean; // next import replaces the board being edited instead of adding
   layers: Record<Layer, boolean>; // what the 3D view shows
   toast: string | null;
+  toastAction: { label: string; run: () => void } | null;
+  addSheet: boolean; // the Add board sheet is open
   printParts: PartOut[] | null; // what Export will print, when it is not everything (the print view shows the same)
 }
 
@@ -72,8 +74,10 @@ let state: State = {
   error: null,
   showGhosts: true,
   replaceMode: false,
-  layers: { holders: true, docks: true, caps: true, rails: true, boards: true, plugs: true, cables: true },
+  layers: { holders: true, docks: true, caps: true, rails: true, boards: true, plugs: true, cables: true, labels: true },
   toast: null,
+  toastAction: null,
+  addSheet: false,
   printParts: null,
   theme: savedTheme() ?? (typeof matchMedia !== 'undefined' && matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'),
 };
@@ -177,7 +181,7 @@ export function addBoard(b: Board) {
  * `replace` the first one takes the place of the board being edited and the rest are added. The first new board
  * becomes the one being edited.
  */
-export function putBoards(bs: Board[], replace: boolean) {
+export function putBoards(bs: Board[], replace: boolean, opts: { stay?: boolean } = {}) {
   if (!bs.length) return;
   const cur = state.project;
   if (!cur || replace) {
@@ -188,12 +192,17 @@ export function putBoards(bs: Board[], replace: boolean) {
   }
   const p = structuredClone(cur);
   const first = p.modules.length;
-  for (const b of bs) {
+  for (const b0 of bs) {
+    // a second Pi 4B becomes "Raspberry Pi 4B 2", so every list, label and cable says which one
+    const taken = new Set(p.modules.map((m) => m.board.name));
+    let name = b0.name;
+    for (let k = 2; taken.has(name); k++) name = `${b0.name} ${k}`;
+    const b = name === b0.name ? b0 : { ...b0, name };
     p.modules.push(newModule(b, activeModule(p).holder));
     if (p.layout === 'panel' && !p.panel.auto) appendDock(p, p.modules[p.modules.length - 1].id);
   }
   p.active = first;
-  store.set({ project: p, past: [...state.past, cur], future: [], sel: [], step: 'board', view: 'assembly', replaceMode: false });
+  store.set({ project: p, past: [...state.past, cur], future: [], sel: [], replaceMode: false, ...(opts.stay ? {} : { step: 'board' as const, view: 'assembly' as const }) });
   persist(p);
 }
 
@@ -252,11 +261,11 @@ let toastTimer: ReturnType<typeof setTimeout> | undefined;
 export let toastAt = 0;
 /** The undo depth when the toast appeared: its Undo button only shows while no other edit has happened since. */
 export let toastPast = -1;
-export function toast(msg: string) {
+export function toast(msg: string, action?: { label: string; run: () => void }) {
   clearTimeout(toastTimer);
   toastAt = Date.now();
   toastPast = state.past.length;
-  store.set({ toast: msg });
+  store.set({ toast: msg, toastAction: action ?? null });
   toastTimer = setTimeout(() => store.set({ toast: null }), Math.min(9000, 3200 + msg.length * 30));
 }
 

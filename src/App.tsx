@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { activeModule, closeProject, redo, select, setActive, store, toastPast, undo, useApp, type Layer, type SelItem, type Step } from './state';
 import { generateProject } from './worker/client';
+import { AddBoardSheet } from './ui/AddBoard';
 import { Viewer3D } from './ui/Viewer3D';
 import { BoardEditor, type Tool } from './ui/BoardEditor';
 import { PanelEditor } from './ui/PanelEditor';
@@ -24,7 +25,7 @@ const STEPS: { id: Step; label: string; title: string; text: string }[] = [
   { id: 'export', label: 'Export', title: 'Print it', text: 'Parts packed onto as few plates as possible, already in print orientation.' },
 ];
 
-const LAYERS: [Layer, string, string][] = [['holders', 'Holders', '#e9e6df'], ['docks', 'Docks', '#4c8dff'], ['caps', 'Plug caps', '#f2c94c'], ['boards', 'Boards', '#1f8a57'], ['plugs', 'Plugs', '#e0a060'], ['cables', 'Cables', '#d0443a'], ['rails', 'Rails and stands', '#94a3b8']];
+const LAYERS: [Layer, string, string][] = [['holders', 'Holders', '#e9e6df'], ['docks', 'Docks', '#4c8dff'], ['caps', 'Plug caps', '#f2c94c'], ['boards', 'Boards', '#1f8a57'], ['plugs', 'Plugs', '#e0a060'], ['cables', 'Cables', '#d0443a'], ['labels', 'Cable numbers', '#f4f1e8'], ['rails', 'Rails and stands', '#94a3b8']];
 
 export function App() {
   const project = useApp((s) => s.project);
@@ -38,6 +39,7 @@ export function App() {
   const sel = useApp((s) => s.sel);
   const layers = useApp((s) => s.layers);
   const toastMsg = useApp((s) => s.toast);
+  const toastAction = useApp((s) => s.toastAction);
   const canUndo = useApp((s) => s.past.length > 0);
   const pastLen = useApp((s) => s.past.length);
   const canRedo = useApp((s) => s.future.length > 0);
@@ -90,6 +92,7 @@ export function App() {
       if (cmd && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); }
       if (cmd && e.key.toLowerCase() === 's' && project) { e.preventDefault(); saveProject(); }
       if (e.key === '?' || (e.key === '/' && e.shiftKey)) setKeys((k) => !k);
+      if (!cmd && e.key.toLowerCase() === 'a' && project && !store.get().addSheet) { e.preventDefault(); store.set({ addSheet: true }); }
       if (e.key === 'Escape') setKeys(false);
       const v = store.get().view;
       if (v === 'assembly') {
@@ -132,15 +135,18 @@ export function App() {
         <div key={dropErr ?? toastMsg ?? ''} className={`toast ${dropErr ? 'err' : 'floating'}`} role="status">
           <span className="toast-ic">{dropErr ? '!' : <Icon d={I.check} />}</span>
           <span className="toast-msg">{(dropErr ?? toastMsg ?? '').replace(/\s*⌘Z (undoes|brings) (it|them)( back)?\.?/, '')}</span>
+          {!dropErr && toastAction && <button className="btn small" onClick={() => { toastAction.run(); store.set({ toast: null, toastAction: null }); }}>{toastAction.label}</button>}
           {!dropErr && /⌘Z (undoes|brings)/.test(toastMsg ?? '') && pastLen === toastPast && <button className="btn small soft" onClick={() => { undo(); store.set({ toast: null }); }}>Undo</button>}
           <button className="toast-x" title="Close" onClick={() => { setDropErr(null); store.set({ toast: null }); }}>×</button>
           {!dropErr && <i className="toast-time" style={{ animationDuration: `${Math.min(9000, 3200 + (toastMsg ?? '').length * 30)}ms` }} />}
         </div>
       )}
       {keys && <Shortcuts onClose={() => setKeys(false)} />}
+      <AddBoardSheet />
       <header className="topbar">
         <div className="brand"><Mark className="mark" /><span className="word">Board<b>Dock</b></span></div>
         {project && <span className="projname" title={activeModule(project).board.source}>{project.modules.length > 1 ? `${project.modules.length} boards` : activeModule(project).board.name}</span>}
+        {project && <button className="btn small soft addboard" onClick={() => store.set({ addSheet: true })} title="Add a board (A)"><Icon d={I.plus} /> Board</button>}
         <nav className="stepper" ref={navRef}>
           {STEPS.map((s, i) => (
             <button key={s.id} className={`${step === s.id ? 'on' : i < si ? 'done' : ''} ${s.id === 'check' && badCount > 0 ? 'flag bad' : s.id === 'check' && warnCount > 0 ? 'flag' : ''}`} disabled={!project && s.id !== 'import'} onClick={() => goStep(s.id)} title={s.title}>
@@ -293,7 +299,7 @@ const KEYS: [string, string][] = [
   ['⌘Z / ⇧⌘Z', 'undo / redo'], ['⌘S', 'save the project file'], ['Click, Shift-click', 'select in 3D, add to the selection'],
   ['Delete', 'remove the selection'], ['Esc', 'clear the selection'], ['Double-click', 'fly to a part'],
   ['R / ⇧R', 'turn the selected docks (Rails view)'], ['F', 'swap front and back boards (Rails view)'], ['Arrows, ⇧Arrows', 'move docks 1 / 10 mm (Rails view)'],
-  ['⌘A', 'select every dock (Rails view)'], ['?', 'show or hide this list'],
+  ['A', 'add a board, from any step'], ['⌘A', 'select every dock (Rails view)'], ['?', 'show or hide this list'],
 ];
 function Shortcuts({ onClose }: { onClose: () => void }) {
   return (
