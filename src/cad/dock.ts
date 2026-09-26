@@ -7,7 +7,7 @@
 //  hub world: X along the rail, Y across it, Z away from the panel (panel at Z = 0)
 //  socket-local: same axes, Z = 0 at the socket top; tongues plug in along -Z; holder A faces +Y
 import type { V2 } from '../model/types';
-import { box, circle2, ext, K, poly, rect2, roundCS, unionCS, unionMF, type CS, type MF } from './kernel';
+import { box, circle2, ext, extCh, K, poly, rect2, roundCS, unionCS, unionMF, type CS, type MF } from './kernel';
 import { gripSpan, HD, headSpan, LEN_X } from './dockdims';
 export { gripSpan, headSpan };
 
@@ -108,11 +108,10 @@ export function socket(): MF {
 
 // ---------------- shoe (v3 "C-jaw") ----------------
 // The jaw wraps round the rail flange's edge and hangs from a 0.9 mm hinge leaf that stands directly ABOVE the lip.
-// A pull away from the wall therefore runs straight down the leaf (tension) instead of prying the jaw open, so the
-// hold does not depend on friction. Push the thumb pad toward the socket: the jaw swings out about the leaf and the
-// lip slides sideways off the flange; the post meets the body shelf just past the needed travel (built-in stop).
-// Pulling the ear's top lip away from the wall also opens it: the lip is 8 mm outboard of the leaf, so the pull
-// turns the jaw open before it can lift the dock.
+// A pull straight up off the rail therefore runs straight down the leaf (tension) instead of prying the jaw open, so
+// the hold does not depend on friction. Pulling the jaw's post toward the socket (the press-down lever's hook does it)
+// swings the jaw out about the leaf and the lip slides sideways off the flange; the post meets the body shelf just
+// past the needed travel (built-in stop).
 const SHOE_BODY = [[-20.3, 3.9], [-15.9, 3.9], [-15.4, 4.4], [-15.4, 5.7], [-15.9, 6.2], [-17.5, 6.2], [-17.783, 6.317], [-17.9, 6.6],
   [-17.9, 7.5], [15.1, 7.5], [15.1, 19.6], [15.8, 20.3], [17.9, 20.3], [17.9, 22.5], [17.4, 23.0], [-19.6, 23.0], [-20.3, 22.3]];
 // hinge leaf 16.3..17.2 (0.9 mm = two 0.45 mm lines), z 10.4..19.8, flared roots
@@ -228,7 +227,8 @@ export function holderDock(far: number, pedestal: number, side = 0, fit = 0) {
     tongue(Math.min(1.0, pedestal), fit),
     extXZ(rect2(-HD.base.hx, 0, HD.base.hx, Math.max(HD.base.t, pedestal)), HD.backY, HD.base.y1), // pedestal on the socket top
     box(-spineHx, HD.backY, 0, spineHx, spineY1, zg1), // spine, dock face to grip bar
-    extXZ(P([[g0, zg0 + 1.5], [g0 + 1.5, zg0], [g1 - 1.5, zg0], [g1, zg0 + 1.5], [g1, zg1], [g0, zg1]]), HD.backY, spineY1),
+    // grip bar: rounded, with a shallow finger scoop in the face the fingers pull on (matches the button's dish)
+    extXZ(roundCS(rect2(g0, zg0, g1, zg1), 1.2).subtract(circle2((g0 + g1) / 2, zg0 - ((g1 - g0) ** 2 / 4 + 0.64) / 1.6 + 0.8, ((g1 - g0) ** 2 / 4 + 0.64) / 1.6, 256)), HD.backY, spineY1),
   ]);
   const cut = unionMF([
     box(-HD.tunnelHx, HD.tunnelY[0], -0.2, HD.tunnelHx, HD.tunnelY[1], zg1 + 0.2), // release-rod tunnel
@@ -242,7 +242,13 @@ export function rod(zg1: number, side = 0): { m: MF; len: number } {
   const zh = zg1 + HD.stroke, zf = HD.rodRest, [y0, y1] = HD.rodY, h = HD.head;
   const [x0, x1] = headSpan(side);
   const shaft = extYZ(P([[y0, zf], [y0 + 0.6, zf], [y1, zf + 1.6], [y1, zh + 0.01], [y0, zh + 0.01]]), HD.rodHx);
-  const head = extXZ(P([[x0, zh], [x1, zh], [x1, zh + h.t - 0.8], [x1 - 0.8, zh + h.t], [x0 + 0.8, zh + h.t], [x0, zh + h.t - 0.8]]), y0, h.y1);
+  // a keycap: softly rounded, a shallow dish in the face the thumb presses, a chamfered rim on the face you see, and
+  // three chevrons engraved in it pointing the way it moves. All of it takes plastic away rather than adding it.
+  const xc = (x0 + x1) / 2, hw = (x1 - x0) / 2, dish = 0.7, R = (hw * hw + dish * dish) / (2 * dish);
+  const face = roundCS(rect2(x0, zh, x1, zh + h.t), 1.1).subtract(circle2(xc, zh + h.t + R - dish, R, 256));
+  const chev = unionCS([-4.2, 0, 4.2].map((dx) => P([[xc + dx - 1.5, zh + 1.2], [xc + dx, zh + 0.5], [xc + dx + 1.5, zh + 1.2], [xc + dx + 1.5, zh + 2.0], [xc + dx, zh + 1.3], [xc + dx - 1.5, zh + 2.0]])));
+  const toXZ = (m: MF, yTop: number) => m.transform([1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, yTop, 0, 1] as any);
+  const head = toXZ(extCh(face, 0, h.y1 - y0, 0.2, 0.6), h.y1).subtract(extXZ(chev, h.y1 - 0.45, h.y1 + 1));
   return { m: unionMF([shaft, head]), len: zh + h.t - zf };
 }
 

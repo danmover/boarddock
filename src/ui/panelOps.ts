@@ -4,7 +4,8 @@ import type { EdgeName, Project, RailMount, Turn } from '../model/types';
 import { round, uid } from '../geom/poly';
 import { appendDock, bestDock, withRiders } from '../cad/dockplan';
 import { baseOf, refreshStandoffs } from '../model/holes';
-import { edit, select, store } from '../state';
+import { edit, select, store, toast } from '../state';
+import { snapshot } from '../model/built';
 
 const rep = () => store.get().result?.report.panel ?? null;
 
@@ -242,4 +243,38 @@ export function setStackMode(moduleId: string, mode: 'bolted' | 'towers', gap?: 
     const below = p.modules.find((x) => x.id === m.on);
     if (below) refreshStandoffs(p, below);
   });
+}
+
+/**
+ * Mark the rack as built: every rail keeps its length, every dock its place, turn, lever side and board edges, and
+ * what was printed, cut and bought is remembered. Boards added later go into free spots without moving the rest,
+ * and Export can list only what's new.
+ */
+export function markBuilt() {
+  const { project, result } = store.get();
+  if (!project || !result) return;
+  const r = result.report.panel;
+  edit((p) => {
+    if (p.layout === 'panel' && r) {
+      p.panel.rails = r.rails.map((x) => ({ id: x.id, x: x.x, y: x.y, dir: x.dir, length: x.length }));
+      p.panel.mounts = r.mounts.map((m) => ({
+        id: m.id, rail: m.rail, at: m.at, kind: m.kind, turn: m.turn, lever: m.leverSide > 0 ? 'pos' : 'neg',
+        slots: m.slots.map((s, k) => ({ module: s.module, edge: s.module ? r.modules.find((x) => x.id === s.module && x.mount === m.id && x.slot === k)?.edge ?? s.edge : s.edge })),
+      }));
+      p.panel.auto = false;
+    }
+    p.built = snapshot(p, result);
+  });
+  toast('Marked as built. New boards now go into free spots and leave the rest where they are; Export lists only what is new.');
+}
+
+export function unmarkBuilt() {
+  edit((p) => { delete p.built; });
+}
+
+/** One line on where a newly added board goes. */
+export function placementNote(p: Project): string {
+  if (p.layout !== 'panel') return '';
+  if (p.panel.auto) return ' Auto-arrange lays out the whole rack again with it (mark the rack as built in Export to keep boards where they are).';
+  return ' It goes into an empty dock slot if one fits (nothing new to print but its holder), else the first free spot on the rails, near a board it is cabled to; the rest stay put.';
 }

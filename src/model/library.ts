@@ -1,5 +1,6 @@
 // Reference data: connectors and their mating plugs, package size heuristics, materials, printers, defaults.
 // Dimensions are typical catalogue values; every one is editable in the app because real parts vary.
+import { PRINTERS_DB, printerByName } from './printers';
 import { applyHoleRoles } from './holes';
 import type { ArrangeSettings, Board, Comp, CompKind, ConnSetup, HolderSettings, Material, Module, MountSettings, PanelSettings, PlugSpec, PrinterSettings, Project, StandSettings } from './types';
 
@@ -37,6 +38,7 @@ export const CONNECTORS: ConnType[] = [
   { id: 'jst_xh', name: 'JST-XH (top entry)', entry: 'top', body: { w: 9.9, l: 5.75, h: 7 }, zc: 0, overhang: 0, plug: { w: 9.9, h: 5.75, len: 12, cable: 2 }, match: /jst[\s_-]?xh|b\dB-XH|xh[\s_-]?\d/i, cradle: false },
   { id: 'jst_ph', name: 'JST-PH (top entry)', entry: 'top', body: { w: 7.9, l: 4.5, h: 6 }, zc: 0, overhang: 0, plug: { w: 7.9, h: 4.5, len: 10, cable: 2 }, match: /jst[\s_-]?ph|b\dB-PH|ph[\s_-]?\d/i, cradle: false },
   { id: 'header', name: 'Pin header (Dupont)', entry: 'top', body: { w: 10.2, l: 2.54, h: 8.5 }, zc: 0, overhang: 0, plug: { w: 10.2, h: 2.54, len: 14, cable: 1.5 }, match: /pin[\s_-]?header|pin[\s_-]?socket|conn_\d+x\d+|header_\d|idc|box[\s_-]?header/i, cradle: false },
+  { id: 'iec_c7', name: 'Mains (figure-8, C7)', entry: 'edge', body: { w: 11.5, l: 12, h: 8 }, zc: 4, overhang: 0, plug: { w: 13, h: 9, len: 30, cable: 6 }, match: /iec[\s_-]?60320|figure[\s_-]?8/i, cradle: false },
   { id: 'custom', name: 'Custom connector', entry: 'edge', body: { w: 10, l: 8, h: 5 }, zc: 2.5, overhang: 0.5, plug: { w: 12, h: 8, len: 20, cable: 4 }, match: /$^/, cradle: true },
 ];
 
@@ -144,15 +146,7 @@ export const MATERIALS: Record<Material, MaterialProps> = {
   PC: { E: 2300, nu: 0.37, strainAllow: 0.025, yield: 55, density: 1.2, tg: 110 },
 };
 
-export const PRINTERS: PrinterSettings[] = [
-  { name: 'Bambu Lab X1 / P1 / A1', bed: [256, 256], spacing: 6 },
-  { name: 'Bambu Lab A1 mini', bed: [180, 180], spacing: 6 },
-  { name: 'Prusa MK4 / MK3S', bed: [250, 210], spacing: 6 },
-  { name: 'Prusa MINI', bed: [180, 180], spacing: 6 },
-  { name: 'Prusa XL', bed: [360, 360], spacing: 6 },
-  { name: 'Creality Ender-3 / K1', bed: [220, 220], spacing: 6 },
-  { name: 'Voron 2.4 350', bed: [350, 350], spacing: 6 },
-];
+export const PRINTERS: PrinterSettings[] = PRINTERS_DB.map((x) => ({ name: x.name, bed: x.bed, spacing: 6, maxZ: x.maxZ }));
 
 export const DEFAULT_HOLDER: HolderSettings = {
   wall: 1.8, base: 2.0, gap: 0.3, wallAbove: 0.8, standoff: null, minStandoff: 3, leadLen: 1.8,
@@ -211,6 +205,8 @@ export function migrate(p: any): Project {
     panel: { ...structuredClone(DEFAULT_PANEL), ...(p.panel ?? {}) },
     arrange: { ...DEFAULT_ARRANGE, ...(p.arrange ?? {}) },
     active: Math.min(p.active ?? 0, p.modules.length - 1),
+    // printers saved under an older combined name get the matching one from the list, with its build height
+    printer: ((pr) => (pr ? { ...p.printer, name: pr.name, maxZ: pr.maxZ } : p.printer ?? { ...PRINTERS[0] }))(printerByName(p.printer?.name ?? '')),
   };
 }
 

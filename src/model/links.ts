@@ -5,6 +5,8 @@ import type { Comp, Link, Module, PlugRef, Project } from './types';
 
 export type PlugRole = 'host' | 'device' | 'power-in' | 'power-in-dc' | 'power-out' | 'hub-up' | 'hub-down' | 'net' | 'video' | 'audio' | 'wire' | 'other';
 
+const ROLES: PlugRole[] = ['host', 'device', 'power-in', 'power-in-dc', 'power-out', 'hub-up', 'hub-down', 'net', 'video', 'audio', 'wire', 'other'];
+
 export const KIND_COLOR: Record<NonNullable<Link['kind']>, string> = { usb: '#3a3f47', power: '#d0443a', net: '#3b7dd8', video: '#7a5cc7', audio: '#2fae9a', wire: '#e0a030' };
 export const KIND_NAME: Record<NonNullable<Link['kind']>, string> = { usb: 'USB', power: 'power', net: 'Ethernet', video: 'video', audio: 'audio', wire: 'wires' };
 
@@ -14,6 +16,7 @@ const plugTypeName: Record<string, string> = {
 };
 
 export function plugRole(m: Module, c: Comp): PlugRole {
+  if (c.role && ROLES.includes(c.role as PlugRole)) return c.role as PlugRole;
   const t = c.conn?.type ?? '';
   const name = `${m.board.name}`.toLowerCase(), ref = `${c.ref} ${c.pkg} ${c.value ?? ''}`.toLowerCase();
   const box = m.board.kind === 'box';
@@ -59,10 +62,16 @@ export function plugsOf(p: Project): PlugInfo[] {
   const out: PlugInfo[] = [];
   for (const m of p.modules) for (const c of m.board.comps) {
     if (!c.conn || c.hidden) continue;
-    out.push({ ref: { module: m.id, ref: c.ref }, module: m, comp: c, role: plugRole(m, c), label: `${c.ref} ${plugTypeName[c.conn.type] ?? ''}`.trim() });
+    const role = plugRole(m, c), nm = `${c.ref} ${plugTypeName[c.conn.type] ?? ''}`.trim();
+    // a stacked pair of USB-A sockets is two ports: the second one's ref ends in ":2"
+    if (c.conn.type === 'usb_a_dual') out.push({ ref: { module: m.id, ref: c.ref }, module: m, comp: c, role, label: `${nm} lower` }, { ref: { module: m.id, ref: `${c.ref}:2` }, module: m, comp: c, role, label: `${nm} upper` });
+    else out.push({ ref: { module: m.id, ref: c.ref }, module: m, comp: c, role, label: nm });
   }
   return out;
 }
+
+/** The part a plug ref belongs to (the upper socket of a stacked pair is "REF:2"). */
+export const baseRef = (ref: string) => ref.replace(/:2$/, '');
 
 export const sameRef = (a: PlugRef, b: PlugRef) => a.module === b.module && a.ref === b.ref;
 export const linkOf = (p: Project, r: PlugRef) => (p.links ?? []).find((l) => sameRef(l.a, r) || sameRef(l.b, r));
@@ -96,3 +105,16 @@ export function cableToBuy(mm: number): number {
 }
 
 export const plugName = (t: string) => plugTypeName[t] ?? t;
+
+/**
+ * What still needs a port: USB devices with no cable against free USB ports (hub ports and host ports), boards
+ * that need power against free power outputs (charger ports, then hub and host ports).
+ */
+export function portBudget(p: Project) {
+  const plugs = plugsOf(p);
+  const taken = new Set((p.links ?? []).flatMap((l) => [`${l.a.module}/${l.a.ref}`, `${l.b.module}/${l.b.ref}`]));
+  const free = (roles: PlugRole[]) => plugs.filter((x) => roles.includes(x.role) && !taken.has(`${x.ref.module}/${x.ref.ref}`));
+  const devices = free(['device', 'hub-up']), usbPorts = free(['hub-down', 'host']);
+  const powerIns = free(['power-in']), powerOuts = free(['power-out']);
+  return { devices, usbPorts, powerIns, powerOuts, short: Math.max(0, devices.length + Math.max(0, powerIns.length - powerOuts.length) - usbPorts.length) };
+}

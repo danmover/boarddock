@@ -345,8 +345,8 @@ function DockInspector({ one, rep }: { one: PanelReport['mounts'][number]; rep: 
       </div>
       {one.kind === 'dock' && (
         <div style={{ marginTop: 8 }}>
-          <Pick label="Rail release ear" value={one.lever ?? 'auto'} options={[['auto', `Auto: ${side(one.leverSide)} side (more room)`], ['pos', `${side(1)} side`], ['neg', `${side(-1)} side`]]} onChange={(val) => setLever([one.id], val)} />
-          <p className="hint">Boards out, then pinch the ear toward the socket and tilt the dock off the rail.</p>
+          <Pick label="Rail release lever" value={one.lever ?? 'auto'} options={[['auto', `Auto: ${side(one.leverSide)} side (more room)`], ['pos', `${side(1)} side`], ['neg', `${side(-1)} side`]]} onChange={(val) => setLever([one.id], val)} />
+          <p className="hint">Boards out, then press the red lever beside the socket down and lift the dock off the rail.</p>
         </div>
       )}
       {one.slots.map((s, slot) => {

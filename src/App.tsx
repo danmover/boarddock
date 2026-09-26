@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { activeModule, edit, redo, select, store, undo, useApp, type Layer, type SelItem, type Step } from './state';
 import { generateProject } from './worker/client';
 import { Viewer3D } from './ui/Viewer3D';
@@ -31,6 +31,7 @@ export function App() {
   const step = useApp((s) => s.step);
   const view = useApp((s) => s.view);
   const result = useApp((s) => s.result);
+  const printParts = useApp((s) => s.printParts);
   const building = useApp((s) => s.building);
   const error = useApp((s) => s.error);
   const theme = useApp((s) => s.theme);
@@ -76,7 +77,8 @@ export function App() {
     return () => clearTimeout(t);
   }, [project]);
 
-  const picks = sel.filter((s) => s.kind === 'module' || s.kind === 'mount' || s.kind === 'rail' || s.kind === 'feature' || s.kind === 'link');
+  const picks = sel.filter((s) => s.kind === 'module' || s.kind === 'mount' || s.kind === 'rail' || s.kind === 'feature' || s.kind === 'link' || s.kind === 'railstand');
+  const [keys, setKeys] = useState(false);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement).tagName;
@@ -85,9 +87,11 @@ export function App() {
       if (cmd && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
       if (cmd && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); }
       if (cmd && e.key.toLowerCase() === 's' && project) { e.preventDefault(); saveProject(); }
+      if (e.key === '?' || (e.key === '/' && e.shiftKey)) setKeys((k) => !k);
+      if (e.key === 'Escape') setKeys(false);
       const v = store.get().view;
       if (v === 'assembly') {
-        const p3 = store.get().sel.filter((s) => s.kind === 'module' || s.kind === 'mount' || s.kind === 'rail' || s.kind === 'feature' || s.kind === 'link');
+        const p3 = store.get().sel.filter((s) => s.kind === 'module' || s.kind === 'mount' || s.kind === 'rail' || s.kind === 'feature' || s.kind === 'link' || s.kind === 'railstand');
         if ((e.key === 'Delete' || e.key === 'Backspace') && p3.length) { e.preventDefault(); removeItems(p3); }
         if (e.key === 'Escape') select([]);
       }
@@ -122,7 +126,16 @@ export function App() {
   return (
     <div className="app" onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDragging(true); } }} onDragLeave={(e) => { if (!e.relatedTarget) setDragging(false); }} onDrop={onDrop}>
       {dragging && <div className="dropveil"><div><b>Drop to import</b><span>{project ? (store.get().replaceMode ? 'replaces the board being edited' : 'adds to this project: one board per file (a Gerber set or zip is one board)') : 'KiCad · STEP · IDF · Eagle · Gerber zip · DXF · project'}</span></div></div>}
-      {(dropErr || toastMsg) && <div className={`toast ${dropErr ? 'err' : 'floating'}`} style={{ padding: '9px 14px', fontSize: 12.5 }} onClick={() => { setDropErr(null); store.set({ toast: null }); }}>{dropErr ?? toastMsg}</div>}
+      {(dropErr || toastMsg) && (
+        <div key={dropErr ?? toastMsg ?? ''} className={`toast ${dropErr ? 'err' : 'floating'}`} role="status">
+          <span className="toast-ic">{dropErr ? '!' : <Icon d={I.check} />}</span>
+          <span className="toast-msg">{(dropErr ?? toastMsg ?? '').replace(/\s*⌘Z undoes (it|them)\.?/, '')}</span>
+          {!dropErr && /⌘Z undoes/.test(toastMsg ?? '') && <button className="btn small soft" onClick={() => { undo(); store.set({ toast: null }); }}>Undo</button>}
+          <button className="toast-x" title="Close" onClick={() => { setDropErr(null); store.set({ toast: null }); }}>×</button>
+          {!dropErr && <i className="toast-time" style={{ animationDuration: `${Math.min(9000, 3200 + (toastMsg ?? '').length * 30)}ms` }} />}
+        </div>
+      )}
+      {keys && <Shortcuts onClose={() => setKeys(false)} />}
       <header className="topbar">
         <div className="brand"><Mark className="mark" /><span className="word">Board<b>Dock</b></span></div>
         {project && <span className="projname" title={activeModule(project).board.source}>{project.modules.length > 1 ? `${project.modules.length} boards` : activeModule(project).board.name}</span>}
@@ -153,10 +166,11 @@ export function App() {
         <aside className="side">
           <div className="head">
             <small>Step {si + 1} of {STEPS.length} · {S.label}</small>
-            <h1>{S.title}</h1>
-            <p>{S.text}</p>
+            <div className="stepbar"><i style={{ width: `${((si + 1) / STEPS.length) * 100}%` }} /></div>
+            <h1>{S.id === 'import' && project ? 'Your rack' : S.title}</h1>
+            <p>{S.id === 'import' && project ? 'Add boards to it, or pick up where you left off.' : S.text}</p>
           </div>
-          <div className="body" ref={bodyRef}>{panel}</div>
+          <div className="body" ref={bodyRef}><div className="body-in" key={step}>{panel}</div></div>
           {project && (
             <div className="foot">
               {si > 0 && <button className="btn back" onClick={() => goStep(STEPS[si - 1].id)}><Icon d={I.left} /> {STEPS[si - 1].label}</button>}
@@ -170,7 +184,7 @@ export function App() {
               <div className="tabs"><div className="seg">{views.map(([k, l]) => <button key={k} className={view === k ? 'on' : ''} onClick={() => store.set({ view: k })}>{l}</button>)}</div></div>
               {view === 'editor' ? <BoardEditor tool={tool} setTool={setTool} /> : view === 'wiring' ? <WiringView /> : view === 'panel' && project.layout === 'panel' ? <PanelEditor /> : (
                 <>
-                  <Viewer3D result={result} mode={view === 'print' ? 'print' : 'assembly'} bed={project.printer.bed} spacing={project.printer.spacing} theme={theme} camera={cam} overhangs={view === 'print' && overhangs}
+                  <Viewer3D result={view === 'print' && printParts && result ? { ...result, parts: printParts } : result} mode={view === 'print' ? 'print' : 'assembly'} bed={project.printer.bed} spacing={project.printer.spacing} theme={theme} camera={cam} overhangs={view === 'print' && overhangs}
                     layers={layers} sel={sel} onPick={(it, add) => (it ? select([it], add ? 'toggle' : 'set') : !add && select([]))} label={(it) => describe(store.get().project!, it)} />
                   <div className="tools">
                     <div className="tgroup floating">
@@ -201,6 +215,7 @@ export function App() {
                     </div>
                   )}
                   {error && <div className="floating err" style={{ position: 'absolute', left: '50%', top: 60, transform: 'translateX(-50%)', zIndex: 7 }}>{error}</div>}
+                  {building && <div className="buildbar" title="Building" />}
                 </>
               )}
             </>
@@ -209,8 +224,9 @@ export function App() {
               <div className="hero">
                 <HeroArt />
                 <h1>Dock any PCB.<br /><span>No screws. No supports.</span></h1>
-                <p>Drop a KiCad, Altium, Eagle or Gerber export, or pick a board. BoardDock builds a light holder around every board with cradles for its plugs, docks them on DIN rails turned so every plug stays reachable, and packs the parts onto as few print plates as possible.</p>
-                <div className="feats"><span>KiCad · STEP · IDF · Gerber</span><span>hole wizard</span><span>light frame holders</span><span>rails, docks, stacks</span><span>pinch-ear rail release</span><span>FEA checked</span><span>STL + 3MF plates</span></div>
+                <p>Drop a KiCad, Altium, Eagle or Gerber export, or pick a board. BoardDock builds a light holder around every board, docks them on DIN rails on printed table stands with every plug reachable, routes and sizes the cables between them, and walks you through putting it all together.</p>
+                <div className="feats"><span>KiCad · STEP · IDF · Gerber</span><span>hole wizard</span><span>light frame holders</span><span>rails, docks, stacks</span><span>press-down rail lever</span><span>table stands</span><span>cables routed and sized</span><span>step-by-step assembly</span><span>FEA checked</span><span>STL + 3MF plates</span></div>
+                <p className="hero-keys">Press <kbd>?</kbd> any time for keyboard shortcuts.</p>
               </div>
             </div>
           )}
@@ -261,6 +277,23 @@ function SelPanel({ items }: { items: SelItem[] }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+const KEYS: [string, string][] = [
+  ['⌘Z / ⇧⌘Z', 'undo / redo'], ['⌘S', 'save the project file'], ['Click, Shift-click', 'select in 3D, add to the selection'],
+  ['Delete', 'remove the selection'], ['Esc', 'clear the selection'], ['Double-click', 'fly to a part'],
+  ['R / ⇧R', 'turn the selected docks (Rails view)'], ['F', 'swap front and back boards (Rails view)'], ['Arrows, ⇧Arrows', 'move docks 1 / 10 mm (Rails view)'],
+  ['⌘A', 'select every dock (Rails view)'], ['?', 'show or hide this list'],
+];
+function Shortcuts({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="keysveil" onClick={onClose}>
+      <div className="keys floating" onClick={(e) => e.stopPropagation()}>
+        <div className="keys-head"><b>Keyboard shortcuts</b><button className="toast-x" onClick={onClose}>×</button></div>
+        <div className="keys-grid">{KEYS.map(([k, t]) => <Fragment key={k}><kbd>{k}</kbd><span>{t}</span></Fragment>)}</div>
+      </div>
     </div>
   );
 }

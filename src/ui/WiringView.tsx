@@ -132,7 +132,7 @@ export function WiringView() {
                 const isP = pending === q;
                 const ok = pending && pending !== q && pending.module !== q.module && compatible(pending.role, q.role);
                 return (
-                  <g key={q.comp.id} style={{ cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); clickPlug(q); }}>
+                  <g key={q.ref.ref} style={{ cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); clickPlug(q); }}>
                     <rect x={6} y={y} width={W - 12} height={ROW - 3} rx={6} fill={isP ? 'var(--accent-soft)' : ok ? 'color-mix(in srgb, var(--good) 14%, transparent)' : 'transparent'} stroke={isP ? 'var(--accent)' : 'transparent'} />
                     <text x={16} y={y + 15} fontSize={11.5} fill="var(--fg)" className="mono">{q.label}</text>
                     <text x={W - 16} y={y + 15} fontSize={10.5} textAnchor="end" fill={l ? wire(l.kind ?? 'usb') : 'var(--subtle)'}>{l ? '● ' : ''}{ROLE_TEXT[q.role]}</text>

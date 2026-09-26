@@ -3,6 +3,7 @@
 import type { Board, Comp, Hole, Side } from './types';
 import { connById, connSetup } from './library';
 import { roundedRectLoop, uid } from '../geom/poly';
+import { makeBox } from './boxes';
 
 const holes = (d: number, pts: [number, number][]): Hole[] =>
   pts.map(([x, y]) => ({ id: uid('h'), x, y, d, plated: true, use: 'auto' as const }));
@@ -32,18 +33,6 @@ function rectBoard(name: string, w: number, h: number, r: number, source: string
 }
 
 export interface Template { id: string; name: string; make: () => Board; accessory?: boolean }
-
-/** A port on the side of a box accessory: the plug axis sits at mid-height of the box. */
-function boxPort(ref: string, type: string, angle: number, along: number, edge: number, height: number): Comp {
-  const c = edgeConn(ref, type, angle, along, edge, 0);
-  const t = connById(type);
-  c.h = 0.2;
-  c.conn!.zc = -height / 2;
-  c.w = angle === 0 || angle === 180 ? 2 : t.body.w;
-  c.l = angle === 0 || angle === 180 ? t.body.w : 2;
-  c.tht = false;
-  return c;
-}
 
 export const TEMPLATES: Template[] = [
   {
@@ -131,28 +120,11 @@ export const TEMPLATES: Template[] = [
       return b;
     },
   },
-  {
-    id: 'usb_hub', name: 'USB hub, 4 ports (box 100 × 30 × 22)', accessory: true,
-    make: () => {
-      const b = rectBoard('USB hub', 100, 30, 3, 'accessory');
-      b.kind = 'box'; b.thickness = 22; b.color = '#2b2f36';
-      for (let i = 0; i < 4; i++) b.comps.push(boxPort(`P${i + 1}`, 'usb_a', -90, 20 + i * 20, 0, 22));
-      b.comps.push(boxPort('UP', 'usb_micro_b', 180, 15, 0, 22));
-      b.notes = ['A generic box: set its size and port positions to match yours (the ports are the connectors).'];
-      return b;
-    },
-  },
-  {
-    id: 'usb_charger', name: 'USB charger, 4 ports (box 90 × 60 × 28)', accessory: true,
-    make: () => {
-      const b = rectBoard('USB charger', 90, 60, 4, 'accessory');
-      b.kind = 'box'; b.thickness = 28; b.color = '#e9e7e2';
-      for (let i = 0; i < 4; i++) b.comps.push(boxPort(`OUT${i + 1}`, 'usb_a', 90, 18 + i * 18, 60, 28));
-      b.comps.push(boxPort('AC', 'barrel', -90, 45, 0, 28));
-      b.notes = ['A generic box: set its size and port positions to match yours (the ports are the connectors).'];
-      return b;
-    },
-  },
+  { id: 'usb_hub', name: 'USB hub, 4 ports (box 100 × 30 × 22)', accessory: true, make: () => makeBox('hub4') },
+  { id: 'usb_hub7', name: 'Powered USB hub, 7 ports on top (160 × 48)', accessory: true, make: () => makeBox('hub7') },
+  { id: 'usb_hubc', name: 'USB-C hub with Ethernet (110 × 32)', accessory: true, make: () => makeBox('hubc') },
+  { id: 'usb_charger', name: 'USB charger, 4 ports (box 90 × 60 × 28)', accessory: true, make: () => makeBox('charger4') },
+  { id: 'usb_charger6', name: 'USB charger, 4 A + 2 C (110 × 70)', accessory: true, make: () => makeBox('charger6') },
   {
     id: 'power_dist', name: 'DC power distribution board (60 × 40)', accessory: true,
     make: () => {

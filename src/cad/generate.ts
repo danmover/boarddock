@@ -1,6 +1,6 @@
 // Builds every printable part for a project: the board holder (tray), DIN clip, plug caps, plus display ghosts
 // (board, components, plugs, rail) and a report of checks. All parts come out in print orientation.
-import type { Anim, Board, Check, EdgeName, Feature, GenResult, Ghost, HolderSettings, Loop, MeshData, MountSettings, PartOut, PickTag, Project, V2 } from '../model/types';
+import type { Anim, Board, Check, Comp, EdgeName, Feature, GenResult, Ghost, HolderSettings, Loop, MeshData, MountSettings, PartOut, PickTag, Project, V2 } from '../model/types';
 import { holeKeepout, isMountHole } from '../model/holes';
 import { DEFAULT_FEATURES, MATERIALS } from '../model/library';
 import { bbox, centroid, compRect, extentAlong, inside, rad, rayExit, round, segDist } from '../geom/poly';
@@ -9,7 +9,7 @@ import { box, circle2, csLoops, cyl, ext, extCh, freeAll, K, orientedBox, poly, 
 import { buildClip, clipDims, clipSlots, hookOffset4, railProfile } from './dinclip';
 import { textCS, textWidth } from './font';
 import { computeLevels } from './levels';
-import { boardDetail, plugDetail } from './boardviz';
+import { boardDetail, plugDetail, plugUp } from './boardviz';
 import { DOCK_MIN_ZB, gripSpan, holderDock, HD, rod } from './dock';
 import { dockFrame, dockSite, type DockSite } from './dockplan';
 import { inv, type M4 } from '../geom/mat';
@@ -322,7 +322,9 @@ function connectors(C: Ctx) {
     if (!cn || c.hidden) continue;
     if (cn.entry === 'top') {
       if (cn.tie && F.ties) tieAnchor(C, [c.x, c.y], null, c.ref);
-      const zTop = (c.side === 'top' ? zt + c.h : zb - c.h) + cn.plug.len;
+      const zTop = (c.side === 'top' ? zt + c.h : zb - c.h) + cn.plug.len + 0.6;
+      // a port in the top of a box gets its plug drawn standing in it
+      if (b.kind === 'box' && c.side === 'top') C.ghosts.push(...plugUp(c.x, c.y, zt + c.h, cn.plug, { kind: 'plug', module: C.mid, refs: [c.ref] }, { seq: 30, dir: [0, 0, 1] }));
       C.plugs.push({ module: C.mid, ref: c.ref, p: [c.x, c.y, zTop], d: [0, 0, c.side === 'top' ? 1 : -1], cable: cn.plug.cable });
       continue;
     }
@@ -339,7 +341,11 @@ function connectors(C: Ctx) {
     C.blocked.push({ poly: orientedRect(mouth, d, -2, toOut + 2, -(pw / 2 + cl + 3), pw / 2 + cl + 3), why: c.ref });
     // plug ghost
     C.ghosts.push(...plugDetail(mouth, d, zAx, cn.plug, { kind: 'plug', module: C.mid, refs: [c.ref] }, { seq: 30, dir: [d[0], d[1], 0] }));
-    C.plugs.push({ module: C.mid, ref: c.ref, p: [mouth[0] + d[0] * (cn.plug.len + 0.6), mouth[1] + d[1] * (cn.plug.len + 0.6), zAx], d: [d[0], d[1], 0], cable: cn.plug.cable });
+    const pe = [mouth[0] + d[0] * (cn.plug.len + 0.6), mouth[1] + d[1] * (cn.plug.len + 0.6)];
+    if (cn.type === 'usb_a_dual') {
+      const off = c.side === 'top' ? 3.9 : -3.9;
+      C.plugs.push({ module: C.mid, ref: c.ref, p: [pe[0], pe[1], zAx - off], d: [d[0], d[1], 0], cable: cn.plug.cable }, { module: C.mid, ref: `${c.ref}:2`, p: [pe[0], pe[1], zAx + off], d: [d[0], d[1], 0], cable: cn.plug.cable });
+    } else C.plugs.push({ module: C.mid, ref: c.ref, p: [pe[0], pe[1], zAx], d: [d[0], d[1], 0], cable: cn.plug.cable });
     if (cn.cradle && F.cradles && ph > 0.5) {
       specs.push({ ref: c.ref, mouth, d, sEdge, toOut, zAx, pw, ph, pl, cap: cn.cap && F.caps, angle: cn.angle });
     } else if (cn.guard && F.guards) {
@@ -468,7 +474,17 @@ function cradleGroup(C: Ctx, g: CradleSpec[], H: HolderSettings) {
 function strapLoops(C: Ctx) {
   const H = C.H, ol = C.b.outline, bb = bbox(ol);
   const alongX = bb.x1 - bb.x0 >= bb.y1 - bb.y0;
-  for (const f of [0.28, 0.72]) for (const side of [-1, 1]) {
+  // the strap runs over the top between a pair of loops on the long sides: keep it off ports on those sides and on top
+  const L0 = alongX ? bb.x0 : bb.y0, L = alongX ? bb.x1 - bb.x0 : bb.y1 - bb.y0;
+  // a side port only gets in the way when its plug reaches down to the loops (7 mm tall)
+  const low = (c: Comp) => C.zt + c.conn!.zc - c.conn!.plug.h / 2 < 8;
+  const busy = C.b.comps.filter((c) => c.conn && !c.hidden && (c.conn.entry === 'top' || ((alongX ? Math.abs(Math.sin(rad(c.conn.angle))) > 0.7 : Math.abs(Math.cos(rad(c.conn.angle))) > 0.7) && low(c))))
+    .map((c) => { const at = (alongX ? c.x : c.y) - L0, half = Math.max(c.w, c.l, c.conn!.plug.w) / 2 + 10; return [at - half, at + half]; });
+  const free = (f: number) => !busy.some(([a, b]) => f * L > a && f * L < b);
+  const pick = (want: number, lo: number, hi: number) => { let best: number | null = null; for (let f = lo; f <= hi + 1e-9; f += 0.01) if (free(f) && (best == null || Math.abs(f - want) < Math.abs(best - want))) best = f; return best; };
+  const fa = pick(0.28, 0.1, 0.46), fb = pick(0.72, 0.54, 0.9);
+  if (fa == null || fb == null) C.warnings.push('The strap loops could not all miss the ports: check that the strap clears them.');
+  for (const f of [fa ?? 0.28, fb ?? 0.72]) for (const side of [-1, 1]) {
     const q: V2 = alongX ? [bb.x0 + (bb.x1 - bb.x0) * f, side > 0 ? bb.y1 : bb.y0] : [side > 0 ? bb.x1 : bb.x0, bb.y0 + (bb.y1 - bb.y0) * f];
     const n: V2 = alongX ? [0, side] : [side, 0];
     const t0 = H.gap + H.wall - 0.4, t1 = t0 + 5.5;
@@ -1196,7 +1212,10 @@ function boltedGhosts(C: Ctx, bo: NonNullable<Job['bolted']>[number]) {
     const zAx = c.side === 'top' ? z1 + cn.zc : z0 - cn.zc;
     const { w: pw, h: ph, len: pl } = cn.plug;
     C.ghosts.push(...plugDetail(mouth, d, zAx, { w: pw, h: ph, len: pl, cable: cn.plug.cable }, { kind: 'plug', module: mid, refs: [c.ref] }, { seq: 30, dir: [d[0], d[1], 0] }));
-    C.plugs.push({ module: mid, ref: c.ref, p: [mouth[0] + d[0] * (pl + 0.6), mouth[1] + d[1] * (pl + 0.6), zAx], d: [d[0], d[1], 0], cable: cn.plug.cable });
+    const pe = [mouth[0] + d[0] * (pl + 0.6), mouth[1] + d[1] * (pl + 0.6)];
+    const off = cn.type === 'usb_a_dual' ? (c.side === 'top' ? 3.9 : -3.9) : 0;
+    C.plugs.push({ module: mid, ref: c.ref, p: [pe[0], pe[1], zAx - off], d: [d[0], d[1], 0], cable: cn.plug.cable });
+    if (off) C.plugs.push({ module: mid, ref: `${c.ref}:2`, p: [pe[0], pe[1], zAx + off], d: [d[0], d[1], 0], cable: cn.plug.cable });
   }
   C.checks.push({ group: 'Stack', name: `${b.name} bolted on top`, value: `${round(dz, 1)} mm standoffs`, status: 'info', detail: `sits on standoffs screwed into the holes it shares with ${C.b.name}; those holes get no holder pins and the holder leaves room under them for screw heads or nuts. Its plugs get no cradles of their own.` });
 }

@@ -1,6 +1,6 @@
 // Multi-board assemblies: one holder per board, combined by stacking (corner towers with press-fit pegs),
 // side by side (bosses + printed link bars), or back to back (bases together, printed snap rivets).
-import type { Check, Feature, GenResult, Ghost, PartOut, Project, V2 } from '../model/types';
+import type { Anim, Check, Feature, GenResult, Ghost, PartOut, PickTag, Project, V2 } from '../model/types';
 import { bbox, round } from '../geom/poly';
 import { buildModule, computeLevels, transformMesh, type ArrangeHooks, type Job } from './generate';
 import { box, cyl, freeAll, poly, rect2, toMesh, unionMF } from './kernel';
@@ -115,22 +115,45 @@ function generateLoose(p: Project): GenResult {
   });
   if (mode === 'side') placeSide(p, facts, outs, T, extra, checks, warnings0);
   const parts: PartOut[] = [], ghosts: Ghost[] = [];
+  const steps: NonNullable<GenResult['steps']> = [];
   const features: Feature[] = [];
   const frames: Record<string, number[]> = {};
   const warnings: string[] = [...notes, ...warnings0];
   outs.forEach((o, i) => {
     if (!o) return;
     const tag = multi ? `${mods[i].board.name}: ` : '';
-    // stacked layers come in one after another from above
-    const lift = (a: PartOut['anim']) => (a && mode === 'stack' ? { ...a, seq: a.seq + 2 * i } : a);
-    for (const pt of o.parts) parts.push({ ...pt, toAssembly: mul(T[i], pt.toAssembly), anim: lift(moveAnim(pt.anim, T[i])) });
-    for (const g of o.ghosts) ghosts.push({ ...g, mesh: transformMesh(g.mesh, T[i]), anim: lift(moveAnim(g.anim, T[i])) });
+    // on the bench, board by board (bottom layer first when stacked): holder, its clip, the board, anything bolted on;
+    // plugs and caps at the end
+    const b0 = 100 + 10 * i, nm = mods[i].board.name;
+    const re = (a: Anim | undefined, t: PickTag | undefined): Anim | undefined => {
+      if (!a) return a;
+      switch (t?.kind) {
+        case 'holder': return { ...a, seq: b0 + 2, dist: 30 };
+        case 'rod': case 'clip': return { ...a, seq: b0 + 3, dist: 30 };
+        case 'board': case 'parts': return { ...a, seq: t.module === mods[i].id ? b0 + 4 : b0 + 5, dist: 25 };
+        case 'cap': return { ...a, seq: 1e6 + 100, dist: 25 };
+        case 'plug': return { ...a, seq: 1e6 + 90, dist: 30 };
+        case 'stand': return { ...a, seq: 1e6 + 50, dist: 40 };
+        case 'rail': return { ...a, seq: 0, dist: 40 };
+        default: return a;
+      }
+    };
+    for (const pt of o.parts) parts.push({ ...pt, toAssembly: mul(T[i], pt.toAssembly), anim: re(moveAnim(pt.anim, T[i]), pt.tag) });
+    for (const g of o.ghosts) ghosts.push({ ...g, mesh: transformMesh(g.mesh, T[i]), anim: re(moveAnim(g.anim, T[i]), g.tag) });
+    steps.push({ seq: b0 + 2, text: mode === 'stack' && i > 0 ? `Press the ${nm} holder onto the corner towers of the one below.` : `Set out the ${nm} holder.` });
+    if (o.parts.some((x) => x.tag?.kind === 'clip')) steps.push({ seq: b0 + 3, text: 'Press the DIN clip into the holder until both hooks click (any of four ways round).' });
+    steps.push({ seq: b0 + 4, text: `Snap the ${nm} into its holder: it clicks under the fingers or onto the pins.` });
+    if (o.ghosts.some((g) => g.tag?.kind === 'board' && g.tag.module !== mods[i].id)) steps.push({ seq: b0 + 5, text: `Bolt the board that sits on the ${nm} onto its standoffs.` });
     features.push(...o.features);
     frames[mods[i].id] = T[i];
     warnings.push(...o.warnings.map((w) => tag + w));
     checks.push(...o.checks.map((c) => ({ ...c, group: multi ? `${mods[i].board.name} · ${c.group}` : c.group })));
   });
   parts.push(...extra);
+  if (ghosts.some((g) => g.tag?.kind === 'rail')) steps.push({ seq: 0, text: 'Your DIN rail: each holder hooks over its top edge and clicks in at the bottom; pull the tab to take it off.' });
+  if (ghosts.some((g) => g.tag?.kind === 'stand')) steps.push({ seq: 1e6 + 50, text: 'Slide the holder onto its stand post.' });
+  if (ghosts.some((g) => g.tag?.kind === 'plug')) steps.push({ seq: 1e6 + 90, text: 'Plug in the cables.' });
+  if (parts.some((x) => x.tag?.kind === 'cap')) steps.push({ seq: 1e6 + 100, text: 'Snap the caps over the plugs to lock them in.' });
   const ai = Math.min(p.active, outs.length - 1);
   const act = outs[ai] ?? outs.find(Boolean);
   const clipIdx = outs.findIndex((o) => o?.clipT);
@@ -141,6 +164,7 @@ function generateLoose(p: Project): GenResult {
   return {
     parts,
     ghosts,
+    steps,
     report: {
       warnings: [...new Set(warnings)],
       checks,

@@ -101,8 +101,10 @@ export function extCh(c: CS, z0: number, z1: number, top = 0, bot = 0, step = 0.
   const nb = Math.round(bot / step), nt = Math.round(top / step);
   const za = z0 + nb * step, zb = z1 - nt * step;
   if (zb > za) parts.push(ext(c, za, zb));
-  for (let i = 0; i < nb; i++) { const s = c.offset(-(nb - i) * step, 'Round'); if (!s.isEmpty()) parts.push(ext(s, z0 + i * step, z0 + (i + 1) * step)); }
-  for (let i = 0; i < nt; i++) { const s = c.offset(-(i + 1) * step, 'Round'); if (!s.isEmpty()) parts.push(ext(s, zb + i * step, zb + (i + 1) * step)); }
+  // each chamfer step overlaps its neighbours by a hair, so the union fuses them instead of leaving touching solids
+  const e = 0.002;
+  for (let i = 0; i < nb; i++) { const s = c.offset(-(nb - i) * step, 'Round'); if (!s.isEmpty()) parts.push(ext(s, z0 + i * step, Math.min(z1, z0 + (i + 1) * step + e))); }
+  for (let i = 0; i < nt; i++) { const s = c.offset(-(i + 1) * step, 'Round'); if (!s.isEmpty()) parts.push(ext(s, Math.max(z0, zb + i * step - e), zb + (i + 1) * step)); }
   return unionMF(parts);
 }
 

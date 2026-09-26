@@ -1,6 +1,6 @@
 // App state: the project (undoable, autosaved) plus UI state. Tiny external store + useSyncExternalStore.
 import { useSyncExternalStore } from 'react';
-import type { Board, Feature, GenResult, Module, Project } from './model/types';
+import type { Board, Feature, GenResult, Module, PartOut, Project } from './model/types';
 import { activeModule, migrate, newModule, newProject } from './model/library';
 import { appendDock } from './cad/dockplan';
 
@@ -37,6 +37,7 @@ export interface State {
   replaceMode: boolean; // next import replaces the board being edited instead of adding
   layers: Record<Layer, boolean>; // what the 3D view shows
   toast: string | null;
+  printParts: PartOut[] | null; // what Export will print, when it is not everything (the print view shows the same)
 }
 
 const KEY = 'boarddock.project.v1';
@@ -64,9 +65,10 @@ let state: State = {
   replaceMode: false,
   layers: { holders: true, docks: true, caps: true, rails: true, boards: true, plugs: true, cables: true },
   toast: null,
+  printParts: null,
   theme: (typeof localStorage !== 'undefined' && (localStorage.getItem('boarddock.theme') as 'dark' | 'light')) || 'dark',
 };
-if (state.project) state.step = 'board';
+// a saved project opens on Start, which shows the rack and the ways on (add a board, cables, what's new to print)
 const subs = new Set<() => void>();
 
 export const store = {
@@ -192,10 +194,13 @@ export function closeProject() {
 }
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
+/** When the current toast appeared (the toast shows how long it has left). */
+export let toastAt = 0;
 export function toast(msg: string) {
   clearTimeout(toastTimer);
+  toastAt = Date.now();
   store.set({ toast: msg });
-  toastTimer = setTimeout(() => store.set({ toast: null }), 4200);
+  toastTimer = setTimeout(() => store.set({ toast: null }), Math.min(9000, 3200 + msg.length * 30));
 }
 
 /** Selection helpers: set, toggle (Shift/Cmd-click) or add to the selection. */

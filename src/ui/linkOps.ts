@@ -1,5 +1,5 @@
 // Cable edits (undoable).
-import { autoLinks, sameRef } from '../model/links';
+import { autoLinks, portBudget, sameRef } from '../model/links';
 import type { PlugRef } from '../model/types';
 import { edit, select, store, toast } from '../state';
 
@@ -8,9 +8,10 @@ export function addLinks() {
   const p = store.get().project;
   if (!p) return;
   const add = autoLinks(p);
-  if (!add.length) { toast('Every plug that has a partner is already connected. Add hubs or chargers (Start › accessories) for more.'); return; }
+  const left = () => { const b = portBudget(store.get().project!); return [b.devices.length ? `${b.devices.length} USB device${b.devices.length > 1 ? 's have' : ' has'} no free port: add a hub or give it more ports.` : '', b.powerIns.length ? `${b.powerIns.length} board${b.powerIns.length > 1 ? 's need' : ' needs'} power: add a charger.` : ''].filter(Boolean).join(' '); };
+  if (!add.length) { toast(`Every plug that has a partner is already connected. ${left() || 'Add hubs or chargers (Start › accessories) for more.'}`); return; }
   edit((q) => { q.links = [...(q.links ?? []), ...add]; });
-  toast(`Connected ${add.length} cable${add.length > 1 ? 's' : ''}. ⌘Z undoes it.`);
+  toast(`Connected ${add.length} cable${add.length > 1 ? 's' : ''}. ${left()} ⌘Z undoes it.`);
 }
 
 export function removeLinks(ids: string[]) {

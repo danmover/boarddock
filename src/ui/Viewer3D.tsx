@@ -35,7 +35,7 @@ const LAYER: Record<PickTag['kind'], Layer> = {
   shoe: 'docks', socket: 'docks', cap: 'caps', rail: 'rails', board: 'boards', parts: 'boards', plug: 'plugs', cable: 'cables', railstand: 'rails',
 };
 
-interface Obj { mesh: THREE.Mesh; tag?: PickTag; anim?: Anim; rank: number; base: THREE.Matrix4; ghost: boolean }
+interface Obj { mesh: THREE.Mesh; tag?: PickTag; anim?: Anim; rank: number; base: THREE.Matrix4; ghost: boolean; moves: { rank: number; dir: number[]; dist?: number }[]; show: number }
 
 function rigidInverse(m: number[]): number[] {
   const r = [m[0], m[4], m[8], 0, m[1], m[5], m[9], 0, m[2], m[6], m[10], 0, 0, 0, 0, 1];
@@ -127,7 +127,8 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
   const host = useRef<HTMLDivElement>(null);
   const tip = useRef<HTMLDivElement>(null);
   const ctx = useRef<any>(null);
-  const [play, setPlay] = useState<{ on: boolean; t: number; n: number }>({ on: false, t: Infinity, n: 0 });
+  // t: animation time in steps (Infinity = assembled); on: playing; until: pause when t reaches it (one step at a time)
+  const [play, setPlay] = useState<{ on: boolean; t: number; n: number; until?: number }>({ on: false, t: Infinity, n: 0 });
   const [explode, setExplode] = useState(0);
   const cb = useRef({ onPick, label });
   cb.current = { onPick, label };
@@ -370,7 +371,7 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
         mesh.add(e);
       }
       world.add(mesh);
-      c.objs.push({ mesh, tag, anim, rank: 0, base: mesh.matrix.clone(), ghost });
+      c.objs.push({ mesh, tag, anim, rank: 0, base: mesh.matrix.clone(), ghost, moves: [], show: 0 });
     };
 
     if (mode === 'assembly') {
@@ -381,9 +382,16 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
         (p.instances ?? []).forEach((T, k) => add(m, p.color, 1, T, p.tags?.[k] ?? p.tag, p.anims?.[k] ?? p.anim, false));
       }
       for (const gh of result.ghosts) add(gh.mesh, gh.color, gh.opacity, null, gh.tag, gh.anim, true, false, gh.mat);
-      // animation ranks: distinct steps in order
-      const seqs = [...new Set((c.objs as Obj[]).map((o) => o.anim?.seq ?? 0))].sort((a, b) => a - b);
-      for (const o of c.objs as Obj[]) o.rank = seqs.indexOf(o.anim?.seq ?? 0);
+      // animation ranks: every distinct step (moves and appearances) in order
+      const movesOf = (a?: Anim) => [...(a?.pre ?? []), { seq: a?.seq ?? 0, dir: a?.dir ?? [0, 0, 1], dist: a?.dist }];
+      const seqs = [...new Set((c.objs as Obj[]).flatMap((o) => [...movesOf(o.anim).map((m) => m.seq), ...(o.anim?.show != null ? [o.anim.show] : [])]))].sort((a, b) => a - b);
+      const rk = (s: number) => seqs.indexOf(s);
+      for (const o of c.objs as Obj[]) {
+        const mv = movesOf(o.anim);
+        o.moves = mv.map((m) => ({ rank: rk(m.seq), dir: m.dir, dist: m.dist }));
+        o.rank = rk(o.anim?.seq ?? 0);
+        o.show = o.anim?.show != null ? rk(o.anim.show) : Math.min(...o.moves.map((m) => m.rank));
+      }
       c.ranks = seqs.length;
       c.phases = seqs;
       const cf = result.report.clipFrame;
@@ -496,8 +504,9 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
       last = now;
       setPlay((p) => {
         if (!p.on) return p;
-        const t = p.t + dt * 1.5;
-        return t >= p.n + 0.001 ? { on: false, t: Infinity, n: p.n } : { ...p, t };
+        const t = p.t + dt * 1.1;
+        if (p.until != null && t >= p.until) return { on: false, t: p.until, n: p.n };
+        return t >= p.n + 0.001 ? { on: false, t: p.n, n: p.n } : { ...p, t };
       });
       return true;
     };
@@ -513,16 +522,21 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
     flyTo(c, box, new THREE.Vector3(...camReq.dir), 1.3);
   }, [camReq?.n]);
 
+  const nSteps = () => ctx.current?.ranks ?? 0;
+  const started = Number.isFinite(play.t);
   const startPlay = () => {
-    const n = ctx.current?.ranks ?? 0;
+    const n = nSteps();
     if (!n) return;
     setExplode(0);
-    setPlay({ on: true, t: 0, n });
+    setPlay(started && play.t < n ? { on: true, t: play.t, n } : { on: true, t: 0, n });
   };
-  const phaseName = (() => {
-    if (!play.on || !ctx.current) return '';
-    const s = ctx.current.phases?.[Math.min(Math.floor(play.t), (ctx.current.phases?.length ?? 1) - 1)] ?? 0;
-    return s < 1 ? 'rails' : s < 2 ? 'rail shoes' : s < 3 ? 'sockets, clips' : s < 3.6 ? 'holders' : s < 20 ? 'boards' : s < 30 ? 'plug caps' : 'plugs';
+  const stepTo = (k: number) => { const n = nSteps(); setExplode(0); setPlay({ on: false, t: Math.max(0, Math.min(n, k)), n }); };
+  const nextStep = () => { const n = nSteps(); if (!n) return; setExplode(0); const from = started ? play.t : 0; setPlay({ on: true, t: from >= n ? 0 : from, n, until: Math.min(n, Math.floor(from + 1e-6) + 1) }); };
+  const stepIdx = started ? Math.max(0, Math.min(play.n - 1, Math.ceil(play.t - 1e-6) - 1)) : 0;
+  const caption = (() => {
+    if (!started || !ctx.current) return '';
+    const seq = ctx.current.phases?.[stepIdx];
+    return result?.steps?.find((s) => s.seq === seq)?.text ?? 'the next parts go on';
   })();
 
   return (
@@ -531,11 +545,21 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
       <div ref={tip} className="hovertip floating" style={{ display: 'none' }} />
       {mode === 'assembly' && result && (
         <div className="player floating" style={{ position: 'absolute', left: 12, bottom: 12, zIndex: 6 }}>
-          <button className="play" title={play.on ? 'Stop' : 'Play the assembly'} onClick={() => (play.on ? setPlay({ on: false, t: Infinity, n: play.n }) : startPlay())}>
-            {play.on ? <svg viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="10" rx="1.5" fill="currentColor" /></svg> : <svg viewBox="0 0 16 16"><path d="M4.5 2.8v10.4L13 8z" fill="currentColor" /></svg>}
+          <button className="play" title={play.on ? 'Pause' : started ? 'Carry on' : 'Play the assembly, step by step'} onClick={() => (play.on ? setPlay({ ...play, on: false, until: undefined }) : startPlay())}>
+            {play.on ? <svg viewBox="0 0 16 16"><rect x="3.5" y="3" width="3" height="10" rx="1" fill="currentColor" /><rect x="9.5" y="3" width="3" height="10" rx="1" fill="currentColor" /></svg> : <svg viewBox="0 0 16 16"><path d="M4.5 2.8v10.4L13 8z" fill="currentColor" /></svg>}
           </button>
-          {play.on ? <span className="phase">{phaseName}…</span> : (
-            <label title="Pull the parts apart along the way they go together">Explode<input type="range" min={0} max={1} step={0.01} value={explode} onChange={(e) => setExplode(+e.target.value)} /></label>
+          {started ? (
+            <>
+              <button className="stepbtn" title="Previous step" disabled={play.t <= 0} onClick={() => stepTo(Math.ceil(play.t - 1e-6) - 1)}>‹</button>
+              <button className="stepbtn" title="Next step" disabled={play.t >= play.n} onClick={nextStep}>›</button>
+              <span className="phase"><b>{stepIdx + 1}/{play.n}</b> {caption}</span>
+              <button className="stepbtn" title="Show it assembled" onClick={() => setPlay({ on: false, t: Infinity, n: play.n })}>✕</button>
+            </>
+          ) : (
+            <>
+              <button className="stepbtn" title="Step through the assembly" onClick={nextStep}>›</button>
+              <label title="Pull the parts apart along the way they go together">Explode<input type="range" min={0} max={1} step={0.01} value={explode} onChange={(e) => setExplode(+e.target.value)} /></label>
+            </>
           )}
         </div>
       )}
@@ -572,23 +596,37 @@ function flyTo(c: any, box: THREE.Box3, dir: THREE.Vector3 | null, k = 1.3, inst
   c.tween = { p0: cam.position.clone(), p1, q0: c.controls.target.clone(), q1: center, t0: performance.now(), dur: 480 };
 }
 
-/** Place every object: assembly animation (parts fly in step by step) or exploded view. */
+/** Place every object: assembly animation (parts move in step by step, cables grow along their route) or the
+ * exploded view (every part pulled back along the moves it makes). */
 function applyPose(c: any) {
   const { t, explode } = c.anim ?? { t: Infinity, explode: 0 };
   const n = Math.max(1, c.ranks);
   const D = Math.max(35, c.radius * 0.75);
   const off = new THREE.Vector3(), M = new THREE.Matrix4();
   for (const o of c.objs as Obj[]) {
-    const dir = o.anim?.dir ?? [0, 0, 1];
-    let k = 0;
-    let shown = true;
+    const grow = !!o.anim?.grow;
+    let shown = true, g = 1;
+    off.set(0, 0, 0);
     if (Number.isFinite(t)) {
-      const local = t - o.rank;
-      if (local <= 0) shown = false;
-      else k = 1 - ease(Math.min(1, local));
-    } else if (explode > 0) k = explode * (0.35 + (0.65 * o.rank) / Math.max(1, n - 1));
+      if (t - o.show <= 0) shown = false;
+      if (grow) g = Math.max(0, Math.min(1, t - o.rank));
+      else for (const m of o.moves) {
+        const k = 1 - ease(Math.max(0, Math.min(1, t - m.rank)));
+        if (k > 0) off.addScaledVector(new THREE.Vector3(m.dir[0], m.dir[1], m.dir[2]), (m.dist ?? D) * k);
+      }
+    } else if (explode > 0) {
+      if (grow) shown = false;
+      else for (const m of o.moves) {
+        const k = m.dist != null ? explode : explode * (0.35 + (0.65 * m.rank) / Math.max(1, n - 1));
+        off.addScaledVector(new THREE.Vector3(m.dir[0], m.dir[1], m.dir[2]), (m.dist ?? D) * k);
+      }
+    }
+    if (grow) {
+      const geo = o.mesh.geometry as THREE.BufferGeometry, all = geo.index?.count ?? 0;
+      geo.setDrawRange(0, g >= 1 ? Infinity : Math.floor((all * g) / 60) * 60);
+      if (g <= 0) shown = false;
+    }
     o.mesh.userData.animHidden = !shown;
-    off.set(dir[0], dir[1], dir[2]).multiplyScalar(D * k);
     o.mesh.matrix.copy(M.makeTranslation(off.x, off.y, off.z).multiply(o.base));
     o.mesh.userData.offset = off.clone();
     o.mesh.visible = shown && !o.mesh.userData.layerHidden;

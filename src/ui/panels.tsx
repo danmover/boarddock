@@ -1,15 +1,17 @@
-import { useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { zipSync, strToU8 } from 'fflate';
-import type { Board, Comp, Hole, HoleRole, Project, V2 } from '../model/types';
+import type { Board, BoxFace, BoxSpec, Comp, Hole, HoleRole, PartOut, Project, V2 } from '../model/types';
 import { applyHoleRoles, boltedOn, detectHoleRoles, ROLE_INFO } from '../model/holes';
-import { compatible, KIND_COLOR, linkKind, linkOf, plugName, plugRole, plugsOf, sameRef } from '../model/links';
+import { baseRef, compatible, KIND_COLOR, linkKind, linkOf, plugName, plugRole, plugsOf, portBudget, sameRef } from '../model/links';
+import { applyBox, BOX_PORT_TYPES, BOX_PRESETS, BOX_ROLES, boxProblems, FACE_NAME, inferBox, layoutPorts, makeBox } from '../model/boxes';
 import { addLinks, removeLinks, setLink } from './linkOps';
 import { Icon, I } from './icons';
 import { CONNECTORS, DEFAULT_FEATURES, HOLDER_PRESETS, MATERIALS, PRINTERS, connById, connSetup } from '../model/library';
+import { printerByName, printSettings } from '../model/printers';
 import { TEMPLATES } from '../model/templates';
 import { ACCEPT } from '../import';
 import { openFiles } from './importFlow';
-import { bbox, circleLoop, roundedRectLoop, round, uid } from '../geom/poly';
+import { bbox, circleLoop, compRect, roundedRectLoop, round, uid } from '../geom/poly';
 import { activeModule, addBoard, closeProject, edit, editMod, isSel, putBoards, select, store, toast, useApp, type SelItem } from '../state';
 import { Check, Chip, Num, Pick, Section, Seg, Text, download, safeName } from './controls';
 import { estimate, packPlates, placedMesh, write3mf, writeStl } from '../cad/export';
@@ -17,7 +19,9 @@ import { buildTestKit, runClipFea } from '../worker/client';
 import type { ClipFeaResult } from '../fea/clipfea';
 import { clipDims } from '../cad/dinclip';
 import { RackBuilder } from './RackBuilder';
-import { duplicateModule } from './panelOps';
+import { duplicateModule, markBuilt, placementNote, unmarkBuilt } from './panelOps';
+import { delta, partsFor, type Delta } from '../model/built';
+import { baseOf as stackBase, ridersOf } from '../model/holes';
 import { DockFeaSection } from './DockFea';
 
 // ============================================================================================ IMPORT
@@ -29,7 +33,7 @@ export function ImportPanel() {
   const hasProject = useApp((s) => !!s.project);
   const replaceMode = useApp((s) => s.replaceMode);
   const nBoards = useApp((s) => s.project?.modules.length ?? 0);
-  const put = (b: Board) => { putBoards([b], replaceMode); if (hasProject && !replaceMode) toast(`Added ${b.name} (${nBoards + 1} boards). ⌘Z undoes it.`); };
+  const put = (b: Board) => { putBoards([b], replaceMode); if (hasProject && !replaceMode) toast(`Added ${b.name} (${nBoards + 1} boards).${placementNote(store.get().project!)} ⌘Z undoes it.`); };
 
   const handle = async (fl: FileList | File[]) => {
     const files = Array.from(fl);
@@ -47,6 +51,7 @@ export function ImportPanel() {
 
   return (
     <div>
+      {hasProject && <RackSummary />}
       <div className={`drop ${over ? 'over' : ''}`} onClick={() => input.current?.click()}
         onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)}
         onDrop={(e) => { e.preventDefault(); setOver(false); handle(e.dataTransfer.files); }}>
@@ -66,12 +71,12 @@ export function ImportPanel() {
       <div style={{ height: 10 }} />
       <Section title="Start from a known board">
         <div className="tiles">
-          {TEMPLATES.filter((t) => !t.accessory).map((t) => { const [n, sz] = t.name.split(' ('); return <button key={t.id} className="tile" onClick={() => put(t.make())}><span>{n}</span>{sz && <small>{sz.replace(')', '')}</small>}</button>; })}
+          {TEMPLATES.filter((t) => !t.accessory).map((t) => { const [n, sz] = t.name.split(' ('); return <button key={t.id} className="tile" onClick={() => put(t.make())}><BoardThumb id={t.id} /><span>{n}</span>{sz && <small>{sz.replace(')', '')}</small>}</button>; })}
         </div>
       </Section>
       <Section title="Hubs, chargers and add-ons">
         <div className="tiles">
-          {TEMPLATES.filter((t) => t.accessory).map((t) => { const [n, sz] = t.name.split(' ('); return <button key={t.id} className="tile" onClick={() => (hasProject ? addBoard(t.make()) : put(t.make()))}><span>{n}</span>{sz && <small>{sz.replace(')', '')}</small>}</button>; })}
+          {TEMPLATES.filter((t) => t.accessory).map((t) => { const [n, sz] = t.name.split(' ('); return <button key={t.id} className="tile" onClick={() => (hasProject ? addBoard(t.make()) : put(t.make()))}><BoardThumb id={t.id} /><span>{n}</span>{sz && <small>{sz.replace(')', '')}</small>}</button>; })}
         </div>
         <p className="hint">They go on their own rail next to the boards, strapped into a low holder, and Auto-connect wires the boards to them. {hasProject ? 'Clicking one adds it to this project.' : ''}</p>
       </Section>
@@ -89,6 +94,53 @@ export function ImportPanel() {
       </details>
       {hasProject && <div className="btns" style={{ marginTop: 12 }}><button className="btn danger small" onClick={() => { if (confirm('Close this project? Unsaved changes are kept only in this browser until you start a new one.')) closeProject(); }}>Close project</button></div>}
     </div>
+  );
+}
+
+/** Coming back to a rack: what is in it, whether it is built, and the two ways on. */
+function RackSummary() {
+  const p = useApp((s) => s.project)!;
+  const res = useApp((s) => s.result);
+  const d = res ? delta(p, res) : null;
+  const rails = res?.report.panel?.rails.length ?? 0;
+  const when = p.built ? new Date(p.built.at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : null;
+  return (
+    <div className="section rackcard">
+      <div className="rackcard-head">
+        <b>Your rack</b>
+        <span className={`chip ${p.built ? 'acc' : ''}`}>{p.built ? `built ${when}` : 'not built yet'}</span>
+      </div>
+      <p className="hint" style={{ margin: '4px 0 8px' }}>
+        {p.modules.length} board{p.modules.length > 1 ? 's' : ''}{p.layout === 'panel' && res ? ` on ${rails} rail${rails === 1 ? '' : 's'}` : ''}{(p.links ?? []).length ? `, ${(p.links ?? []).length} cable${(p.links ?? []).length > 1 ? 's' : ''}` : ''}: {p.modules.map((m) => m.board.name).join(', ')}.
+        {p.built ? ' Drop a new board below: it goes into an empty dock slot or a free spot, and nothing else moves.' : ' Drop more boards below, or carry on where you left off.'}
+      </p>
+      <div className="btns">
+        <button className="btn small" onClick={() => store.set({ step: 'mount' })}>Rails</button>
+        <button className="btn small" onClick={() => store.set({ step: 'plugs' })}>Cables</button>
+        <button className={`btn small ${d?.any ? 'soft' : ''}`} onClick={() => store.set({ step: 'export' })}>{d?.any ? `Print what's new (${d.parts.reduce((a, x) => a + x.qty, 0)} parts)` : 'Export'}</button>
+      </div>
+    </div>
+  );
+}
+
+const thumbCache = new Map<string, Board>();
+/** A small top view of a template: outline, holes, parts, and the connectors picked out. */
+function BoardThumb({ id }: { id: string }) {
+  let b = thumbCache.get(id);
+  if (!b) { b = TEMPLATES.find((t) => t.id === id)!.make(); thumbCache.set(id, b); }
+  const bb = bbox(b.outline), pad = 3, w = bb.x1 - bb.x0 + 2 * pad, h = bb.y1 - bb.y0 + 2 * pad;
+  const tx = (x: number) => x - bb.x0 + pad, ty = (y: number) => bb.y1 - y + pad;
+  const path = (l: V2[]) => 'M' + l.map((q) => `${tx(q[0]).toFixed(1)},${ty(q[1]).toFixed(1)}`).join('L') + 'Z';
+  const box = b.kind === 'box';
+  return (
+    <svg className="thumb" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="xMinYMid meet" aria-hidden>
+      <path d={path(b.outline)} className={box ? 'th-box' : 'th-pcb'} style={box && b.color ? { fill: b.color } : undefined} />
+      {!box && b.comps.filter((c) => !c.conn && c.h >= 1).map((c) => <path key={c.id} d={path(compRect(c))} className="th-part" />)}
+      {b.comps.filter((c) => c.conn).map((c) => (c.conn!.entry === 'top' && box
+        ? <rect key={c.id} x={tx(c.x) - 3} y={ty(c.y) - 1.2} width={6} height={2.4} rx={0.6} className="th-port" />
+        : <path key={c.id} d={path(compRect(c))} className={box ? 'th-port' : 'th-conn'} />))}
+      {b.holes.map((q) => <circle key={q.id} cx={tx(q.x)} cy={ty(q.y)} r={Math.max(0.9, q.d / 2)} className="th-hole" />)}
+    </svg>
   );
 }
 
@@ -161,15 +213,16 @@ export function BoardPanel() {
       <Section title="Summary">
         <Text label="Name" value={b.name} onChange={(v) => editMod((q) => { q.board.name = v; })} />
         <div className="row" style={{ marginTop: 8 }}>
-          <Num label="Thickness" value={b.thickness} min={0.3} max={4} onChange={(v) => editMod((q) => { q.board.thickness = v; })} />
+          {b.kind === 'box' ? <div className="field"><span>Height</span><div className="static mono">{round(b.thickness, 1)} mm</div></div> : <Num label="Thickness" value={b.thickness} min={0.3} max={4} onChange={(v) => editMod((q) => { q.board.thickness = v; })} />}
           <div className="field"><span>Size</span><div className="static mono">{round(bb.x1 - bb.x0, 1)} × {round(bb.y1 - bb.y0, 1)}</div></div>
         </div>
         <p className="hint">{b.source}. {b.holes.length} holes, {b.comps.filter((c) => !c.hidden).length} parts, {b.comps.filter((c) => c.conn).length} connectors.</p>
         {b.notes.length > 0 && <div className="warns">{b.notes.map((n, i) => <div key={i}>{n}</div>)}</div>}
       </Section>
+      {b.kind === 'box' && <BoxEditor />}
       {sel.length > 0 && <Inspector />}
-      <HoleWizard />
-      <CleanUp />
+      {b.kind !== 'box' && <HoleWizard />}
+      {b.kind !== 'box' && <CleanUp />}
       <Section title="Parts" right={<span className="btns"><AllBox items={comps.map((c) => ({ kind: 'comp' as const, id: c.id }))} /><Seg value={filter} options={[['key', 'Key'], ['all', 'All']]} onChange={setFilter} /></span>}>
         <div className="list" style={{ maxHeight: 340, overflowY: 'auto' }}>
           {comps.map((c) => (
@@ -192,6 +245,82 @@ export function BoardPanel() {
         <div style={{ marginTop: 10 }}><ReshapeOutline b={b} /></div>
       </details>
     </div>
+  );
+}
+
+const ROLE_COLOR: Record<string, string> = { 'hub-down': '#8b95a3', 'hub-up': '#4c8dff', 'power-out': '#d0443a', 'power-in': '#f08a4b', host: '#8b95a3', device: '#4c8dff', net: '#3b7dd8', other: '#e0a030' };
+
+/** Size and ports of a box (hub, charger): presets, rows of ports per face, a top-view preview. */
+function BoxEditor() {
+  const p = useApp((s) => s.project)!;
+  const m = activeModule(p), b = m.board;
+  const spec = b.box;
+  const set = (fn: (s: BoxSpec) => void) => editMod((q, pp) => {
+    const s = structuredClone(q.board.box ?? inferBox(q.board, (c) => plugRole(q, c)));
+    fn(s);
+    applyBox(q.board, s);
+    // cables to ports that no longer exist go
+    const refs = new Set(q.board.comps.map((c) => c.ref));
+    pp.links = (pp.links ?? []).filter((l) => !((l.a.module === q.id && !refs.has(l.a.ref)) || (l.b.module === q.id && !refs.has(l.b.ref))));
+  });
+  if (!spec) return (
+    <Section title="Box">
+      <p className="hint" style={{ marginTop: 0 }}>This box's ports were placed one by one. Turn it into an editable box to set how many ports it has and where they are.</p>
+      <button className="btn small soft" onClick={() => set(() => {})}>Edit as a box</button>
+    </Section>
+  );
+  const probs = boxProblems(spec);
+  const count = (r: string) => spec.groups.filter((x) => x.role === r).reduce((a, x) => a + x.count, 0);
+  const sum = [['hub-down', 'hub port'], ['hub-up', 'upstream'], ['power-out', 'power out'], ['power-in', 'power in'], ['host', 'host port']].map(([r, n]) => [count(r), n] as [number, string]).filter(([k]) => k).map(([k, n]) => `${k} ${n}${k > 1 ? 's' : ''}`).join(', ');
+  return (
+    <Section title="Box" right={<span className="chip">{sum || 'no ports'}</span>}>
+      <div className="btns" style={{ flexWrap: 'wrap' }}>
+        {Object.entries(BOX_PRESETS).map(([k, P]) => <button key={k} className="btn small" onClick={() => set((s) => { Object.assign(s, P.spec()); })}>{P.name}</button>)}
+      </div>
+      <div className="row3" style={{ marginTop: 10 }}>
+        <Num label="Length" value={spec.l} min={20} max={400} step={1} onChange={(v) => set((s) => { s.l = v; })} />
+        <Num label="Width" value={spec.w} min={10} max={200} step={1} onChange={(v) => set((s) => { s.w = v; })} />
+        <Num label="Height" value={spec.h} min={5} max={120} step={1} onChange={(v) => set((s) => { s.h = v; })} />
+      </div>
+      <BoxPreview spec={spec} />
+      <div className="boxgroups">
+        {spec.groups.map((g, i) => (
+          <div key={g.id} className="boxgroup">
+            <div className="row" style={{ gridTemplateColumns: '58px 1.25fr 1fr 26px', alignItems: 'end' }}>
+              <Num label="Ports" value={g.count} min={0} max={24} step={1} unit="" onChange={(v) => set((s) => { s.groups[i].count = Math.max(0, Math.round(v)); })} />
+              <Pick label="Type" value={g.type} options={BOX_PORT_TYPES.map((t) => [t, plugName(t)] as [string, string])} onChange={(v) => set((s) => { s.groups[i].type = v; })} />
+              <Pick label="On" value={g.face} options={(Object.keys(FACE_NAME) as BoxFace[]).map((f) => [f, FACE_NAME[f].replace(' end', '')] as [BoxFace, string])} onChange={(v) => set((s) => { s.groups[i].face = v; })} />
+              <button className="btn small ghost icon" title="Remove these ports" onClick={() => set((s) => { s.groups.splice(i, 1); })}><Icon d={I.x} /></button>
+            </div>
+            <Pick label="What they are for" value={g.role} options={BOX_ROLES as [string, string][]} onChange={(v) => set((s) => { s.groups[i].role = v; })} />
+          </div>
+        ))}
+      </div>
+      <button className="btn small" style={{ marginTop: 8 }} onClick={() => set((s) => { const hub = s.groups.some((x) => x.role === 'hub-down'); s.groups.push({ id: uid('pg'), type: 'usb_a', count: 1, face: 'front', role: hub ? 'hub-down' : s.groups.some((x) => x.role === 'power-out') ? 'power-out' : 'hub-down' }); })}><Icon d={I.plus} /> Add ports</button>
+      {probs.length > 0 && <div className="warns" style={{ marginTop: 8 }}>{probs.map((x) => <div key={x}>{x}</div>)}</div>}
+      <p className="hint">Front and back are the long sides; the box lies on its base in its holder, strapped down. Ports on top are fine: the strap loops move to miss them. Cables to ports you remove are removed too.</p>
+    </Section>
+  );
+}
+
+/** Top view of a box with its ports, coloured by what they are for. */
+function BoxPreview({ spec }: { spec: BoxSpec }) {
+  const W = 300, s = Math.min((W - 40) / spec.l, 110 / spec.w), bw = spec.l * s, bh = spec.w * s, ox = (W - bw) / 2, oy = 22;
+  const pos = layoutPorts(spec);
+  return (
+    <svg className="boxpreview" viewBox={`0 0 ${W} ${bh + 44}`} width="100%">
+      <rect x={ox} y={oy} width={bw} height={bh} rx={Math.min(8, bh / 5)} fill="var(--surface-3)" stroke="var(--line-2)" />
+      <text x={W / 2} y={oy + bh + 16} textAnchor="middle" fontSize={10} fill="var(--subtle)">front</text>
+      <text x={W / 2} y={14} textAnchor="middle" fontSize={10} fill="var(--subtle)">back</text>
+      {pos.map(({ group, along }, k) => {
+        const w = Math.max(4, connById(group.type).body.w * s), t = 5, c = ROLE_COLOR[group.role] ?? '#8b95a3';
+        const r = group.face === 'top' ? { x: ox + along * s - w / 2, y: oy + bh / 2 - t / 2, w, h: t }
+          : group.face === 'front' ? { x: ox + along * s - w / 2, y: oy + bh - t / 2, w, h: t }
+          : group.face === 'back' ? { x: ox + along * s - w / 2, y: oy - t / 2, w, h: t }
+          : { x: (group.face === 'left' ? ox : ox + bw) - t / 2, y: oy + bh - along * s - w / 2, w: t, h: w };
+        return <rect key={k} {...{ x: r.x, y: r.y, width: r.w, height: r.h }} rx={1.5} fill={c} />;
+      })}
+    </svg>
   );
 }
 
@@ -302,15 +431,17 @@ function CablesSection() {
   const buy = new Map<string, number>();
   for (const l of links) {
     const c = cables.find((x) => x.id === l.id);
-    const A = p.modules.find((m) => m.id === l.a.module)?.board.comps.find((x) => x.ref === l.a.ref), B = p.modules.find((m) => m.id === l.b.module)?.board.comps.find((x) => x.ref === l.b.ref);
+    const A = p.modules.find((m) => m.id === l.a.module)?.board.comps.find((x) => x.ref === baseRef(l.a.ref)), B = p.modules.find((m) => m.id === l.b.module)?.board.comps.find((x) => x.ref === baseRef(l.b.ref));
     const key = `${c ? `${c.buy} m ` : ''}${plugName(A?.conn?.type ?? '')} to ${plugName(B?.conn?.type ?? '')}`;
     buy.set(key, (buy.get(key) ?? 0) + 1);
   }
+  const budget = portBudget(p);
   return (
     <Section title={`Cables · ${links.length}`} right={<span className="btns">
       <button className="btn small soft" onClick={() => addLinks()}><Icon d={I.wand} /> Auto-connect</button>
       <button className="btn small ghost" onClick={() => store.set({ view: 'wiring' })}>Wiring view</button>
     </span>}>
+      {(links.length > 0 || budget.devices.length + budget.powerIns.length > 0) && <PortBudget budget={budget} />}
       {!links.length ? <p className="hint" style={{ marginTop: 0 }}>Say what plugs into what (a Pi's USB to an Arduino, power from a charger) and BoardDock keeps connected boards together on the rails, routes each cable along the channels between the rails, and tells you how long a cable to buy. <b>Auto-connect</b> fills in the obvious ones.</p> : (
         <>
           <div className="list">
@@ -332,6 +463,19 @@ function CablesSection() {
         </>
       )}
     </Section>
+  );
+}
+
+/** Devices still waiting for a port, and free ports, with a one-click fix when ports run short. */
+function PortBudget({ budget }: { budget: ReturnType<typeof portBudget> }) {
+  const { devices, usbPorts, powerIns, powerOuts } = budget;
+  if (!devices.length && !powerIns.length) return <p className="hint">{usbPorts.length ? `${usbPorts.length} USB port${usbPorts.length > 1 ? 's' : ''} still free` : 'No USB ports left over'}{powerOuts.length ? `, ${powerOuts.length} charger port${powerOuts.length > 1 ? 's' : ''} free` : ''}.</p>;
+  const addBox = (k: keyof typeof BOX_PRESETS) => { addBoard(makeBox(k)); toast(`Added a ${BOX_PRESETS[k].name}: set its ports under Box, then press Auto-connect.`); };
+  return (
+    <div className="warns" style={{ marginTop: 8 }}>
+      {devices.length > 0 && <div>{devices.length} USB plug{devices.length > 1 ? 's' : ''} waiting for a port ({devices.map((d) => `${d.module.board.name} ${d.comp.ref}`).join(', ')}); {usbPorts.length} free. {devices.length > usbPorts.length && <button className="btn small" style={{ marginLeft: 4 }} onClick={() => addBox(devices.length - usbPorts.length > 3 ? 'hub7' : 'hub4')}>Add a USB hub</button>}</div>}
+      {powerIns.length > 0 && <div>{powerIns.length} board{powerIns.length > 1 ? 's need' : ' needs'} power ({powerIns.map((d) => d.module.board.name).join(', ')}); {powerOuts.length} charger port{powerOuts.length === 1 ? '' : 's'} free. {powerIns.length > powerOuts.length && <button className="btn small" style={{ marginLeft: 4 }} onClick={() => addBox(powerIns.length - powerOuts.length > 4 ? 'charger6' : 'charger4')}>Add a USB charger</button>}</div>}
+    </div>
   );
 }
 
@@ -673,9 +817,21 @@ export function ExportPanel() {
   const res = useApp((s) => s.result);
   const [copies, setCopies] = useState(1);
   const setP = (fn: (x: Project['printer']) => void) => edit((q) => fn(q.printer));
-  const plates = useMemo(() => (res ? packPlates(res.parts, p.printer.bed, p.printer.spacing, copies) : []), [res, p.printer.bed[0], p.printer.bed[1], p.printer.spacing, copies]);
+  const d = useMemo(() => (res ? delta(p, res) : null), [res, p.built]);
+  // what to print: everything, only what is new since the rack was built, or just some boards
+  const [scopeSel, setScope] = useState<'all' | 'new' | 'pick' | null>(null);
+  const scope = scopeSel ?? (d?.any ? 'new' : 'all');
+  const [picked, setPicked] = useState<string[]>(() => [activeModule(p).id]);
+  const [withDocks, setWithDocks] = useState(true);
+  const [withStands, setWithStands] = useState(false);
+  const pickSet = useMemo(() => new Set(picked.flatMap((id) => { const m = p.modules.find((x) => x.id === id); return m ? [id, ...ridersOf(p, m).map((r) => r.id)] : []; })), [picked, p.modules]);
+  const onlyNew = scope === 'new' && !!d;
+  const parts = useMemo(() => (!res ? [] : onlyNew ? d!.parts : scope === 'pick' ? partsFor(res, pickSet, { docks: withDocks, stands: withStands }) : res.parts), [res, onlyNew, d, scope, pickSet, withDocks, withStands]);
+  useEffect(() => { store.set({ printParts: scope === 'all' ? null : parts }); }, [parts, scope]);
+  useEffect(() => () => store.set({ printParts: null }), []);
+  const plates = useMemo(() => packPlates(parts, p.printer.bed, p.printer.spacing, copies), [parts, p.printer.bed[0], p.printer.bed[1], p.printer.spacing, copies]);
   const dens = MATERIALS[activeModule(p).holder.material].density;
-  const est = useMemo(() => (res ? res.parts.map((x) => ({ part: x, ...estimate(x, dens) })) : []), [res, dens]);
+  const est = useMemo(() => parts.map((x) => ({ part: x, ...estimate(x, dens) })), [parts, dens]);
   const tot = est.reduce((a, e) => ({ g: a.g + e.grams * e.part.qty * copies, m: a.m + e.minutes * e.part.qty * copies }), { g: 0, m: 0 });
   if (!res) return <div><p className="lede">Building…</p></div>;
   const base = safeName(p.modules.map((m) => m.board.name).join('+'));
@@ -686,27 +842,53 @@ export function ExportPanel() {
       files[`plate_${i + 1}.stl`] = writeStl(plateMeshes(i));
       files[`plate_${i + 1}.3mf`] = write3mf(pl.items.map((it, k) => ({ name: `${it.part.name} ${k + 1}`, mesh: placedMesh(it, p.printer.bed, pl.used) })));
     });
-    for (const x of res.parts) files[`parts/${safeName(x.id)}_${safeName(x.name)}.stl`] = writeStl([x.mesh]);
+    for (const x of parts) files[`parts/${safeName(x.id)}_${safeName(x.name)}.stl`] = writeStl([x.mesh]);
     files[`${base}.boarddock.json`] = strToU8(JSON.stringify(p, null, 1));
-    files['README.txt'] = strToU8(printNotes(p, res, plates.length, tot));
-    download(`${base}_boarddock.zip`, zipSync(files), 'application/zip');
+    const pr = printerByName(p.printer.name), mat = activeModule(p).holder.material;
+    const settings = [`Print settings (${pr?.name ?? p.printer.name}, ${mat}${pr ? `, printer preset "${pr.orca}"` : ''}):`, ...printSettings(pr, mat, tallness(parts, p.printer.maxZ ?? 250).tall).map((r) => `  ${r.name}: ${r.value}  (${r.basis}: ${r.why})`)].join('\n');
+    files['README.txt'] = strToU8(printNotes(p, res, plates.length, tot, shopping(p, res, onlyNew ? d : null, tot, scope === 'pick' ? pickSet : undefined)).replace('Print: 0.2 mm layers, 3 walls, 15% infill, NO supports. Parts are already in print orientation.', settings));
+    download(`${base}_boarddock${onlyNew ? '_new-parts' : scope === 'pick' ? '_some-boards' : ''}.zip`, zipSync(files), 'application/zip');
   };
   return (
     <div>
+      <BuildSection d={d} />
+      <Section title="What to print" right={<span className="chip">{parts.reduce((a, x) => a + x.qty, 0)} parts</span>}>
+        <Seg value={scope} options={[['all', 'Everything'], ...(p.built ? [['new', "What's new"] as ['new', string]] : []), ['pick', 'Some boards']]} onChange={setScope} />
+        {scope === 'pick' && (
+          <div className="picklist">
+            {p.modules.filter((m) => stackBase(p, m) === m).map((m) => {
+              const rs = ridersOf(p, m);
+              return <Check key={m.id} label={<>{m.board.name}{rs.length > 0 && <small> with {rs.map((r) => r.board.name).join(', ')}</small>}</>} value={picked.includes(m.id)} onChange={(v) => setPicked((x) => (v ? [...x, m.id] : x.filter((y) => y !== m.id)))} />;
+            })}
+            <div className="btns"><button className="btn small ghost" onClick={() => setPicked(p.modules.map((m) => m.id))}>All</button><button className="btn small ghost" onClick={() => setPicked([])}>None</button><button className="btn small ghost" onClick={() => setPicked([activeModule(p).id])}>Just {activeModule(p).board.name}</button></div>
+            {p.layout === 'panel' && (
+              <div className="picklist-opts">
+                <Check label="Their docks (rail shoe and socket)" value={withDocks} onChange={setWithDocks} />
+                <Check label="Table stands" value={withStands} onChange={setWithStands} />
+              </div>
+            )}
+          </div>
+        )}
+        <p className="hint">{scope === 'all' ? 'Every part of the rack.' : scope === 'new' ? (d?.any ? 'Only the parts added or changed since you marked the rack as built.' : 'Nothing is new since the rack was built.') : picked.length ? 'Just the holders (and plug caps and release rods) of the boards you tick, with anything stacked on them.' : 'Tick the boards to print.'} The plates, the estimate, the download and the plates view all follow this.</p>
+      </Section>
       <div className="bigstat">
-        <div><b>{plates.length}</b><span>plate{plates.length > 1 ? 's' : ''}</span></div>
+        <div><b>{plates.length}</b><span>plate{plates.length === 1 ? '' : 's'}{onlyNew ? ', new parts' : scope === 'pick' ? ', chosen boards' : ''}</span></div>
         <div><b>{tot.g.toFixed(0)} g</b><span>{activeModule(p).holder.material}</span></div>
         <div><b>{fmtMin(tot.m)}</b><span>print time, rough</span></div>
       </div>
-      <button className="btn primary" style={{ width: '100%', justifyContent: 'center', marginBottom: 10 }} onClick={() => zipAll()}><Icon d={I.download} /> Download everything (.zip)</button>
+      <button className="btn primary" style={{ width: '100%', justifyContent: 'center', marginBottom: 10 }} onClick={() => zipAll()}><Icon d={I.download} /> {scope === 'all' ? 'Download everything' : scope === 'new' ? "Download what's new" : 'Download these'} (.zip)</button>
       <Section title="Printer">
-        <Pick label="Printer" value={p.printer.name} options={[...PRINTERS.map((x) => [x.name, x.name] as [string, string]), ['Custom', 'Custom']]} onChange={(v) => setP((x) => { const pr = PRINTERS.find((q) => q.name === v); if (pr) Object.assign(x, pr); else x.name = 'Custom'; })} />
+        <Pick label="Printer" value={p.printer.name} options={[...PRINTERS.map((x) => [x.name, x.name] as [string, string]), ['Custom', 'Custom']]} onChange={(v) => setP((x) => { const pr = PRINTERS.find((q) => q.name === v); if (pr) Object.assign(x, { ...pr, spacing: x.spacing }); else x.name = 'Custom'; })} />
         <div className="row3" style={{ marginTop: 8 }}>
           <Num label="Bed X" value={p.printer.bed[0]} min={50} onChange={(v) => setP((x) => { x.bed = [v, x.bed[1]]; x.name = 'Custom'; })} />
           <Num label="Bed Y" value={p.printer.bed[1]} min={50} onChange={(v) => setP((x) => { x.bed = [x.bed[0], v]; x.name = 'Custom'; })} />
           <Num label="Spacing" value={p.printer.spacing} min={2} max={20} onChange={(v) => setP((x) => { x.spacing = v; })} />
         </div>
-        <div className="row" style={{ marginTop: 8 }}><Num label="Sets to print" unit="" step={1} min={1} max={50} value={copies} onChange={(v) => setCopies(Math.round(v))} /></div>
+        <div className="row" style={{ marginTop: 8 }}>
+          <Num label="Build height" value={p.printer.maxZ ?? 250} min={50} max={1000} step={1} onChange={(v) => setP((x) => { x.maxZ = v; x.name = 'Custom'; })} />
+          <Num label="Sets to print" unit="" step={1} min={1} max={50} value={copies} onChange={(v) => setCopies(Math.round(v))} />
+        </div>
+        {(() => { const pr = printerByName(p.printer.name); return pr ? <p className="hint">{pr.kind === 'corexy' ? 'CoreXY' : 'Bed-slinger'}, {pr.extruder === 'direct' ? 'direct drive' : 'bowden'}, {pr.firmware === 'bambu' ? 'Bambu firmware' : pr.firmware === 'klipper' ? 'Klipper' : 'Marlin'}. Profiles in {pr.slicers.join(' and ')}.</p> : null; })()}
       </Section>
       <Section title={`${plates.length} plate${plates.length > 1 ? 's' : ''}`}>
         <div className="plates">
@@ -725,6 +907,7 @@ export function ExportPanel() {
           <button className="btn ghost" onClick={() => store.set({ view: 'print' })}>Show plates in 3D</button>
         </div>
       </Section>
+      <ShoppingList lines={shopping(p, res, onlyNew ? d : null, tot, scope === 'pick' ? pickSet : undefined)} />
       {p.layout === 'panel' && <TestKitSection />}
       <Section title="Estimate">
         <table className="table"><tbody>
@@ -734,15 +917,70 @@ export function ExportPanel() {
         </tbody></table>
         <p className="hint">Rough: 3 walls, 5 top/bottom layers, 15% infill, 0.2 mm layers, {activeModule(p).holder.material}. Your slicer's numbers are the real ones.</p>
       </Section>
-      <Section title="Print settings">
-        <ul className="fmt">
-          <li>{activeModule(p).holder.material}, 0.2 mm layers, 0.4 mm nozzle, 3 walls, 15% infill.</li>
-          <li><b>No supports</b>: every part is already oriented, and overhangs are 45° or short bridges.</li>
-          <li>The DIN clip prints on its side, so its spring bends within the layers. Keep its first-layer squish normal: the jaw is printed in place with a 0.3 mm gap.</li>
-          <li>Print one clip and one plug cap first to check the fit on your printer.</li>
-        </ul>
-      </Section>
+      <PrintSettings parts={parts} />
+      <SlicerSection plates={plates.length} plate3mf={(i) => write3mf(plates[i].items.map((it, k) => ({ name: `${it.part.name} ${k + 1}`, mesh: placedMesh(it, p.printer.bed, plates[i].used) })))} base={base} />
     </div>
+  );
+}
+
+/** Parts that stand much taller than they are wide (a brim helps), and parts too tall for the printer. */
+function tallness(parts: PartOut[], maxZ: number) {
+  const tall = [...new Set(parts.filter((x) => x.size[2] > 20 && x.size[2] > 3 * Math.min(x.size[0], x.size[1])).map((x) => x.name.replace(/\s*\(.*$/, '')))];
+  const tooTall = parts.filter((x) => x.size[2] > maxZ).map((x) => `${x.name} (${Math.round(x.size[2])} mm)`);
+  return { tall, tooTall };
+}
+
+/** Slicer settings for this printer and filament, each marked by where it comes from. */
+function PrintSettings({ parts }: { parts: PartOut[] }) {
+  const p = useApp((s) => s.project)!;
+  const mat = activeModule(p).holder.material;
+  const pr = printerByName(p.printer.name);
+  const { tall, tooTall } = tallness(parts, p.printer.maxZ ?? pr?.maxZ ?? 250);
+  const rows = printSettings(pr, mat, tall);
+  const [where, setWhere] = useState<'orca' | 'prusa'>(pr?.slicers[0] === 'PrusaSlicer' ? 'prusa' : 'orca');
+  const text = () => [`BoardDock print settings: ${pr?.name ?? p.printer.name}, ${mat}`, pr ? `Printer preset: ${pr.orca}` : '', ...rows.map((r) => `${r.name}: ${r.value}  [${r.basis}: ${r.why}]`)].filter(Boolean).join('\n');
+  return (
+    <Section title="Print settings" right={<button className="btn small ghost" onClick={() => { navigator.clipboard?.writeText(text()); toast('Print settings copied.'); }}>Copy</button>}>
+      <p className="hint" style={{ marginTop: 0 }}>{pr ? <>In {pr.slicers.join(' or ')}, pick the <b>{pr.orca}</b> printer preset and a generic {mat} filament, then set these:</> : <>Pick your printer's preset and a generic {mat} filament, then set these:</>}</p>
+      {tooTall.length > 0 && <div className="warns" style={{ marginTop: 8 }}><div>Taller than the {p.printer.maxZ ?? pr?.maxZ} mm build height: {tooTall.join(', ')}.</div></div>}
+      <table className="table settings"><tbody>
+        {rows.map((r) => (
+          <tr key={r.name} title={`${r.why}. ${where === 'orca' ? 'OrcaSlicer / Bambu Studio' : 'PrusaSlicer'}: ${where === 'orca' ? r.orca : r.prusa}`}>
+            <td>{r.name}<div className="where">{where === 'orca' ? r.orca : r.prusa}</div></td>
+            <td className="val">{r.value}</td>
+            <td><span className={`basis ${r.basis}`}>{r.basis === 'design' ? 'design' : r.basis === 'vendor' ? 'profile' : 'convention'}</span></td>
+          </tr>
+        ))}
+      </tbody></table>
+      <div className="row" style={{ marginTop: 8, alignItems: 'center' }}>
+        <Seg value={where} options={[['orca', 'OrcaSlicer, Bambu Studio'], ['prusa', 'PrusaSlicer']]} onChange={setWhere} />
+      </div>
+      <p className="hint"><b>design</b>: the parts need it. <b>profile</b>: OrcaSlicer's generic {mat} profile or your printer's machine profile. <b>convention</b>: common practice, not a tested requirement. Nothing has been print-tested yet: print the test-fit kit first.</p>
+    </Section>
+  );
+}
+
+/** Getting G-code: the plates open in the user's own slicer, parts already placed. */
+function SlicerSection({ plates, plate3mf, base }: { plates: number; plate3mf: (i: number) => Uint8Array; base: string }) {
+  const desk = (window as any).boarddockDesktop as undefined | { slicers: () => Promise<string[]>; openInSlicer: (app: string | null, name: string, bytes: Uint8Array) => Promise<string> };
+  const [found, setFound] = useState<string[] | null>(null);
+  const [app, setApp] = useState<string>('');
+  useEffect(() => { desk?.slicers().then((l) => { setFound(l); setApp(l[0] ?? ''); }).catch(() => setFound([])); }, []);
+  const open = async (i: number) => {
+    const err = await desk!.openInSlicer(app || null, `${base}_plate${i + 1}.3mf`, plate3mf(i));
+    toast(err ? `Could not open it: ${err}` : `Plate ${i + 1} opened in ${app || 'your slicer'}. Pick the printer preset and the settings above, then slice.`);
+  };
+  return (
+    <Section title="G-code">
+      <p className="hint" style={{ marginTop: 0 }}>Your slicer makes the G-code: it has your printer's start code, calibration and firmware quirks. Each plate is a 3MF with every part already placed, so you only pick the settings above and press slice. Bambu Lab printers take the <code>.gcode.3mf</code> that Bambu Studio or OrcaSlicer sends.</p>
+      {desk ? (
+        <>
+          {found && found.length > 0 && <Pick label="Slicer" value={app} options={[...found.map((x) => [x, x] as [string, string]), ['', 'The app your system opens 3MF files with']]} onChange={setApp} />}
+          {found && !found.length && <p className="hint">No slicer found in the usual places; plates open in whatever your system uses for 3MF files. OrcaSlicer and PrusaSlicer are free and open source.</p>}
+          <div className="btns" style={{ marginTop: 8 }}>{[...Array(plates)].map((_, i) => <button key={i} className="btn small soft" onClick={() => open(i)}>Open plate {i + 1}</button>)}</div>
+        </>
+      ) : <p className="hint">Download a plate's <b>3MF</b> above and open it in OrcaSlicer, PrusaSlicer, Bambu Studio or Cura (all free). In the desktop app, one click opens it in your slicer.</p>}
+    </Section>
   );
 }
 
@@ -763,7 +1001,100 @@ function PlateThumb({ pl, bed }: { pl: ReturnType<typeof packPlates>[number]; be
   );
 }
 
-function printNotes(p: Project, res: NonNullable<ReturnType<typeof store.get>['result']>, nPlates: number, tot: { g: number; m: number }) {
+/** Mark the rack as built, and what is new since. */
+function BuildSection({ d }: { d: Delta | null }) {
+  const p = useApp((s) => s.project)!;
+  if (!p.built) return (
+    <Section title="Built it?">
+      <p className="hint" style={{ marginTop: 0 }}>Once you have printed and put the rack together, mark it as built. BoardDock then keeps every board, dock and rail where it is when you add boards later, and this step lists only the new parts, cables and rails.</p>
+      <button className="btn soft" onClick={markBuilt}>Mark the rack as built</button>
+    </Section>
+  );
+  const when = new Date(p.built.at).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  return (
+    <Section title={`Built ${when}`} right={<button className="btn small ghost" title="Forget what was built: Export lists everything again" onClick={unmarkBuilt}>Forget</button>}>
+      {d && d.any ? (
+        <>
+          <p className="hint" style={{ marginTop: 0 }}>New since then{d.boards.length ? ` (${d.boards.join(', ')})` : ''}:</p>
+          <ul className="fmt">
+            {d.parts.length > 0 && <li>{d.parts.reduce((a, x) => a + x.qty, 0)} part{d.parts.reduce((a, x) => a + x.qty, 0) > 1 ? 's' : ''} to print: {d.parts.map((x) => `${x.name}${x.qty > 1 ? ` ×${x.qty}` : ''}`).join(', ')}</li>}
+            {d.cables.length > 0 && <li>{d.cables.length} cable{d.cables.length > 1 ? 's' : ''} to buy: {d.cables.map((c) => `${c.a} to ${c.b} (${c.buy} m)`).join(', ')}</li>}
+            {d.rails.map((r) => <li key={r.id}>Rail {r.id.replace(/^r/, '')}: {r.was == null ? `a new ${Math.round(r.length)} mm rail` : `now ${Math.round(r.length)} mm (yours is ${Math.round(r.was)} mm): cut a longer one`}</li>)}
+          </ul>
+          <div className="btns" style={{ marginTop: 8 }}><button className="btn small soft" onClick={markBuilt}>I've built these too</button></div>
+        </>
+      ) : <p className="hint" style={{ marginTop: 0 }}>Nothing new to print, cut or buy since then. Add a board and this lists just what it needs.</p>}
+    </Section>
+  );
+}
+
+type Res = NonNullable<ReturnType<typeof store.get>['result']>;
+/** Everything to print, cut and buy (or only what's new since the rack was built). */
+function shopping(p: Project, res: Res, d: Delta | null, tot: { g: number; m: number }, pick?: Set<string>): { head: string; items: string[] }[] {
+  const out: { head: string; items: string[] }[] = [];
+  if (pick) {
+    const other: string[] = [];
+    for (const m of p.modules.filter((x) => pick.has(x.id))) {
+      if (m.board.kind === 'box') other.push(`12 mm hook-and-loop strap for the ${m.board.name}`);
+      if (m.on && pick.has(m.on) && (m.onMode ?? 'bolted') === 'bolted') other.push(`4 M2.5 standoffs, ${m.onGap ?? 11} mm, and 8 M2.5 screws (${m.board.name})`);
+    }
+    if (other.length) out.push({ head: 'Hardware', items: other });
+    out.push({ head: 'Filament', items: [`about ${tot.g.toFixed(0)} g of ${activeModule(p).holder.material} (roughly ${fmtMin(tot.m)} of printing)`] });
+    return out;
+  }
+  const count = (xs: string[]) => { const m = new Map<string, number>(); for (const x of xs) m.set(x, (m.get(x) ?? 0) + 1); return [...m.entries()].map(([k, n]) => `${n} × ${k}`); };
+  const rails = d ? d.rails.map((r) => r.length) : (res.report.panel?.rails ?? []).map((r) => r.length);
+  if (rails.length) out.push({ head: 'Rails', items: count(rails.map((l) => `TS35 × 7.5 top-hat rail, cut to ${Math.round(l)} mm`)) });
+  const cables = d ? d.cables : res.report.cables ?? [];
+  const typeOf = (id: string, end: 'a' | 'b') => { const l = (p.links ?? []).find((x) => x.id === id); const r = l?.[end]; return plugName(p.modules.find((m) => m.id === r?.module)?.board.comps.find((c) => c.ref === baseRef(r?.ref ?? ''))?.conn?.type ?? ''); };
+  if (cables.length) out.push({ head: 'Cables', items: count(cables.map((c) => `${c.buy} m ${typeOf(c.id, 'a')} to ${typeOf(c.id, 'b')} cable`)) });
+  const newIds = new Set(p.built ? p.modules.filter((m) => !p.built!.boards.includes(m.id)).map((m) => m.id) : p.modules.map((m) => m.id));
+  const mods = p.modules.filter((m) => !d || newIds.has(m.id));
+  const other: string[] = [];
+  for (const m of mods) if (m.board.kind === 'box') { const b = m.board.box, per = b ? Math.ceil((2 * (b.w + b.h) + 80) / 50) * 5 : 30; other.push(`12 mm hook-and-loop strap, about ${per} cm (2 for the ${m.board.name})`); }
+  for (const m of mods) if (m.on && stackBase(p, m) !== m && (m.onMode ?? 'bolted') === 'bolted') other.push(`4 M2.5 standoffs, ${m.onGap ?? 11} mm, and 8 M2.5 screws (${m.board.name} on ${p.modules.find((x) => x.id === m.on)?.board.name ?? 'its board'})`);
+  if (other.length) out.push({ head: 'Hardware', items: other });
+  out.push({ head: 'Filament', items: [`about ${tot.g.toFixed(0)} g of ${activeModule(p).holder.material} (roughly ${fmtMin(tot.m)} of printing)`] });
+  return out;
+}
+
+function ShoppingList({ lines }: { lines: { head: string; items: string[] }[] }) {
+  return (
+    <Section title="Shopping list">
+      {lines.map((g) => (
+        <div key={g.head} style={{ marginBottom: 6 }}>
+          <div className="field"><span>{g.head}</span></div>
+          <ul className="fmt" style={{ marginTop: 2 }}>{g.items.map((x) => <li key={x}>{x}</li>)}</ul>
+        </div>
+      ))}
+      <p className="hint">No screws hold any printed part: the list above is all you need besides a printer and a hacksaw for the rail.</p>
+    </Section>
+  );
+}
+
+function printNotes(p: Project, res: Res, nPlates: number, tot: { g: number; m: number }, shop: { head: string; items: string[] }[]) {
+  if (res.steps?.length) {
+    const steps = [...res.steps].sort((a, b) => a.seq - b.seq);
+    return [
+      `BoardDock export: ${p.modules.map((m) => m.board.name).join(' + ')}`,
+      `${nPlates} plate(s), about ${tot.g.toFixed(0)} g of ${activeModule(p).holder.material}, about ${fmtMin(tot.m)}.`,
+      '',
+      'Print: 0.2 mm layers, 3 walls, 15% infill, NO supports. Parts are already in print orientation.',
+      '',
+      'Shopping list:',
+      ...shop.flatMap((g) => [`  ${g.head}:`, ...g.items.map((x) => `    - ${x}`)]),
+      '',
+      'Parts:',
+      ...res.parts.map((x) => `  - ${x.name} x${x.qty}: ${(x.volume / 1000).toFixed(2)} cm3, ${x.size.map((v) => v.toFixed(0)).join(' x ')} mm`),
+      '',
+      'Assembly (the play button in the 3D view shows each step):',
+      ...steps.map((s, i) => `  ${i + 1}. ${s.text}`),
+      '',
+      'Checks:',
+      ...res.report.checks.map((c) => `  [${c.status}] ${c.group} / ${c.name}: ${c.value}${c.detail ? ` (${c.detail})` : ''}`),
+      ...(res.report.warnings.length ? ['', 'Warnings:', ...res.report.warnings.map((w) => `  - ${w}`)] : []),
+    ].join('\n');
+  }
   const lines = [
     `BoardDock export: ${p.modules.map((m) => m.board.name).join(' + ')}`,
     `${nPlates} plate(s), about ${tot.g.toFixed(0)} g of ${activeModule(p).holder.material}, about ${fmtMin(tot.m)}.`,

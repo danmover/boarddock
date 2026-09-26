@@ -332,6 +332,14 @@ export function boardDetail(b: Board, zb: number, zt: number, tag: PickTag, anim
       if (t === 'usb_a') { bin.box('white', T, -0.7, -pw / 2 + 1.6, -0.7, 0.1, pw / 2 - 1.6, 0.9); bin.box('metal', T, -0.2, -pw / 2 - 0.4, -ph / 2 - 0.4, 0.12, pw / 2 + 0.4, -ph / 2); bin.box('metal', T, -0.2, -pw / 2 - 0.4, ph / 2, 0.12, pw / 2 + 0.4, ph / 2 + 0.4); }
       if (t === 'barrel') bin.box('metal', T, -0.7, -0.8, -0.8, 0.1, 0.8, 0.8);
     }
+    // ports in the top face: the opening, the tongue and the shell rim
+    for (const c of b.comps) {
+      if (c.hidden || !c.conn || c.conn.entry !== 'top') continue;
+      const t = c.conn.type, T = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, c.x, c.y, zt, 1];
+      const pw = t === 'usb_a' ? 13 : Math.max(6, c.conn.plug.w * 0.65), ph = t === 'usb_a' ? 5.8 : Math.max(2.8, c.conn.plug.h * 0.45);
+      bin.box('black', T, -pw / 2, -ph / 2, -0.8, pw / 2, ph / 2, 0.08);
+      if (t === 'usb_a') { bin.box('white', T, -pw / 2 + 1.6, -0.7, -0.7, pw / 2 - 1.6, 0.9, 0.1); bin.box('metal', T, -pw / 2 - 0.4, -ph / 2 - 0.4, -0.2, pw / 2 + 0.4, -ph / 2, 0.12); bin.box('metal', T, -pw / 2 - 0.4, ph / 2, -0.2, pw / 2 + 0.4, ph / 2 + 0.4, 0.12); }
+    }
     const bb = bbox(b.outline);
     bin.box('led', [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, bb.x0 + 6, (bb.y0 + bb.y1) / 2, zt, 1], -1, -1, -0.02, 1, 1, 0.3);
     const nm = b.name.slice(0, 20), nh = Math.min(3.5, (bb.y1 - bb.y0) * 0.12);
@@ -403,8 +411,17 @@ export function boardDetail(b: Board, zb: number, zt: number, tag: PickTag, anim
 
 /** A plug in a receptacle: metal tip inside the mouth, overmoulded body, and a cable leaving the body. */
 export function plugDetail(mouth: V2, d: V2, zAx: number, p: { w: number; h: number; len: number; cable: number }, tag: PickTag, anim: Anim): Ghost[] {
+  return plugAt([d[0], d[1], 0, 0, -d[1], d[0], 0, 0, 0, 0, 1, 0, mouth[0], mouth[1], zAx, 1], p, tag, anim); // x along the plug axis
+}
+
+/** A plug pointing straight up out of a port in a top face at (x, y, z). */
+export function plugUp(x: number, y: number, z: number, p: { w: number; h: number; len: number; cable: number }, tag: PickTag, anim: Anim): Ghost[] {
+  return plugAt([0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 0, 0, x, y, z, 1], p, tag, anim);
+}
+
+/** A plug in its own frame T: x along its axis out of the mouth, y across its width, z across its height. */
+function plugAt(T: number[], p: { w: number; h: number; len: number; cable: number }, tag: PickTag, anim: Anim): Ghost[] {
   const bin = new Bin();
-  const T = [d[0], d[1], 0, 0, -d[1], d[0], 0, 0, 0, 0, 1, 0, mouth[0], mouth[1], zAx, 1]; // x along the plug axis
   const tipW = p.w * 0.55, tipH = Math.min(p.h * 0.45, 3);
   bin.box('metal', T, -4, -tipW / 2, -tipH / 2, 0.6, tipW / 2, tipH / 2);
   const body = ext(roundRect(p.w, p.h, Math.min(p.w, p.h) * 0.3), 0, p.len).transform([0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0.6, 0, 0, 1] as any);
@@ -464,4 +481,21 @@ export function smooth(pts: number[][], rounds = 3): number[][] {
     p = q;
   }
   return p;
+}
+
+/** A small UV sphere (for markers). */
+export function sphereMesh(c: number[], r: number, n = 12): MeshData {
+  const pos: number[] = [], idx: number[] = [];
+  for (let i = 0; i <= n; i++) {
+    const th = (i / n) * Math.PI;
+    for (let j = 0; j < 2 * n; j++) {
+      const ph = (j / (2 * n)) * Math.PI * 2;
+      pos.push(c[0] + r * Math.sin(th) * Math.cos(ph), c[1] + r * Math.sin(th) * Math.sin(ph), c[2] + r * Math.cos(th));
+    }
+  }
+  for (let i = 0; i < n; i++) for (let j = 0; j < 2 * n; j++) {
+    const a = i * 2 * n + j, b = i * 2 * n + ((j + 1) % (2 * n)), c2 = a + 2 * n, d = b + 2 * n;
+    idx.push(a, c2, d, a, d, b);
+  }
+  return { pos: Float32Array.from(pos), idx: Uint32Array.from(idx) };
 }

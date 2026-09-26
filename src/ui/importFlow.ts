@@ -2,6 +2,7 @@
 // several boards (a Gerber set or an IDF pair stays one board); they join the project unless "replace" is ticked.
 import { importMany } from '../import';
 import { loadProject, putBoards, store, toast } from '../state';
+import { placementNote } from './panelOps';
 
 export async function openFiles(fl: FileList | File[]): Promise<void> {
   const files = Array.from(fl);
@@ -17,5 +18,5 @@ export async function openFiles(fl: FileList | File[]): Promise<void> {
   const n = store.get().project?.modules.length ?? 0;
   const names = boards.map((b) => b.name).join(', ');
   const what = replace && had ? `Replaced the board with ${names}` : `${had ? 'Added' : 'Imported'} ${boards.length > 1 ? `${boards.length} boards: ${names}` : names}`;
-  toast(`${what}${n > 1 ? ` (${n} boards in the project)` : ''}.${had ? ' ⌘Z undoes it.' : ''}${errors.length ? ` Skipped: ${errors.join('; ')}` : ''}`);
+  toast(`${what}${n > 1 ? ` (${n} boards in the project)` : ''}.${had && !replace ? placementNote(store.get().project!) : ''}${had ? ' ⌘Z undoes it.' : ''}${errors.length ? ` Skipped: ${errors.join('; ')}` : ''}`);
 }

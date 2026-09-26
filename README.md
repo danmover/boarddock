@@ -7,7 +7,9 @@ BoardDock turns a PCB design, or a few measurements, into 3D-printable holders:
 - It docks every holder onto DIN rails, horizontal or vertical, and turns each board so every plug stays reachable.
 - Boards stack: a HAT or shield bolted on its standoffs, or a separate board on a printed layer.
 - A button on top of each holder releases the board; a press-down lever releases the dock from the rail.
-- Printed table stands hold the rails, and cables between the boards are routed, sized and combed automatically.
+- Printed table stands hold the rails. Cables between the boards are routed clear of everything, sized and combed automatically.
+- The 3D view walks you through the assembly one step at a time, in the order you would really do it.
+- Come back later to add a board: the rest of the rack stays where it is, and Export gives you only the new parts, cables and rails.
 
 Everything is checked with FEA and packed onto as few print plates as possible.
 
@@ -26,9 +28,9 @@ Everything is checked with FEA and packed onto as few print plates as possible.
   - Docks that turn four ways and take two boards back to back.
   - Stacks of boards on one dock.
   - One rail, rows or columns, laid out automatically, with boards that are cabled together kept next to each other. Then drag boards between slots, rails and stacks in the rack tree, or in the Rails view.
-  - Holders for boxes such as USB hubs, USB chargers and power boards, on their own rail.
+  - Boxes such as USB hubs, USB chargers and power boards, on their own rail. You set how many ports they have, of what type, on which face (top included) and what each one is for.
   - **Table stands:** printed sleepers across the rails, with cable combs.
-- **Cables:** Auto-connect works out which plug goes where (power, USB host, hub and device ports). You can connect plugs by hand in the Wiring view. Every cable is routed through the rack and sized to a standard length you can buy.
+- **Cables:** Auto-connect works out which plug goes where (power, USB host, hub and device ports) and says when you are short of hub or charger ports. You can connect plugs by hand in the Wiring view. Every cable is routed clear of the holders, boards, docks, rails and stands, and sized to a standard length you can buy.
 - **3D view:**
   - Boards show copper traces, vias, silkscreen, parts and plugs. The traces are real for KiCad files and decorative for other boards.
   - Click anything (a board, a dock, a rail, a cable, a table stand, or one feature of a holder such as a cradle, cap, pin or finger) to see it and edit it.
@@ -59,14 +61,14 @@ The desktop builds are not code-signed yet:
 
 ## Quick start
 
-1. **Start:** drop your board files (or a zip) anywhere in the window, or pick a template.
-   - To add more boards, tick **Add as another board**.
+1. **Start:** drop your board files (several at once is fine: each becomes a board) anywhere in the window, or pick templates, hubs and chargers. Once you have a project, everything you drop or pick is added to it.
 2. **Board:** check the outline, parts and the hole wizard; fix anything in the board editor.
 3. **Plugs:** pick the plug type and size for each connector, and what each one is cabled to (or press **Auto-connect**).
 4. **Holder:** frame or tray, a preset, where the release button goes, and the features you want.
 5. **Rails:** BoardDock has already placed every board on a rail. Pick one rail, rows or columns; drag, turn, pair or stack boards if you like.
 6. **Check:** read the notes and run the dock FEA for your material.
-7. **Export:** download the plates and print them in PETG. Cut the TS35 rails to the lengths shown and buy the cables listed.
+7. **Export:** download the plates and print them in PETG. The shopping list has the rail lengths, the cables (length and plug types), straps and standoffs. The download's README has the assembly steps.
+8. **Build it**, following the play button in the 3D view. Then press **Mark the rack as built** in Export.
 
 Every step has **Back** and **Next** at the bottom of the sidebar.
 
@@ -81,7 +83,7 @@ Every board sits in a holder that plugs into a dock on the rail. This is the scr
 | **Rail shoe** (graphite, red lever) | Clips onto a TS35 rail. Its jaw wraps round the rail flange and hangs from a hinge leaf directly **above** the lip, so pulling the dock straight up can't pry it open. **To remove it:** lift the boards out, press the ridged red pad beside the socket down about 8 mm, and lift the dock off. The lever is printed in place on a pin; its hook pulls the jaw off the flange and the jaw spring lifts it back. A built-in stop protects the hinge. The lever goes on whichever side of the rail has more room; you can flip it per dock. | on its end face, lever and all |
 | **Socket** (blue) | Snaps into the shoe in any of four 90° turns and takes two holders back to back. It has two print-in-place latches. | on its end face |
 | **Holder** | The frame (or tray) around your board, with a tongue on its dock edge and a spine that carries the release rod. | flat on its back |
-| **Release rod** (red) | Its head is the **button on the holder's top edge**. Press it and the rod's 45° foot wedges the latch open. The latch spring returns it. | flat |
+| **Release rod** (red) | Its head is the **button on the holder's top edge**: a keycap with a shallow thumb dish, rounded corners and chevrons that point the way it moves. It uses 11% less plastic than the old square button. Press it and the rod's 45° foot wedges the latch open. The latch spring returns it. The grip bar under your fingers has a matching finger scoop. | flat |
 
 **Using it:**
 1. Hook the shoe under the rail and press it down until it clicks.
@@ -199,6 +201,18 @@ The inspector sets:
 
 **Overlaps** between neighbours are hatched red. The Check step lists the rails to cut and how tall the rack stands.
 
+## Hubs, chargers and other boxes
+
+A box is a size and rows of ports (Board step, **Box**). Pick a preset (USB hub, powered 7-port hub, USB-C hub with Ethernet, USB charger, USB charger with USB-C) or set your own:
+- length, width and height;
+- any number of rows of ports: how many, which type (USB-A, USB-C, micro-USB, USB-B, DC barrel, mains, RJ45, HDMI, audio, screw terminals), on which face (front, back, either end or the top), and what they are for (hub port, upstream, power out, power in, and so on).
+
+![Box editor with a 7-port powered hub](docs/images/box.png)
+
+Ports are spaced evenly along their face, and a preview shows where they are. Every port knows its role, so Auto-connect never has to guess whether a USB-A socket on a box takes a device or gives power. Ports on the top get plugs standing in them, and the strap loops move to miss them. If ports don't fit their face, the editor says so. Fewer ports keep the first ports' names, so cables to them stay; cables to ports you remove go.
+
+The Plugs step counts what still needs a port: USB devices against free hub and computer ports, and boards that need power against free charger ports. When you are short, it offers to add a hub or a charger. A stacked pair of USB-A sockets, like on a Raspberry Pi, counts as two ports.
+
 ## Table stands
 
 ![Table stands under two rails](docs/images/stands.png)
@@ -240,9 +254,11 @@ Each plug gets a role from its type, its name and its board:
 You can also connect plugs by hand. In the **Wiring** view, click a plug, then the plug it goes to; plugs that fit light up green. In the Plugs step, pick **Cable to** for any plug.
 
 The panel routes every cable:
-1. out of its plug;
-2. down to a **street** between the rails (or beside the outer ones), where each cable gets its own lane;
-3. along the street and back up to the other plug.
+1. Out of its plug and clear of its own board. A plug pointing up out of a board standing on edge steps sideways off the board before going down; a plug pointing sideways drops, reaches further out first, or slopes straight into a lane it faces. A drop that would land on a sleeper steps along the rail first.
+2. Down to a **street** between the rails (or beside the outer ones), where each cable gets its own lane. Lanes are ordered so as few cables cross as possible.
+3. Along the street and back up to the other plug the same way.
+
+Every combination of these is checked against the bounding boxes of every holder, board, plug, dock, rail and stand piece, and the shortest route that hits nothing wins. If every route touches something, the cable is marked in red in the 3D view and the Check step says what it runs into.
 
 On table stands the streets run under the rails' level. Wherever a street crosses a sleeper, the spacer there carries a **cable comb**: one round-bottomed slot per cable, sized for it, with snap lips at the mouth.
 
@@ -260,9 +276,12 @@ Every cable's length is measured along its route and rounded up to a standard le
 | Remove the selection (a cradle or cap is switched off, a pin becomes an ignored hole, a dock, rail or cable is removed, a board leaves the project, table stands are switched off) | Delete, or **Remove** in the bar below the view; one ⌘Z brings it all back |
 | Jump to the settings of the selected thing | **Edit** in the bar |
 | Fly to a part | double-click it |
-| Watch it go together | the play button: stands, rails, shoes, sockets, holders, boards, caps, plugs and cables, in order |
+| Watch it go together | the play button. It goes step by step, the way you would build it, with an instruction for each step: saddles on the table, rails in, end blocks on, spacers in, shoes clipped on, sockets in; then for each board, its release rod into the spine, the board into its holder, anything stacked on it, and the holder into its dock; then the cables (power first), and the caps. **‹ ›** step back and forward; **✕** shows it assembled. |
 | Pull it apart | the **Explode** slider |
 | Show or hide holders, docks, caps, boards, plugs, rails or cables | **Layers** |
+| See every keyboard shortcut | **?** |
+
+![Stepping through the assembly](docs/images/steps.png)
 
 It uses studio lighting with ambient occlusion. Boards get:
 - a solder mask with copper traces and vias: the real ones from KiCad files, and a decorative pattern, only for looks, on every other board;
@@ -271,6 +290,17 @@ It uses studio lighting with ambient occlusion. Boards get:
 - chips, passives and LEDs.
 
 Plugs show their shells, tongues and pins. The view draws a frame only when something changes.
+
+## Coming back to add a board
+
+Once the rack is built, press **Mark the rack as built** in Export. BoardDock remembers what you printed, the rail lengths you cut and the cables you bought, and freezes the layout: every dock keeps its place, turn, lever side and board edges.
+
+Later, open BoardDock. A saved rack opens on **Your rack**, with its boards, whether it is built, and buttons for the rails, the cables and what's new to print. Drop the new board's files in. It goes:
+1. into the empty slot of a dock already on the rack, if it fits there with all its plugs reachable and without touching anything (then only its holder is new);
+2. otherwise into the first gap on the rails that is clear in 3D, preferably on the rail of a board it is cabled to;
+3. otherwise on the end of a rail, and Export tells you that rail has to be longer.
+
+Nothing else moves. Connect its cables (Auto-connect only fills plugs that are still free). Export then lists only what's new since the build: the parts to print, the cables to buy and any rail to cut longer. Plates, the estimate and the download follow that list. Press **I've built these too** when you have.
 
 ## Supported files
 
@@ -329,6 +359,15 @@ PETG results (E = 2100 MPa, strain limit 2%):
 ## Printing
 
 - **Material: PETG.** Every dock part is a spring. PLA is stiffer and more brittle, so strains that are fine in PETG are marginal in PLA. The Check step judges each part against your material's limit.
+- **Printer:** pick yours in Export. The list has 18 printers: Bambu Lab X1 Carbon, P1S, A1 and A1 mini; Prusa CORE One, MK4S, MK3S+, MINI+ and XL; Creality K1C, Ender-3 V3 SE and Ender-3 S1; Voron 2.4 and Trident; Elegoo Neptune 4 Pro; Anycubic Kobra 3; Sovol SV06; and Qidi Q1 Pro. Bed size and build height come from the machine profiles in [OrcaSlicer's open profile library](https://github.com/OrcaSlicer/OrcaSlicer/tree/main/resources/profiles). Parts are packed onto that bed, and any part taller than the build height is flagged.
+- **Print settings:** Export lists what to set in your slicer for your printer and material. Each setting shows where to find it in OrcaSlicer, Bambu Studio or PrusaSlicer, and is marked by where it comes from:
+  - **design:** the parts need it. For example, 0.45 mm wall lines (the rail shoe hinge is exactly two of them), 0.2 mm layers, no supports.
+  - **profile:** OrcaSlicer's generic filament profile (for example PETG: 255 °C nozzle, 80 °C bed, 20–100 % fan, 10 mm³/s), or your printer's machine profile (retraction).
+  - **convention:** common practice, not a tested requirement. For example 3 walls, detect thin walls off, aligned seam, and a brim only for parts more than three times taller than they are wide.
+
+  **Copy** puts the list on the clipboard, and the download's README has it too.
+- **What to print:** everything, only what's new since you built the rack, or just the boards you tick (with or without their docks and the table stands). The plates, the estimate, the download and the plates view all follow the choice.
+- **G-code:** your slicer makes it, because it knows your printer's start code and calibration. Every plate is a 3MF with all its parts already placed. In the desktop app, **Open plate** hands it straight to OrcaSlicer, PrusaSlicer, Bambu Studio or Cura if one is installed, or else to whatever opens 3MF files. On the web, download the plate's 3MF. Bambu Lab printers take the `.gcode.3mf` that Bambu Studio or OrcaSlicer sends them.
 - **Supports: none.** Overhangs are 45° chamfers or short bridges, round holes on their side are teardrops, and all springs flex within their print layers.
 - **Plates:** each plate becomes one STL or 3MF file with every part already placed. The estimate shows grams and print time per part.
 - **First print:** the **test-fit kit** in Export: a shoe, a socket and a small tongue key with its release rod, about 21 g. Clip it on your rail, plug the key in, press its button. If the key is tight, raise **Tongue fit** in the Panel step by 0.05–0.1 mm.
@@ -343,7 +382,12 @@ PETG results (E = 2100 MPa, strain limit 2%):
 - The frame holder's stiffness is from geometry, not tested: the board itself stiffens the frame once it is clipped in.
 - The rail release is reached with the holders out (they cover the lever). Taking a single board out is the button on the holder, which is always reachable.
 - The table stands' press fit, the dovetails and the cable combs' snap lips are sized from typical FDM tolerances, not from test prints. The sag and cap-stress numbers are hand calculations.
-- Plug roles for Auto-connect are guessed from connector types and names; check the Wiring view. Cable routes are drawn clear of the rails, but not checked against every holder they pass.
+- Plug roles for Auto-connect are guessed from connector types and names, except on boxes, where you set them; check the Wiring view.
+- Cable routes are checked against bounding boxes. A route marked clear is clear; one marked as touching may still fit, since a box is bigger than the part inside it. Real cables are floppier and stiffer in places than the drawn tubes.
+- "Only what's new" recognises parts by their geometry. If you change a holder setting after marking the rack as built, that holder counts as new even if you would not reprint it.
+- A board that carries a stack is never put into another dock's empty slot automatically; place it by hand in the Rails step.
+- The desktop app's **Open plate** looks for slicers in their usual install folders. It has not been tried with every slicer and operating system. If nothing opens, download the plate's 3MF and open it by hand.
+- BoardDock does not make G-code itself. The one open-source slicer that runs in a browser under a compatible licence (Kiri:Moto, MIT) is not published as a package, and bundling CuraEngine's WebAssembly build would bring in the AGPL.
 - A board whose holes all carry the standoffs of a HAT has no pins; it needs room on its edges for two snap fingers, and the Check step says so when there isn't any.
 
 ## Development
@@ -365,21 +409,25 @@ npm run dist         # installers for the current OS in release/
   - `generate.ts`: the holder around one board.
   - `dock.ts`: rail shoe, socket, tongue, spine and rod.
   - `dockplan.ts`: plug access, orientation and auto-assignment (no geometry kernel).
-  - `panelgen.ts`: the panel (placement, rows, collisions, parts, cable routes).
+  - `panelgen.ts`: the panel (placement, rows, placing added boards, collisions, parts, assembly steps).
+  - `cableroute.ts`: cable routes and their collision checks (no geometry kernel).
   - `railstand.ts`: table stands (sleeper layout, end blocks, saddles, spacers, cable combs).
   - `boardviz.ts`: board, part and plug detail for the 3D view (traces, vias, silkscreen, cable tubes).
   - `assembly.ts`: loose layouts.
   - `export.ts`: STL and 3MF output, plate packing.
 - `src/fea/`: 2D solver (`fea2d.ts`), the flat clip (`clipfea.ts`), the dock (`dockfea.ts`), and a 3D beam solver for the holder's support ribs (`frame3d.ts`).
 - `src/model/holes.ts`: the hole wizard and stacks (alignment on shared holes, bolted and printed layers).
-- `src/model/links.ts`: plug roles, Auto-connect and cable sizes.
+- `src/model/links.ts`: plug roles, Auto-connect, the port budget and cable sizes.
+- `src/model/boxes.ts`: boxes (hubs, chargers) from a size and rows of ports.
+- `src/model/built.ts`: what was built, and what is new since.
 - `src/ui/`: React UI.
   - `Viewer3D.tsx`: the 3D view, with picking, animation and explode.
   - `pickOps.ts`: what a selection is and how it is removed.
   - `RackBuilder.tsx`: the rails step.
   - `BoardEditor.tsx`, `PanelEditor.tsx` and `WiringView.tsx`: the 2D board editor, the Rails view and the Wiring view.
 - `src/worker/`: geometry and FEA run in web workers.
-- `electron/`: desktop shell.
+- `src/model/printers.ts`: printers (from OrcaSlicer's machine profiles), filament settings (from its generic filament profiles) and the print settings list.
+- `electron/`: desktop shell; `preload.cjs` exposes finding installed slicers and opening a plate in one.
 - `.github/workflows/`: CI, and a release job that builds installers for all three platforms and publishes the web app.
 
 Geometry uses [manifold](https://github.com/elalish/manifold) (WebAssembly), which always produces watertight, printable meshes.

@@ -60,7 +60,14 @@ export interface Comp {
   tht: boolean; // has through-hole leads that stick out of the other side
   conn?: ConnSetup;
   hidden?: boolean;
+  role?: string; // plug role, when it is known (the ports of a box): host, device, hub-up, hub-down, power-in, power-out...
 }
+
+/** Where a box's ports sit: its long faces (front: y = 0, back: y = width), its ends (left: x = 0, right: x = length), or its top. */
+export type BoxFace = 'front' | 'back' | 'left' | 'right' | 'top';
+/** A row of identical ports on one face of a box. */
+export interface BoxPortGroup { id: string; type: string; count: number; face: BoxFace; role: string }
+export interface BoxSpec { l: number; w: number; h: number; groups: BoxPortGroup[] }
 
 export interface Board {
   name: string;
@@ -72,6 +79,7 @@ export interface Board {
   source: string;
   notes: string[];
   kind?: 'pcb' | 'box'; // box: a closed device (USB hub, charger) held by low guards and strap loops; thickness = its height
+  box?: BoxSpec; // box: its size and ports, from which outline, thickness and port parts are generated
   color?: string; // box colour in the 3D view
   traces?: { a: V2; b: V2; w: number; side: Side }[]; // copper tracks (read from KiCad), for the 3D view
   vias?: { x: number; y: number; d: number }[];
@@ -140,6 +148,7 @@ export interface PrinterSettings {
   name: string;
   bed: V2;
   spacing: number;
+  maxZ?: number; // build height
 }
 
 /** One board and the holder built around it. */
@@ -184,6 +193,7 @@ export interface RailMount {
   id: string;
   rail: string;
   at: number | null; // centre, mm along the rail from its start; null = packed after the previous mount
+  place?: 'free'; // at is null: put it in the first gap that fits on any rail, leaving every other mount where it is
   kind: 'dock' | 'flat';
   turn: Turn; // dock: socket turn about the panel normal; flat: board rotation on the panel
   slots: Slot[];
@@ -207,8 +217,19 @@ export interface PanelSettings {
 export interface PlugRef { module: string; ref: string }
 export interface Link { id: string; a: PlugRef; b: PlugRef; kind?: 'usb' | 'power' | 'video' | 'net' | 'audio' | 'wire' }
 
+/** What was printed, cut and bought when the rack was built: what Export compares against to list only what's new. */
+export interface Built {
+  at: string; // ISO date
+  parts: Record<string, number>; // part signature -> how many were printed
+  places?: Record<string, number[][]>; // part signature -> where each of them sits in the rack
+  cables: string[]; // cable signatures
+  rails: { id: string; length: number }[];
+  boards: string[]; // module ids on the rack then
+}
+
 export interface Project {
   version: 3;
+  built?: Built;
   links?: Link[]; // cables between boards
   modules: Module[];
   active: number; // module being edited
@@ -236,7 +257,15 @@ export interface PickTag {
 }
 
 /** Assembly animation: the part flies in from `dir` (assembly frame, unit) at step `seq`. */
-export interface Anim { seq: number; dir: [number, number, number] }
+/** One straight move of the assembly animation: the part slides in from `dir` (unit, assembly frame), `dist` mm
+ * away (scaled to the scene when unset), during step `seq`. */
+export interface Motion { seq: number; dir: [number, number, number]; dist?: number }
+/**
+ * Assembly animation: the part's last move, earlier moves it makes first (`pre`: a board drops into its holder,
+ * then the holder with it goes into the dock), the step it appears at (`show`, default its first move), and `grow`
+ * for cables, which are drawn along their route instead of moved.
+ */
+export interface Anim extends Motion { pre?: Motion[]; show?: number; grow?: boolean }
 
 export interface PartOut {
   id: string;
@@ -292,7 +321,7 @@ export interface GenReport {
   panel?: PanelReport | null;
   features?: Feature[];
   frames?: Record<string, number[]>; // module id -> holder frame to assembly
-  cables?: { id: string; a: string; b: string; kind: NonNullable<Link['kind']>; length: number; buy: number }[];
+  cables?: { id: string; a: string; b: string; ends?: string; kind: NonNullable<Link['kind']>; length: number; buy: number; clash?: string }[]; // ends: "module/ref|module/ref"
 }
 
 export type AccessDir = 'front' | 'up' | 'down' | 'left' | 'right' | 'wall';
@@ -315,4 +344,5 @@ export interface GenResult {
   ghosts: Ghost[];
   report: GenReport;
   display?: PartOut[]; // shown in the 3D view only (printed as part of another part)
+  steps?: { seq: number; text: string }[]; // assembly instructions, one per animation step
 }

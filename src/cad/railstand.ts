@@ -207,3 +207,19 @@ export function pieceMesh(pc: StandPiece) {
   }
   return m;
 }
+
+/** Bounding boxes of the stand pieces in the rack frame (for cable routing), from the plan alone. */
+export function standBoxes(plan: StandPlan): { box: number[]; label: string }[] {
+  const w = STAND.half;
+  return plan.pieces.map((pc) => {
+    const [x0, x1] = pc.kind === 'end' || pc.kind === 'saddle' ? [-w, w] : [w, pc.to != null ? pc.to - w : pc.reach];
+    const [y0, y1] = [-STAND.H, pc.kind === 'end' ? TOP : pc.kind === 'saddle' ? 2.4 : -2.5];
+    const zl = pc.kind === 'end' || pc.kind === 'saddle' ? STAND.len : STAND.spacerT;
+    const b = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+    for (const x of [x0, x1]) for (const y of [y0, y1]) for (const z of [0, zl]) {
+      const M = pc.M, q = [M[0] * x + M[4] * y + M[8] * z + M[12], M[1] * x + M[5] * y + M[9] * z + M[13], M[2] * x + M[6] * y + M[10] * z + M[14]];
+      for (let k = 0; k < 3; k++) { b[k] = Math.min(b[k], q[k]); b[k + 3] = Math.max(b[k + 3], q[k]); }
+    }
+    return { box: b, label: `table stand ${pc.station + 1}` };
+  });
+}

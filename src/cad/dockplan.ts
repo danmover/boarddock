@@ -307,7 +307,7 @@ export function appendDock(p: Project, moduleId: string) {
   let rail = P.rails[P.rails.length - 1];
   if (!rail) { rail = { id: 'r1', x: 0, y: 0, dir: P.rowDir, length: null }; P.rails.push(rail); }
   const o = bestDock(m, rail.dir, 0);
-  P.mounts.push({ id: `d${Date.now().toString(36).slice(-5)}`, rail: rail.id, at: null, kind: 'dock', turn: o.turn, slots: [{ module: moduleId, edge: o.edge }, { module: null, edge: 'auto' }] });
+  P.mounts.push({ id: `d${Date.now().toString(36).slice(-5)}`, rail: rail.id, at: null, place: 'free', kind: 'dock', turn: o.turn, slots: [{ module: moduleId, edge: o.edge }, { module: null, edge: 'auto' }] });
 }
 
 export { I4 };
