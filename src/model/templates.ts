@@ -31,7 +31,19 @@ function rectBoard(name: string, w: number, h: number, r: number, source: string
   return { name, outline, cutouts: [], thickness: 1.6, holes: [], comps: [], source, notes: [] };
 }
 
-export interface Template { id: string; name: string; make: () => Board }
+export interface Template { id: string; name: string; make: () => Board; accessory?: boolean }
+
+/** A port on the side of a box accessory: the plug axis sits at mid-height of the box. */
+function boxPort(ref: string, type: string, angle: number, along: number, edge: number, height: number): Comp {
+  const c = edgeConn(ref, type, angle, along, edge, 0);
+  const t = connById(type);
+  c.h = 0.2;
+  c.conn!.zc = -height / 2;
+  c.w = angle === 0 || angle === 180 ? 2 : t.body.w;
+  c.l = angle === 0 || angle === 180 ? t.body.w : 2;
+  c.tht = false;
+  return c;
+}
 
 export const TEMPLATES: Template[] = [
   {
@@ -116,6 +128,52 @@ export const TEMPLATES: Template[] = [
       const b = rectBoard('Perfboard 50x70', 70, 50, 0.5, 'template');
       b.holes = holes(2.0, [[2, 2], [68, 2], [2, 48], [68, 48]]);
       b.notes = ['Cheap perfboards vary: measure the hole positions and diameter.'];
+      return b;
+    },
+  },
+  {
+    id: 'usb_hub', name: 'USB hub, 4 ports (box 100 × 30 × 22)', accessory: true,
+    make: () => {
+      const b = rectBoard('USB hub', 100, 30, 3, 'accessory');
+      b.kind = 'box'; b.thickness = 22; b.color = '#2b2f36';
+      for (let i = 0; i < 4; i++) b.comps.push(boxPort(`P${i + 1}`, 'usb_a', -90, 20 + i * 20, 0, 22));
+      b.comps.push(boxPort('UP', 'usb_micro_b', 180, 15, 0, 22));
+      b.notes = ['A generic box: set its size and port positions to match yours (the ports are the connectors).'];
+      return b;
+    },
+  },
+  {
+    id: 'usb_charger', name: 'USB charger, 4 ports (box 90 × 60 × 28)', accessory: true,
+    make: () => {
+      const b = rectBoard('USB charger', 90, 60, 4, 'accessory');
+      b.kind = 'box'; b.thickness = 28; b.color = '#e9e7e2';
+      for (let i = 0; i < 4; i++) b.comps.push(boxPort(`OUT${i + 1}`, 'usb_a', 90, 18 + i * 18, 60, 28));
+      b.comps.push(boxPort('AC', 'barrel', -90, 45, 0, 28));
+      b.notes = ['A generic box: set its size and port positions to match yours (the ports are the connectors).'];
+      return b;
+    },
+  },
+  {
+    id: 'power_dist', name: 'DC power distribution board (60 × 40)', accessory: true,
+    make: () => {
+      const b = rectBoard('Power distribution', 60, 40, 1, 'accessory');
+      b.holes = holes(3.2, [[3.5, 3.5], [56.5, 3.5], [3.5, 36.5], [56.5, 36.5]]);
+      b.comps.push(edgeConn('IN', 'terminal', 180, 20, 0, 0));
+      for (let i = 0; i < 4; i++) b.comps.push(edgeConn(`OUT${i + 1}`, 'terminal', -90, 12 + i * 12, 0, 0));
+      b.comps.push(comp('F1', 'fuse holder', 30, 24, 14, 6, 9));
+      return b;
+    },
+  },
+  {
+    id: 'relay4', name: 'Relay board, 4 channels (75 × 55)', accessory: true,
+    make: () => {
+      const b = rectBoard('Relay board', 75, 55, 1, 'accessory');
+      b.holes = holes(3.1, [[3.2, 3.2], [71.8, 3.2], [3.2, 51.8], [71.8, 51.8]]);
+      for (let i = 0; i < 4; i++) {
+        b.comps.push(comp(`K${i + 1}`, 'relay', 16 + i * 15, 30, 15.5, 19, 15.5, { kind: 'module' }));
+        b.comps.push(edgeConn(`X${i + 1}`, 'terminal', 90, 16 + i * 15, 55, 0));
+      }
+      b.comps.push(comp('J1', 'PinHeader_1x06', 37, 6, 15.2, 2.54, 8.5, { kind: 'header', conn: connSetup(connById('header'), 0) }));
       return b;
     },
   },

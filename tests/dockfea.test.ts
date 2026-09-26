@@ -7,7 +7,7 @@ it('dock parts are single solids and the 2D FEA runs', async () => {
   await initKernel();
   for (const [n, m] of [['shoe', shoe()], ['socket', socket()]] as const) {
     console.log(n, 'pieces', m.decompose().length, 'vol', (m.volume() / 1000).toFixed(2), 'cm3');
-    expect(m.decompose().length).toBe(1);
+    expect(m.decompose().length).toBe(n === 'shoe' ? 2 : 1); // the shoe's release lever is printed in place
   }
   const latch = csLoops(latchProfile().add(noseProfile()));
   const sh = csLoops(shoeProfile());

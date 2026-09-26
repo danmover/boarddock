@@ -160,11 +160,12 @@ export function dockSite(b: Board, H: HolderSettings, edge: EdgeName): DockSite 
     const isUnder = ov(tc - HD.spineHx, tc + HD.spineHx, bt0 - H.gap, bt1 + H.gap); // else it sits beside the board, fused to the wall
     const side = isUnder ? 0 : tc > tMid ? 1 : -1;
     const [g0, g1] = gripSpan(side), [h0, h1] = headSpan(side);
-    let pen = 0.3 * Math.abs(tc - tMid) + (!isUnder && fingerHeld ? 12 : 0);
+    const want = H.release ?? 'centre';
+    let pen = 0.3 * Math.abs(tc - tMid) + (!isUnder && fingerHeld ? 12 : 0) + (want === 'centre' && !isUnder ? 200 : want === 'side' && isUnder ? 200 : 0);
     const conflicts: string[] = [];
     if (isUnder) {
       for (const p of posts) if (Math.abs(p.t - tc) < p.r + 3.3) pen += 1000;
-      pen += ((H.style ?? 'frame') === 'frame' ? 2.6 : 1.2) * Math.max(0, DOCK_MIN_ZB - zbLow); // a raised board makes every post and wall taller
+      pen += ((H.style ?? 'frame') === 'frame' && (H.release ?? 'centre') === 'auto' ? 2.6 : 1.2) * Math.max(0, DOCK_MIN_ZB - zbLow); // a raised board makes every post and wall taller
       for (const k of under) if (ov(k.t0, k.t1, tc - spineW, tc + spineW)) pen += 3 * k.need;
     }
     for (const q of plugs) {
@@ -229,7 +230,10 @@ export function slotAccess(m: Module, mt: Pick<RailMount, 'kind' | 'turn'>, slot
 export function autoAssign(p: Project): RailMount[] {
   const railDir = p.panel.rowDir;
   // stacked boards ride on the board below them; score each stack with all of its plugs
-  const mods = p.modules.filter((m) => baseOf(p, m) === m).map((m) => withRiders(p, m));
+  const all = p.modules.filter((m) => baseOf(p, m) === m).map((m) => withRiders(p, m));
+  // boxes (hubs, chargers) lie flat on their own rail after the boards; boards connected to each other sit together
+  const boxes = all.filter((m) => m.board.kind === 'box');
+  const mods = orderByLinks(p, all.filter((m) => m.board.kind !== 'box'));
   const best = mods.map((m) => bestDock(m, railDir, 0));
   const used = new Set<number>();
   const out: RailMount[] = [];
@@ -257,6 +261,29 @@ export function autoAssign(p: Project): RailMount[] {
       out.push({ id: `auto${out.length}`, rail: '', at: null, kind: 'dock', turn: best[i].turn, slots: [{ module: m.id, edge: best[i].edge }, { module: null, edge: 'auto' }] });
     }
   });
+  for (const m of boxes) {
+    const bb = bbox(m.board.outline);
+    out.push({ id: `auto${out.length}`, rail: '', at: null, kind: 'flat', turn: bb.x1 - bb.x0 >= bb.y1 - bb.y0 ? 0 : 90, slots: [{ module: m.id, edge: 'auto' }] });
+  }
+  return out;
+}
+
+/** Boards in an order that keeps connected ones next to each other (walks the connection graph). */
+export function orderByLinks<T extends Module>(p: Project, mods: T[]): T[] {
+  const links = p.links ?? [];
+  if (!links.length) return mods;
+  const deg = new Map(mods.map((m) => [m.id, links.filter((l) => l.a.module === m.id || l.b.module === m.id).length]));
+  const nb = (id: string) => links.flatMap((l) => (l.a.module === id ? [l.b.module] : l.b.module === id ? [l.a.module] : []));
+  const left = new Set(mods.map((m) => m.id)), out: T[] = [];
+  while (left.size) {
+    // start from the best-connected board left, then follow its connections
+    let cur = [...left].sort((a, b) => (deg.get(b) ?? 0) - (deg.get(a) ?? 0))[0];
+    while (cur) {
+      left.delete(cur);
+      out.push(mods.find((m) => m.id === cur)!);
+      cur = nb(cur).filter((id) => left.has(id)).sort((a, b) => (deg.get(b) ?? 0) - (deg.get(a) ?? 0))[0];
+    }
+  }
   return out;
 }
 

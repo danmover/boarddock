@@ -13,6 +13,8 @@ export function finishBoard(b: Board, opts: { sizesKnown: boolean; heightsKnown?
   b.outline = b.outline.map(([x, y]) => [x + dx, y + dy]);
   b.cutouts = b.cutouts.map((l) => l.map(([x, y]) => [x + dx, y + dy]));
   b.holes = dedupeHoles(b.holes.map(mv));
+  if (b.traces) b.traces = b.traces.map((t) => ({ ...t, a: [t.a[0] + dx, t.a[1] + dy], b: [t.b[0] + dx, t.b[1] + dy] }));
+  if (b.vias) b.vias = b.vias.map(mv);
   b.comps = b.comps.map(mv).map((c) => {
     const known = opts.heightsKnown ? c.h : 0;
     let out = classify({ ...c, h: known }, opts.sizesKnown, undefined);

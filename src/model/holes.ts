@@ -96,8 +96,9 @@ export function detectHoleRoles(b: Board, above: Board[] = []): HoleGuess[] {
   });
   return b.holes.map((h): HoleGuess => {
     const p: [number, number] = [h.x, h.y];
-    const conn = b.comps.find((c) => !c.hidden && (c.conn || c.kind === 'connector') && inside(p, compRect(c, 0.8)));
-    if (conn) return { id: h.id, role: 'plug', why: `inside ${conn.ref} (${conn.conn ? conn.pkg || 'connector' : 'connector'}): a peg or shell tab`, sure: true };
+    const conn = b.comps.find((c) => !c.hidden && (c.conn || c.kind === 'connector' || c.kind === 'header') && inside(p, compRect(c, 0.8)));
+    if (conn && (h.d < 1.5 || conn.kind === 'header' || conn.conn?.type === 'header')) return { id: h.id, role: 'lead', why: `a pin of ${conn.ref}${conn.pkg ? ` (${conn.pkg})` : ''}`, sure: true };
+    if (conn) return { id: h.id, role: 'plug', why: `inside ${conn.ref}${conn.pkg ? ` (${conn.pkg})` : ''}: a peg or shell tab`, sure: true };
     const part = b.comps.find((c) => !c.hidden && c.h > 0 && c.w > h.d + 0.5 && inside(p, compRect(c, 0.3)));
     if (part) return { id: h.id, role: 'lead', why: `inside ${part.ref}: a pin or peg of that part`, sure: true };
     if (inRow(h, b.holes)) return { id: h.id, role: 'lead', why: 'in a row at header pitch: pins', sure: true };

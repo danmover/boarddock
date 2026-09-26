@@ -12,6 +12,7 @@ import { estimate, packPlates } from './cad/export';
 import { openFiles } from './ui/importFlow';
 import { describe, removeItems } from './ui/pickOps';
 import { Icon, I } from './ui/icons';
+import { WiringView } from './ui/WiringView';
 
 const STEPS: { id: Step; label: string; title: string; text: string }[] = [
   { id: 'import', label: 'Start', title: 'Bring a board in', text: 'Drop a KiCad, Altium, Eagle or Gerber export, or start from a known board.' },
@@ -23,7 +24,7 @@ const STEPS: { id: Step; label: string; title: string; text: string }[] = [
   { id: 'export', label: 'Export', title: 'Print it', text: 'Parts packed onto as few plates as possible, already in print orientation.' },
 ];
 
-const LAYERS: [Layer, string, string][] = [['holders', 'Holders', '#e9e6df'], ['docks', 'Docks', '#ff7a2f'], ['caps', 'Plug caps', '#ffc043'], ['boards', 'Boards', '#1f8a57'], ['plugs', 'Plugs', '#e0a060'], ['rails', 'Rails', '#94a3b8']];
+const LAYERS: [Layer, string, string][] = [['holders', 'Holders', '#e9e6df'], ['docks', 'Docks', '#4c8dff'], ['caps', 'Plug caps', '#f2c94c'], ['boards', 'Boards', '#1f8a57'], ['plugs', 'Plugs', '#e0a060'], ['cables', 'Cables', '#d0443a'], ['rails', 'Rails and stands', '#94a3b8']];
 
 export function App() {
   const project = useApp((s) => s.project);
@@ -41,10 +42,7 @@ export function App() {
   const [tool, setTool] = useState<Tool>('select');
   const [cam, setCam] = useState<{ dir: [number, number, number]; n: number } | undefined>();
   const look = (dir: [number, number, number]) => setCam((c) => ({ dir, n: (c?.n ?? 0) + 1 }));
-  const [installed, setInstalled] = useState<'h' | 'v' | null>(null);
   const [showLayers, setShowLayers] = useState(false);
-  const layout = project?.layout;
-  useEffect(() => { setInstalled(layout === 'panel' ? 'h' : null); }, [layout]);
   const [dragging, setDragging] = useState(false);
   const [overhangs, setOverhangs] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -78,7 +76,7 @@ export function App() {
     return () => clearTimeout(t);
   }, [project]);
 
-  const picks = sel.filter((s) => s.kind === 'module' || s.kind === 'mount' || s.kind === 'rail' || s.kind === 'feature');
+  const picks = sel.filter((s) => s.kind === 'module' || s.kind === 'mount' || s.kind === 'rail' || s.kind === 'feature' || s.kind === 'link');
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement).tagName;
@@ -89,7 +87,7 @@ export function App() {
       if (cmd && e.key.toLowerCase() === 's' && project) { e.preventDefault(); saveProject(); }
       const v = store.get().view;
       if (v === 'assembly') {
-        const p3 = store.get().sel.filter((s) => s.kind === 'module' || s.kind === 'mount' || s.kind === 'rail' || s.kind === 'feature');
+        const p3 = store.get().sel.filter((s) => s.kind === 'module' || s.kind === 'mount' || s.kind === 'rail' || s.kind === 'feature' || s.kind === 'link');
         if ((e.key === 'Delete' || e.key === 'Backspace') && p3.length) { e.preventDefault(); removeItems(p3); }
         if (e.key === 'Escape') select([]);
       }
@@ -119,11 +117,11 @@ export function App() {
   const si = STEPS.findIndex((s) => s.id === step);
   const S = STEPS[si];
   const goStep = (id: Step) => store.set({ step: id, ...(id === 'mount' && project?.layout === 'panel' && view === 'editor' ? { view: 'assembly' as const } : {}) });
-  const views: [typeof view, string][] = project ? [['assembly', '3D'], ...(project.layout === 'panel' ? [['panel', 'Wall'] as [typeof view, string]] : []), ['print', 'Plates'], ['editor', 'Board']] : [];
+  const views: [typeof view, string][] = project ? [['assembly', '3D'], ...(project.layout === 'panel' ? [['panel', 'Rails'] as [typeof view, string]] : []), ['wiring', 'Wiring'], ['print', 'Plates'], ['editor', 'Board']] : [];
 
   return (
     <div className="app" onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDragging(true); } }} onDragLeave={(e) => { if (!e.relatedTarget) setDragging(false); }} onDrop={onDrop}>
-      {dragging && <div className="dropveil"><div><b>Drop to import</b><span>{store.get().addMode ? 'adds another board' : project ? 'replaces the current board (tick "add as another board" on Start to add)' : 'KiCad · STEP · IDF · Eagle · Gerber zip · DXF · project'}</span></div></div>}
+      {dragging && <div className="dropveil"><div><b>Drop to import</b><span>{project ? (store.get().replaceMode ? 'replaces the board being edited' : 'adds to this project: one board per file (a Gerber set or zip is one board)') : 'KiCad · STEP · IDF · Eagle · Gerber zip · DXF · project'}</span></div></div>}
       {(dropErr || toastMsg) && <div className={`toast ${dropErr ? 'err' : 'floating'}`} style={{ padding: '9px 14px', fontSize: 12.5 }} onClick={() => { setDropErr(null); store.set({ toast: null }); }}>{dropErr ?? toastMsg}</div>}
       <header className="topbar">
         <div className="brand"><Mark className="mark" /><span className="word">Board<b>Dock</b></span></div>
@@ -170,9 +168,9 @@ export function App() {
           {project ? (
             <>
               <div className="tabs"><div className="seg">{views.map(([k, l]) => <button key={k} className={view === k ? 'on' : ''} onClick={() => store.set({ view: k })}>{l}</button>)}</div></div>
-              {view === 'editor' ? <BoardEditor tool={tool} setTool={setTool} /> : view === 'panel' && project.layout === 'panel' ? <PanelEditor /> : (
+              {view === 'editor' ? <BoardEditor tool={tool} setTool={setTool} /> : view === 'wiring' ? <WiringView /> : view === 'panel' && project.layout === 'panel' ? <PanelEditor /> : (
                 <>
-                  <Viewer3D result={result} mode={view === 'print' ? 'print' : 'assembly'} bed={project.printer.bed} spacing={project.printer.spacing} theme={theme} camera={cam} installed={view === 'assembly' ? installed : null} overhangs={view === 'print' && overhangs}
+                  <Viewer3D result={result} mode={view === 'print' ? 'print' : 'assembly'} bed={project.printer.bed} spacing={project.printer.spacing} theme={theme} camera={cam} overhangs={view === 'print' && overhangs}
                     layers={layers} sel={sel} onPick={(it, add) => (it ? select([it], add ? 'toggle' : 'set') : !add && select([]))} label={(it) => describe(store.get().project!, it)} />
                   <div className="tools">
                     <div className="tgroup floating">
@@ -182,19 +180,6 @@ export function App() {
                       <button onClick={() => look([1, 0, 0.22])} title="From the side">Side</button>
                       <button onClick={() => look([-0.5, 0.6, -0.65])} title="From below">Under</button>
                     </div>
-                    {view === 'assembly' && result?.report.panel && (
-                      <div className="tgroup floating" title="The panel as it hangs on the wall, or lying flat">
-                        <button className={installed ? 'on' : ''} onClick={() => setInstalled('h')}>On the wall</button>
-                        <button className={!installed ? 'on' : ''} onClick={() => setInstalled(null)}>Flat</button>
-                      </div>
-                    )}
-                    {view === 'assembly' && result?.report.clipFrame && !result.report.panel && (
-                      <div className="tgroup floating" title="See it installed on a DIN rail">
-                        <button className={!installed ? 'on' : ''} onClick={() => setInstalled(null)}>Holder</button>
-                        <button className={installed === 'h' ? 'on' : ''} onClick={() => setInstalled('h')}>Rail ⟷</button>
-                        <button className={installed === 'v' ? 'on' : ''} onClick={() => setInstalled('v')}>Rail ↕</button>
-                      </div>
-                    )}
                     {view === 'assembly' && <div className="tgroup floating"><button className={showLayers ? 'on' : ''} onClick={() => setShowLayers(!showLayers)} title="Show or hide kinds of parts"><Icon d={I.layers} /> Layers</button></div>}
                     {view === 'print' && <div className="tgroup floating" title="Red: faces that would need support. Amber: bridges (fine when short)."><button className={overhangs ? 'on' : ''} onClick={() => setOverhangs(!overhangs)}>Overhangs</button></div>}
                   </div>
@@ -235,7 +220,7 @@ export function App() {
   );
 }
 
-function fmtTime(m: number) { return m < 60 ? `${Math.round(m)} min` : `${Math.floor(m / 60)} h ${String(Math.round(m % 60)).padStart(2, '0')}`; }
+function fmtTime(m: number) { const t = Math.round(m); return t < 60 ? `${t} min` : `${Math.floor(t / 60)} h ${String(t % 60).padStart(2, '0')}`; }
 
 /** What is picked in the 3D view, with the actions that apply to it. */
 function SelPanel({ items }: { items: SelItem[] }) {
@@ -248,7 +233,8 @@ function SelPanel({ items }: { items: SelItem[] }) {
     const mid = one.kind === 'module' ? one.id : one.module;
     const mi = p.modules.findIndex((m) => m.id === mid);
     if (mi >= 0 && mi !== p.active) edit((q) => { q.active = mi; });
-    if (one.kind === 'mount' || one.kind === 'rail') store.set({ step: 'mount' });
+    if (one.kind === 'mount' || one.kind === 'rail' || one.kind === 'railstand') store.set({ step: 'mount' });
+    else if (one.kind === 'link') store.set({ step: 'plugs' });
     else if (one.kind === 'module') store.set({ step: 'holder' });
     else if (one.fkind === 'pin') store.set({ step: 'board' });
     else if (one.fkind === 'cradle' || one.fkind === 'cap' || one.fkind === 'guard' || one.fkind === 'tie' || one.fkind === 'plug') {

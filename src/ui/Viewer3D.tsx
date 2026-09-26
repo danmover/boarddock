@@ -10,7 +10,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
 import { OutlinePass } from 'three/examples/jsm/postprocessing/OutlinePass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
-import type { Anim, Feature, GenResult, MeshData, PickTag, V2 } from '../model/types';
+import type { Anim, Feature, GenResult, Ghost, MeshData, PickTag, V2 } from '../model/types';
 import { packPlates, placedMesh, printability, type Plate } from '../cad/export';
 import type { Layer, SelItem } from '../state';
 import { featureItem } from './pickOps';
@@ -32,7 +32,7 @@ interface Props {
 
 const LAYER: Record<PickTag['kind'], Layer> = {
   holder: 'holders', rod: 'holders', clip: 'holders', link: 'holders', rivet: 'holders', stand: 'boards',
-  shoe: 'docks', socket: 'docks', cap: 'caps', rail: 'rails', board: 'boards', parts: 'boards', plug: 'plugs',
+  shoe: 'docks', socket: 'docks', cap: 'caps', rail: 'rails', board: 'boards', parts: 'boards', plug: 'plugs', cable: 'cables', railstand: 'rails',
 };
 
 interface Obj { mesh: THREE.Mesh; tag?: PickTag; anim?: Anim; rank: number; base: THREE.Matrix4; ghost: boolean }
@@ -95,8 +95,8 @@ function backdrop(theme: 'dark' | 'light') {
   c.width = 16; c.height = 512;
   const g = c.getContext('2d')!;
   const gr = g.createLinearGradient(0, 0, 0, 512);
-  if (theme === 'dark') { gr.addColorStop(0, '#232a32'); gr.addColorStop(0.55, '#161b20'); gr.addColorStop(1, '#0d1013'); }
-  else { gr.addColorStop(0, '#fdfdfe'); gr.addColorStop(0.6, '#eef1f4'); gr.addColorStop(1, '#dde2e7'); }
+  if (theme === 'dark') { gr.addColorStop(0, '#4b545e'); gr.addColorStop(0.55, '#343b43'); gr.addColorStop(1, '#22282e'); }
+  else { gr.addColorStop(0, '#ffffff'); gr.addColorStop(0.6, '#eceff2'); gr.addColorStop(1, '#d6dce2'); }
   g.fillStyle = gr; g.fillRect(0, 0, 16, 512);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
@@ -104,6 +104,24 @@ function backdrop(theme: 'dark' | 'light') {
 }
 
 const ease = (x: number) => 1 - Math.pow(1 - x, 3);
+
+/** Physically based look per surface kind (boards, pads, connector shells, plastics). */
+function surface(mat: Ghost['mat'] | undefined, color: string, opacity: number, ghost: boolean, board: boolean): THREE.MeshStandardMaterial {
+  const base = { color, flatShading: true, transparent: opacity < 1, opacity, depthWrite: opacity >= 0.9, side: THREE.DoubleSide, emissive: new THREE.Color(0x4c8dff), emissiveIntensity: 0 };
+  switch (mat) {
+    case 'mask': return new THREE.MeshPhysicalMaterial({ ...base, roughness: 0.42, metalness: 0, clearcoat: 0.6, clearcoatRoughness: 0.3 });
+    case 'trace': return new THREE.MeshPhysicalMaterial({ ...base, roughness: 0.3, metalness: 0.15, clearcoat: 0.8, clearcoatRoughness: 0.2 });
+    case 'tin': return new THREE.MeshStandardMaterial({ ...base, metalness: 0.95, roughness: 0.35 });
+    case 'box': return new THREE.MeshPhysicalMaterial({ ...base, roughness: 0.38, metalness: 0, clearcoat: 0.3, clearcoatRoughness: 0.5 });
+    case 'gold': return new THREE.MeshStandardMaterial({ ...base, metalness: 1, roughness: 0.3 });
+    case 'metal': return new THREE.MeshStandardMaterial({ ...base, metalness: 0.9, roughness: 0.32 });
+    case 'led': return new THREE.MeshStandardMaterial({ ...base, roughness: 0.2, emissive: new THREE.Color(color), emissiveIntensity: 0.55 });
+    case 'chip': case 'black': case 'plug': case 'cable': return new THREE.MeshStandardMaterial({ ...base, roughness: 0.5, metalness: 0.05 });
+    case 'silk': return new THREE.MeshStandardMaterial({ ...base, roughness: 0.75 });
+    case undefined: return new THREE.MeshStandardMaterial({ ...base, roughness: board ? 0.42 : 0.5, metalness: board ? 0.05 : 0 });
+    default: return new THREE.MeshStandardMaterial({ ...base, roughness: 0.55 });
+  }
+}
 
 export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, installed, overhangs, layers, sel, onPick, label }: Props) {
   const host = useRef<HTMLDivElement>(null);
@@ -120,7 +138,7 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
     const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false, preserveDrawingBuffer: true, powerPreference: 'high-performance' });
     renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.22;
+    renderer.toneMappingExposure = 1.3;
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     el.appendChild(renderer.domElement);
@@ -134,10 +152,10 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
     controls.zoomToCursor = true;
     const pmrem = new THREE.PMREMGenerator(renderer);
     scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    scene.environmentIntensity = 0.85;
-    const hemi = new THREE.HemisphereLight(0xf2f6ff, 0x20262c, 0.55);
+    scene.environmentIntensity = 1.05;
+    const hemi = new THREE.HemisphereLight(0xf4f7ff, 0x3a4048, 0.9);
     scene.add(hemi);
-    const key = new THREE.DirectionalLight(0xfff3e6, 2.1);
+    const key = new THREE.DirectionalLight(0xfff6ec, 2.4);
     key.castShadow = true;
     key.shadow.mapSize.set(2048, 2048);
     key.shadow.bias = -0.0004;
@@ -158,7 +176,7 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
     const composer = new EffectComposer(renderer, rt);
     composer.addPass(new RenderPass(scene, camera));
     const gtao = new GTAOPass(scene, camera, 4, 4);
-    gtao.blendIntensity = 0.85;
+    gtao.blendIntensity = 0.65;
     gtao.updateGtaoMaterial({ radius: 6, distanceExponent: 1.4, thickness: 2, scale: 1.1, samples: 12 });
     gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 12 });
     composer.addPass(gtao);
@@ -166,8 +184,8 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
     outline.edgeStrength = 4;
     outline.edgeGlow = 0.35;
     outline.edgeThickness = 1.2;
-    outline.visibleEdgeColor.set('#ff7a2f');
-    outline.hiddenEdgeColor.set('#7a3a16');
+    outline.visibleEdgeColor.set('#4c8dff');
+    outline.hiddenEdgeColor.set('#1d3f80');
     composer.addPass(outline);
     composer.addPass(new OutputPass());
 
@@ -236,6 +254,8 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
         case 'stand': return featureItem({ kind: 'stand', module: t.module! });
         case 'shoe': case 'socket': return t.mount ? { kind: 'mount', id: t.mount } : null;
         case 'rail': return t.rail ? { kind: 'rail', id: t.rail } : null;
+        case 'cable': return t.refs?.[0] ? { kind: 'link', id: t.refs[0] } : null;
+        case 'railstand': return t.refs?.[0] ? { kind: 'railstand', id: t.refs[0] } : null;
         default: return null;
       }
     };
@@ -312,7 +332,7 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
     c.scene.background?.dispose?.();
     c.scene.background = backdrop(theme);
     c.theme = theme;
-    c.outline.visibleEdgeColor.set(theme === 'dark' ? '#ff7a2f' : '#f0600f');
+    c.outline.visibleEdgeColor.set(theme === 'dark' ? '#5b9bff' : '#2563eb');
     c.invalidate();
   }, [theme]);
 
@@ -333,10 +353,10 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
     if (!result) { c.invalidate(); return; }
     const edgeCol = new THREE.Color(theme === 'dark' ? 0x0a0d10 : 0x2a3138);
 
-    const add = (m: MeshData, color: string, opacity: number, matrix: number[] | null, tag: PickTag | undefined, anim: Anim | undefined, ghost: boolean, edges = true) => {
+    const add = (m: MeshData, color: string, opacity: number, matrix: number[] | null, tag: PickTag | undefined, anim: Anim | undefined, ghost: boolean, edges = true, kind?: Ghost['mat']) => {
       const cg = geom(m, edges && opacity >= 1);
       const board = tag?.kind === 'board';
-      const mat = new THREE.MeshStandardMaterial({ color, roughness: board ? 0.42 : ghost ? 0.5 : 0.56, metalness: board ? 0.05 : 0, flatShading: true, transparent: opacity < 1, opacity, depthWrite: opacity >= 0.9, side: THREE.DoubleSide, emissive: new THREE.Color(0xff7a2f), emissiveIntensity: 0 });
+      const mat = surface(kind, color, opacity, ghost, board);
       const mesh = new THREE.Mesh(cg.g, mat);
       mesh.castShadow = opacity >= 0.8;
       mesh.receiveShadow = false;
@@ -354,12 +374,13 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
     };
 
     if (mode === 'assembly') {
-      for (const p of result.parts) {
+      for (const p of [...result.parts, ...(result.display ?? [])]) {
         if (p.toAssembly[14] <= -300) continue;
-        add(p.mesh, p.color, 1, p.toAssembly, p.tag, p.anim, false);
-        (p.instances ?? []).forEach((T, k) => add(p.mesh, p.color, 1, T, p.tags?.[k] ?? p.tag, p.anims?.[k] ?? p.anim, false));
+        const m = p.displayMesh ?? p.mesh;
+        add(m, p.color, 1, p.toAssembly, p.tag, p.anim, false);
+        (p.instances ?? []).forEach((T, k) => add(m, p.color, 1, T, p.tags?.[k] ?? p.tag, p.anims?.[k] ?? p.anim, false));
       }
-      for (const gh of result.ghosts) add(gh.mesh, gh.color, gh.opacity, null, gh.tag, gh.anim, true, false);
+      for (const gh of result.ghosts) add(gh.mesh, gh.color, gh.opacity, null, gh.tag, gh.anim, true, false, gh.mat);
       // animation ranks: distinct steps in order
       const seqs = [...new Set((c.objs as Obj[]).map((o) => o.anim?.seq ?? 0))].sort((a, b) => a - b);
       for (const o of c.objs as Obj[]) o.rank = seqs.indexOf(o.anim?.seq ?? 0);
@@ -379,7 +400,7 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
         bedMesh.position.set(ox + bed[0] / 2, bed[1] / 2, -0.05);
         bedMesh.receiveShadow = true;
         c.floor.add(bedMesh);
-        const border = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.PlaneGeometry(bed[0], bed[1])), new THREE.LineBasicMaterial({ color: 0xff7a2f, transparent: true, opacity: 0.8 }));
+        const border = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.PlaneGeometry(bed[0], bed[1])), new THREE.LineBasicMaterial({ color: 0x4c8dff, transparent: true, opacity: 0.8 }));
         border.position.copy(bedMesh.position);
         c.floor.add(border);
         for (const it of pl.items) {
@@ -414,9 +435,9 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
     c.radius = size.length() / 2;
     const wall = mode === 'assembly' && !!installed;
     const R = Math.max(size.x, size.y, size.z) * 1.4 + 120;
-    const gridCol = new THREE.Color(theme === 'dark' ? 0x3b4550 : 0x9aa5b1);
+    const gridCol = new THREE.Color(theme === 'dark' ? 0x7d8894 : 0x9aa5b1);
     const grid = new THREE.Mesh(new THREE.PlaneGeometry(R * 2.2, R * 2.2), gridMaterial(gridCol, wall ? 1 : 0));
-    const shadow = new THREE.Mesh(new THREE.PlaneGeometry(R * 2, R * 2), new THREE.ShadowMaterial({ opacity: theme === 'dark' ? 0.5 : 0.2 }));
+    const shadow = new THREE.Mesh(new THREE.PlaneGeometry(R * 2, R * 2), new THREE.ShadowMaterial({ opacity: theme === 'dark' ? 0.38 : 0.2 }));
     shadow.receiveShadow = true;
     if (wall) {
       grid.rotation.x = Math.PI / 2; shadow.rotation.x = Math.PI / 2;
@@ -545,7 +566,7 @@ function flyTo(c: any, box: THREE.Box3, dir: THREE.Vector3 | null, k = 1.3, inst
   const r = Math.max(8, box.getSize(new THREE.Vector3()).length() / 2);
   const d = (dir ?? cam.position.clone().sub(c.controls.target)).clone().normalize();
   const aspect = Math.min(1, cam.aspect || 1);
-  const dist = (r / Math.sin(((cam.fov / 2) * Math.PI) / 180)) * k * 0.82 / Math.sqrt(aspect);
+  const dist = (r / Math.sin(((cam.fov / 2) * Math.PI) / 180)) * k * 0.72 / Math.sqrt(aspect);
   const p1 = center.clone().add(d.multiplyScalar(dist));
   if (instant) { cam.position.copy(p1); c.controls.target.copy(center); c.tween = null; c.invalidate(); return; }
   c.tween = { p0: cam.position.clone(), p1, q0: c.controls.target.clone(), q1: center, t0: performance.now(), dur: 480 };
@@ -616,6 +637,8 @@ function applySel(c: any, sel: SelItem[]) {
       const hit = it.kind === 'module' ? t.module === it.id && ['holder', 'rod', 'board', 'parts', 'clip'].includes(t.kind)
         : it.kind === 'mount' ? t.mount === it.id
         : it.kind === 'rail' ? t.rail === it.id
+        : it.kind === 'link' ? t.kind === 'cable' && (t.refs ?? []).includes(it.id)
+        : it.kind === 'railstand' ? t.kind === 'railstand' && (t.refs ?? []).includes(it.id)
         : it.kind === 'feature' && (it.fkind === 'cap' || it.fkind === 'plug' || it.fkind === 'clip' || it.fkind === 'stand') ? t.kind === it.fkind && t.module === it.module && (!it.refs?.length || (t.refs ?? []).some((r) => it.refs!.includes(r)))
         : false;
       if (hit) picked.push(o.mesh);
@@ -639,8 +662,8 @@ function placeHighlights(c: any) {
     const b = f.box, pad = 0.8;
     const g = new THREE.BoxGeometry(b[3] - b[0] + 2 * pad, b[4] - b[1] + 2 * pad, b[5] - b[2] + 2 * pad);
     const M = new THREE.Matrix4().makeTranslation(holder?.mesh.userData.offset ?? new THREE.Vector3()).multiply(new THREE.Matrix4().fromArray(F)).multiply(new THREE.Matrix4().makeTranslation((b[0] + b[3]) / 2, (b[1] + b[4]) / 2, (b[2] + b[5]) / 2));
-    const fill = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0xff7a2f, transparent: true, opacity: 0.16, depthWrite: false }));
-    const edges = new THREE.LineSegments(new THREE.EdgesGeometry(g), new THREE.LineBasicMaterial({ color: 0xff7a2f, transparent: true, opacity: 0.95, depthTest: false }));
+    const fill = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0x4c8dff, transparent: true, opacity: 0.18, depthWrite: false }));
+    const edges = new THREE.LineSegments(new THREE.EdgesGeometry(g), new THREE.LineBasicMaterial({ color: 0x75a8ff, transparent: true, opacity: 0.95, depthTest: false }));
     for (const m of [fill, edges]) { m.matrixAutoUpdate = false; m.matrix.copy(M); m.renderOrder = 10; hl.add(m); }
   }
   hl.updateMatrixWorld(true);

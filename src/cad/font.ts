@@ -87,3 +87,17 @@ export function textCS(text: string, height: number): CS {
   }
   return unionCS(parts);
 }
+
+/** Text as stroke segments (for silkscreen in the 3D view), baseline at y = 0, starting at x = 0. */
+export function textStrokes(text: string, height: number): [V2, V2][] {
+  const u = height / 6;
+  const out: [V2, V2][] = [];
+  const up = text.toUpperCase();
+  for (let i = 0; i < up.length; i++) {
+    const g = GLYPHS[up[i]];
+    if (!g) continue;
+    const ox = i * ADVANCE * u;
+    for (const stroke of g) for (let k = 0; k + 3 < stroke.length; k += 2) out.push([[ox + stroke[k] * u, stroke[k + 1] * u], [ox + stroke[k + 2] * u, stroke[k + 3] * u]]);
+  }
+  return out;
+}

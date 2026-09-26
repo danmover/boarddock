@@ -3,37 +3,45 @@
 **Dock any PCB. No screws. No supports.**
 
 BoardDock turns a PCB design, or a few measurements, into 3D-printable holders:
-- It fits each holder around the board's parts, holes and plugs.
-- It docks every holder onto DIN rails, horizontal or vertical.
-- It turns each board so every plug stays reachable.
-- A push-button on top of each holder releases the board.
+- It fits a light frame holder around each board's parts, holes and plugs.
+- It docks every holder onto DIN rails, horizontal or vertical, and turns each board so every plug stays reachable.
+- Boards stack: a HAT or shield bolted on its standoffs, or a separate board on a printed layer.
+- A button on top of each holder releases the board; a press-down lever releases the dock from the rail.
+- Printed table stands hold the rails, and cables between the boards are routed, sized and combed automatically.
 
 Everything is checked with FEA and packed onto as few print plates as possible.
 
-![A panel of five boards on a DIN rail](docs/images/hero.png)
+![A panel of boards on a DIN rail](docs/images/hero.png)
 
 - **Imports:** KiCad, Altium (via STEP or Gerber), Eagle, IDF, DXF and Gerber + drill + pick-and-place.
   - You can also draw a board by hand or start from a template.
+- **Hole wizard:** sorts every hole into mounting holes (they get pins), connector pegs, part leads and stacking standoffs (kept clear, with room underneath). You can change any of them.
 - **Fits holders automatically:**
-  - Standoffs, and snap pins in the mounting holes.
-  - Snap fingers in the walls.
-  - Clearance for the board's underside.
-  - Openings for every plug.
+  - **Frame** style (default): a rim round the board, corner guards, edge seats, and ribs laid out as a minimum spanning tree to every pin. It uses 25–50% less plastic than a full tray. The **tray** style is still there.
+  - Snap pins in the mounting holes, or snap fingers on the edges.
+  - Clearance for the board's underside, openings for every plug.
 - **Protects plugs:** each connector gets a cradle that carries the mating plug's body, so a knocked cable loads the holder, not the solder joints. A snap-on cap locks the plug in.
 - **Builds panels:**
   - Any number of rails, each horizontal or vertical.
   - Docks that turn four ways and take two boards back to back.
-  - Flat clips for boards that should lie against the wall.
-  - All laid out automatically, then editable by drag, turn, swap and multi-select.
+  - Stacks of boards on one dock.
+  - One rail, rows or columns, laid out automatically, with boards that are cabled together kept next to each other. Then drag boards between slots, rails and stacks in the rack tree, or in the Rails view.
+  - Holders for boxes such as USB hubs, USB chargers and power boards, on their own rail.
+  - **Table stands:** printed sleepers across the rails, with cable combs.
+- **Cables:** Auto-connect works out which plug goes where (power, USB host, hub and device ports). You can connect plugs by hand in the Wiring view. Every cable is routed through the rack and sized to a standard length you can buy.
+- **3D view:**
+  - Boards show copper traces, vias, silkscreen, parts and plugs. The traces are real for KiCad files and decorative for other boards.
+  - Click anything (a board, a dock, a rail, a cable, a table stand, or one feature of a holder such as a cradle, cap, pin or finger) to see it and edit it.
+  - Shift-click to pick several, then Delete to remove them all in one undoable step.
+  - Play the assembly step by step, or pull it apart with the explode slider.
 - **Checks:** hand calculations for every snap, plus 2D FEA of the dock's springs (the socket latch and the rail shoe hinge) for your material. A printability check finds every overhang and bridge; the print view can paint them.
 - **Easy to correct:**
-  - Switch cradles, caps, tie anchors, guards, fingers, labels or the base pattern off for a whole holder.
+  - Switch cradles, caps, tie anchors, guards, fingers or labels off for a whole holder, or remove single ones in 3D.
   - Hide small parts, ignore holes, strip plug protection, or revert to the import, for one board or all of them.
 - **Efficient:**
-  - Sturdy, balanced and lean presets.
-  - Duplicate a board.
-  - A tongue-fit tolerance.
-  - A 30–40 minute test-fit kit to print before the real thing.
+  - Only changed holders are rebuilt: moving or turning docks takes milliseconds.
+  - Sturdy, balanced and lean presets; duplicate a board.
+  - A tongue-fit tolerance and a 30–40 minute test-fit kit to print before the real thing.
 - **Exports** binary STL or 3MF, one file per print plate, packed onto your printer's bed.
 - **Open source** (MIT). It runs in the browser or as a desktop app for Windows, macOS and Linux.
 
@@ -53,12 +61,14 @@ The desktop builds are not code-signed yet:
 
 1. **Start:** drop your board files (or a zip) anywhere in the window, or pick a template.
    - To add more boards, tick **Add as another board**.
-2. **Board and Plugs:**
-   - Check the outline, holes and parts; fix anything in the board editor.
-   - Pick the plug type and size for each connector.
-3. **Panel:** BoardDock has already placed every board on a rail. Drag, turn or pair them if you like.
-4. **Check:** read the notes and run the dock FEA for your material.
-5. **Export:** download the plates and print them in PETG. Cut a TS35 rail to the length shown.
+2. **Board:** check the outline, parts and the hole wizard; fix anything in the board editor.
+3. **Plugs:** pick the plug type and size for each connector, and what each one is cabled to (or press **Auto-connect**).
+4. **Holder:** frame or tray, a preset, where the release button goes, and the features you want.
+5. **Rails:** BoardDock has already placed every board on a rail. Pick one rail, rows or columns; drag, turn, pair or stack boards if you like.
+6. **Check:** read the notes and run the dock FEA for your material.
+7. **Export:** download the plates and print them in PETG. Cut the TS35 rails to the lengths shown and buy the cables listed.
+
+Every step has **Back** and **Next** at the bottom of the sidebar.
 
 ![Start screen](docs/images/start.png)
 
@@ -68,9 +78,9 @@ Every board sits in a holder that plugs into a dock on the rail. This is the scr
 
 | Part | What it does | Prints |
 |---|---|---|
-| **Rail shoe** (orange) | Clips onto a TS35 rail. Its jaw wraps round the rail flange and hangs from a hinge leaf directly **above** the lip, so pulling the dock off the wall can't pry it open. **To remove it:** lift the boards out, push the ridged lever pad beside the socket toward it, and tilt the dock off. A built-in stop protects the hinge. The lever goes on whichever side of the rail has more room; you can flip it per dock. | on its end face |
+| **Rail shoe** (graphite, red lever) | Clips onto a TS35 rail. Its jaw wraps round the rail flange and hangs from a hinge leaf directly **above** the lip, so pulling the dock straight up can't pry it open. **To remove it:** lift the boards out, press the ridged red pad beside the socket down about 8 mm, and lift the dock off. The lever is printed in place on a pin; its hook pulls the jaw off the flange and the jaw spring lifts it back. A built-in stop protects the hinge. The lever goes on whichever side of the rail has more room; you can flip it per dock. | on its end face, lever and all |
 | **Socket** (blue) | Snaps into the shoe in any of four 90° turns and takes two holders back to back. It has two print-in-place latches. | on its end face |
-| **Holder** | The tray around your board, with a tongue on its dock edge and a spine that carries the release rod. | flat on its back |
+| **Holder** | The frame (or tray) around your board, with a tongue on its dock edge and a spine that carries the release rod. | flat on its back |
 | **Release rod** (red) | Its head is the **button on the holder's top edge**. Press it and the rod's 45° foot wedges the latch open. The latch spring returns it. | flat |
 
 **Using it:**
@@ -79,32 +89,90 @@ Every board sits in a holder that plugs into a dock on the rail. This is the scr
 3. Push the holder straight down into the socket until the latch clicks.
 4. **To take a board out:** put your thumb on the red button and two fingers under the grip bar, squeeze, and lift.
 
-**Where the release goes:**
-- When the top edge of the board is free, the spine runs under the board. The board is lifted about 10 mm to clear it.
-- When the top edge is crowded with plugs, as on a Raspberry Pi, the spine, grip bar and button move beside the board and reach away from it. The plugs stay clear and the board stays low.
+**Where the release button goes** (Holder step, per board):
+- **Centred** (the default): the button sits in the middle of the holder's far edge, and the spine that carries its rod runs under the board, which sits about 10 mm up.
+- **Beside the board:** the spine, grip bar and button run beside the board, so the board sits low and the far edge stays free for plugs.
+- **Automatic:** whichever keeps the plugs clear with the least plastic.
+
+Plugs always win: if the button would block one, it moves.
 
 ![A Raspberry Pi 4 docked](docs/images/holder-pi4.png)
 
+## The holder
+
+![Frame and tray holders](docs/images/holders.png)
+
+**Frame** (the default) combines the lean spine-and-rib carrier of the original DIN hub with the tray's protection:
+- a rim runs round the board, under its edge and out to the holder's outline;
+- short corner guards locate the board, and **edge seats** carry it wherever no pin is close;
+- ribs, laid out as a minimum spanning tree, tie every pin to the rim or to the dock's spine;
+- plug cradles, caps, guards, tie anchors, snap fingers and the label each bring only the bit of wall they need.
+
+**Tray** is the full base with a hex pattern and a wall all round: stiffer, and more plastic.
+
+Plastic in a holder with no cradles or clip:
+
+| Board | Frame | Tray |
+|---|---|---|
+| Raspberry Pi 4 | 4.0 cm³ | 7.8 cm³ |
+| Arduino Uno | 4.3 cm³ | 7.2 cm³ |
+| Perfboard 50 × 70 | 4.7 cm³ | 6.8 cm³ |
+| 60 × 40 blank | 4.4 cm³ | 5.8 cm³ |
+
+Cradles, caps and the dock tongue come on top of these and are the same for both styles.
+
+## Hole wizard
+
+Not every hole is for mounting. The wizard sorts them when a board comes in, and you can change any hole or group:
+
+| Kind | Found by | The holder |
+|---|---|---|
+| **Mounting hole** | no part on it, near a corner or edge, 2.2–4.5 mm | puts a locating or snap pin through it |
+| **Connector peg** | inside a connector's body (RJ45 pegs, USB shell tabs, jack pins) | leaves it free, with a pocket underneath |
+| **Part lead** | inside a part, or in a row at header pitch | leaves it free, with clearance for the leads |
+| **Stacking standoff** | lines up with a hole of a board bolted on top | leaves it free, with room for the screw head or nut |
+| **Ignored** | set by hand | does nothing |
+
+The board editor colours every hole by its kind.
+
+## Stacks
+
+A board can sit on top of another; the bottom one carries the dock. In the **Rails** step, drag a board onto another board, or pick **on top of…** in Stacks. There are two kinds:
+- **Bolted on standoffs:** a HAT on a Pi, a shield on an Arduino. The top board is lined up on the holes the two boards share (for example the Pi's 58 × 49 pattern), and shown on standoffs of the length you set (11 mm by default). The shared holes of the bottom board become stacking standoffs in the hole wizard: no pins there, and room underneath.
+- **Printed layer:** a separate board gets its own light holder that presses onto four corner towers on the holder below, with press-fit pegs. The towers on a docked holder stay back from the dock face.
+
+Bolted is chosen automatically when at least two holes line up; you can switch it.
+
 ## The panel
 
-![Panel editor](docs/images/panel.png)
+![Rails step](docs/images/panel.png)
 
-The **Panel** step shows the wall from the front: rails, docks, and every board's footprint. Arrows show where each board's plugs point:
+The **Rails** step shows the whole rack as a tree: rails, docks, the front and back slot of each dock, and stacked boards under the board they sit on. Chips show where the plugs point. Drag a board onto:
+- a slot, to seat it there;
+- a rail, for a new dock at its end;
+- another board, to stack it;
+- **+ Rail**, for a new rail with it;
+- the tray, to take it off the rails.
+
+Quick layouts are **one rail**, **rows** (a new rail when one gets longer than your limit) and **columns** (vertical rails).
+
+The **Rails** view shows the rack from above: rails, table stands, docks, and every board's footprint. Arrows show where each board's plugs point:
 
 | Mark | Meaning |
 |---|---|
-| **◉** | faces you |
-| **✓** | points along the panel, where cable ducts usually run |
+| **◉** | points up |
+| **✓** | reachable from the side, where the cables run |
 | **⚠** | points at the next dock on the rail |
-| **✕** | points into the wall |
+| **✕** | points down into the table |
 
 **Auto-arrange** (on by default):
 - Tries every dock edge and all four turns for each board, and picks the one with the best plug access.
-  - It never lets a plug face the wall.
+  - It never lets a plug point into the table.
   - It keeps the release button clear of plugs, and prefers boards that stick out less.
 - Pairs boards back to back in one dock when that costs nothing in plug access.
 - Packs the docks along the rail using their real 3D size, including plugs, cradles and buttons.
-- Starts a new rail when one gets longer than your limit.
+- Starts a new rail when one gets longer than your limit. Boxes such as hubs and chargers get a rail of their own.
+- Keeps boards that are cabled together next to each other.
 - Settings: rail direction, longest rail, gap between docks, space between rails, and pairing on or off.
 
 **Editing by hand.** The first edit keeps everything where it is and switches to manual.
@@ -129,15 +197,86 @@ The inspector sets:
 - which board edge goes into the dock, or Auto;
 - rail direction, position and length (fixed, or cut to fit).
 
-**Overlaps** between neighbours are hatched red. The Check step lists the rails to cut and how far the panel stands off the wall.
+**Overlaps** between neighbours are hatched red. The Check step lists the rails to cut and how tall the rack stands.
 
-![On the wall](docs/images/wall.png)
+## Table stands
+
+![Table stands under two rails](docs/images/stands.png)
+
+The rails stand on printed sleepers (Rails step, **Table stands**, on by default):
+- A sleeper crosses the rails at each end, and at least every 200 mm between.
+- Each **rail end pushes 7 mm into an end block** with a TS35-shaped pocket. It caps the rail's lips, and crush ribs make it a light press fit.
+- **Saddles** carry the rails in between. Their low cheeks stay under the dock shoes' jaws, so a saddle can sit under a dock.
+- **Spacer bars** join the blocks. They slide in along the rail through dovetails, and set the rail spacing.
+- The rails stand 10 mm off the table, so cables can run under them.
+
+The pieces scale with the rack: more rails give more blocks and spacers, and longer rails give more sleepers. In the automatic layout every rail is cut to the same length, so the sleepers run straight across. Every piece is a profile printed on its end: no supports, and every load lies in the plane of the layers.
+
+| Piece | Plastic |
+|---|---|
+| End block | 3.6 cm³ |
+| Saddle | 2.2 cm³ |
+| Spacer, 150 mm | 2.5 cm³ |
+
+The Check step also reports two hand calculations:
+- the rail's sag between sleepers under a 20 N press, treating the rail as a steel beam;
+- the stress in an end block's lip caps when you lift a rail end with 20 N: about 6 MPa, against PETG's yield of about 50 MPa.
+
+## Cables
+
+![Wiring view](docs/images/wiring.png)
+
+Each plug gets a role from its type, its name and its board:
+- a Raspberry Pi's USB-A ports are hosts, and its USB-C is its power input;
+- an Arduino's USB-B is a device, and its barrel jack is an optional 7–12 V input;
+- a hub's ports feed devices;
+- a charger's ports give power.
+
+**Auto-connect** pairs the free plugs, nearest boards first:
+1. hubs to hosts;
+2. power inputs to chargers (or to hub or host ports);
+3. devices to hubs (or hosts).
+
+You can also connect plugs by hand. In the **Wiring** view, click a plug, then the plug it goes to; plugs that fit light up green. In the Plugs step, pick **Cable to** for any plug.
+
+The panel routes every cable:
+1. out of its plug;
+2. down to a **street** between the rails (or beside the outer ones), where each cable gets its own lane;
+3. along the street and back up to the other plug.
+
+On table stands the streets run under the rails' level. Wherever a street crosses a sleeper, the spacer there carries a **cable comb**: one round-bottomed slot per cable, sized for it, with snap lips at the mouth.
+
+Every cable's length is measured along its route and rounded up to a standard length to buy (10% slack). Auto-arrange keeps cabled boards next to each other, so the cables stay short.
+
+## The 3D view
+
+![The 3D view](docs/images/rack.png)
+
+| Action | How |
+|---|---|
+| See what something is | hover over it |
+| Select a board, dock, rail, cable, table stand, or one holder feature (cradle, cap, pin, finger, guard, tie anchor, label, stand socket) | click it |
+| Select several | Shift-click |
+| Remove the selection (a cradle or cap is switched off, a pin becomes an ignored hole, a dock, rail or cable is removed, a board leaves the project, table stands are switched off) | Delete, or **Remove** in the bar below the view; one ⌘Z brings it all back |
+| Jump to the settings of the selected thing | **Edit** in the bar |
+| Fly to a part | double-click it |
+| Watch it go together | the play button: stands, rails, shoes, sockets, holders, boards, caps, plugs and cables, in order |
+| Pull it apart | the **Explode** slider |
+| Show or hide holders, docks, caps, boards, plugs, rails or cables | **Layers** |
+
+It uses studio lighting with ambient occlusion. Boards get:
+- a solder mask with copper traces and vias: the real ones from KiCad files, and a decorative pattern, only for looks, on every other board;
+- silkscreen;
+- gold pads and pins;
+- chips, passives and LEDs.
+
+Plugs show their shells, tongues and pins. The view draws a frame only when something changes.
 
 ## Supported files
 
 | Source | What to export | What BoardDock reads |
 |---|---|---|
-| **KiCad** 6–9 | the `.kicad_pcb` file | outline (lines and arcs), holes, footprints with courtyard sizes, top and bottom parts |
+| **KiCad** 6–9 | the `.kicad_pcb` file | outline (lines and arcs), holes, footprints with courtyard sizes, top and bottom parts, copper traces and vias |
 | **Altium Designer** | *File → Export → STEP 3D*, or Gerber + NC drill + pick-and-place | STEP: board outline, holes and part bodies. Fab files: outline, holes, parts. |
 | **Fusion 360 / Eagle** | the `.brd` file, or STEP | outline, holes, packages |
 | **EasyEDA / JLCPCB** | Gerber zip + CPL (pick and place) | outline, holes, parts |
@@ -177,13 +316,15 @@ PETG results (E = 2100 MPa, strain limit 2%):
 |---|---|---|---|
 | Latch: holder pushed in (nose moves out 1.3 mm) | about 10 N push | 1.6% | 1.0% |
 | Latch: button pressed (nose clears the groove after 1.9 of 3.1 mm) | 3.2 N | 1.2% | 0.8% |
-| Rail shoe: thumb lever (jaw opens 1.7 mm; 3.3 mm of pad travel; the stop engages at 2.1 mm) | 2.7 N | 1.7–1.9% | 0.6% |
+| Rail shoe: lever pad pressed down (jaw opens 1.7 mm for about 8 mm of pad travel; the stop engages at 2.2 mm of jaw travel) | 1.4 N | 1.6% | 0.55% |
 | Rail shoe: pressed onto the rail | 4.3 N | 1.7–1.9% | 0.5% |
-| Rail shoe: pulled straight off the wall | holds to about 90–120 N (the hinge's strain limit), friction or not | 1.7–2.3% at 100 N | 0.4% |
+| Rail shoe: pulled straight up off the rail | holds to about 90–120 N (the hinge's strain limit), friction or not | 1.7–2.3% at 100 N | 0.4% |
 
 **Design changes that came out of this analysis**, compared with the original DIN hub:
-- **Pull-off.** The original jaw hung from a hinge outboard of its lip. Pulling the dock off the wall pried the jaw open, and in the model only friction held it: without friction it let go at about 14 N. The v3 "C-jaw" wraps round the flange edge with the hinge leaf directly above the lip, so a pull runs straight down the leaf. It no longer depends on friction; the jaw moves about 0.03 mm per 100 N. The shoe is also 5% lighter.
-- **Hinge leaf.** The thumb lever pushes from above the hinge, so its bending peaks at the leaf's lower end. A uniform 0.9 mm leaf (two 0.45 mm lines) replaces the old 0.84–1.14 mm taper.
+- **Pull-off.** The original jaw hung from a hinge outboard of its lip. Pulling the dock off the rail pried the jaw open, and in the model only friction held it: without friction it let go at about 14 N. The v3 "C-jaw" wraps round the flange edge with the hinge leaf directly above the lip, so a pull runs straight down the leaf. It no longer depends on friction; the jaw moves about 0.03 mm per 100 N. The shoe is also 5% lighter.
+- **Hinge leaf.** The lever pushes from above the hinge, so its bending peaks at the leaf's lower end. A uniform 0.9 mm leaf (two 0.45 mm lines) replaces the old 0.84–1.14 mm taper.
+- **Pinch ear (v4).** The short thumb pad sat 14 mm below the socket top and was hard to reach. The lever post now rises into a tall ridged ear whose top is 3 mm under the socket top. With the holders out, you pinch the ear and the socket together with one hand. The longer lever roughly halves the force. The ear's top lip also lets you pull it: the lip is 8 mm outboard of the hinge leaf, so a pull turns the jaw open before it can lift the dock. The shoe grows 8% (7.8 to 8.5 cm³).
+- **Press-down lever (v5).** Pinching the ear worked, but it looked clumsy and needed two opposing fingers. The ear is gone. Instead, a lever is printed in place on a pin at the top of a slim tower beside the socket, inside a C-shaped hub that wraps 290° so it can't come off. Pressing its ridged pad down about 8 mm makes the hook underneath pull the jaw's post toward the socket, and the jaw swings open about its leaf. The existing stop still limits the travel, and the jaw spring lifts the lever back. The release force is about 1.4 N. The shoe is 10.0 cm³.
 
 ## Printing
 
@@ -199,6 +340,11 @@ PETG results (E = 2100 MPa, strain limit 2%):
 - The FEA is linear, 2D and idealised. It has no contact, friction or print anisotropy, and its peaks sit at pixel-mesh corners. Treat it as a comparison between designs, not a guarantee.
 - Template boards come from the manufacturers' drawings; check yours. Imported part heights are only as good as the source (IDF and STEP are best).
 - A large board docked by one tongue feels a sizeable lever when you plug in a stiff cable at the far end: the Check step lists the tongue stress. Hold the holder while you plug in.
+- The frame holder's stiffness is from geometry, not tested: the board itself stiffens the frame once it is clipped in.
+- The rail release is reached with the holders out (they cover the lever). Taking a single board out is the button on the holder, which is always reachable.
+- The table stands' press fit, the dovetails and the cable combs' snap lips are sized from typical FDM tolerances, not from test prints. The sag and cap-stress numbers are hand calculations.
+- Plug roles for Auto-connect are guessed from connector types and names; check the Wiring view. Cable routes are drawn clear of the rails, but not checked against every holder they pass.
+- A board whose holes all carry the standoffs of a HAT has no pins; it needs room on its edges for two snap fingers, and the Check step says so when there isn't any.
 
 ## Development
 
@@ -219,11 +365,19 @@ npm run dist         # installers for the current OS in release/
   - `generate.ts`: the holder around one board.
   - `dock.ts`: rail shoe, socket, tongue, spine and rod.
   - `dockplan.ts`: plug access, orientation and auto-assignment (no geometry kernel).
-  - `panelgen.ts`: the panel (placement, rows, collisions, parts).
+  - `panelgen.ts`: the panel (placement, rows, collisions, parts, cable routes).
+  - `railstand.ts`: table stands (sleeper layout, end blocks, saddles, spacers, cable combs).
+  - `boardviz.ts`: board, part and plug detail for the 3D view (traces, vias, silkscreen, cable tubes).
   - `assembly.ts`: loose layouts.
   - `export.ts`: STL and 3MF output, plate packing.
-- `src/fea/`: 2D solver (`fea2d.ts`), the flat clip (`clipfea.ts`) and the dock (`dockfea.ts`).
-- `src/ui/`: React UI, including the board editor (`BoardEditor.tsx`) and the panel editor (`PanelEditor.tsx`, `PanelSide.tsx`).
+- `src/fea/`: 2D solver (`fea2d.ts`), the flat clip (`clipfea.ts`), the dock (`dockfea.ts`), and a 3D beam solver for the holder's support ribs (`frame3d.ts`).
+- `src/model/holes.ts`: the hole wizard and stacks (alignment on shared holes, bolted and printed layers).
+- `src/model/links.ts`: plug roles, Auto-connect and cable sizes.
+- `src/ui/`: React UI.
+  - `Viewer3D.tsx`: the 3D view, with picking, animation and explode.
+  - `pickOps.ts`: what a selection is and how it is removed.
+  - `RackBuilder.tsx`: the rails step.
+  - `BoardEditor.tsx`, `PanelEditor.tsx` and `WiringView.tsx`: the 2D board editor, the Rails view and the Wiring view.
 - `src/worker/`: geometry and FEA run in web workers.
 - `electron/`: desktop shell.
 - `.github/workflows/`: CI, and a release job that builds installers for all three platforms and publishes the web app.

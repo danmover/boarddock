@@ -29,6 +29,50 @@ function expand(files: InFile[]): InFile[] {
   return out;
 }
 
+const BOARD_FILE = /\.(kicad_pcb|step|stp|dxf|emn|idf)$/i;
+const base = (n: string) => n.replace(/\.[^.]+$/, '').toLowerCase();
+
+/**
+ * Split one drop into boards: every KiCad, STEP, DXF or IDF file (with the .emp of the same name) and every Eagle
+ * .brd is a board of its own; a zip is one board unless it holds several board files; loose Gerber, drill and
+ * pick-and-place files together make one board. Files sharing a board file's name go with it.
+ */
+export function groupFiles(files: InFile[]): InFile[][] {
+  const groups: InFile[][] = [];
+  const loose: InFile[] = [];
+  const isEagle = (f: InFile) => /\.brd$/i.test(f.name) && /<eagle/i.test(strFromU8(f.bytes.slice(0, 2000)));
+  const split = (list: InFile[], rest: InFile[]) => {
+    const heads = list.filter((f) => BOARD_FILE.test(f.name) || isEagle(f));
+    const used = new Set<InFile>();
+    for (const h of heads) {
+      if (used.has(h)) continue;
+      const g = list.filter((f) => !used.has(f) && (f === h || base(f.name) === base(h.name)));
+      g.forEach((f) => used.add(f));
+      groups.push(g);
+    }
+    rest.push(...list.filter((f) => !used.has(f)));
+  };
+  for (const f of files) {
+    if (!/\.zip$/i.test(f.name)) { loose.push(f); continue; }
+    const inner = expand([f]);
+    if (inner.filter((x) => BOARD_FILE.test(x.name) || isEagle(x)).length > 1) { const rest: InFile[] = []; split(inner, rest); if (rest.length) groups.push(rest); }
+    else groups.push(inner);
+  }
+  const rest: InFile[] = [];
+  split(loose, rest);
+  if (rest.length) groups.push(rest);
+  return groups;
+}
+
+/** Import every board in a drop; files that fail are reported, the rest still come in. */
+export async function importMany(files: InFile[]): Promise<{ boards: Board[]; errors: string[] }> {
+  const boards: Board[] = [], errors: string[] = [];
+  for (const g of groupFiles(files)) {
+    try { boards.push(await importFiles(g)); } catch (e: any) { errors.push(`${g.map((f) => f.name).slice(0, 3).join(', ')}${g.length > 3 ? '…' : ''}: ${e?.message ?? e}`); }
+  }
+  return { boards, errors };
+}
+
 export async function importFiles(files: InFile[]): Promise<Board> {
   const all = expand(files);
   const by = (re: RegExp) => all.find((f) => re.test(f.name));

@@ -11,14 +11,14 @@ import { addDock, addRail, appendToRail, autoArrange, duplicateModule, newRailWi
 import { turnLabel } from '../cad/dockplan';
 import { Icon, I } from './icons';
 
-const DIR_TEXT: Record<string, string> = { front: 'faces you', up: 'points up', down: 'points down', left: 'points left', right: 'points right', wall: 'into the wall' };
+const DIR_TEXT: Record<string, string> = { front: 'points up', up: 'points back', down: 'points toward you', left: 'points left', right: 'points right', wall: 'into the table' };
 const EDGE_OPTS: ['auto' | EdgeName, string][] = [['auto', 'auto edge'], ['bottom', 'bottom edge'], ['top', 'top edge'], ['left', 'left edge'], ['right', 'right edge']];
 
 export function AccessChips({ list }: { list: Access[] }) {
   const c = accessCounts(list);
   if (!list.length) return null;
   return (
-    <span className="accchips" title="◉ faces you · ✓ reachable · ⚠ points at the next dock · ✕ into the wall">
+    <span className="accchips" title="◉ points up · ✓ reachable · ⚠ points at the next dock · ✕ into the table">
       {c.front > 0 && <Chip status="ok">◉{c.front}</Chip>}
       {c.good - c.front > 0 && <Chip status="ok">✓{c.good - c.front}</Chip>}
       {c.side > 0 && <Chip status="warn">⚠{c.side}</Chip>}
@@ -112,7 +112,7 @@ export function RackBuilder() {
           </div>
         )}
         <div style={{ marginTop: 8 }}><Check label="Two boards back to back in one dock when their plugs allow it" value={P.pairs} onChange={(v) => setAuto((q) => { q.pairs = v; })} /></div>
-        <p className="hint">{P.auto ? 'Every board is turned so its plugs stay reachable and packed onto rails. Drag anything below, or on the Wall view, to take over by hand.' : 'Your own layout. Auto-arrange starts over (⌘Z undoes it).'}</p>
+        <p className="hint">{P.auto ? 'Every board is turned so its plugs stay reachable and packed onto rails. Drag anything below, or in the Rails view, to take over by hand.' : 'Your own layout. Auto-arrange starts over (⌘Z undoes it).'}</p>
       </Section>
 
       <div className="rack">
@@ -145,6 +145,7 @@ export function RackBuilder() {
       </div>
 
       <StackSection />
+      <TableStands />
 
       {one && <DockInspector one={one} rep={rep!} />}
       {mountsSel.length > 1 && (
@@ -179,9 +180,41 @@ export function RackBuilder() {
             <Pick label="Pull tab points" value={p.mount.tabSide} options={[['down', 'Down'], ['up', 'Up']]} onChange={(v) => edit((q) => { q.mount.tabSide = v; })} />
           </div>
         )}
-        <p className="hint">TS35 × 7.5 top-hat rail, cut with a hacksaw. {rep ? `Rails to cut: ${rep.rails.map((r) => `${Math.round(r.length)} mm`).join(' + ') || 'none'}. Deepest point ${Math.round(rep.depth)} mm from the wall.` : ''}</p>
+        <p className="hint">TS35 × 7.5 top-hat rail, cut with a hacksaw. {rep ? `Rails to cut: ${rep.rails.map((r) => `${Math.round(r.length)} mm`).join(' + ') || 'none'}. Tallest point ${Math.round(rep.height ?? rep.depth)} mm above the ${rep.stands?.length ? 'table' : 'rail base'}.` : ''}</p>
       </details>
     </>
+  );
+}
+
+/** Printed sleepers under the rails, with cable combs sized for the routed cables. */
+function TableStands() {
+  const on = useApp((s) => s.project?.panel.stands !== false);
+  const parts = useApp((s) => s.result?.parts);
+  const rep = useApp((s) => s.result?.report);
+  const st = (parts ?? []).filter((x) => x.tag?.kind === 'railstand');
+  const vol = st.reduce((a, x) => a + x.volume * x.qty, 0);
+  const n = (k: string) => st.filter((x) => x.name.startsWith(k)).reduce((a, x) => a + x.qty, 0);
+  const combs = st.filter((x) => /comb/.test(x.name)).reduce((a, x) => a + x.qty, 0);
+  const sag = rep?.checks.find((c) => c.name === 'Rail sag between sleepers');
+  return (
+    <Section title="Table stands" right={<Chip status={on ? 'ok' : 'info'}>{on ? `${rep?.panel?.stands?.length ?? 0} sleepers` : 'off'}</Chip>}>
+      <Check label="Print stands that hold the rails on a table" value={on} onChange={(v) => edit((q) => { q.panel.stands = v; })} />
+      {on && st.length > 0 && (
+        <>
+          <div className="bigstat" style={{ marginTop: 10, gridTemplateColumns: "repeat(4, 1fr)" }}>
+            <div><b>{n('Rail end block')}</b><span>end blocks</span></div>
+            <div><b>{n('Rail saddle')}</b><span>saddles</span></div>
+            <div><b>{n('Stand spacer') + n('Stand foot')}</b><span>spacers, feet</span></div>
+            <div><b>{combs}</b><span>cable combs</span></div>
+          </div>
+          <p className="hint">
+            A sleeper crosses the rails at each end{rep?.panel?.stands && rep.panel.stands.length > 2 ? ' and every 200 mm or less between' : ''}. The rail ends push into end blocks, saddles carry the rails between, and spacer bars slide into the blocks' dovetails. Where a cable street crosses a sleeper its spacer gets a comb with one snap-in slot per cable, sized for it. The rails stand clear of the table, so cables can pass under them.
+            {' '}{Math.round(vol / 100) / 10} cm³ in all, every piece printed on its end without supports.{sag ? ` Rail sag under a 20 N press: ${sag.value}.` : ''}
+          </p>
+        </>
+      )}
+      {!on && <p className="hint">Off: fix the rails to your own base. Cables still route between the rails.</p>}
+    </Section>
   );
 }
 

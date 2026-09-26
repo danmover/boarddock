@@ -1,4 +1,4 @@
-// The panel as seen on the wall: DIN rails, docks and the boards in them, with the direction every plug points.
+// The rack seen from above: DIN rails, table stands, docks and the boards in them, with the direction every plug points.
 // Drag docks along or between rails, drag rails to move them, drag boards from the sidebar onto a rail or a dock.
 // Keys: R / Shift+R turn, F swap front and back, arrows move along the rail (Shift = 10 mm), Del remove,
 // Cmd/Ctrl+A select all docks, Esc clear.
@@ -7,7 +7,7 @@ import type { Access, PanelReport, V2 } from '../model/types';
 import { isSel, select, store, useApp, type SelItem } from '../state';
 import { addDock, addRail, autoArrange, moveRail, nudge, placeMount, removeMounts, removeRails, seat, swapSlots, turnMounts } from './panelOps';
 
-export const PALETTE = ['#ff7a2f', '#5aa9ff', '#46d58b', '#f5c542', '#c084fc', '#2dd4bf', '#fb7185', '#a3e635'];
+export const PALETTE = ['#4c8dff', '#46d58b', '#f5c542', '#c084fc', '#2dd4bf', '#fb7185', '#a3e635', '#38bdf8'];
 export const MODULE_DRAG = 'application/x-boarddock-module';
 
 const ARROW: Record<string, string> = { up: '↑', down: '↓', left: '←', right: '→', front: '◉', wall: '✕' };
@@ -94,9 +94,10 @@ export function PanelEditor() {
     const t = (e.target as SVGElement).closest('[data-kind]') as SVGElement | null;
     const multi = e.shiftKey || e.metaKey || e.ctrlKey;
     if (t) {
-      const it: SelItem = { kind: t.dataset.kind as 'mount' | 'rail', id: t.dataset.id! };
+      const it: SelItem = { kind: t.dataset.kind as 'mount' | 'rail' | 'railstand', id: t.dataset.id! };
       if (multi) select([it], 'toggle');
       else if (!isSel(sel, it.id)) select([it]);
+      if (it.kind === 'railstand') return; // the stands follow the rails: select only
       const now = store.get().sel;
       if (it.kind === 'rail') drag.current = { kind: 'rail', start: w, client: [e.clientX, e.clientY], vb0: vb, ids: [it.id] };
       else drag.current = { kind: 'move', start: w, client: [e.clientX, e.clientY], vb0: vb, ids: now.filter((s) => s.kind === 'mount').map((s) => s.id) };
@@ -233,6 +234,10 @@ export function PanelEditor() {
         </defs>
         <rect x={vb.x - vb.w} y={vb.y - vb.h} width={vb.w * 3} height={vb.h * 3} fill="url(#pg50)" />
 
+        {(rep?.stands ?? []).map((st) => {
+          const f = st.foot, on = isSel(sel, `s${st.station}`);
+          return <rect key={st.station} data-kind="railstand" data-id={`s${st.station}`} x={f[0]} y={-f[3]} width={f[2] - f[0]} height={f[3] - f[1]} rx={2.5} fill="#7c8896" fillOpacity={on ? 0.8 : 0.5} stroke={on ? 'var(--accent)' : '#56616c'} strokeWidth={fs(on ? 2 : 1)} style={{ cursor: 'pointer' }} />;
+        })}
         {(rep?.rails ?? []).map((r) => {
           const o = ghost?.railMove === r.id ? ghost.d : [0, 0];
           const x = r.x + o[0], y = r.y + o[1];
@@ -259,15 +264,18 @@ export function PanelEditor() {
           const rot = -(m.turn + (h ? 0 : 90));
           if (layer === 'hub') return (
             <g key={`h${m.id}`} data-kind="mount" data-id={m.id} style={{ cursor: 'grab' }}>
-              {m.kind === 'dock' && <rect x={sx - (h ? 10.5 : 25)} y={-(sy + (h ? 25 : 10.5))} width={h ? 21 : 50} height={h ? 50 : 21} rx={2} fill="#f59e42" stroke="#7a4a12" strokeWidth={fs(1)} />}
+              {m.kind === 'dock' && <rect x={sx - (h ? 10.5 : 25)} y={-(sy + (h ? 25 : 10.5))} width={h ? 21 : 50} height={h ? 50 : 21} rx={2} fill="#5b6570" stroke="#2a3038" strokeWidth={fs(1)} />}
               {m.kind === 'dock' && (() => {
-                // release lever pad (hub y 21.9..24.9 on the lever side)
+                // release lever: arm over hub y 10..28.8 on its side, red pad at the outer end
                 const L = m.leverSide;
-                const x0 = h ? sx - 10.5 : sx - L * 24.9, y0 = h ? sy + L * 21.9 : sy - 10.5;
-                const w = h ? 21 : 3, hh = h ? 3 : 21;
-                return <rect x={h ? x0 : Math.min(x0, x0 + L * 3)} y={-(h ? Math.max(y0, y0 + L * 3) : y0 + hh)} width={w} height={hh} rx={0.8} fill="#ffd08a" stroke="#7a4a12" strokeWidth={fs(0.8)} />;
+                const arm = (a: number, b: number, fill: string) => {
+                  const x0 = h ? sx - 10.5 : sx - L * b, y0 = h ? sy + L * a : sy - 10.5;
+                  const w = h ? 21 : b - a, hh = h ? b - a : 21;
+                  return <rect x={h ? x0 : Math.min(x0, x0 + L * (b - a))} y={-(h ? Math.max(y0, y0 + L * (b - a)) : y0 + hh)} width={w} height={hh} rx={1} fill={fill} stroke="#2a3038" strokeWidth={fs(0.8)} />;
+                };
+                return <>{arm(10, 24.6, '#8a949e')}{arm(24.6, 28.8, '#ff4d5e')}</>;
               })()}
-              {m.kind === 'dock' && <rect x={sx - 9} y={-(sy + 10.4)} width={18} height={20.8} rx={1.5} transform={`rotate(${rot} ${sx} ${-sy})`} fill="#5b8def" stroke="#1d3f8a" strokeWidth={fs(1)} />}
+              {m.kind === 'dock' && <rect x={sx - 9} y={-(sy + 10.4)} width={18} height={20.8} rx={1.5} transform={`rotate(${rot} ${sx} ${-sy})`} fill="#4c8dff" stroke="#1d3f8a" strokeWidth={fs(1)} />}
               {m.kind === 'dock' && <path d={`M${sx - 3.5} ${-sy - 3} L${sx} ${-sy - 8} L${sx + 3.5} ${-sy - 3}`} transform={`rotate(${rot} ${sx} ${-sy})`} fill="none" stroke="#fff" strokeWidth={fs(1.8)} strokeLinecap="round" strokeLinejoin="round" />}
               {m.kind === 'flat' && <rect x={sx - (h ? 7 : 25)} y={-(sy + (h ? 25 : 7))} width={h ? 14 : 50} height={h ? 50 : 14} rx={2} fill="#ff6b5b" stroke="#7a2a22" strokeWidth={fs(1)} />}
             </g>
@@ -302,7 +310,7 @@ export function PanelEditor() {
                 const mid = (a0 + a1) / 2;
                 const cx = (h ? (f[0] + f[2]) / 2 : mid) + o[0], cy = (h ? mid : (f[1] + f[3]) / 2) + o[1];
                 const across = (h ? f[2] - f[0] : f[3] - f[1]) / px, along = Math.abs(a1 - a0) / px;
-                const name = nameOf(q.id);
+                const name = nameOf(q.id) + (q.stack?.length ? ` + ${q.stack.join(' + ')}` : '');
                 const fsz = 11.5;
                 const vertical = h ? across < Math.max(name.length * fsz * 0.6, 24 * 5.9) + 16 && along > across : false;
                 const sub = `${q.edge} edge in · ◉${cnt.front} ✓${cnt.good - cnt.front}${cnt.side ? ` ⚠${cnt.side}` : ''}${cnt.blocked ? ` ✕${cnt.blocked}` : ''}`;
@@ -371,7 +379,7 @@ export function PanelEditor() {
       )}
 
       <div className="hud floating mono">
-        <span>{building && !rep ? 'building the panel…' : rep ? `${rep.rails.length} rail${rep.rails.length === 1 ? '' : 's'} · ${rep.mounts.length} mount${rep.mounts.length === 1 ? '' : 's'} · ${Math.round(rep.depth)} mm deep${project.panel.auto ? ' · auto' : ' · manual'}` : project.layout === 'panel' ? '' : 'Loose holders: switch the Panel step to DIN rails'}</span>
+        <span>{building && !rep ? 'building the panel…' : rep ? `${rep.rails.length} rail${rep.rails.length === 1 ? '' : 's'} · ${rep.mounts.length} mount${rep.mounts.length === 1 ? '' : 's'} · ${Math.round(rep.height ?? rep.depth)} mm tall${rep.stands?.length ? ` · ${rep.stands.length} table stands` : ''}${project.panel.auto ? ' · auto' : ' · manual'}` : project.layout === 'panel' ? '' : 'Loose holders: switch the Panel step to DIN rails'}</span>
         <span>drag docks along or between rails · R turn · F swap · drag boards from the list onto a rail</span>
         {cursor && <span className="xy">{cursor[0].toFixed(0)}, {cursor[1].toFixed(0)}</span>}
       </div>

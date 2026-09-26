@@ -2,13 +2,15 @@ import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { zipSync, strToU8 } from 'fflate';
 import type { Board, Comp, Hole, HoleRole, Project, V2 } from '../model/types';
 import { applyHoleRoles, boltedOn, detectHoleRoles, ROLE_INFO } from '../model/holes';
+import { compatible, KIND_COLOR, linkKind, linkOf, plugName, plugRole, plugsOf, sameRef } from '../model/links';
+import { addLinks, removeLinks, setLink } from './linkOps';
 import { Icon, I } from './icons';
 import { CONNECTORS, DEFAULT_FEATURES, HOLDER_PRESETS, MATERIALS, PRINTERS, connById, connSetup } from '../model/library';
 import { TEMPLATES } from '../model/templates';
 import { ACCEPT } from '../import';
 import { openFiles } from './importFlow';
 import { bbox, circleLoop, roundedRectLoop, round, uid } from '../geom/poly';
-import { activeModule, addBoard, closeProject, edit, editMod, isSel, select, setBoard, store, useApp, type SelItem } from '../state';
+import { activeModule, addBoard, closeProject, edit, editMod, isSel, putBoards, select, store, toast, useApp, type SelItem } from '../state';
 import { Check, Chip, Num, Pick, Section, Seg, Text, download, safeName } from './controls';
 import { estimate, packPlates, placedMesh, write3mf, writeStl } from '../cad/export';
 import { buildTestKit, runClipFea } from '../worker/client';
@@ -25,9 +27,9 @@ export function ImportPanel() {
   const [over, setOver] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const hasProject = useApp((s) => !!s.project);
-  const addMode = useApp((s) => s.addMode);
-  const setAddMode = (v: boolean) => store.set({ addMode: v });
-  const put = (b: Board) => (addMode && hasProject ? addBoard(b) : setBoard(b));
+  const replaceMode = useApp((s) => s.replaceMode);
+  const nBoards = useApp((s) => s.project?.modules.length ?? 0);
+  const put = (b: Board) => { putBoards([b], replaceMode); if (hasProject && !replaceMode) toast(`Added ${b.name} (${nBoards + 1} boards). ⌘Z undoes it.`); };
 
   const handle = async (fl: FileList | File[]) => {
     const files = Array.from(fl);
@@ -53,14 +55,25 @@ export function ImportPanel() {
         <p>KiCad · STEP · IDF · Eagle/Fusion · Gerber + drill + pick & place (zip is fine) · DXF · BoardDock project</p>
         <input ref={input} type="file" multiple accept={ACCEPT} hidden onChange={(e) => e.target.files && handle(e.target.files)} />
       </div>
-      {hasProject && <div className="section" style={{ marginTop: 10, padding: '6px 12px' }}><Check label="Add as another board (it joins the rails)" value={addMode} onChange={setAddMode} /></div>}
+      {hasProject && (
+        <div className="section" style={{ marginTop: 10, padding: '8px 12px' }}>
+          <p className="hint" style={{ marginTop: 0 }}>Boards you drop or pick join this project ({nBoards} so far) and go on the rails. Drop several files at once for several boards.</p>
+          <Check label="Replace the board being edited instead" value={replaceMode} onChange={(v) => store.set({ replaceMode: v })} />
+        </div>
+      )}
       {busy && <div className="progress" style={{ margin: '8px 0' }}><div /></div>}
       {err && <div className="err" style={{ margin: '10px 0' }}>{err}</div>}
       <div style={{ height: 10 }} />
       <Section title="Start from a known board">
         <div className="tiles">
-          {TEMPLATES.map((t) => { const [n, sz] = t.name.split(' ('); return <button key={t.id} className="tile" onClick={() => put(t.make())}><span>{n}</span>{sz && <small>{sz.replace(')', '')}</small>}</button>; })}
+          {TEMPLATES.filter((t) => !t.accessory).map((t) => { const [n, sz] = t.name.split(' ('); return <button key={t.id} className="tile" onClick={() => put(t.make())}><span>{n}</span>{sz && <small>{sz.replace(')', '')}</small>}</button>; })}
         </div>
+      </Section>
+      <Section title="Hubs, chargers and add-ons">
+        <div className="tiles">
+          {TEMPLATES.filter((t) => t.accessory).map((t) => { const [n, sz] = t.name.split(' ('); return <button key={t.id} className="tile" onClick={() => (hasProject ? addBoard(t.make()) : put(t.make()))}><span>{n}</span>{sz && <small>{sz.replace(')', '')}</small>}</button>; })}
+        </div>
+        <p className="hint">They go on their own rail next to the boards, strapped into a low holder, and Auto-connect wires the boards to them. {hasProject ? 'Clicking one adds it to this project.' : ''}</p>
       </Section>
       <ManualBoard put={put} />
       <details className="section">
@@ -274,7 +287,66 @@ export function PlugsPanel() {
         </div>
       </Section>
       {chosen.length > 0 && <ConnEditor list={chosen} />}
+      <CablesSection />
     </div>
+  );
+}
+
+/** Every cable in the project: what goes where, how long, what to buy. */
+function CablesSection() {
+  const p = useApp((s) => s.project)!;
+  const cables = useApp((s) => s.result?.report.cables ?? []);
+  const sel = useApp((s) => s.sel);
+  const links = p.links ?? [];
+  const nm = (r: { module: string; ref: string }) => `${p.modules.find((m) => m.id === r.module)?.board.name ?? '?'} ${r.ref}`;
+  const buy = new Map<string, number>();
+  for (const l of links) {
+    const c = cables.find((x) => x.id === l.id);
+    const A = p.modules.find((m) => m.id === l.a.module)?.board.comps.find((x) => x.ref === l.a.ref), B = p.modules.find((m) => m.id === l.b.module)?.board.comps.find((x) => x.ref === l.b.ref);
+    const key = `${c ? `${c.buy} m ` : ''}${plugName(A?.conn?.type ?? '')} to ${plugName(B?.conn?.type ?? '')}`;
+    buy.set(key, (buy.get(key) ?? 0) + 1);
+  }
+  return (
+    <Section title={`Cables · ${links.length}`} right={<span className="btns">
+      <button className="btn small soft" onClick={() => addLinks()}><Icon d={I.wand} /> Auto-connect</button>
+      <button className="btn small ghost" onClick={() => store.set({ view: 'wiring' })}>Wiring view</button>
+    </span>}>
+      {!links.length ? <p className="hint" style={{ marginTop: 0 }}>Say what plugs into what (a Pi's USB to an Arduino, power from a charger) and BoardDock keeps connected boards together on the rails, routes each cable along the channels between the rails, and tells you how long a cable to buy. <b>Auto-connect</b> fills in the obvious ones.</p> : (
+        <>
+          <div className="list">
+            {links.map((l) => {
+              const c = cables.find((x) => x.id === l.id);
+              return (
+                <div key={l.id} className={`item ${isSel(sel, l.id) ? 'sel' : ''}`} onClick={() => select([{ kind: 'link', id: l.id }])}>
+                  <span className="dot" style={{ background: KIND_COLOR[l.kind ?? 'usb'], borderRadius: 99 }} />
+                  <span className="grow"><b>{nm(l.a)}</b> <small>to</small> <b>{nm(l.b)}</b></span>
+                  {c ? <span className="chip">{Math.round(c.length / 10)} cm</span> : <span className="chip">not on the rails</span>}
+                  <button className="btn small ghost icon" title="Remove the cable" onClick={(e) => { e.stopPropagation(); removeLinks([l.id]); }}><Icon d={I.x} /></button>
+                </div>
+              );
+            })}
+          </div>
+          <div className="divider" />
+          <div className="field"><span>Cables to buy (route + 10%, next standard length)</span></div>
+          <ul className="fmt" style={{ marginTop: 4 }}>{[...buy.entries()].map(([k, n]) => <li key={k}>{n} × {k}</li>)}</ul>
+        </>
+      )}
+    </Section>
+  );
+}
+
+/** "Cable to" picker for one connector. */
+function CableTo({ c }: { c: Comp }) {
+  const p = useApp((s) => s.project)!;
+  const m = activeModule(p);
+  const me = { module: m.id, ref: c.ref };
+  const cur = linkOf(p, me);
+  const other = cur ? (sameRef(cur.a, me) ? cur.b : cur.a) : null;
+  const myRole = plugRole(m, c);
+  const options = plugsOf(p).filter((q) => q.module !== m && compatible(myRole, q.role));
+  return (
+    <Pick label="Cable to" value={other ? `${other.module}|${other.ref}` : ''} options={[['', options.length ? '— not connected —' : '— nothing it fits —'], ...options.map((q) => [`${q.ref.module}|${q.ref.ref}`, `${q.module.board.name} · ${q.label}`] as [string, string])]}
+      onChange={(v) => { if (!v) setLink(me, null); else { const [mod, ref] = v.split('|'); const q = options.find((x) => x.ref.module === mod && x.ref.ref === ref)!; setLink(me, q.ref, linkKind(myRole, q.role)); } }} />
   );
 }
 
@@ -301,6 +373,7 @@ function ConnEditor({ list }: { list: Comp[] }) {
           <Pick label="Plug enters" value={common(cs, (c) => c.entry) ?? ('' as 'edge')} options={[['edge', 'Through the edge'], ['top', 'From above']]} onChange={(v) => set((x) => { x.conn!.entry = v; })} />
           <Pick label="Mounted on" value={common(list, (c) => c.side) ?? ('' as 'top')} options={[['top', 'Top side'], ['bottom', 'Bottom side']]} onChange={(v) => set((x) => { x.side = v; })} />
         </div>
+        {one && <div style={{ marginTop: 8 }}><CableTo c={list[0]} /></div>}
         {one && cs[0].entry === 'edge' && (
           <>
             <div className="row" style={{ marginTop: 8 }}>
@@ -341,6 +414,12 @@ export function HolderPanel() {
     <div>
       <ModulePicker />
       <HolderStyle />
+      {p.layout === 'panel' && (
+        <Section title="Release button">
+          <Seg value={H.release ?? 'centre'} options={[['centre', 'Centred'], ['side', 'Beside the board'], ['auto', 'Automatic']]} onChange={(v) => set((h) => { h.release = v; })} />
+          <p className="hint">{(H.release ?? 'centre') === 'centre' ? 'The button sits in the middle of the holder’s far edge; the spine that carries its rod runs under the board, which sits about 10 mm up.' : (H.release ?? 'centre') === 'side' ? 'The spine, grip bar and button run beside the board: the board sits low and the far edge stays free for plugs.' : 'Picks centred or beside for each board, whichever keeps the plugs clear with the least plastic.'} Plugs in the way always win: the button moves if it would block one.</p>
+        </Section>
+      )}
       <Section title="Material">
         <Seg value={H.material} options={(Object.keys(MATERIALS) as (keyof typeof MATERIALS)[]).map((m) => [m, m])} onChange={(v) => set((h) => { h.material = v; })} />
         <p className="hint">{H.material === 'PLA' ? 'PLA works but is stiff and brittle for springs and softens around 55 °C. PETG is the default.' : `${H.material}: E ≈ ${MATERIALS[H.material].E} MPa, spring strain limit ${(MATERIALS[H.material].strainAllow * 100).toFixed(1)}%.`}</p>
@@ -405,7 +484,7 @@ export function HolderPanel() {
         <div style={{ marginTop: 8 }}><Text label="Engraved label" value={H.label} placeholder="e.g. SENSOR HUB" onChange={(v) => set((h) => { h.label = v; })} /></div>
         <div className="field" style={{ marginTop: 10 }}><span>Filament colour (preview)</span>
           <div className="swatches">
-            {[['#e9e6df', 'Bone'], ['#3a4048', 'Graphite'], ['#ff7a2f', 'Signal orange'], ['#46d58b', 'Mint'], ['#4f8cff', 'Blue'], ['#f5c542', 'Yellow']].map(([c, n]) => (
+            {[['#e9e6df', 'Bone'], ['#3a4048', 'Graphite'], ['#4c8dff', 'Blue'], ['#46d58b', 'Mint'], ['#c084fc', 'Violet'], ['#f5c542', 'Yellow']].map(([c, n]) => (
               <button key={c} title={n} className={(H.color ?? '#e9e6df') === c ? 'on' : ''} style={{ background: c }} onClick={() => set((h) => { h.color = c; })} />
             ))}
           </div>
@@ -667,7 +746,7 @@ export function ExportPanel() {
   );
 }
 
-function fmtMin(m: number) { return m < 60 ? `${Math.round(m)} min` : `${Math.floor(m / 60)} h ${Math.round(m % 60)} min`; }
+function fmtMin(m: number) { const t = Math.round(m); return t < 60 ? `${t} min` : `${Math.floor(t / 60)} h ${t % 60} min`; }
 
 function PlateThumb({ pl, bed }: { pl: ReturnType<typeof packPlates>[number]; bed: V2 }) {
   const cx = (bed[0] - pl.used[0]) / 2, cy = (bed[1] - pl.used[1]) / 2;
@@ -731,7 +810,7 @@ export function LayoutSection() {
   const setA = (fn: (a: Project['arrange']) => void) => edit((q) => fn(q.arrange));
   const multi = p.modules.length > 1;
   return (
-    <Section title={`Boards (${p.modules.length})`} right={<button className="btn small" onClick={() => store.set({ step: 'import', addMode: true })}>+ Add board</button>}>
+    <Section title={`Boards (${p.modules.length})`} right={<button className="btn small" onClick={() => store.set({ step: 'import', replaceMode: false })}>+ Add board</button>}>
       <div className="list">
         {p.modules.map((m, i) => (
           <div key={m.id} className={`item ${p.active === i ? 'sel' : ''}`} onClick={() => edit((q) => { q.active = i; })}>

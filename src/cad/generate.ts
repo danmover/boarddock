@@ -9,9 +9,11 @@ import { box, circle2, csLoops, cyl, ext, extCh, freeAll, K, orientedBox, poly, 
 import { buildClip, clipDims, clipSlots, hookOffset4, railProfile } from './dinclip';
 import { textCS, textWidth } from './font';
 import { computeLevels } from './levels';
+import { boardDetail, plugDetail } from './boardviz';
 import { DOCK_MIN_ZB, gripSpan, holderDock, HD, rod } from './dock';
 import { dockFrame, dockSite, type DockSite } from './dockplan';
 import { inv, type M4 } from '../geom/mat';
+import { rectSection, roundSection, solveFrame, type FElem, type FNode } from '../fea/frame3d';
 
 const ID = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
@@ -60,6 +62,7 @@ interface Ctx {
   rimH: number; // frame rim height
   ribNodes: { p: V2; r: number }[]; // points the frame's ribs must reach (pins, pads)
   features: Feature[];
+  plugs: PlugEnd[];
 }
 
 const dirOf = (a: number): V2 => [Math.cos(rad(a)), Math.sin(rad(a))];
@@ -133,7 +136,9 @@ function wallPiece(C: Ctx, q: V2, d: V2, s0: number, s1: number, z1: number) {
 
 export { computeLevels } from './levels';
 
-export interface ModuleOut { parts: PartOut[]; ghosts: Ghost[]; warnings: string[]; checks: Check[]; levels: GenResult['report']['levels']; clipAt: V2 | null; clipT: number[] | null; dockM: M4 | null; features: Feature[] }
+/** Where a plug's cable leaves it (holder frame): the end of the plug body and the way it points. */
+export interface PlugEnd { module: string; ref: string; p: [number, number, number]; d: [number, number, number]; cable: number }
+export interface ModuleOut { parts: PartOut[]; ghosts: Ghost[]; warnings: string[]; checks: Check[]; levels: GenResult['report']['levels']; clipAt: V2 | null; clipT: number[] | null; dockM: M4 | null; features: Feature[]; plugs: PlugEnd[] }
 
 // Built modules are cached by their inputs: moving, turning or re-pairing docks does not rebuild holders.
 const cache = new Map<string, ModuleOut>();
@@ -155,8 +160,13 @@ export function buildModule(job: Job): ModuleOut {
   }
 }
 
+/** Boxes (hubs, chargers) sit in low guards and are strapped down; no snap fingers, notches or label. */
+const holderFor = (H: HolderSettings, b: Board): HolderSettings =>
+  b.kind === 'box' ? { ...H, tabs: 'off', notches: false, label: '', wallAbove: Math.min(H.wallAbove, -(b.thickness - 8)), standoff: H.standoff ?? 1.2, minStandoff: 1.2 } : H;
+
 function build(job: Job): ModuleOut {
-  const { p, b, H } = job;
+  const { p, b } = job;
+  const H = holderFor(job.H, b);
   const warnings: string[] = [...b.notes];
   const checks: Check[] = [];
   const mat = MATERIALS[H.material];
@@ -179,7 +189,7 @@ function build(job: Job): ModuleOut {
   const outer = O.offset(H.gap + H.wall, 'Round');
   const frame = (H.style ?? 'frame') === 'frame';
   const C: Ctx = { p, job, H, b, base, s, zb, zt, zw, O, inner, outer, warnings, checks, pos: [], neg: [], late: [], keep: [], blocked: [], parts: [], ghosts: [], standoffs: [], keepouts, dock: site,
-    mid: p.modules[job.mi]?.id ?? `m${job.mi}`, frame, rimH: Math.min(zb - 0.3, base + 1.2), ribNodes: [], features: [] };
+    mid: p.modules[job.mi]?.id ?? `m${job.mi}`, frame, rimH: Math.min(zb - 0.3, base + 1.2), ribNodes: [], features: [], plugs: [] };
   checks.push({ group: 'Board', name: 'Clearance under the board', value: `${round(s, 1)} mm`, status: 'info', detail: needMax ? `tallest underside item needs ${round(needMax, 1)} mm (${keepouts.sort((a, c) => c.need - a.need)[0].why}); deeper items get pockets in the base` : 'nothing under the board' });
 
   // ---- base and wall ----
@@ -196,6 +206,7 @@ function build(job: Job): ModuleOut {
   }
 
   connectors(C);
+  if (b.kind === 'box') strapLoops(C);
   overhangs(C);
   if (site) dockBlocks(C, site);
   // label first so it gets a long free wall; if that leaves no room for two fingers, drop the label
@@ -217,7 +228,7 @@ function build(job: Job): ModuleOut {
   arrangeFeatures(C);
   if (H.notches && !frame) notches(C, tabsUsed);
   if (frame) frameRibs(C);
-  else pattern(C);
+  else { pattern(C); supportChecks(C, supportFea(C, C.ribNodes, [], 1, 2 * base)); }
 
   // ---- assemble the holder ----
   let holder = unionMF(C.pos);
@@ -227,8 +238,10 @@ function build(job: Job): ModuleOut {
   if (pieces.length > 1) {
     // keep the main body, report stray islands (can happen with odd user geometry)
     const main = pieces.reduce((a, c) => (c.volume() > a.volume() ? c : a));
-    const lost = pieces.filter((x) => x !== main).reduce((sum, x) => sum + x.volume(), 0);
-    if (lost > 1) warnings.push(`${pieces.length - 1} loose piece(s) (${round(lost, 0)} mm³) were dropped from the holder. Check features near the board edge.`);
+    const lostList = pieces.filter((x) => x !== main);
+    const lost = lostList.reduce((sum, x) => sum + x.volume(), 0);
+    const where = lostList.map((x) => { const bb = x.boundingBox(); return `${round((bb.min[0] + bb.max[0]) / 2, 0)}, ${round((bb.min[1] + bb.max[1]) / 2, 0)}, z ${round(bb.min[2], 1)}–${round(bb.max[2], 1)}`; }).join('; ');
+    if (lost > 1) warnings.push(`${pieces.length - 1} loose piece(s) (${round(lost, 0)} mm³) were dropped from the holder (at ${where}). Check features near the board edge.`);
     holder = main;
   }
   const lv = job.level ?? 0;
@@ -247,7 +260,7 @@ function build(job: Job): ModuleOut {
   }
   checks.push({ group: 'Print', name: 'Material', value: H.material, status: H.material === 'PLA' ? 'warn' : 'ok', detail: H.material === 'PLA' ? `PLA is stiff and brittle for springs and softens at ~${mat.tg} °C. PETG, ASA or PA are better for clips.` : `strain limit used for springs: ${(mat.strainAllow * 100).toFixed(1)}%` });
   const clip = C.parts.find((x) => x.id.endsWith('_clip'));
-  return { parts: C.parts, ghosts: C.ghosts, warnings, checks, levels: { base, boardBottom: zb, boardTop: zt, wallTop: zw }, clipAt: (C as any).clipAt ?? null, clipT: clip ? clip.toAssembly : null, dockM: site ? dockFrame(site.edge, site.tc, site.L0) : null, features: C.features };
+  return { parts: C.parts, ghosts: C.ghosts, warnings, checks, levels: { base, boardBottom: zb, boardTop: zt, wallTop: zw }, clipAt: (C as any).clipAt ?? null, clipT: clip ? clip.toAssembly : null, dockM: site ? dockFrame(site.edge, site.tc, site.L0) : null, features: C.features, plugs: C.plugs };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -271,11 +284,12 @@ function standoffs(C: Ctx, fingersHold: boolean) {
     C.ribNodes.push({ p: at, r });
     C.keep.push(circle2(h.x, h.y, r + 1.4));
     feat(C, 'pin', [[h.x - r, h.y - r], [h.x + r, h.y + r]], 0, zt + 1.5, [h.id]);
-    C.pos.push(cyl(h.x, h.y, base - 0.01, zb, r));
-    C.pos.push(cyl(h.x, h.y, base - 0.01, base + 0.4, r + 0.5), cyl(h.x, h.y, base + 0.39, base + 0.8, r + 0.25));
+    C.pos.push(cyl(h.x, h.y, C.frame ? 0 : base - 0.01, zb, r));
+    const zf = C.frame ? Math.max(C.rimH, Math.min(C.zb - 0.8, C.rimH + 1.6)) : base; // top of the ribs or of the base
+    C.pos.push(cyl(h.x, h.y, zf - 0.01, Math.min(zb - 0.3, zf + 1.6), r + 1.4, r)); // 45 degree fillet into the post
     const rp = h.d / 2 - H.pinClear;
     const snap = h.use === 'snap' || (h.use === 'auto' && !fingersHold && h.d >= 2.0);
-    if (C.frame) C.pos.push(cyl(h.x, h.y, 0, base + 0.01, r + 1.2)); // pad on the rib under the post
+
     if (snap && h.d >= 1.8) {
       snaps++;
       const barb = Math.min(0.3, Math.max(0.2, 0.08 * h.d));
@@ -308,6 +322,8 @@ function connectors(C: Ctx) {
     if (!cn || c.hidden) continue;
     if (cn.entry === 'top') {
       if (cn.tie && F.ties) tieAnchor(C, [c.x, c.y], null, c.ref);
+      const zTop = (c.side === 'top' ? zt + c.h : zb - c.h) + cn.plug.len;
+      C.plugs.push({ module: C.mid, ref: c.ref, p: [c.x, c.y, zTop], d: [0, 0, c.side === 'top' ? 1 : -1], cable: cn.plug.cable });
       continue;
     }
     const d = dirOf(cn.angle);
@@ -322,7 +338,8 @@ function connectors(C: Ctx) {
     C.neg.push(orientedBox(mouth, d, Math.min(-0.6, sEdge - 0.5), toOut + 4, -(pw / 2 + cl), pw / 2 + cl, zLo, zHi + 20));
     C.blocked.push({ poly: orientedRect(mouth, d, -2, toOut + 2, -(pw / 2 + cl + 3), pw / 2 + cl + 3), why: c.ref });
     // plug ghost
-    C.ghosts.push({ name: `plug ${c.ref}`, mesh: meshFrom(orientedBox(mouth, d, 0.4, 0.4 + pl, -pw / 2, pw / 2, zAx - ph / 2, zAx + ph / 2)), color: '#e8a15a', opacity: 0.33, tag: { kind: 'plug', module: C.mid, refs: [c.ref] }, anim: { seq: 30, dir: [d[0], d[1], 0] } });
+    C.ghosts.push(...plugDetail(mouth, d, zAx, cn.plug, { kind: 'plug', module: C.mid, refs: [c.ref] }, { seq: 30, dir: [d[0], d[1], 0] }));
+    C.plugs.push({ module: C.mid, ref: c.ref, p: [mouth[0] + d[0] * (cn.plug.len + 0.6), mouth[1] + d[1] * (cn.plug.len + 0.6), zAx], d: [d[0], d[1], 0], cable: cn.plug.cable });
     if (cn.cradle && F.cradles && ph > 0.5) {
       specs.push({ ref: c.ref, mouth, d, sEdge, toOut, zAx, pw, ph, pl, cap: cn.cap && F.caps, angle: cn.angle });
     } else if (cn.guard && F.guards) {
@@ -443,8 +460,25 @@ function cradleGroup(C: Ctx, g: CradleSpec[], H: HolderSettings) {
   const L = zPlate - zHook;
   const eps = (3 * legT * (hook + 0.1)) / (2 * L * L);
   const refs = g.map((sp) => sp.ref).join(' + ');
-  C.parts.push(part(`cap_${C.parts.length}`, `Plug cap (${refs})`, mesh, Tm, '#ffc857', 1, { kind: 'cap', module: C.mid, refs: g.map((sp) => sp.ref) }, { seq: 20 + (C.job.level ?? 0), dir: [0, 0, 1] }));
+  C.parts.push(part(`cap_${C.parts.length}`, `Plug cap (${refs})`, mesh, Tm, '#f2c94c', 1, { kind: 'cap', module: C.mid, refs: g.map((sp) => sp.ref) }, { seq: 20 + (C.job.level ?? 0), dir: [0, 0, 1] }));
   C.checks.push({ group: 'Plugs', name: `Cap legs (${refs})`, value: `${(eps * 100).toFixed(2)}% strain`, status: strainStatus(C, eps), detail: `${round(L, 1)} mm legs, ${hook} mm hooks under the cradle ledges; they flex within the layers` });
+}
+
+/** Loops on the two long sides of a box: a hook-and-loop strap goes over the box and through them. */
+function strapLoops(C: Ctx) {
+  const H = C.H, ol = C.b.outline, bb = bbox(ol);
+  const alongX = bb.x1 - bb.x0 >= bb.y1 - bb.y0;
+  for (const f of [0.28, 0.72]) for (const side of [-1, 1]) {
+    const q: V2 = alongX ? [bb.x0 + (bb.x1 - bb.x0) * f, side > 0 ? bb.y1 : bb.y0] : [side > 0 ? bb.x1 : bb.x0, bb.y0 + (bb.y1 - bb.y0) * f];
+    const n: V2 = alongX ? [0, side] : [side, 0];
+    const t0 = H.gap + H.wall - 0.4, t1 = t0 + 5.5;
+    const blk = orientedBox(q, n, t0, t1, -8, 8, 0, 7).subtract(orientedBox(q, n, t0 + 1.6, t0 + 3.9, -6.5, 6.5, -1, 8));
+    C.late.push(blk);
+    wallPiece(C, add(q, left(n), -9), left(n), 0, 18, 7);
+    C.blocked.push({ poly: orientedRect(q, n, -2, t1 + 1, -9, 9), why: 'strap loop' });
+    feat(C, 'tie', orientedRect(q, n, t0, t1, -8, 8), 0, 7, ['strap']);
+  }
+  C.checks.push({ group: 'Holder', name: 'Strap loops', value: '4', status: 'info', detail: 'thread a 12 mm hook-and-loop strap (or two zip ties) over the box through the loops on each long side' });
 }
 
 function tieAnchor(C: Ctx, at: V2, edgeConn: { d: V2; half: number } | null, ref: string) {
@@ -549,16 +583,20 @@ function tabs(C: Ctx): Site[] {
   if (!want) return [];
   const bb = bbox(C.b.outline);
   const small = Math.min(bb.x1 - bb.x0, bb.y1 - bb.y0) < 30;
-  const Lf = small ? 10 : 14;
-  const sites = edgeSites(C, Lf + 1);
-  const chosen = pickSpread(sites, 4, centroid(C.b.outline));
   const pinsCanHold = C.b.holes.filter((h) => isMountHole(h) && (h.use === 'auto' || h.use === 'snap') && h.d >= 1.8).length >= 2;
+  let Lf = small ? 10 : 14;
+  let chosen = pickSpread(edgeSites(C, Lf + 1), 4, centroid(C.b.outline));
+  if (chosen.length < 2 && !pinsCanHold) {
+    // crowded edges: shorter fingers fit in the gaps between plugs (stiffer, so a smaller lip)
+    const short = pickSpread(edgeSites(C, 9), 4, centroid(C.b.outline));
+    if (short.length > chosen.length) { chosen = short; Lf = 8; }
+  }
   if (chosen.length < 2) {
-    if (pinsCanHold) C.checks.push({ group: 'Board', name: 'Wall snap fingers', value: 'no room', status: 'info', detail: 'plugs and the dock take the free wall; snap pins in the mounting holes hold the board instead' });
-    else C.warnings.push('Could not find room for two wall snap fingers: the board is held by the wall only. Add holes or free up an edge.');
+    if (pinsCanHold) C.checks.push({ group: 'Board', name: 'Wall snap fingers', value: 'no room', status: 'info', detail: 'plugs and the dock take the free edges; snap pins in the mounting holes hold the board instead' });
+    else C.warnings.push(`Nothing clips this board in: no mounting holes for snap pins${C.b.holes.some((h) => h.role === 'standoff') ? ' (they carry the standoffs of the board on top)' : ''} and no free edge for two snap fingers. Free an edge (turn off a cradle or the label), or set two holes to "mount" in the hole wizard.`);
   }
   const { zt, zw } = C;
-  const tf = small ? 1.0 : 1.2;
+  const tf = small || Lf < 10 ? 1.0 : 1.2;
   const Leff0 = Lf * 0.78 - 0.2;
   const allow = MATERIALS[H.material].strainAllow;
   const lip = Math.max(0.4, Math.min(H.tabLip, (0.8 * allow * 2 * Leff0 * Leff0) / (3 * tf)));
@@ -661,9 +699,11 @@ function seats(C: Ctx) {
   C.checks.push({ group: 'Board', name: 'Edge seats', value: `${pads.length}`, status: 'info', detail: 'posts under the board edge where no pin is close, clear of parts and leads under the board' });
 }
 
+interface Rib { a: V2; b: V2; na: number; nb: number } // na / nb: node index, or -1 for the rim / spine
+
 function frameRibs(C: Ctx) {
   const nodes = C.ribNodes;
-  const w = 2.4, h = C.rimH;
+  const mat = MATERIALS[C.H.material];
   const loops = O_inner(C);
   const spine = (C as any).spine as { a: V2; b: V2; hx: number } | undefined;
   const toFrame = (p: V2) => {
@@ -672,34 +712,159 @@ function frameRibs(C: Ctx) {
     if (spine) { const r = segDist(p, spine.a, spine.b); if (r.d - spine.hx < best.d) best = { d: r.d - spine.hx, q: r.q }; }
     return best;
   };
+  /** Nearest rim or spine point from p in a direction at least `apart` degrees from every direction in `used`. */
+  const frameInSector = (p: V2, used: V2[], apart: number): V2 | null => {
+    let best: { d: number; q: V2 } | null = null;
+    for (let a = 0; a < 360; a += 10) {
+      const d: V2 = [Math.cos(rad(a)), Math.sin(rad(a))];
+      if (used.some((u) => d[0] * u[0] + d[1] * u[1] > Math.cos(rad(apart)))) continue;
+      let dist = Infinity;
+      for (const L of loops) dist = Math.min(dist, rayExit(p, d, L));
+      if (spine) {
+        // ray against the spine segment
+        const ax = spine.a, bx = spine.b, ex = bx[0] - ax[0], ey = bx[1] - ax[1];
+        const den = d[0] * ey - d[1] * ex;
+        if (Math.abs(den) > 1e-9) {
+          const t = ((ax[0] - p[0]) * ey - (ax[1] - p[1]) * ex) / den, u = ((ax[0] - p[0]) * d[1] - (ax[1] - p[1]) * d[0]) / den;
+          if (t > 0 && u >= 0 && u <= 1) dist = Math.min(dist, t - spine.hx);
+        }
+      }
+      if (dist < 60 && (!best || dist < best.d)) best = { d: dist, q: [p[0] + d[0] * dist, p[1] + d[1] * dist] };
+    }
+    return best?.q ?? null;
+  };
   // Prim's minimum spanning tree with the frame (rim + spine) as one node
   const n = nodes.length;
-  const best = nodes.map((nd) => toFrame(nd.p));
-  const par: V2[] = best.map((b) => b.q);
+  const best = nodes.map((nd) => ({ ...toFrame(nd.p), from: -1 }));
   const done = new Array(n).fill(false);
-  const ribs: [V2, V2, number][] = [];
+  const ribs: Rib[] = [];
   for (let k = 0; k < n; k++) {
     let i = -1;
     for (let j = 0; j < n; j++) if (!done[j] && (i < 0 || best[j].d < best[i].d)) i = j;
     done[i] = true;
-    ribs.push([nodes[i].p, par[i], nodes[i].r]);
+    if (best[i].d > nodes[i].r * 0.6) ribs.push({ a: nodes[i].p, b: best[i].q, na: i, nb: best[i].from });
     for (let j = 0; j < n; j++) {
       if (done[j]) continue;
       const d = Math.hypot(nodes[j].p[0] - nodes[i].p[0], nodes[j].p[1] - nodes[i].p[1]) - nodes[i].r;
-      if (d < best[j].d) { best[j] = { d, q: nodes[i].p }; par[j] = nodes[i].p; }
+      if (d < best[j].d) best[j] = { d, q: nodes[i].p, from: i };
     }
   }
-  const cs: CS[] = [];
-  for (const [a, b, r] of ribs) {
-    const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
-    if (L < r * 0.6) continue;
-    const d: V2 = [(b[0] - a[0]) / L, (b[1] - a[1]) / L];
-    cs.push(poly(orientedRect(a, d, 0, L + 0.8, -w / 2, w / 2), 'NonZero'));
+  // posts that hang on one rib (or only reach the frame through another post) get a second rib to the frame,
+  // pointing well away from the first: two supports instead of one cantilever
+  const ribsAt = (i: number) => ribs.filter((r) => r.na === i || r.nb === i);
+  const dirFrom = (i: number, r: Rib): V2 => { const o = r.na === i ? r.b : r.a; const p = nodes[i].p, L = Math.hypot(o[0] - p[0], o[1] - p[1]) || 1; return [(o[0] - p[0]) / L, (o[1] - p[1]) / L]; };
+  const brace = (i: number, force = false) => {
+    const at = ribsAt(i);
+    const toFrameDirect = at.some((r) => (r.na === i && r.nb === -1) || (r.nb === i && r.na === -1));
+    const len = at.reduce((m, r) => Math.max(m, Math.hypot(r.b[0] - r.a[0], r.b[1] - r.a[1])), 0);
+    if (!force && at.length >= 2 && toFrameDirect) return false;
+    if (!force && at.length === 1 && toFrameDirect && len < 14) return false;
+    if (at.length >= 4) return false;
+    const q = frameInSector(nodes[i].p, at.map((r) => dirFrom(i, r)), 60);
+    if (!q || Math.hypot(q[0] - nodes[i].p[0], q[1] - nodes[i].p[1]) < nodes[i].r * 0.8) return false;
+    ribs.push({ a: nodes[i].p, b: q, na: i, nb: -1 });
+    return true;
+  };
+  for (let i = 0; i < n; i++) if (C.standoffs.some((so) => so.x === nodes[i].p[0] && so.y === nodes[i].p[1])) brace(i);
+
+  // size the ribs from the frame FEA: start lean, deepen and widen where a post is loaded too hard
+  let w = 2.6, h = Math.max(C.rimH, Math.min(C.zb - 0.8, C.rimH + 1.6));
+  const hMax = Math.max(h, C.zb - 0.6);
+  let fea = supportFea(C, nodes, ribs, w, h);
+  const braced = new Set<number>();
+  for (let pass = 0; pass < 8 && fea.worst.sigma > 0.33 * mat.yield; pass++) {
+    const i = fea.worst.node;
+    // deeper ribs first (stiffness grows with the cube of the depth), then one more rib to the worst post, then wider ribs
+    if (h < hMax - 0.05) h = Math.min(hMax, h + 1.5);
+    else if (i >= 0 && !braced.has(i) && (braced.add(i), brace(i, true))) { /* added a rib */ }
+    else if (w < 4) w = Math.min(4, w + 0.7);
+    else break;
+    fea = supportFea(C, nodes, ribs, w, h);
   }
-  if (cs.length) C.pos.push(ext(unionCS(cs), 0, h));
+
+  // plan view: rib strips, pads under the posts and a band of the rim, filleted where they meet
+  const strips: CS[] = [];
+  for (const r of ribs) {
+    const L = Math.hypot(r.b[0] - r.a[0], r.b[1] - r.a[1]);
+    const d: V2 = [(r.b[0] - r.a[0]) / L, (r.b[1] - r.a[1]) / L];
+    strips.push(poly(orientedRect(r.a, d, 0, L + 0.8, -w / 2, w / 2), 'NonZero'));
+  }
+  if (strips.length) {
+    const pads = unionCS(C.standoffs.map((so) => circle2(so.x, so.y, so.r + 1.4, 32)));
+    const rimBand = C.outer.subtract(C.O.offset(-RIM_IN - 0.5, 'Round'));
+    const net = unionCS([...strips, pads]);
+    const fil = unionCS([net, rimBand]).offset(1.4, 'Round').offset(-1.4, 'Round').intersect(net.offset(3, 'Round'));
+    C.pos.push(extCh(fil.intersect(C.outer), 0, h, 0.4, 0.2));
+    // gussets: each rib climbs to the post it carries over its last 5 mm
+    for (const r of ribs) for (const [end, other, ni] of [[r.a, r.b, r.na], [r.b, r.a, r.nb]] as [V2, V2, number][]) {
+      const so = ni >= 0 ? C.standoffs.find((q) => q.x === nodes[ni].p[0] && q.y === nodes[ni].p[1]) : undefined;
+      if (!so) continue;
+      const L = Math.hypot(other[0] - end[0], other[1] - end[1]);
+      const d: V2 = [(other[0] - end[0]) / L, (other[1] - end[1]) / L];
+      const top = C.zb - 0.4, run = Math.min(L - 0.5, so.r + 5);
+      if (run <= so.r + 0.5 || top <= h + 0.3) continue;
+      const prof = poly([[0, 0], [run, 0], [run, h], [so.r + 0.3, top], [0, top]], 'NonZero');
+      const t: V2 = [-d[1], d[0]];
+      // profile (s, z) extruded across the rib: local x -> d, local y -> z, local z -> -t (right handed)
+      C.pos.push(prof.extrude(w * 0.8).transform([d[0], d[1], 0, 0, 0, 0, 1, 0, -t[0], -t[1], 0, 0, end[0] + t[0] * w * 0.4, end[1] + t[1] * w * 0.4, 0, 1] as any));
+    }
+  }
   // parts under the board sink into the ribs where they need more room than the ribs leave
   for (const k of C.keepouts) if (k.need > C.zb - h) C.neg.push(ext(poly(k.rect).offset(0.3, 'Round'), Math.max(0.6, C.zb - k.need - 0.3), C.zb + 0.1));
-  C.checks.push({ group: 'Holder', name: 'Frame', value: `${ribs.length} rib${ribs.length === 1 ? '' : 's'}`, status: 'info', detail: `rim ${round(RIM_IN + C.H.gap + C.H.wall, 1)} × ${round(h, 1)} mm round the board, ${guardPoints(C.b.outline).length} corner guards, ribs tie ${n} pin${n === 1 ? '' : 's'} and pads to the rim${spine ? ' or the dock spine' : ''}` });
+  C.checks.push({ group: 'Holder', name: 'Frame', value: `${ribs.length} rib${ribs.length === 1 ? '' : 's'}`, status: 'info', detail: `rim ${round(RIM_IN + C.H.gap + C.H.wall, 1)} × ${round(C.rimH, 1)} mm round the board, ${guardPoints(C.b.outline).length} corner guards; ribs ${round(w, 1)} × ${round(h, 1)} mm with gussets up each post tie ${n} pin${n === 1 ? '' : 's'} and pads to the rim${spine ? ' or the dock spine' : ''}` });
+  supportChecks(C, fea);
+}
+
+/**
+ * Beam model of the posts and ribs (the rim and the dock spine are taken as rigid). Each post is loaded on its own:
+ * 20 N pushing the board down onto it (a plug pressed in from above), and 10 N sideways in x and in y (the board
+ * knocked). Returns the worst post and every post's peak stress and deflection.
+ */
+function supportFea(C: Ctx, nodes: Ctx['ribNodes'], ribs: Rib[], w: number, h: number) {
+  const mat = MATERIALS[C.H.material];
+  const N: FNode[] = [], E: FElem[] = [];
+  const zc = h / 2;
+  const base = nodes.map((nd) => N.push({ x: nd.p[0], y: nd.p[1], z: zc }) - 1);
+  const posts = C.standoffs.map((so) => {
+    const ni = nodes.findIndex((nd) => nd.p[0] === so.x && nd.p[1] === so.y);
+    const top = N.push({ x: so.x, y: so.y, z: C.zb }) - 1;
+    if (ni >= 0) E.push({ a: base[ni], b: top, s: roundSection(so.r), name: 'post' });
+    else { const fix = N.push({ x: so.x, y: so.y, z: zc, fixed: true }) - 1; E.push({ a: fix, b: top, s: roundSection(so.r), name: 'post' }); }
+    return { so, top, ni };
+  });
+  const sec = rectSection(w, h);
+  for (const r of ribs) {
+    const a = r.na >= 0 ? base[r.na] : N.push({ x: r.a[0], y: r.a[1], z: zc, fixed: true }) - 1;
+    const b = r.nb >= 0 ? base[r.nb] : N.push({ x: r.b[0], y: r.b[1], z: zc, fixed: true }) - 1;
+    if (Math.hypot(N[a].x - N[b].x, N[a].y - N[b].y) > 0.3) E.push({ a, b, s: sec, name: 'rib' });
+  }
+  // nodes not reached by any rib (pads over the rim) sit on the rim: clamp them
+  N.forEach((nd, i) => { if (!nd.fixed && !E.some((e) => e.a === i || e.b === i)) nd.fixed = true; });
+  for (const pt of posts) if (pt.ni >= 0 && !E.some((e) => e.name === 'rib' && (e.a === base[pt.ni] || e.b === base[pt.ni]))) N[base[pt.ni]].fixed = true;
+  const out = posts.map((pt) => {
+    let sigma = 0, defl = 0, which = '';
+    for (const [f, lab] of [[[0, 0, -20], 'down'], [[10, 0, 0], 'x'], [[0, 10, 0], 'y']] as [[number, number, number], string][]) {
+      const r = solveFrame(N, E, mat.E, mat.nu, [{ node: pt.top, f }]);
+      const s = Math.max(...r.stress);
+      const u = Math.hypot(r.u[pt.top * 6], r.u[pt.top * 6 + 1], r.u[pt.top * 6 + 2]);
+      if (s > sigma) { sigma = s; which = lab; }
+      defl = Math.max(defl, u);
+    }
+    return { so: pt.so, sigma, defl, which, node: pt.ni };
+  });
+  const worst = out.reduce((a, c) => (c.sigma > a.sigma ? c : a), { so: null as any, sigma: 0, defl: 0, which: '', node: -1 });
+  return { posts: out, worst };
+}
+
+function supportChecks(C: Ctx, fea: ReturnType<typeof supportFea>) {
+  if (!fea.posts.length) return;
+  const mat = MATERIALS[C.H.material];
+  const w = fea.worst;
+  const st: Check['status'] = w.sigma < 0.33 * mat.yield ? 'ok' : w.sigma < 0.6 * mat.yield ? 'warn' : 'bad';
+  const hole = (so: { x: number; y: number }) => C.b.holes.findIndex((h) => Math.abs(h.x - so.x) < 1e-6 && Math.abs(h.y - so.y) < 1e-6) + 1;
+  C.checks.push({ group: 'Board', name: 'Hole supports (beam FEA)', value: `${round(w.sigma, 1)} MPa`, status: st,
+    detail: `worst post: hole ${hole(w.so)}, ${w.which === 'down' ? '20 N pushing the board down' : `10 N sideways (${w.which})`}, ${round(w.defl, 2)} mm movement. ${mat.yield} MPa yield for ${C.H.material}; posts and ribs as beams, the rim held rigid. ` +
+      fea.posts.map((p) => `Hole ${hole(p.so)}: ${round(p.sigma, 1)} MPa, ${round(p.defl, 2)} mm`).join('; ') });
 }
 
 /** Loops a rib may end on: just inside the rim's inner edge. */
@@ -1004,21 +1169,8 @@ function label(C: Ctx): boolean {
 
 // ------------------------------- ghosts ----------------------------------------------------------
 function boardGhosts(C: Ctx) {
-  const { b, zb, zt } = C;
-  let bcs = C.O;
-  for (const cu of b.cutouts) bcs = bcs.subtract(poly(cu));
-  for (const h of b.holes) bcs = bcs.subtract(circle2(h.x, h.y, h.d / 2, 24));
   const lv = C.job.level ?? 0;
-  const tag: PickTag = { kind: 'board', module: C.mid }, anim: Anim = { seq: 4 + 2 * lv, dir: [0, 0, 1] };
-  C.ghosts.push({ name: 'board', mesh: meshFrom(ext(bcs, zb, zt)), color: '#17804f', opacity: 0.92, tag, anim });
-  const col: Record<string, string> = { connector: '#e2e8f0', header: '#1f2937', switch: '#475569', led: '#fde047', module: '#64748b', hot: '#ef4444', antenna: '#60a5fa', generic: '#334155' };
-  const boxes: Record<string, MF[]> = {};
-  for (const c of b.comps) {
-    if (c.hidden || c.h <= 0.05) continue;
-    const z0 = c.side === 'top' ? zt : zb - c.h, z1 = c.side === 'top' ? zt + c.h : zb;
-    (boxes[c.kind] ??= []).push(ext(poly(compRect(c)), z0, z1));
-  }
-  for (const [k, list] of Object.entries(boxes)) C.ghosts.push({ name: `parts ${k}`, mesh: meshFrom(unionMF(list)), color: col[k] ?? '#334155', opacity: 0.9, tag: { kind: 'parts', module: C.mid }, anim });
+  C.ghosts.push(...boardDetail(C.b, C.zb, C.zt, { kind: 'board', module: C.mid }, { seq: 4 + 2 * lv, dir: [0, 0, 1] }));
 }
 
 
@@ -1026,26 +1178,16 @@ function boardGhosts(C: Ctx) {
 function boltedGhosts(C: Ctx, bo: NonNullable<Job['bolted']>[number]) {
   const { b, dx, dy, dz, mid } = bo;
   const z0 = C.zt + dz, z1 = z0 + b.thickness;
-  let bcs = poly(b.outline);
-  for (const cu of b.cutouts) bcs = bcs.subtract(poly(cu));
-  for (const h of b.holes) bcs = bcs.subtract(circle2(h.x, h.y, h.d / 2, 24));
   const tag: PickTag = { kind: 'board', module: mid }, anim: Anim = { seq: 4.5 + 2 * (C.job.level ?? 0), dir: [0, 0, 1] };
   const T = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, dx, dy, 0, 1];
-  C.ghosts.push({ name: 'board', mesh: transformMesh(meshFrom(ext(bcs, z0, z1)), T), color: '#1f8a57', opacity: 0.92, tag, anim });
-  const boxes: MF[] = [];
-  for (const c of b.comps) {
-    if (c.hidden || c.h <= 0.05) continue;
-    const a0 = c.side === 'top' ? z1 : z0 - c.h, a1 = c.side === 'top' ? z1 + c.h : z0;
-    boxes.push(ext(poly(compRect(c)), a0, a1));
-  }
-  if (boxes.length) C.ghosts.push({ name: 'parts bolted', mesh: transformMesh(meshFrom(unionMF(boxes)), T), color: '#3b4654', opacity: 0.9, tag: { kind: 'parts', module: mid }, anim });
+  for (const g of boardDetail(b, z0, z1, tag, anim)) C.ghosts.push({ ...g, mesh: transformMesh(g.mesh, T) });
   // standoffs where the holes line up with the board below
   const posts: MF[] = [];
   for (const h of b.holes) {
     const x = h.x + dx, y = h.y + dy;
     if (C.b.holes.some((q) => Math.hypot(q.x - x, q.y - y) < 0.8)) posts.push(cyl(x, y, C.zt, z0, 2.5, 2.5, 6));
   }
-  if (posts.length) C.ghosts.push({ name: 'standoffs', mesh: meshFrom(unionMF(posts)), color: '#c8ced6', opacity: 0.95, tag, anim });
+  if (posts.length) C.ghosts.push({ name: 'standoffs', mesh: meshFrom(unionMF(posts)), color: '#c9a74a', opacity: 1, tag, anim, mat: 'gold' });
   for (const c of b.comps) {
     const cn = c.conn;
     if (!cn || c.hidden || cn.entry !== 'edge') continue;
@@ -1053,7 +1195,8 @@ function boltedGhosts(C: Ctx, bo: NonNullable<Job['bolted']>[number]) {
     const mouth = add([c.x + dx, c.y + dy], d, extentAlong(c, cn.angle));
     const zAx = c.side === 'top' ? z1 + cn.zc : z0 - cn.zc;
     const { w: pw, h: ph, len: pl } = cn.plug;
-    C.ghosts.push({ name: `plug ${c.ref}`, mesh: meshFrom(orientedBox(mouth, d, 0.4, 0.4 + pl, -pw / 2, pw / 2, zAx - ph / 2, zAx + ph / 2)), color: '#e8a15a', opacity: 0.33, tag: { kind: 'plug', module: mid, refs: [c.ref] }, anim: { seq: 30, dir: [d[0], d[1], 0] } });
+    C.ghosts.push(...plugDetail(mouth, d, zAx, { w: pw, h: ph, len: pl, cable: cn.plug.cable }, { kind: 'plug', module: mid, refs: [c.ref] }, { seq: 30, dir: [d[0], d[1], 0] }));
+    C.plugs.push({ module: mid, ref: c.ref, p: [mouth[0] + d[0] * (pl + 0.6), mouth[1] + d[1] * (pl + 0.6), zAx], d: [d[0], d[1], 0], cable: cn.plug.cable });
   }
   C.checks.push({ group: 'Stack', name: `${b.name} bolted on top`, value: `${round(dz, 1)} mm standoffs`, status: 'info', detail: `sits on standoffs screwed into the holes it shares with ${C.b.name}; those holes get no holder pins and the holder leaves room under them for screw heads or nuts. Its plugs get no cradles of their own.` });
 }

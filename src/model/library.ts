@@ -176,7 +176,7 @@ export const DEFAULT_STAND: StandSettings = {
 
 export const DEFAULT_ARRANGE: ArrangeSettings = { mode: 'stack', stackGap: 3, sideGap: 0.4, sideAxis: 'x', links: true };
 
-export const DEFAULT_PANEL: PanelSettings = { auto: true, rowDir: 'h', pairs: true, gap: 2, maxRail: 400, rowGap: 25, rails: [], mounts: [] };
+export const DEFAULT_PANEL: PanelSettings = { auto: true, rowDir: 'h', pairs: true, gap: 2, maxRail: 400, rowGap: 25, stands: true, rails: [], mounts: [] };
 
 export function newModule(board: Board, holder?: HolderSettings): Module {
   applyHoleRoles(board, [], false);

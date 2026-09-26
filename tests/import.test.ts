@@ -4,7 +4,7 @@ import { strToU8, zipSync } from 'fflate';
 import { importKicad, parseSexpr } from '../src/import/kicad';
 import { parseGerber, parseExcellon, parsePnP } from '../src/import/fab';
 import { importDxf, importEagle, importIdf } from '../src/import/other';
-import { importFiles } from '../src/import';
+import { groupFiles, importFiles, importMany } from '../src/import';
 import { bbox } from '../src/geom/poly';
 
 const KICAD = `(kicad_pcb (version 20240108) (generator "pcbnew")
@@ -210,5 +210,21 @@ describe('IDF, Eagle, DXF', () => {
     expect(bbox(b.outline).x1).toBeCloseTo(40);
     expect(b.holes.length).toBe(1);
     expect(b.holes[0].d).toBeCloseTo(3.2);
+  });
+});
+
+describe('several boards in one drop', () => {
+  const f = (name: string, text = 'x') => ({ name, bytes: strToU8(text) });
+  it('splits a drop into one group per board', () => {
+    const zip = { name: 'node-gerbers.zip', bytes: zipSync({ 'node.gko': strToU8('G04*'), 'node.drl': strToU8('M48') }) };
+    const g = groupFiles([f('a.kicad_pcb'), f('b.kicad_pcb'), f('c.step'), zip, f('d.emn'), f('d.emp'), f('top.gtl'), f('board.gko'), f('board.drl')]);
+    const names = g.map((x) => x.map((y) => y.name).sort().join('+'));
+    expect(names).toEqual(['node.drl+node.gko', 'a.kicad_pcb', 'b.kicad_pcb', 'c.step', 'd.emn+d.emp', 'board.drl+board.gko+top.gtl']);
+  });
+  it('imports every KiCad file as its own board and reports the ones that fail', async () => {
+    const r = await importMany([f('one.kicad_pcb', KICAD), f('two.kicad_pcb', KICAD.replace('Sensor node', 'Relay node')), f('broken.dxf', 'nonsense')]);
+    expect(r.boards.map((b) => b.name)).toEqual(['Sensor node', 'Relay node']);
+    expect(r.errors.length).toBe(1);
+    expect(r.errors[0]).toMatch(/broken\.dxf/);
   });
 });

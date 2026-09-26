@@ -1,5 +1,5 @@
 /* =====================================================================================================
-   BoardDock design system: graphite instrument panel, one signal-orange accent, cool blue for info.
+   BoardDock design system: graphite instrument panel, one electric-blue accent.
    Every control is 30 px tall with an 8 px radius; cards are 12 px; numbers are mono. PCB green is kept
    for boards in the 3D view only.
    ===================================================================================================== */
@@ -14,16 +14,16 @@
   --fg: #eef1f4;
   --muted: #a3acb6;
   --subtle: #6c7783;
-  --accent: #ff7a2f;
-  --accent-2: #ff9d63;
-  --accent-ink: #1b0c03;
-  --accent-soft: rgba(255, 122, 47, 0.13);
-  --accent-line: rgba(255, 122, 47, 0.45);
-  --blue: #5aa9ff;
+  --accent: #4c8dff;
+  --accent-2: #75a8ff;
+  --accent-ink: #ffffff;
+  --accent-soft: rgba(76, 141, 255, 0.14);
+  --accent-line: rgba(76, 141, 255, 0.5);
+  --blue: #4c8dff;
   --good: #46d58b;
   --warn: #f5c542;
   --bad: #ff5c6c;
-  --info: #5aa9ff;
+  --info: #38bdf8;
   --pcb: #1f8a57;
   --mask: #123f2c;
   --mask-edge: #46d58b;
@@ -32,7 +32,7 @@
   --coral: #ff5c6c;
   --grid: rgba(150, 170, 190, 0.08);
   --grid-fine: rgba(150, 170, 190, 0.04);
-  --viewer: #0f1216;
+  --viewer: #2b3137;
   --glass: rgba(17, 20, 24, 0.78);
   --shadow: 0 14px 40px rgba(0, 0, 0, 0.5);
   --shadow-sm: 0 4px 14px rgba(0, 0, 0, 0.35);
@@ -57,16 +57,16 @@
   --fg: #12161a;
   --muted: #4b5661;
   --subtle: #8a949e;
-  --accent: #f0600f;
-  --accent-2: #ff8540;
+  --accent: #2563eb;
+  --accent-2: #3b82f6;
   --accent-ink: #ffffff;
-  --accent-soft: rgba(240, 96, 15, 0.1);
-  --accent-line: rgba(240, 96, 15, 0.4);
-  --blue: #1f7ae0;
+  --accent-soft: rgba(37, 99, 235, 0.1);
+  --accent-line: rgba(37, 99, 235, 0.38);
+  --blue: #2563eb;
   --good: #16a35a;
   --warn: #c48a00;
   --bad: #e03448;
-  --info: #1f7ae0;
+  --info: #0284c7;
   --mask: #1f7a4d;
   --mask-edge: #0b5c38;
   --silk: #ffffff;

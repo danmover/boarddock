@@ -1,5 +1,5 @@
 // Rail dock: the screwless "DIN hub" (din_hub_v2) ported to manifold.
-//  - rail shoe: clips on the rail; pinch its tall ear toward the socket (or pull the ear's lip) to release it, built-in stop
+//  - rail shoe: clips on the rail; press the lever pad beside the socket down to release it, built-in stop
 //  - socket: snaps into the shoe in any of four 90 degree turns, two print-in-place tongue latches
 //  - holder side: tongue, pedestal, spine with a release-rod tunnel, grip bar
 //  - release rod: its head is the button on the holder's far (top) edge; pressing it wedges the latch open
@@ -7,7 +7,7 @@
 //  hub world: X along the rail, Y across it, Z away from the panel (panel at Z = 0)
 //  socket-local: same axes, Z = 0 at the socket top; tongues plug in along -Z; holder A faces +Y
 import type { V2 } from '../model/types';
-import { box, circle2, ext, K, poly, rect2, unionCS, unionMF, type CS, type MF } from './kernel';
+import { box, circle2, ext, K, poly, rect2, roundCS, unionCS, unionMF, type CS, type MF } from './kernel';
 import { gripSpan, HD, headSpan, LEN_X } from './dockdims';
 export { gripSpan, headSpan };
 
@@ -117,13 +117,31 @@ const SHOE_BODY = [[-20.3, 3.9], [-15.9, 3.9], [-15.4, 4.4], [-15.4, 5.7], [-15.
   [-17.9, 7.5], [15.1, 7.5], [15.1, 19.6], [15.8, 20.3], [17.9, 20.3], [17.9, 22.5], [17.4, 23.0], [-19.6, 23.0], [-20.3, 22.3]];
 // hinge leaf 16.3..17.2 (0.9 mm = two 0.45 mm lines), z 10.4..19.8, flared roots
 const HINGE = [[15.8, 9.9], [17.7, 9.9], [17.2, 10.4], [17.2, 19.8], [17.7, 20.3], [15.8, 20.3], [16.3, 19.8], [16.3, 10.4]];
-// jaw: lip under the flange (engages 1.7 mm, 48 deg lead-in), pocket round the flange edge, top bar, lever post, ridged pad
-// v4: the lever post rises into a tall "pinch ear" whose top sits just under the socket top (43.5), so with the
-// holders out you pinch the ear toward the socket (or hook the top lip and pull it off the wall) in one hand.
-const SHOE_JAW = [[17.7, 3.9], [20.6, 3.9], [21.9, 5.2], [21.9, 33.6], [24.4, 34.1], [24.0, 34.6], [24.4, 35.1], [24.0, 35.6], [24.4, 36.1],
-  [24.0, 36.6], [24.4, 37.1], [24.0, 37.6], [24.4, 38.1], [24.4, 39.6], [25.3, 40.1], [25.3, 40.6], [20.4, 40.6], [19.9, 40.1],
+// jaw: lip under the flange (engages 1.7 mm, 48 deg lead-in), pocket round the flange edge, post up to z 34.2
+const SHOE_JAW = [[17.7, 3.9], [20.6, 3.9], [21.9, 5.2], [21.9, 33.4], [21.5, 34.2], [20.3, 34.2], [19.9, 33.8],
   [19.9, 9.9], [15.9, 9.9], [15.9, 8.0], [18.0, 8.0], [18.0, 6.2], [16.0, 6.2], [15.8, 6.0]];
-export const SHOE_LEVER = { pad: [21.9, 25.3], z: [34.1, 40.6], stopGap: 2.0 };
+// v5 "press-down lever": a lever on a pin at the top of a slim tower beside the socket. Press its ridged pad down
+// (toward the rail) and the hook on its underside pulls the jaw's post toward the socket: the jaw swings open about
+// its leaf, and the stop still limits it. The lever is printed in place round its pin (0.35 mm gap); its C-shaped hub
+// wraps 290 degrees so it can't come off, and the jaw spring lifts it back.
+export const SHOE_LEVER = { pivot: [13.4, 39.2] as V2, pad: [24.6, 28.8] as V2, top: 41.0, hook: 22.3, stopGap: 2.0 };
+const TOWER = [[11.2, 22.9], [13.3, 22.9], [13.3, 34.6], [12.7, 35.2], [11.8, 35.2], [11.2, 34.6]];
+const NECK = [[12.75, 33.8], [13.75, 33.8], [13.75, 38.2], [12.75, 38.2]];
+
+/** The rail release lever (y, z), a separate island printed in place round the tower's pin. */
+export function leverProfile(): CS {
+  const [py, pz] = SHOE_LEVER.pivot;
+  const ring = circle2(py, pz, 3.55, 64).subtract(circle2(py, pz, 2.05, 48));
+  const sec: V2[] = [[py, pz]];
+  for (let a = -111; a <= -39; a += 4) sec.push([py + 7 * Math.cos((a * Math.PI) / 180), pz + 7 * Math.sin((a * Math.PI) / 180)]);
+  const hub = ring.subtract(poly(sec, 'NonZero'));
+  const arm = roundCS(rect2(15.6, 37.8, 28.8, 40.4), 0.9);
+  const hook = roundCS(rect2(22.3, 30.6, 24.3, 38.8), 0.7);
+  const ridges = unionCS([25.3, 26.7, 28.1].map((y) => roundCS(rect2(y - 0.45, 40.0, y + 0.45, SHOE_LEVER.top), 0.3)));
+  // keep the pin clearance clean wherever the arm meets the hub
+  return unionCS([hub, arm, hook, ridges]).subtract(circle2(py, pz, 2.05, 48));
+}
+
 const HOOK_TIP = [[9.15, 20.33], [8.35, 20.47], [8.35, 20.8], [8.65, 21.1], [9.15, 21.1]];
 const mir = (pts: number[][]) => pts.map(([y, z]) => [-y, z]).reverse();
 
@@ -140,6 +158,15 @@ export function shoeProfile(): CS {
   let c = unionCS([P(SHOE_BODY), jawR, P(HINGE)]);
   const closed = c.offset(0.5, 'Round').offset(-0.5, 'Round');
   c = c.add(closed.intersect(unionCS([rect2(15.9, 9.8, 17.8, 11.0), rect2(15.9, 19.2, 17.8, 20.4)])));
+  // lever tower and pin, filleted into the body top
+  const [py, pz] = SHOE_LEVER.pivot;
+  const tower = unionCS([P(TOWER), P(NECK), circle2(py, pz, 1.7, 40)]);
+  const towerF = tower.add(unionCS([tower, rect2(10.2, 21.9, 14.3, 23.0)]).offset(0.8, 'Round').offset(-0.8, 'Round').intersect(rect2(10.2, 22.0, 14.3, 25.0)));
+  c = c.add(towerF);
+  // soften the outer corners of the body (0.6 mm) so the part looks moulded, not boxy
+  const outer = rect2(-21, 21.2, 18.5, 23.5).add(rect2(-21, 3.5, -19.5, 23.5));
+  const rounded = c.offset(-0.6, 'Round').offset(0.6, 'Round');
+  c = c.subtract(outer).add(rounded.intersect(outer));
   return c.subtract(unionCS(shoeCuts())).add(unionCS([P(HOOK_TIP), P(mir(HOOK_TIP))]));
 }
 
@@ -158,12 +185,19 @@ function shoeCuts(): CS[] {
 
 /** Rail shoe in hub world coordinates (centred on x = 0). */
 export function shoe(): MF {
+  return unionMF([shoeBody(), shoeLever()]);
+}
+
+/** The shoe without its lever (the lever prints in place with it; they are shown in two colours). */
+export function shoeBody(): MF {
   const hx = LEN_X / 2;
   // the hinge leaf is split into two 7 mm segments to lower the release force
   const body = extYZ(shoeProfile(), hx).subtract(box(-3.5, 16.0, 10.7, 3.5, 17.5, 19.5));
   const stop = extXZ(P([[8.1, 18.0], [hx, 18.0], [hx, 20.2], [10.3, 20.2]]), -8.1, 8.1); // x stops seat the boss chamfer
   return unionMF([body, stop, stop.mirror([1, 0, 0])]);
 }
+
+export const shoeLever = () => extYZ(leverProfile(), LEN_X / 2);
 
 /** Print pose for shoe and socket: standing on the -X end face. Returns [pose, inverse]. */
 export const END_POSE = { pose: [0, 0, 1, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 0, 1], inv: [0, 0, -1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1] };

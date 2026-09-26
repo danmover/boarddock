@@ -166,10 +166,28 @@ export function importKicad(text: string, fileName = 'board.kicad_pcb'): Board {
     });
   }
 
+  // copper tracks and vias (for the 3D view only)
+  const traces: NonNullable<Board['traces']> = [], vias: NonNullable<Board['vias']> = [];
+  for (const g of root) {
+    if (!isNode(g) || traces.length > 6000) continue;
+    const h = head(g);
+    const L = layerOf(g);
+    const side = L === 'F.Cu' ? 'top' : L === 'B.Cu' ? 'bottom' : null;
+    if (h === 'segment' && side) traces.push({ a: up(pt(kid(g, 'start'))), b: up(pt(kid(g, 'end'))), w: nums(kid(g, 'width'))[0] || 0.25, side });
+    else if (h === 'arc' && side) {
+      const a = up(pt(kid(g, 'start'))), m = up(pt(kid(g, 'mid'))), e = up(pt(kid(g, 'end')));
+      const pts = arc3(a, m, e);
+      for (let k = 0; k + 1 < pts.length; k++) traces.push({ a: pts[k], b: pts[k + 1], w: nums(kid(g, 'width'))[0] || 0.25, side });
+    } else if (h === 'via') {
+      const at = up(pt(kid(g, 'at')));
+      vias.push({ x: at[0], y: at[1], d: nums(kid(g, 'size'))[0] || 0.6 });
+    }
+  }
+
   const loops = chainLoops(edgePaths, 0.02);
   const ol = outlineFromLoops(loops);
   if (!ol) throw new Error('No closed board outline on Edge.Cuts');
   if (loops.length && edgePaths.length && loops.length === 0) notes.push('Edge.Cuts did not close; check the outline.');
-  const board: Board = { name, outline: ol.outline as Loop, cutouts: ol.cutouts, thickness, holes, comps, source: `KiCad: ${fileName}`, notes };
+  const board: Board = { name, outline: ol.outline as Loop, cutouts: ol.cutouts, thickness, holes, comps, source: `KiCad: ${fileName}`, notes, traces, vias };
   return finishBoard(board, { sizesKnown: true });
 }

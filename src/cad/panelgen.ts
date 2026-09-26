@@ -4,18 +4,53 @@
 import type { Anim, Check, EdgeName, Feature, GenResult, Ghost, MeshData, Module, PanelReport, PartOut, Project, Rail, RailMount, V2 } from '../model/types';
 import { MATERIALS } from '../model/library';
 import { bbox, round } from '../geom/poly';
-import { basis, dir, I4, inv, mul, rotZ, tr, type M4 } from '../geom/mat';
+import { basis, dir, I4, inv, mul, pt as ptM, rotZ, tr, type M4 } from '../geom/mat';
+import { smooth, tubeMesh } from './boardviz';
+import { cableToBuy, KIND_COLOR, KIND_NAME } from '../model/links';
 import { buildModule, computeLevels, transformMesh, type ArrangeHooks, type ModuleOut } from './generate';
 import { baseOf, ridersOf, stackLayers, type StackLayer } from '../model/holes';
 import { freeAll, toMesh, type MF } from './kernel';
-import { END_POSE, LEN_X, rail as railSolid, shoe, socket, SOCKET_Z } from './dock';
+import { END_POSE, LEN_X, rail as railSolid, shoe, shoeBody, shoeLever, socket, SOCKET_Z } from './dock';
 import { autoAssign, bestDock, classify, clipToRail, dockSite, plugDirs, railMatrix, slotMatrix, withRiders } from './dockplan';
+import { capStress, pieceMesh, planStands, railI, STAND, type StandLane } from './railstand';
 
-const SHOE_BOX = { x: [-LEN_X / 2, LEN_X / 2], y: [-25.4, 25.4], z: [0, 40.6] };
+const SHOE_BOX = { x: [-LEN_X / 2, LEN_X / 2], y: [-29, 29], z: [0, 42.8] };
 
 interface Layer { mod: Module; mi: number; out: ModuleOut; T: M4 } // a board stacked on the seat's board: T = its holder -> base holder frame
 interface Seat { mod: Module; mi: number; slot: number; edge: EdgeName; out: ModuleOut; M: M4; above: Layer[]; riders: Module[] }
 interface Placed { mt: RailMount; seats: Seat[]; lo: number; hi: number; ylo: number; yhi: number; zhi: number; boxes: { id: string; b: number[] }[]; lever: 1 | -1 }
+
+/**
+ * Lane order in a cable street (lowest v first) with the fewest crossings: each cable drops into its lane at both
+ * ends from the side its plug is on, crossing every lane between that side and its own where another cable runs
+ * past. Exhaustive for up to 6 cables, the given order beyond that.
+ */
+export function laneOrder<T extends { a1: number[]; b1: number[] }>(rs: T[], c: number): T[] {
+  if (rs.length < 2 || rs.length > 6) return rs;
+  const span = (q: T) => [Math.min(q.a1[0], q.b1[0]), Math.max(q.a1[0], q.b1[0])];
+  const crossings = (order: T[]) => {
+    let n = 0;
+    order.forEach((q, i) => {
+      for (const e of [q.a1, q.b1]) {
+        const below = e[1] < c; // drops in from the low-v side
+        order.forEach((o, j) => {
+          if (o === q || (below ? j >= i : j <= i)) return;
+          const [u0, u1] = span(o);
+          if (e[0] > u0 + 0.5 && e[0] < u1 - 0.5) n++;
+        });
+      }
+    });
+    return n;
+  };
+  let best = rs, bestN = crossings(rs);
+  const perm = (done: T[], rest: T[]) => {
+    if (!bestN) return;
+    if (!rest.length) { const n = crossings(done); if (n < bestN) { best = done; bestN = n; } return; }
+    rest.forEach((q, i) => perm([...done, q], [...rest.slice(0, i), ...rest.slice(i + 1)]));
+  };
+  perm([], rs);
+  return best;
+}
 
 /** Move a part's animation into another frame. */
 export const moveAnim = (a: Anim | undefined, T: M4): Anim | undefined => (a ? { seq: a.seq, dir: dir(T, a.dir) } : undefined);
@@ -50,7 +85,16 @@ function stackPlan(p: Project, layers: StackLayer[], dockEdge: EdgeName | null) 
 
 const boltedOf = (L: StackLayer) => L.bolted.map((bo) => ({ b: bo.mod.board, dx: bo.dx, dy: bo.dy, dz: bo.dz, mid: bo.mod.id }));
 
-let shoeRest: ReturnType<typeof rest> | null = null, sockRest: ReturnType<typeof rest> | null = null;
+let shoeRest: (ReturnType<typeof rest> & { body: MeshData; lever: MeshData }) | null = null, sockRest: ReturnType<typeof rest> | null = null;
+
+/** The shoe in its print pose, plus its body and its lever alone in the same frame (shown in two colours). */
+function shoeRested() {
+  const all = shoe();
+  const r = rest(all, END_POSE.pose);
+  const dz = -all.transform(END_POSE.pose as any).boundingBox().min[2]; // the rest translation
+  const place = (m: MF) => toMesh(m.transform(END_POSE.pose as any).translate([0, 0, dz]));
+  return { ...r, body: place(shoeBody()), lever: place(shoeLever()) };
+}
 
 function rest(m: MF, pose: M4): { mesh: MeshData; back: M4; volume: number; size: [number, number, number] } {
   const pm = m.transform(pose as any);
@@ -170,8 +214,10 @@ export function generatePanel(p: Project): GenResult {
     let row: Placed[] = [];
     const rows: Placed[][] = [];
     let cursor = margin;
+    const isBox = (pl: Placed) => pl.seats.some((st) => st.mod.board.kind === 'box');
     for (const pl of placed) {
-      if (row.length && cursor + (pl.hi - pl.lo) > P.maxRail - margin) { rows.push(row); row = []; cursor = margin; }
+      const newKind = row.length && isBox(pl) && !isBox(row[row.length - 1]);
+      if (row.length && (newKind || cursor + (pl.hi - pl.lo) > P.maxRail - margin)) { rows.push(row); row = []; cursor = margin; }
       pl.mt.at = cursor - pl.lo;
       cursor = pl.mt.at + pl.hi + gap;
       row.push(pl);
@@ -191,6 +237,8 @@ export function generatePanel(p: Project): GenResult {
       rw.forEach((q, j) => { q.mt.rail = r.id; q.mt.id = `d${k + 1}.${j + 1}`; });
       prev = { x, y, ylo, yhi };
     });
+    // on table stands the rails make a rectangle: every rail as long as the longest, so the sleepers run straight across
+    if (P.stands !== false && rails.length > 1) { const L = Math.max(...rails.map((r) => r.length!)); for (const r of rails) r.length = L; }
     mounts = placed.map((q) => q.mt);
   } else {
     for (const r of rails) {
@@ -229,18 +277,21 @@ export function generatePanel(p: Project): GenResult {
     const start = on.length ? Math.min(...on.map((q) => q.mt.at! + q.lo)) : 0;
     if (r.length == null) r.length = round(Math.max(need, 50), 0);
     else if (need - margin > r.length + 0.5 || start < -0.5) warnings.push(`Rail ${r.id.replace(/^r/, '')}: the mounts run past the end of the ${r.length} mm rail (need ${round(need, 0)} mm).`);
+    else if (P.stands !== false && on.length && (start < STAND.len - STAND.back + 1 || need - margin > r.length - (STAND.len - STAND.back + 1))) warnings.push(`Rail ${r.id.replace(/^r/, '')}: a mount sits within ${STAND.len - STAND.back + 1} mm of a rail end, where the table stand's end block goes. Move it in or lengthen the rail.`);
   }
 
   // ---- parts ----
-  const parts: PartOut[] = [], ghosts: Ghost[] = [];
+  const parts: PartOut[] = [], ghosts: Ghost[] = [], display: PartOut[] = [];
   const access: PanelReport['modules'] = [];
   const mountOut: PanelReport['mounts'] = [];
   const docks = placed.filter((q) => q.mt.kind === 'dock');
   const shoeInst: M4[] = [], sockInst: M4[] = [], dockIds: string[] = [];
   const features: Feature[] = [];
   const frames: Record<string, number[]> = {};
+  const ends = new Map<string, { p: number[]; d: number[]; cable: number }>();
+  const linked = new Set((p.links ?? []).flatMap((l) => [`${l.a.module}/${l.a.ref}`, `${l.b.module}/${l.b.ref}`]));
   try {
-    const sh = docks.length ? (shoeRest ??= rest(shoe(), END_POSE.pose)) : null;
+    const sh = docks.length ? (shoeRest ??= shoeRested()) : null;
     const so = docks.length ? (sockRest ??= rest(socket(), END_POSE.pose)) : null;
     for (const q of placed) {
       const r = railOf(q.mt)!;
@@ -254,21 +305,26 @@ export function generatePanel(p: Project): GenResult {
         const T = mul(R, s.M);
         const layers = [{ mod: s.mod, out: s.out, T }, ...s.above.map((L) => ({ mod: L.mod, out: L.out, T: mul(T, L.T) }))];
         for (const L of layers) {
+          for (const pe of L.out.plugs) ends.set(`${pe.module}/${pe.ref}`, { p: ptM(L.T, pe.p), d: dir(L.T, pe.d), cable: pe.cable });
           for (const pt of L.out.parts) {
             const a = pt.id.endsWith('_clip') ? { seq: 2, dir: dir(R, [0, 0, 1]) } : moveAnim(pt.anim, L.T);
             parts.push({ ...pt, toAssembly: mul(L.T, pt.toAssembly), anim: a });
           }
-          for (const g of L.out.ghosts) if (!g.name.startsWith('DIN rail')) ghosts.push({ ...g, mesh: transformMesh(g.mesh, L.T), anim: moveAnim(g.anim, L.T) });
+          for (const g of L.out.ghosts) {
+            if (g.name.startsWith('DIN rail')) continue;
+            // a plug with a routed cable loses its straight stub: the routed cable leaves the plug instead
+            if (g.mat === 'cable' && g.tag?.kind === 'plug' && linked.has(`${g.tag.module}/${g.tag.refs?.[0]}`)) continue;
+            ghosts.push({ ...g, mesh: transformMesh(g.mesh, L.T), anim: moveAnim(g.anim, L.T) });
+          }
           features.push(...L.out.features);
           frames[L.mod.id] = L.T;
         }
         const bx = q.boxes.find((b) => b.id === s.mod.id)!.b;
         const accOf = (b: Module['board']) => plugDirs(b).map((d) => ({ ref: d.ref, type: d.type, ...classify(dir(T, d.v), r.dir) }));
         const acc = [s.mod, ...s.riders].flatMap((mm) => accOf(mm.board).map((a) => (mm === s.mod ? a : { ...a, ref: `${a.ref}·${mm.board.name.slice(0, 10)}` })));
-        access.push({ id: s.mod.id, mount: q.mt.id, slot: s.slot, edge: s.edge, turn: q.mt.turn, foot: toPanel(r, q.mt.at!, bx), z1: bx[5], access: acc });
-        for (const mm of s.riders) access.push({ id: mm.id, mount: q.mt.id, slot: s.slot, edge: s.edge, turn: q.mt.turn, foot: toPanel(r, q.mt.at!, bx), z1: bx[5], access: accOf(mm.board) });
+        access.push({ id: s.mod.id, mount: q.mt.id, slot: s.slot, edge: s.edge, turn: q.mt.turn, foot: toPanel(r, q.mt.at!, bx), z1: bx[5], access: acc, stack: s.riders.map((x) => x.board.name) });
         const blocked = acc.filter((a) => a.ok === 'blocked');
-        if (blocked.length) warnings.push(`${s.mod.board.name}: ${blocked.map((a) => a.ref).join(', ')} face${blocked.length > 1 ? '' : 's'} the wall. Turn the dock or pick another dock edge.`);
+        if (blocked.length) warnings.push(`${s.mod.board.name}: ${blocked.map((a) => a.ref).join(', ')} point${blocked.length > 1 ? '' : 's'} down into the table. Turn the dock or pick another dock edge.`);
         for (const L of layers) {
           warnings.push(...L.out.warnings.map((w) => `${L.mod.board.name}: ${w}`));
           checks.push(...L.out.checks.map((c) => ({ ...c, group: `${L.mod.board.name} · ${c.group}` })));
@@ -284,9 +340,11 @@ export function generatePanel(p: Project): GenResult {
     if (sh && so) {
       const out: [number, number, number] = [0, 0, 1];
       const tags = (kind: 'shoe' | 'socket') => dockIds.map((id) => ({ kind, mount: id }));
-      parts.push({ ...base, id: 'dock_shoe', name: 'Rail shoe (pinch-ear release)', qty: docks.length, mesh: sh.mesh, toAssembly: shoeInst[0], instances: shoeInst.slice(1), volume: sh.volume, size: sh.size, color: '#f59e42',
+      parts.push({ ...base, id: 'dock_shoe', name: 'Rail shoe (press-down release lever)', qty: docks.length, mesh: sh.mesh, displayMesh: sh.body, toAssembly: shoeInst[0], instances: shoeInst.slice(1), volume: sh.volume, size: sh.size, color: '#5b6570',
         tag: tags('shoe')[0], tags: tags('shoe').slice(1), anim: { seq: 1, dir: out }, anims: dockIds.slice(1).map(() => ({ seq: 1, dir: out })) });
-      parts.push({ ...base, id: 'dock_socket', name: 'Dock socket (turns 4 ways, 2 slots)', qty: docks.length, mesh: so.mesh, toAssembly: sockInst[0], instances: sockInst.slice(1), volume: so.volume, size: so.size, color: '#5b8def',
+      display.push({ ...base, id: 'dock_lever', name: 'Rail release lever (prints with the shoe)', qty: docks.length, mesh: sh.lever, toAssembly: shoeInst[0], instances: shoeInst.slice(1), volume: 0, size: sh.size, color: '#ff4d5e',
+        tag: tags('shoe')[0], tags: tags('shoe').slice(1), anim: { seq: 1, dir: out }, anims: dockIds.slice(1).map(() => ({ seq: 1, dir: out })) });
+      parts.push({ ...base, id: 'dock_socket', name: 'Dock socket (turns 4 ways, 2 slots)', qty: docks.length, mesh: so.mesh, toAssembly: sockInst[0], instances: sockInst.slice(1), volume: so.volume, size: so.size, color: '#4c8dff',
         tag: tags('socket')[0], tags: tags('socket').slice(1), anim: { seq: 2, dir: out }, anims: dockIds.slice(1).map(() => ({ seq: 2, dir: out })) });
     }
     for (const r of rails) {
@@ -297,22 +355,118 @@ export function generatePanel(p: Project): GenResult {
     freeAll();
   }
 
+  // ---- cables: out of each plug, down to a street between (or beside) the rails, along it, and up to the other
+  // plug. On table stands the streets run under the rails' level, through a comb slot in every sleeper they cross;
+  // each cable gets its own lane in its street.
+  const cables: NonNullable<GenResult['report']['cables']> = [];
+  const nameOf2 = (id: string) => mods.get(id)?.m.board.name ?? '?';
+  const stands = P.stands !== false && rails.length > 0;
+  const vert = rails.filter((r) => r.dir === 'v').length > rails.length / 2;
+  // rack coordinates: u along the rails, v across them
+  const uv = (q: number[]) => (vert ? [q[1], -q[0], q[2]] : [q[0], q[1], q[2]]);
+  const xy = (q: number[]) => (vert ? [-q[1], q[0], q[2]] : [q[0], q[1], q[2]]);
+  const rackRails = rails.filter((r) => r.dir === (vert ? 'v' : 'h'));
+  const across = rackRails.map((r) => (vert ? -r.x : r.y)).sort((a, b) => a - b);
+  const streets = across.length ? [across[0] - 45, ...across.slice(1).map((v, i) => (v + across[i]) / 2), across[across.length - 1] + 45] : [];
+  const lanes: StandLane[] = [];
+  if ((p.links ?? []).length && streets.length) {
+    const routes: { l: NonNullable<Project['links']>[number]; a0: number[]; a1: number[]; b0: number[]; b1: number[]; st: number; d: number }[] = [];
+    for (const l of p.links ?? []) {
+      const A = ends.get(`${l.a.module}/${l.a.ref}`), B = ends.get(`${l.b.module}/${l.b.ref}`);
+      if (!A || !B) continue;
+      const a0 = uv(A.p), b0 = uv(B.p), da = uv(A.d), db = uv(B.d);
+      const a1 = a0.map((v, j) => v + da[j] * 14), b1 = b0.map((v, j) => v + db[j] * 14);
+      // nearest street, preferring one on the side each plug faces (no U-turn straight out of a sideways plug)
+      const behind = (q: number[], d: number[], c: number) => (Math.abs(d[1]) > 0.5 && (c - q[1]) * d[1] < -5 ? 60 : 0);
+      const cost = (c: number) => Math.abs(a1[1] - c) + Math.abs(b1[1] - c) + behind(a1, da, c) + behind(b1, db, c);
+      let st = 0;
+      streets.forEach((c, k) => { if (cost(c) < cost(streets[st])) st = k; });
+      routes.push({ l, a0, a1, b0, b1, st, d: 2 * Math.max(1.4, Math.max(A.cable, B.cable) / 2) });
+    }
+    // lanes: side by side in each street, ordered so cables from the lower rail take the lower lanes
+    const laneOf = new Map<string, number>();
+    streets.forEach((c, k) => {
+      const rs0 = routes.filter((q) => q.st === k).sort((x, y) => (x.a1[1] + x.b1[1]) - (y.a1[1] + y.b1[1]) || Math.min(x.a1[0], x.b1[0]) - Math.min(y.a1[0], y.b1[0]));
+      const rs = laneOrder(rs0, c);
+      const pitch = Math.max(0, ...rs.map((q) => q.d)) + 2.9;
+      rs.forEach((q, i) => laneOf.set(q.l.id, c + (i - (rs.length - 1) / 2) * pitch));
+    });
+    for (const q of routes) {
+      const { l, a0, a1, b0, b1, d } = q;
+      const vl = laneOf.get(l.id)!;
+      const zc = stands ? STAND.floor + d / 2 + 0.25 : 5;
+      // a sideways plug facing its lane slopes straight down into it; any other drops vertically first (clear of its board)
+      const da = uv(ends.get(`${l.a.module}/${l.a.ref}`)!.d), db = uv(ends.get(`${l.b.module}/${l.b.ref}`)!.d);
+      const facing = (q: number[], d: number[]) => Math.abs(d[1]) > 0.5 && (vl - q[1]) * d[1] > 10;
+      const raw = [a0, a1, ...(facing(a1, da) ? [] : [[a1[0], a1[1], zc]]), [a1[0], vl, zc], [b1[0], vl, zc], ...(facing(b1, db) ? [] : [[b1[0], b1[1], zc]]), b1, b0].filter((pt, i, arr) => i === 0 || Math.hypot(pt[0] - arr[i - 1][0], pt[1] - arr[i - 1][1], pt[2] - arr[i - 1][2]) > 0.5);
+      const path = smooth(raw, 3).map(xy);
+      let len = 0;
+      for (let i = 1; i < path.length; i++) len += Math.hypot(path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1], path[i][2] - path[i - 1][2]);
+      const kind = l.kind ?? 'usb';
+      ghosts.push({ name: `cable ${l.id}`, mesh: tubeMesh(path, d / 2, 10), color: KIND_COLOR[kind], opacity: 1, tag: { kind: 'cable', refs: [l.id] }, anim: { seq: 31, dir: [0, 0, 1] }, mat: 'cable' });
+      cables.push({ id: l.id, a: `${nameOf2(l.a.module)} ${l.a.ref}`, b: `${nameOf2(l.b.module)} ${l.b.ref}`, kind, length: round(len, 0), buy: cableToBuy(len) });
+      lanes.push({ street: q.st, y: vl, d: Math.round(d * 10) / 10, u0: Math.min(a1[0], b1[0]), u1: Math.max(a1[0], b1[0]) });
+    }
+    const long = cables.filter((c) => c.length > 1200);
+    if (long.length) warnings.push(`${long.map((c) => `${c.a} to ${c.b}`).join(', ')}: over 1.2 m of ${long.length > 1 ? 'cable each' : 'cable'}. Put the two boards closer (Auto-arrange keeps connected boards together).`);
+    if (cables.length) checks.push({ group: 'Panel', name: 'Cables', value: `${cables.length}, ${round(cables.reduce((a, c) => a + c.length, 0) / 1000, 1)} m`, status: 'info', detail: cables.map((c) => `${KIND_NAME[c.kind]} ${c.a} to ${c.b}: ${round(c.length / 10, 0)} cm (buy ${c.buy} m)`).join('; ') });
+  }
+
+  // ---- table stands: sleepers across the rails, with cable combs where the streets cross them ----
+  let standOut: PanelReport['stands'];
+  if (stands) {
+    const off = rails.filter((r) => !rackRails.includes(r));
+    if (off.length) warnings.push(`Rail${off.length > 1 ? 's' : ''} ${off.map((r) => r.id.replace(/^r/, '')).join(', ')} ${off.length > 1 ? 'run' : 'runs'} across the others, so the table stands leave ${off.length > 1 ? 'them' : 'it'} out. Turn ${off.length > 1 ? 'them' : 'it'} to match.`);
+    const plan = planStands(rackRails.map((r) => { const u0 = vert ? r.y : r.x; return { id: r.id, u0, u1: u0 + r.length!, v: vert ? -r.x : r.y }; }), streets, lanes);
+    warnings.push(...plan.warnings);
+    const Rk: M4 = vert ? basis([0, 1, 0], [-1, 0, 0], [0, 0, 1], [0, 0, 0]) : I4;
+    const NAME = { end: 'Rail end block (the rail pushes in)', saddle: 'Rail saddle', spacer: 'Stand spacer', outrigger: 'Stand foot' } as const;
+    const groups = new Map<string, typeof plan.pieces>();
+    for (const pc of plan.pieces) groups.set(pc.key, [...(groups.get(pc.key) ?? []), pc]);
+    const foot = new Map<number, number[]>();
+    try {
+      let k = 0;
+      for (const [, list] of groups) {
+        const pc0 = list[0], m = pieceMesh(pc0);
+        const T = list.map((pc) => mul(Rk, pc.M));
+        const len = pc0.to != null ? ` ${Math.round(pc0.to - 2 * STAND.half)} mm` : '';
+        const name = `${NAME[pc0.kind]}${len}${pc0.lanes.length ? `, comb for ${pc0.lanes.length} cable${pc0.lanes.length > 1 ? 's' : ''}` : ''}`;
+        const tag = (pc: (typeof list)[number]) => ({ kind: 'railstand' as const, refs: [`s${pc.station + 1}`] });
+        const anim = { seq: 0, dir: [0, 0, -1] as [number, number, number] };
+        parts.push({ id: `stand_${++k}`, name, qty: list.length, mesh: m.mesh, toAssembly: T[0], instances: T.slice(1), volume: m.volume, size: m.size, color: '#7c8896',
+          tag: tag(pc0), tags: list.slice(1).map(tag), anim, anims: list.slice(1).map(() => anim) });
+        list.forEach((pc, i) => { const b = foot.get(pc.station) ?? emptyBox(); boxOf(m.mesh.pos, T[i], b); foot.set(pc.station, b); });
+      }
+    } finally {
+      freeAll();
+    }
+    standOut = plan.stations.map((_, i) => ({ station: i + 1, foot: [foot.get(i)?.[0] ?? 0, foot.get(i)?.[1] ?? 0, foot.get(i)?.[3] ?? 0, foot.get(i)?.[4] ?? 0] as [number, number, number, number], pieces: plan.pieces.filter((q) => q.station === i).length, combs: plan.pieces.filter((q) => q.station === i && q.lanes.length).length })).filter((s) => s.pieces);
+    const combs = plan.pieces.filter((q) => q.lanes.length).length;
+    if (plan.pieces.length) {
+      checks.push({ group: 'Panel', name: 'Table stands', value: `${plan.stations.length} sleepers, ${plan.pieces.length} pieces`, status: 'info', detail: `the rails stand ${STAND.H} mm off the table. Each rail end pushes ${STAND.len - STAND.back} mm into an end block (crush ribs make it a light press fit); saddles carry the rails between; spacer bars slide into the blocks' dovetails along the rail.${combs ? ` ${combs} spacer${combs > 1 ? 's carry' : ' carries'} a cable comb where a cable street crosses the sleeper: press each cable into its slot.` : ''} Every piece prints on its end, no supports. Lifting a rail end with 20 N puts about ${capStress(20).toFixed(0)} MPa in the caps over its lips (hand calculation; PETG yields near 50). Not print-tested yet.` });
+      // sag of the longest unsupported span under a 20 N press at mid-span (steel rail; aluminium sags ~2.9x more)
+      const I = railI(), F = 20, L = plan.span, E = 200e3;
+      const sag = (F * L ** 3) / (48 * E * I);
+      checks.push({ group: 'Panel', name: 'Rail sag between sleepers', value: `${sag.toFixed(2)} mm`, status: sag < 0.5 ? 'ok' : sag < 1.5 ? 'warn' : 'bad', detail: `longest span ${Math.round(L)} mm, 20 N pressed at mid-span (pushing a board in), steel TS35 (I = ${Math.round(I)} mm⁴, simply supported beam). Aluminium rail sags about 2.9 times as much.` });
+    }
+  }
+
   // ---- checks ----
   const eR = mat.E / MATERIALS.PETG.E;
   const allow = mat.strainAllow;
   const st = (eps: number): Check['status'] => (eps <= allow * 0.85 ? 'ok' : eps <= allow * 1.1 ? 'warn' : 'bad');
   if (docks.length) {
     // PETG numbers from the in-app 2D FEA (0.06 mm mesh), scaled by stiffness; the Check tab reruns it for your material
-    checks.push({ group: 'Panel', name: 'Rail shoe release', value: `${(1.6 * eR).toFixed(1)} N pinch`, status: 'info', detail: `lift the boards out, then pinch the tall ridged ear beside the socket toward it (about 5 mm) and tilt the dock off the rail, one hand. Or hook a fingertip under the ear's top lip and pull it off the wall (about ${(6.1 * eR).toFixed(0)} N). A stop meets the post at 2.3 mm of jaw travel (1.7 needed), so the hinge cannot be over-bent. Each dock puts its ear on the side with the most room.` });
+    checks.push({ group: 'Panel', name: 'Rail shoe release', value: `${(1.4 * eR).toFixed(1)} N press`, status: 'info', detail: 'lift the boards out, then press the ridged pad of the lever beside the socket down (about 8 mm) and lift the dock off the rail. The lever is printed in place on its pin; its hook pulls the jaw off the flange, and the jaw spring lifts it back. A stop meets the post at 2.2 mm of jaw travel (1.7 needed), so the hinge cannot be over-bent. Each dock puts its lever on the side of the rail with the most room.' });
     checks.push({ group: 'Panel', name: 'Rail shoe hinge', value: '1.9% peak', status: st(0.019), detail: 'uniform 0.9 mm leaf above the lip, at its root fillet; 99% of the shoe stays under 0.6%. Clipping on: 4.3 N (PETG) at the jaw ramp.' });
     checks.push({ group: 'Panel', name: 'Socket latch (per board)', value: `${(9.8 * eR).toFixed(1)} N to plug in`, status: st(0.018), detail: `1.8% peak at the spring root while the tongue goes in, 1.3% while the button releases it; the nose clears the groove after 1.9 mm of the 3.1 mm button stroke; a stop post prevents over-bending` });
-    checks.push({ group: 'Panel', name: 'Rail shoe pull-off', value: `~${Math.round(90 * (allow / 0.02))} N`, status: 'ok', detail: 'the hinge leaf stands above the lip, so a pull straight off the wall runs down the leaf and cannot pry the jaw open, friction or not; this is where the hinge reaches its strain limit.' });
+    checks.push({ group: 'Panel', name: 'Rail shoe pull-off', value: `~${Math.round(90 * (allow / 0.02))} N`, status: 'ok', detail: 'the hinge leaf stands above the lip, so a pull straight up off the rail runs down the leaf and cannot pry the jaw open, friction or not; this is where the hinge reaches its strain limit.' });
     checks.push({ group: 'Panel', name: 'Socket to shoe hooks', value: '0.84% strain', status: st(0.0084), detail: 'press the socket into the shoe in any of 4 turns; a pull tightens the 10° hooks' });
   }
   const railLens = rails.map((r) => r.length!);
   checks.push({ group: 'Panel', name: 'Rails to cut', value: railLens.length ? railLens.map((l) => `${l} mm`).join(' + ') : 'none', status: 'info', detail: `${docks.length} dock${docks.length === 1 ? '' : 's'}, ${placed.length - docks.length} flat clip${placed.length - docks.length === 1 ? '' : 's'}; TS35 top-hat rail` });
   const depth = Math.max(0, ...placed.map((q) => q.zhi));
-  checks.push({ group: 'Panel', name: 'Depth from the wall', value: `${round(depth, 0)} mm`, status: 'info', detail: 'furthest point of any holder, plug or button from the panel surface' });
+  checks.push({ group: 'Panel', name: stands ? 'Height above the table' : 'Height above the rail base', value: `${round(depth + (stands ? STAND.H : 0), 0)} mm`, status: 'info', detail: 'tallest point of any holder, plug or button' });
 
   // ---- report ----
   const act = placed.flatMap((q) => q.seats).find((s) => s.mi === p.active) ?? placed[0]?.seats[0];
@@ -322,10 +476,11 @@ export function generatePanel(p: Project): GenResult {
     cx = (Math.min(...xs) + Math.max(...xs)) / 2;
     cy = (Math.min(...ys) + Math.max(...ys)) / 2;
   }
-  const panel: PanelReport = { rails: rails as PanelReport['rails'], mounts: mountOut, modules: access, unplaced, depth, collisions };
+  const panel: PanelReport = { rails: rails as PanelReport['rails'], mounts: mountOut, modules: access, unplaced, depth, height: round(depth + (standOut?.length ? STAND.H : 0), 1), collisions, stands: standOut };
   return {
     parts,
     ghosts,
+    display,
     report: {
       warnings: [...new Set(warnings)],
       checks,
@@ -336,6 +491,7 @@ export function generatePanel(p: Project): GenResult {
       panel,
       features,
       frames,
+      cables,
     },
   };
 }

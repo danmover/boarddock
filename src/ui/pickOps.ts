@@ -2,6 +2,7 @@
 // multi-selection picked in the 3D view (a cradle here, a cap there, a whole dock) goes in one ⌘Z.
 import type { Feature, Project } from '../model/types';
 import { ROLE_INFO } from '../model/holes';
+import { KIND_COLOR, KIND_NAME } from '../model/links';
 import { edit, select, store, toast, type SelItem } from '../state';
 import { materialise } from './panelOps';
 
@@ -36,6 +37,16 @@ export function describe(p: Project, it: SelItem): { title: string; sub: string;
       const r = rep?.rails.find((x) => x.id === it.id);
       return { title: `Rail ${it.id.replace(/^r/, '')}`, sub: r ? `${r.dir === 'h' ? 'horizontal' : 'vertical'} · ${Math.round(r.length)} mm` : 'DIN rail', color: 'var(--muted)', removable: 'Remove rail' };
     }
+    case 'link': {
+      const l = (p.links ?? []).find((x) => x.id === it.id);
+      const c = store.get().result?.report.cables?.find((x) => x.id === it.id);
+      const nm = (r?: { module: string; ref: string }) => (r ? `${mod(r.module)?.board.name ?? '?'} ${r.ref}` : '?');
+      return { title: `${l ? KIND_NAME[l.kind ?? 'usb'] : ''} cable`, sub: `${nm(l?.a)} to ${nm(l?.b)}${c ? ` · ${Math.round(c.length / 10)} cm, buy ${c.buy} m` : ''}`, color: l ? KIND_COLOR[l.kind ?? 'usb'] : 'var(--muted)', removable: 'Remove cable' };
+    }
+    case 'railstand': {
+      const all = rep?.stands ?? [], s = all.find((x) => `s${x.station}` === it.id);
+      return { title: `Table stand ${it.id.slice(1)} of ${all.length}`, sub: s ? `${s.pieces} piece${s.pieces > 1 ? 's' : ''}${s.combs ? ` · ${s.combs} cable comb${s.combs > 1 ? 's' : ''}` : ''}` : 'sleeper under the rails', color: 'var(--muted)', removable: 'Remove table stands' };
+    }
     case 'hole': {
       const h = p.modules[p.active].board.holes.find((x) => x.id === it.id);
       return { title: `Hole Ø${h?.d.toFixed(2) ?? ''}`, sub: ROLE_INFO[h?.role ?? 'mount'].name, color: ROLE_INFO[h?.role ?? 'mount'].color, removable: 'Delete' };
@@ -49,7 +60,7 @@ export function describe(p: Project, it: SelItem): { title: string; sub: string;
       const name = FEATURE_NAME[it.fkind ?? 'rim'];
       const refs = it.fkind === 'pin' ? (it.refs ?? []).map((id) => `hole ${(m?.board.holes.findIndex((h) => h.id === id) ?? -1) + 1}`).join(', ') : (it.refs ?? []).join(' + ');
       const removable = it.fkind === 'seat' || it.fkind === 'rim' ? null : it.fkind === 'dock' ? 'Take off the panel' : it.fkind === 'tower' ? 'Unstack' : it.fkind === 'plug' ? 'Ignore this connector' : `Remove ${name}`;
-      return { title: `${refs ? refs + ' ' : ''}${name}`, sub: `${m?.board.name ?? ''}${p.modules.length > 1 ? ` · board ${idx(it.module) + 1}` : ''}`, color: it.fkind === 'cap' ? '#ffc043' : it.fkind === 'plug' ? 'var(--copper)' : 'var(--accent)', removable };
+      return { title: `${refs ? refs + ' ' : ''}${name}`, sub: `${m?.board.name ?? ''}${p.modules.length > 1 ? ` · board ${idx(it.module) + 1}` : ''}`, color: it.fkind === 'cap' ? '#f2c94c' : it.fkind === 'plug' ? 'var(--copper)' : 'var(--accent)', removable };
     }
   }
 }
@@ -70,8 +81,15 @@ export function removeItems(items: SelItem[]) {
         for (const mt of p.panel.mounts) for (const sl of mt.slots) if (sl.module === m.id) sl.module = null;
         p.active = Math.min(p.active, p.modules.length - 1);
         n++;
+      } else if (it.kind === 'link') {
+        p.links = (p.links ?? []).filter((l) => l.id !== it.id);
+        n++;
       } else if (it.kind === 'mount') {
         p.panel.mounts = p.panel.mounts.filter((x) => x.id !== it.id);
+        n++;
+      } else if (it.kind === 'railstand') {
+        if (p.panel.stands === false) continue;
+        p.panel.stands = false;
         n++;
       } else if (it.kind === 'rail') {
         p.panel.rails = p.panel.rails.filter((r) => r.id !== it.id);

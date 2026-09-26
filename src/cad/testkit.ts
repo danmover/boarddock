@@ -20,7 +20,7 @@ export function testKit(fit = 0): PartOut[] {
     const f = holderDock(6, 3, 0, fit);
     const key = f.add.subtract(f.cut);
     return [
-      part('kit_shoe', 'Rail shoe', shoe(), END_POSE.pose, '#f59e42'),
+      part('kit_shoe', 'Rail shoe', shoe(), END_POSE.pose, '#5b6570'),
       part('kit_socket', 'Dock socket', socket(), END_POSE.pose, '#5b8def'),
       part('kit_key', 'Tongue key', key, D, '#e4ebe6'),
       part('kit_rod', 'Release rod (key)', rod(f.zg1).m, D, '#ff5d6c'),

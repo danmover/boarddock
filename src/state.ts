@@ -12,15 +12,15 @@ export type Step = 'import' | 'board' | 'plugs' | 'holder' | 'mount' | 'check' |
  * 3D view (a whole board and its holder, or one feature of a holder such as a plug cradle).
  */
 export type SelItem = {
-  kind: 'hole' | 'comp' | 'mount' | 'rail' | 'module' | 'feature';
+  kind: 'hole' | 'comp' | 'mount' | 'rail' | 'module' | 'feature' | 'link' | 'railstand';
   id: string;
   module?: string; // feature: the board it belongs to
   fkind?: Feature['kind'] | 'plug' | 'clip'; // feature kind
   refs?: string[]; // feature: connector refs or hole ids
 };
-export type Layer = 'holders' | 'docks' | 'caps' | 'rails' | 'boards' | 'plugs';
+export type Layer = 'holders' | 'docks' | 'caps' | 'rails' | 'boards' | 'plugs' | 'cables';
 export type Sel = SelItem[];
-export type View = 'assembly' | 'print' | 'editor' | 'panel';
+export type View = 'assembly' | 'print' | 'editor' | 'panel' | 'wiring';
 
 export interface State {
   project: Project | null;
@@ -34,7 +34,7 @@ export interface State {
   error: string | null;
   showGhosts: boolean;
   theme: 'dark' | 'light';
-  addMode: boolean; // next import adds a board instead of replacing
+  replaceMode: boolean; // next import replaces the board being edited instead of adding
   layers: Record<Layer, boolean>; // what the 3D view shows
   toast: string | null;
 }
@@ -61,8 +61,8 @@ let state: State = {
   building: false,
   error: null,
   showGhosts: true,
-  addMode: false,
-  layers: { holders: true, docks: true, caps: true, rails: true, boards: true, plugs: true },
+  replaceMode: false,
+  layers: { holders: true, docks: true, caps: true, rails: true, boards: true, plugs: true, cables: true },
   toast: null,
   theme: (typeof localStorage !== 'undefined' && (localStorage.getItem('boarddock.theme') as 'dark' | 'light')) || 'dark',
 };
@@ -136,15 +136,33 @@ export function setBoard(b: Board) {
   persist(p);
 }
 
-/** Add another board to the project (stack / side by side / back to back). */
+/** Add another board to the project. */
 export function addBoard(b: Board) {
+  putBoards([b], false);
+}
+
+/**
+ * Put imported boards into the project in one undoable step: added (the default once there is a project), or with
+ * `replace` the first one takes the place of the board being edited and the rest are added. The first new board
+ * becomes the one being edited.
+ */
+export function putBoards(bs: Board[], replace: boolean) {
+  if (!bs.length) return;
   const cur = state.project;
-  if (!cur) return setBoard(b);
+  if (!cur || replace) {
+    setBoard(bs[0]);
+    if (bs.length > 1) { const past = state.past; putBoards(bs.slice(1), false); store.set({ past }); }
+    store.set({ replaceMode: false });
+    return;
+  }
   const p = structuredClone(cur);
-  p.modules.push(newModule(b, activeModule(p).holder));
-  p.active = p.modules.length - 1;
-  if (p.layout === 'panel' && !p.panel.auto) appendDock(p, p.modules[p.active].id);
-  store.set({ project: p, past: [...state.past, cur], future: [], sel: [], step: 'board', view: 'assembly', addMode: false });
+  const first = p.modules.length;
+  for (const b of bs) {
+    p.modules.push(newModule(b, activeModule(p).holder));
+    if (p.layout === 'panel' && !p.panel.auto) appendDock(p, p.modules[p.modules.length - 1].id);
+  }
+  p.active = first;
+  store.set({ project: p, past: [...state.past, cur], future: [], sel: [], step: 'board', view: 'assembly', replaceMode: false });
   persist(p);
 }
 

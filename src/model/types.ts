@@ -71,6 +71,10 @@ export interface Board {
   comps: Comp[];
   source: string;
   notes: string[];
+  kind?: 'pcb' | 'box'; // box: a closed device (USB hub, charger) held by low guards and strap loops; thickness = its height
+  color?: string; // box colour in the 3D view
+  traces?: { a: V2; b: V2; w: number; side: Side }[]; // copper tracks (read from KiCad), for the 3D view
+  vias?: { x: number; y: number; d: number }[];
 }
 
 export type Material = 'PLA' | 'PETG' | 'ABS' | 'ASA' | 'PA' | 'PC';
@@ -97,6 +101,7 @@ export interface HolderSettings {
   color?: string; // preview colour of the printed holder
   feat?: HolderFeatures; // global switches over the per-connector options
   style?: 'frame' | 'tray'; // frame: rim, corner guards and ribs (fast to print); tray: full base and wall
+  release?: 'centre' | 'side' | 'auto'; // docked holders: release button in the middle of the far edge (default), beside the board, or whichever fits best
 }
 
 /** Whole-holder switches: turn a kind of feature off for every connector at once (per-connector choices are kept). */
@@ -159,7 +164,7 @@ export interface ArrangeSettings {
 
 export type Turn = 0 | 90 | 180 | 270;
 
-/** A DIN rail on the panel (wall or enclosure back plate). Panel frame: X right, Y up, Z out of the wall. */
+/** A DIN rail on the panel (table stands, or any flat base). Panel frame: X right, Y away from you, Z up. */
 export interface Rail {
   id: string;
   x: number; // start of the centre line: left end (horizontal) or bottom end (vertical)
@@ -193,12 +198,18 @@ export interface PanelSettings {
   maxRail: number; // auto: longest rail before a new row starts
   rowGap: number; // auto: space between rows of rails
   fit?: number; // tongue made this much smaller on every face (mm): raise it if holders are hard to plug in
+  stands?: boolean; // printed table stands under the rails, with cable combs (default on)
   rails: Rail[]; // manual layout
   mounts: RailMount[];
 }
 
+/** A cable between two plugs (connectors on two boards, or a board and a box such as a hub). */
+export interface PlugRef { module: string; ref: string }
+export interface Link { id: string; a: PlugRef; b: PlugRef; kind?: 'usb' | 'power' | 'video' | 'net' | 'audio' | 'wire' }
+
 export interface Project {
   version: 3;
+  links?: Link[]; // cables between boards
   modules: Module[];
   active: number; // module being edited
   layout: 'panel' | 'loose'; // boards on DIN rail docks (default), or loose holders (stack / side by side / back to back)
@@ -217,7 +228,7 @@ export interface MeshData {
 
 /** What a part or ghost belongs to, for picking in the 3D view. */
 export interface PickTag {
-  kind: 'holder' | 'cap' | 'rod' | 'clip' | 'shoe' | 'socket' | 'link' | 'rivet' | 'board' | 'parts' | 'plug' | 'rail' | 'stand';
+  kind: 'holder' | 'cap' | 'rod' | 'clip' | 'shoe' | 'socket' | 'link' | 'rivet' | 'board' | 'parts' | 'plug' | 'rail' | 'stand' | 'cable' | 'railstand';
   module?: string;
   mount?: string;
   rail?: string;
@@ -241,6 +252,7 @@ export interface PartOut {
   tags?: PickTag[]; // one per further placement (instances)
   anim?: Anim;
   anims?: Anim[]; // one per further placement
+  displayMesh?: MeshData; // what the 3D view shows instead of `mesh` (same frame), e.g. without a print-in-place lever
 }
 
 export interface Ghost {
@@ -250,6 +262,7 @@ export interface Ghost {
   opacity: number;
   tag?: PickTag;
   anim?: Anim;
+  mat?: 'mask' | 'gold' | 'metal' | 'black' | 'chip' | 'white' | 'silk' | 'led' | 'passive' | 'blue' | 'plug' | 'cable' | 'copper' | 'trace' | 'tin' | 'box';
 }
 
 /** A pickable feature fused into a holder (cradle, pin, finger...), as a box in the holder frame. */
@@ -279,6 +292,7 @@ export interface GenReport {
   panel?: PanelReport | null;
   features?: Feature[];
   frames?: Record<string, number[]>; // module id -> holder frame to assembly
+  cables?: { id: string; a: string; b: string; kind: NonNullable<Link['kind']>; length: number; buy: number }[];
 }
 
 export type AccessDir = 'front' | 'up' | 'down' | 'left' | 'right' | 'wall';
@@ -288,14 +302,17 @@ export interface Access { ref: string; type: string; dir: AccessDir; ok: 'good' 
 export interface PanelReport {
   rails: (Rail & { length: number })[];
   mounts: (RailMount & { at: number; x: number; y: number; foot: [number, number, number, number]; leverSide: 1 | -1 })[];
-  modules: { id: string; mount: string; slot: number; edge: EdgeName; turn: Turn; foot: [number, number, number, number]; z1: number; access: Access[] }[];
+  modules: { id: string; mount: string; slot: number; edge: EdgeName; turn: Turn; foot: [number, number, number, number]; z1: number; access: Access[]; stack?: string[] }[];
   unplaced: string[];
-  depth: number; // furthest point from the wall
+  depth: number; // tallest point above the rail base
+  height?: number; // tallest point above the table (on stands) or the rail base
   collisions: string[][]; // pairs of module / mount ids that overlap
+  stands?: { station: number; foot: [number, number, number, number]; pieces: number; combs: number }[]; // table sleepers, panel-frame footprints
 }
 
 export interface GenResult {
   parts: PartOut[];
   ghosts: Ghost[];
   report: GenReport;
+  display?: PartOut[]; // shown in the 3D view only (printed as part of another part)
 }
