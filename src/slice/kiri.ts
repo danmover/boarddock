@@ -2,7 +2,7 @@
 // vendor/kiri/build.mjs. The engine loads on first use and slices in its own worker plus a pool of helpers, so the
 // app stays responsive. Out comes plain G-code, or a .gcode.3mf for Bambu Lab printers.
 import { zipSync, strToU8 } from 'fflate';
-import type { Material, MeshData, PrinterSettings, V2 } from '../model/types';
+import type { Material, MeshData, PrinterSettings } from '../model/types';
 import { printerByName } from '../model/printers';
 import { writeStl } from '../cad/export';
 import { kiriDevice, kiriProcess, machinePlan, type MachinePlan } from './profiles';
@@ -60,7 +60,7 @@ export async function slicePlate(job: SliceJob, onProgress: (f: number, what: st
     if (!st.layers || /^G[01] [^;\n]*(NaN|Infinity|undefined)/m.test(gcode)) throw new Error('The slicer returned broken G-code');
     const bambu = plan.firmware === 'bambu';
     const name = `${job.base}.gcode${bambu ? '.3mf' : ''}`;
-    const bytes = bambu ? bambu3mf(gcode, st, await plateImage(job.meshes, job.printer.bed, 512), await plateImage(job.meshes, job.printer.bed, 128)) : strToU8(gcode);
+    const bytes = bambu ? bambu3mf(gcode, st, ...(await plateImages(job.meshes, [512, 128]))) : strToU8(gcode);
     onProgress(1, 'Done');
     return { gcode, ...st, plan, file: name, bytes };
   } finally {
@@ -109,8 +109,19 @@ export function gcodeLayers(gcode: string): { z: number; segs: Float32Array }[] 
   return out.filter((l) => l.segs.length);
 }
 
-/** A top-down picture of the plate for the Bambu printer screen. */
-async function plateImage(meshes: MeshData[], bed: V2, size: number): Promise<Uint8Array> {
+/** Top-down pictures of the plate for the Bambu printer screen: drawn once at the first size, scaled for the rest. */
+async function plateImages(meshes: MeshData[], sizes: [number, number]): Promise<[Uint8Array, Uint8Array]> {
+  const big = plateCanvas(meshes, sizes[0]);
+  const small = document.createElement('canvas');
+  small.width = small.height = sizes[1];
+  const g = small.getContext('2d')!;
+  g.imageSmoothingQuality = 'high';
+  g.drawImage(big, 0, 0, sizes[1], sizes[1]);
+  const png = async (cv: HTMLCanvasElement) => new Uint8Array(await ((await new Promise<Blob | null>((r) => cv.toBlob(r, 'image/png'))) ?? new Blob()).arrayBuffer());
+  return [await png(big), await png(small)];
+}
+
+function plateCanvas(meshes: MeshData[], size: number): HTMLCanvasElement {
   const cv = document.createElement('canvas');
   cv.width = cv.height = size;
   const g = cv.getContext('2d')!;
@@ -133,9 +144,7 @@ async function plateImage(meshes: MeshData[], bed: V2, size: number): Promise<Ui
     for (let i = 0; i < 6; i += 2) g[i ? 'lineTo' : 'moveTo'](ox + (t.pts[i] - x0) * s, size - oy - (t.pts[i + 1] - y0) * s);
     g.closePath(); g.fill(); g.stroke();
   }
-  void bed;
-  const blob = await new Promise<Blob | null>((r) => cv.toBlob(r, 'image/png'));
-  return new Uint8Array(await (blob ?? new Blob()).arrayBuffer());
+  return cv;
 }
 
 /**

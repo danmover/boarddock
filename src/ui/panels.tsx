@@ -173,7 +173,18 @@ function usePicture(key: string, make: () => Promise<PicPart[]>, w?: number, h?:
   return url;
 }
 
+/** Version of the pictures in public/tiles (scripts/render-tiles.mjs makes them): bump it after re-rendering. */
+const TILE_V = 1;
+const tileFailed = new Set<string>();
+
 export function BoardThumb({ id }: { id: string }) {
+  // the picture shipped with the app, rendered ahead of time; a live render only if it is missing
+  const [live, setLive] = useState(() => tileFailed.has(id));
+  if (!live) return <img className="thumb pic" src={new URL(`tiles/${id}.webp?v=${TILE_V}`, document.baseURI).href} alt="" draggable={false} decoding="async" onError={() => { tileFailed.add(id); setLive(true); }} />;
+  return <LiveThumb id={id} />;
+}
+
+function LiveThumb({ id }: { id: string }) {
   let b = thumbCache.get(id);
   if (!b) { b = TEMPLATES.find((t) => t.id === id)!.make(); thumbCache.set(id, b); }
   const board = b;
@@ -614,7 +625,10 @@ function CablesSection() {
 function PowerDraw() {
   const p = useApp((s) => s.project)!;
   const m = activeModule(p), b = m.board;
-  const n = needOf(b, plugsOf(p).some((x) => x.module === m && x.role === 'power-in'));
+  const mine = plugsOf(p).filter((x) => x.module === m);
+  const n = needOf(b, mine.some((x) => x.role === 'power-in'));
+  // only boards that take power from a port (a power input, or USB as a device) are in the budget
+  if (b.draw == null && !mine.some((x) => x.role === 'power-in' || x.role === 'device')) return null;
   return (
     <>
       <div className="row" style={{ marginTop: 8, alignItems: 'end' }}>
@@ -640,7 +654,8 @@ function PowerBudget() {
         const t = powerText(s), f = Math.min(1, s.load / Math.max(0.01, s.total));
         return (
           <div key={s.module.id} className={`pw ${s.status}`} onClick={() => setOpen(open === s.module.id ? null : s.module.id)} title="Click for the details">
-            <div className="pw-row"><b>{shortName(s.module.board.name)}</b><small>{s.kind}</small><span className="grow" /><span className="mono">{t.value}</span></div>
+            <div className="pw-row"><b title={s.module.board.name}>{shortName(s.module.board.name)}</b><small>{s.kind}</small><span className="grow" /><span className="mono">{Math.round(s.load * 10) / 10} / {Math.round(s.total * 10) / 10} A</span></div>
+            {s.ports.length > 0 && <small className="pw-note">{s.ports.length} port{s.ports.length > 1 ? 's' : ''} too weak for {s.ports.length > 1 ? 'their boards' : shortName(s.ports[0].take)}</small>}
             <div className="pw-bar"><i style={{ width: `${f * 100}%` }} /></div>
             {open === s.module.id && <p className="hint" style={{ margin: '6px 0 0' }}>{t.detail}</p>}
           </div>
@@ -1503,7 +1518,7 @@ function HoleWizard() {
       <button className="btn small ghost" title="Sort every hole again from the parts and the stack" onClick={() => editMod((q) => applyHoleRoles(q.board, above, true))}><Icon d={I.wand} /> Detect{differs ? ` (${differs})` : ''}</button>
       <button className="btn small ghost icon" title="Add a hole" onClick={() => { editMod((q) => { q.board.holes.push({ id: uid('h'), x: (bb.x0 + bb.x1) / 2, y: (bb.y0 + bb.y1) / 2, d: 3.2, plated: false, use: 'auto', role: 'mount', why: 'added by hand' }); }); store.set({ view: 'editor' }); }}><Icon d={I.plus} /></button>
     </span>}>
-      {!b.holes.length ? <p className="hint" style={{ marginTop: 0 }}>No holes: the board sits on edge seats and snap fingers hold it.</p> : (
+      {!b.holes.length ? <NoHoles /> : (
         <>
           <div className="rolebar">{byRole.map((g) => <i key={g.r} style={{ width: `${(g.holes.length / b.holes.length) * 100}%`, background: ROLE_INFO[g.r].color }} title={`${g.holes.length} ${ROLE_INFO[g.r].name}`} />)}</div>
           {byRole.map((g) => (
@@ -1539,6 +1554,28 @@ function HoleWizard() {
         </>
       )}
     </Section>
+  );
+}
+
+/** A board with no holes: what holds it, from the build (the snap fingers in its walls), and what to do if nothing does. */
+function NoHoles() {
+  const p = useApp((s) => s.project)!;
+  const res = useApp((s) => s.result);
+  const id = activeModule(p).id;
+  const fingers = res?.report.checks.find((c) => c.module === id && /^Wall snap fingers \(\d+\)/.test(c.name));
+  // warnings name their boards ("Pico, Pico 2 and Nano: Nothing clips…") or none when there is one board
+  const loose = res?.report.warnings.some((w) => {
+    const i = w.indexOf('Nothing clips this board in');
+    if (i < 0) return false;
+    return i === 0 ? p.modules.length === 1 : w.slice(0, i - 2).split(/, | and /).includes(activeModule(p).board.name);
+  });
+  const n = fingers ? +(/\((\d+)\)/.exec(fingers.name)?.[1] ?? 0) : 0;
+  return (
+    <>
+      <p className="hint" style={{ marginTop: 0 }}>No holes: the board sits on seats along its edges and snap fingers in the wall hold it down.{fingers ? ` Here ${n} finger${n === 1 ? '' : 's'} hold it (${fingers.value} when it clicks in; Check has the details).` : ''}</p>
+      {loose && <div className="warns"><div>Nothing holds this board in yet: plugs{p.layout === 'panel' ? ', the dock' : ''} and the label take its free edges. Turn off a plug cradle or the label (Plugs, Holder), or set the snap fingers to Always (Holder) to try short fingers between the plugs.</div></div>}
+      {!loose && n === 2 && <p className="hint">Two fingers hold it: press it down until both click. Setting the snap fingers to Always (Holder) adds short ones between the plugs where they fit.</p>}
+    </>
   );
 }
 

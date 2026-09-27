@@ -225,6 +225,8 @@ Ports are spaced evenly along their face, and a preview shows where they are. Ev
 
 The Plugs step counts what still needs a port: USB devices against free hub and computer ports, and boards that need power against free charger ports. When you are short, it offers to add a hub or a charger. A stacked pair of USB-A sockets, like on a Raspberry Pi, counts as two ports ("USB2 lower" and "USB2 upper"). Boards with screw terminals or jumper headers and nothing connected (a relay board, a power distribution board) are listed too: Auto-connect leaves wiring to you.
 
+![Power budget in the Plugs step](docs/images/power.png)
+
 **Power budget.** Every charger, powered hub, bus-powered hub and Raspberry Pi USB port gets a bar: what the boards on it take at full load against what it gives, at 5 V. It warns when a charger is asked for more than it gives, when a Pi's four USB ports (1.2 A between them) or a hub with no supply of its own carry too much, and when a board needs more than its port gives (a Pi 4 wants a 3 A supply; a USB-A charger port gives about 2.4 A). The figures are estimates: the makers' recommended supplies and typical draws under load. Set a board's own under **Board › Power** and a charger's total (the watts on its label, divided by 5) under **Box**. Check lists the same.
 
 ## Table stands
@@ -249,6 +251,8 @@ The pieces scale with the rack: more rails give more blocks and spacers, and lon
 The Check step also reports two hand calculations:
 - the rail's sag between sleepers under a 20 N press, treating the rail as a steel beam;
 - the stress in an end block's lip caps when you lift a rail end with 20 N: about 6 MPa, against PETG's yield of about 50 MPa.
+
+A lone rail gets short feet on each end block, so it stands on a wider footprint. **Tipping**: when the holders and boards reach more than 1.5 times as high above the table as the stands are wide at their narrowest, Check says so. That's a rule of thumb, not a calculation: a lone Pi on a short rail gets a note to hold the rack while plugging in; a big board standing on a short rail gets a warning, with ways to steady it (lay it flat, add a rail, space the rails wider).
 
 ## Cables
 
@@ -326,6 +330,9 @@ Later, open BoardDock. A saved rack opens on **Your rack**, with its boards, whe
 3. otherwise on the end of a rail, and Export tells you that rail has to be longer.
 
 Nothing else moves. Connect its cables (Auto-connect only fills plugs that are still free). Export then lists what to do since the build:
+
+![What changed since the rack was built](docs/images/whatsnew.png)
+
 - **Take off** the boards you removed, with the parts and cables (by number) they leave spare;
 - **Move** boards that now sit somewhere else ("Arduino Uno R3 from dock 1.3 front to dock 1.2 front"; docks are numbered by rail and place);
 - **Print** only the new or changed parts, each with why ("new: Arduino Nano", "Pi 4B 2 became Raspberry Pi 5");
@@ -457,6 +464,8 @@ npm run desktop      # Electron app from the build
 npm run dist         # installers for the current OS in release/
 ```
 
+The board tiles on Start and in **Add a board** are pictures shipped in `public/tiles/`. After changing a template, render them again with the dev server running (`PLAYWRIGHT=/path/to/playwright/index.mjs node scripts/render-tiles.mjs`) and bump `TILE_V` in `src/ui/panels.tsx`.
+
 **Project layout:**
 
 - `src/import/`: KiCad, Gerber, Excellon, pick-and-place, IDF, Eagle, DXF and STEP importers.
@@ -473,6 +482,8 @@ npm run dist         # installers for the current OS in release/
 - `src/fea/`: 2D solver (`fea2d.ts`), the flat clip (`clipfea.ts`), the dock (`dockfea.ts`), and a 3D beam solver for the holder's support ribs (`frame3d.ts`).
 - `src/model/holes.ts`: the hole wizard and stacks (alignment on shared holes, bolted and printed layers).
 - `src/model/links.ts`: plug roles, Auto-connect, the port budget and cable sizes.
+- `src/model/power.ts`, `powerdata.ts`: the power budget and its estimates.
+- `src/model/built.ts`: what was built, and what changed since.
 - `src/model/boxes.ts`: boxes (hubs, chargers) from a size and rows of ports.
 - `src/model/built.ts`: what was built, and what is new since.
 - `src/ui/`: React UI.

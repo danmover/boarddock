@@ -555,8 +555,10 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
   .stepper { flex: 1; }
   .stepper button + button { margin-left: 10px; }
   .stepper button + button::before { left: -9px; width: 8px; }
-  .stage .tools { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; justify-content: flex-start; }
+  /* camera presets and Layers fit a phone's width: no side-scrolling (it clipped their shadows into a band) */
+  .stage .tools { flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
   .stage .tools .tgroup { flex: none; }
+  .stage .tools .tgroup button { padding-left: 8px; padding-right: 8px; }
   .stage .tabs { max-width: calc(100% - 24px); overflow-x: auto; scrollbar-width: none; }
   .player .phase { max-width: calc(100vw - 150px); }
   .row3 { grid-template-columns: 1fr 1fr; }
@@ -565,7 +567,7 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
   .side .body { overflow: visible; }
   .status { display: none; }
   .stats { display: none; }
-  .stage .tools { top: 52px; right: 8px; max-width: calc(100% - 16px); }
+  .stage .tools { top: 56px; right: 8px; max-width: calc(100% - 16px); }
   .brand .word { display: none; }
 }
 
@@ -702,7 +704,10 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 .powerlist { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
 .pw { border: 1px solid var(--line); border-radius: 10px; padding: 7px 10px; cursor: pointer; background: var(--surface); }
 .pw-row { display: flex; align-items: baseline; gap: 6px; font-size: 12.5px; }
-.pw-row small { color: var(--subtle); font-size: 11px; }
+.pw-row small { color: var(--subtle); font-size: 11px; flex: none; }
+.pw-row b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pw-row .mono { white-space: nowrap; flex: none; }
+.pw-note { display: block; margin-top: 4px; font-size: 11.5px; color: var(--warn); }
 .pw-row .mono { font-size: 11.5px; }
 .pw-bar { height: 5px; border-radius: 3px; background: var(--surface-2); margin-top: 5px; overflow: hidden; }
 .pw-bar i { display: block; height: 100%; background: var(--good); border-radius: 3px; }

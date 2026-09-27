@@ -149,3 +149,78 @@ describe('since the rack was built', () => {
     expect(d.any).toBe(true);
   });
 });
+
+describe('tipping', () => {
+  it('warns about a tall board standing on one short rail, not about a Pi', async () => {
+    const { initKernel } = await import('../src/cad/kernel');
+    const { generate } = await import('../src/cad/assembly');
+    await initKernel();
+    const big = T('blank');
+    big.name = 'Big board';
+    big.outline = [[0, 0], [260, 0], [260, 180], [0, 180]];
+    big.holes = big.holes.map((h, i) => ({ ...h, x: i % 2 ? 256 : 4, y: i < 2 ? 4 : 176 }));
+    const tip = (p: Project) => generate(p).report.checks.find((c) => c.name === 'Tipping');
+    const pi = tip(newProject(T('rpi4')));
+    expect(pi == null || pi.status === 'info').toBe(true); // a lone Pi: at most "hold it while plugging in"
+    const t = tip(newProject(big));
+    expect(t?.status).toBe('warn');
+    expect(t?.detail).toMatch(/Big board/);
+    process.stdout.write(`TIP pi ${pi?.value ?? 'none'} big ${t?.value}\n`);
+  }, 300000);
+});
+
+// a terminal block whose wire mouth sits past the board edge: its cable-tie anchor used to float clear of the rim
+const MOTOR = `(kicad_pcb (version 20240108) (generator "pcbnew")
+  (general (thickness 1.6))
+  (title_block (title "Motor driver"))
+  (gr_line (start 104 100) (end 176 100) (layer "Edge.Cuts"))
+  (gr_arc (start 176 100) (mid 178.828 101.172) (end 180 104) (layer "Edge.Cuts"))
+  (gr_line (start 180 104) (end 180 156) (layer "Edge.Cuts"))
+  (gr_arc (start 180 156) (mid 178.828 158.828) (end 176 160) (layer "Edge.Cuts"))
+  (gr_line (start 176 160) (end 104 160) (layer "Edge.Cuts"))
+  (gr_arc (start 104 160) (mid 101.172 158.828) (end 100 156) (layer "Edge.Cuts"))
+  (gr_line (start 100 156) (end 100 104) (layer "Edge.Cuts"))
+  (gr_arc (start 100 104) (mid 101.172 101.172) (end 104 100) (layer "Edge.Cuts"))
+  (footprint "MountingHole:MountingHole_3.2mm_M3" (layer "F.Cu") (at 104 104)
+    (property "Reference" "H1")
+    (pad "" np_thru_hole circle (at 0 0) (size 3.2 3.2) (drill 3.2) (layers "*.Cu" "*.Mask")))
+  (footprint "MountingHole:MountingHole_3.2mm_M3" (layer "F.Cu") (at 176 104)
+    (property "Reference" "H2")
+    (pad "" np_thru_hole circle (at 0 0) (size 3.2 3.2) (drill 3.2) (layers "*.Cu" "*.Mask")))
+  (footprint "MountingHole:MountingHole_3.2mm_M3" (layer "F.Cu") (at 104 156)
+    (property "Reference" "H3")
+    (pad "" np_thru_hole circle (at 0 0) (size 3.2 3.2) (drill 3.2) (layers "*.Cu" "*.Mask")))
+  (footprint "MountingHole:MountingHole_3.2mm_M3" (layer "F.Cu") (at 176 156)
+    (property "Reference" "H4")
+    (pad "" np_thru_hole circle (at 0 0) (size 3.2 3.2) (drill 3.2) (layers "*.Cu" "*.Mask")))
+  (footprint "Connector_BarrelJack:BarrelJack_Horizontal" (layer "F.Cu") (at 107 130 90)
+    (property "Reference" "J1")
+    (fp_rect (start -7.0 -4.75) (end 7.0 4.75) (layer "F.CrtYd"))
+)
+  (footprint "Connector_USB:USB_C_Receptacle_GCT_USB4085" (layer "F.Cu") (at 140 103.5 180)
+    (property "Reference" "J2")
+    (fp_rect (start -4.7 -3.9) (end 4.7 3.9) (layer "F.CrtYd"))
+)
+  (footprint "TerminalBlock_Phoenix:TerminalBlock_Phoenix_MKDS-1,5-4_1x04_P5.00mm_Horizontal" (layer "F.Cu") (at 175 130 90)
+    (property "Reference" "J3")
+    (fp_rect (start -4.0 -10.0) (end 4.0 10.0) (layer "F.CrtYd"))
+    (pad "1" thru_hole rect (at 0 0) (size 2.6 2.6) (drill 1.3) (layers "*.Cu"))
+)
+  (footprint "Package_TO_SOT_THT:TO-220-3_Vertical" (layer "F.Cu") (at 140 140)
+    (property "Reference" "U1")
+    (fp_rect (start -5.25 -2.3) (end 5.25 2.3) (layer "F.CrtYd"))
+)
+)
+`;
+
+describe('holders come out in one piece', () => {
+  it('drops nothing for an imported board or any template', async () => {
+    const { initKernel } = await import('../src/cad/kernel');
+    const { generate } = await import('../src/cad/assembly');
+    const { importKicad } = await import('../src/import/kicad');
+    await initKernel();
+    const loose = (p: Project) => generate(p).report.warnings.filter((w) => /loose piece/.test(w));
+    expect(loose(newProject(importKicad(MOTOR, 'motor_driver.kicad_pcb')))).toEqual([]);
+    for (const t of TEMPLATES) expect([t.id, ...loose(newProject(t.make()))]).toEqual([t.id]);
+  }, 600000);
+});

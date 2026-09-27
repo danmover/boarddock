@@ -111,7 +111,9 @@ export function spacer(to: number | null, lanes: { y: number; d: number }[], rea
   const ct = combTop(lanes), zTop = -2.5;
   const cy0 = lanes.length ? Math.max(y0, Math.min(...lanes.map((l) => l.y - l.d / 2)) - 3.2) : 0, cy1 = lanes.length ? Math.min(y1, Math.max(...lanes.map((l) => l.y + l.d / 2)) + 3.2) : 0;
   let body = roundCS(rect2(y0, -H, y1, zTop), 0.8);
-  if (to == null) body = body.intersect(roundCS(rect2(y0 - 10, -H, y1, zTop), 4));
+  // the foot's rounded end: a radius over half the bar's height would round the whole bar away (it did: feet printed
+  // as bare dovetail stubs)
+  if (to == null) body = body.intersect(roundCS(rect2(y0 - 10, -H, y1, zTop), Math.min(4, (zTop + H) / 2 - 0.2)));
   const comb = lanes.length ? roundCS(rect2(cy0, -H, cy1, ct), 1.4) : null;
   // windows in the plain stretches only
   const spans: [number, number][] = [];

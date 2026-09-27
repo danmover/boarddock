@@ -33,7 +33,9 @@ export function picture(key: string, make: () => Promise<PicPart[]>, w = 320, h 
   try { const s = sessionStorage.getItem(`bd.pic.${key}`); if (s) { const p = Promise.resolve(s); cache.set(key, p); return p; } } catch { /* private mode */ }
   const job = queue.then(async () => {
     const parts = await make();
-    const url = render(parts, w, h, view);
+    // let clicks and typing through between pictures: each render holds the main thread while it draws
+    await new Promise((r) => setTimeout(r, 16));
+    const url = await render(parts, w, h, view);
     try { sessionStorage.setItem(`bd.pic.${key}`, url); } catch { /* full */ }
     return url;
   });
@@ -43,7 +45,7 @@ export function picture(key: string, make: () => Promise<PicPart[]>, w = 320, h 
   return job;
 }
 
-function render(parts: PicPart[], w: number, h: number, view: [number, number, number]): string {
+async function render(parts: PicPart[], w: number, h: number, view: [number, number, number]): Promise<string> {
   const { renderer, scene } = setup();
   const dpr = 2;
   renderer.setPixelRatio(dpr);
@@ -102,9 +104,11 @@ function render(parts: PicPart[], w: number, h: number, view: [number, number, n
   cam.position.copy(c).addScaledVector(d, dist);
   cam.lookAt(c);
   renderer.render(scene, cam);
-  const url = renderer.domElement.toDataURL('image/png');
   scene.remove(root, hemi, key, key.target, rim, floor);
   floor.geometry.dispose(); (floor.material as THREE.Material).dispose(); key.shadow.map?.dispose();
   for (const x of made) x.dispose();
-  return url;
+  // encode off the main thread (toBlob; toDataURL blocks), as WebP: a third of the PNG's size, transparency kept
+  const blob = await new Promise<Blob | null>((ok) => renderer.domElement.toBlob(ok, 'image/webp', 0.9));
+  if (!blob) return renderer.domElement.toDataURL('image/png');
+  return await new Promise<string>((ok, bad) => { const fr = new FileReader(); fr.onload = () => ok(fr.result as string); fr.onerror = () => bad(fr.error); fr.readAsDataURL(blob); });
 }

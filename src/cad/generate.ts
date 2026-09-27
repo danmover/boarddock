@@ -377,7 +377,7 @@ function connectors(C: Ctx) {
       wallPiece(C, add(add(mouth, d, sEdge), left(d), -(ow / 2 + 4)), left(d), 0, ow + 8, zw); // frame style: a wall to carry the collar
       feat(C, 'guard', orientedRect(mouth, d, toOut - 0.6, toOut + 2.5, -(ow / 2 + 1.8), ow / 2 + 1.8), 0, zAx + oh / 2 + 1.8, [c.ref]);
     }
-    if (cn.tie && F.ties) tieAnchor(C, mouth, { d, half: pw / 2 + cl }, c.ref);
+    if (cn.tie && F.ties) tieAnchor(C, mouth, { d, half: pw / 2 + cl, sEdge }, c.ref);
   }
   buildCradles(C, specs);
 }
@@ -518,14 +518,16 @@ function strapLoops(C: Ctx) {
   C.checks.push({ group: 'Holder', name: 'Strap loops', value: '4', status: 'info', detail: 'thread a 12 mm hook-and-loop strap (or two zip ties) over the box through the loops on each long side' });
 }
 
-function tieAnchor(C: Ctx, at: V2, edgeConn: { d: V2; half: number } | null, ref: string) {
+function tieAnchor(C: Ctx, at: V2, edgeConn: { d: V2; half: number; sEdge: number } | null, ref: string) {
   // find the nearest wall point and its outward normal
   const b = C.b, H = C.H;
   let q: V2, n: V2;
   if (edgeConn) {
     const t = left(edgeConn.d);
-    // put it beside the opening on the side with more room
-    const cand = [add(at, t, edgeConn.half + 4), add(at, t, -(edgeConn.half + 4))];
+    // beside the opening, on the holder's wall at the board edge (not out at the plug's mouth, where a receptacle
+    // that overhangs the edge would leave it floating clear of the rim), on the side with more room
+    const e = add(at, edgeConn.d, edgeConn.sEdge);
+    const cand = [add(e, t, edgeConn.half + 4), add(e, t, -(edgeConn.half + 4))];
     q = cand.find((pt) => !C.blocked.some((bl) => inside(pt, bl.poly))) ?? cand[0];
     n = edgeConn.d;
   } else {

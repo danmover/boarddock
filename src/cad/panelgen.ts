@@ -689,6 +689,27 @@ export function generatePanel(p: Project): GenResult {
   checks.push({ group: 'Panel', name: 'Rails to cut', value: railLens.length ? railLens.map((l) => `${l} mm`).join(' + ') : 'none', status: 'info', detail: `${docks.length} dock${docks.length === 1 ? '' : 's'}, ${placed.length - docks.length} flat clip${placed.length - docks.length === 1 ? '' : 's'}; TS35 top-hat rail` });
   const depth = Math.max(0, ...placed.map((q) => q.zhi));
   checks.push({ group: 'Panel', name: stands ? 'Height above the table' : 'Height above the rail base', value: `${round(depth + (stands ? STAND.H : 0), 0)} mm`, status: 'info', detail: 'tallest point of any holder, plug or button' });
+  // tipping: a rack on table stands that is much taller than its footprint is narrow tips when a plug is pushed in
+  // near the top. A rule of thumb (height over 1.5 times the narrow side of the stands' footprint), not a calculation.
+  if (standOut?.length) {
+    const fx0 = Math.min(...standOut.map((q) => q.foot[0])), fy0 = Math.min(...standOut.map((q) => q.foot[1]));
+    const fx1 = Math.max(...standOut.map((q) => q.foot[2])), fy1 = Math.max(...standOut.map((q) => q.foot[3]));
+    // how high the holders and boards reach (where a hand pushes a plug in), not the cables sticking up
+    let top = 0, tallMod: string | undefined;
+    for (const pt of parts) {
+      if (pt.tag?.kind === 'railstand' || pt.tag?.kind === 'cabletag') continue;
+      [pt.toAssembly, ...(pt.instances ?? [])].forEach((T, i) => { const b = emptyBox(); boxOf(pt.mesh.pos, T, b); if (b[5] > top) { top = b[5]; tallMod = (i ? pt.tags?.[i - 1] ?? pt.tag : pt.tag)?.module; } });
+    }
+    for (const g of ghosts) if (g.tag?.kind === 'board') { const b = emptyBox(); boxOf(g.mesh.pos, I4, b); if (b[5] > top) { top = b[5]; tallMod = g.tag.module; } }
+    const B = Math.min(fx1 - fx0, fy1 - fy0), H = top + STAND.H, r = H / Math.max(1, B);
+    const who = (tallMod && mods.get(tallMod)?.m.board.name) || 'The tallest board';
+    if (B > 0 && r > 1.5) {
+      const lone = rails.length === 1, bad = r > 2.2;
+      checks.push({ group: 'Panel', name: 'Tipping', value: `${Math.round(H)} mm tall on ${Math.round(B)} mm`, status: bad ? 'warn' : 'info', module: tallMod,
+        detail: `${who} reaches ${Math.round(H)} mm above the table, and the stands are ${Math.round(B)} mm across at their narrowest${lone ? ' (one rail)' : ''}: ${bad ? 'a push near the top while plugging in will tip the rack' : 'hold the rack while you plug in near the top'}. To steady it: lay that board flat (Rails: its dock › Flat on the panel), ${lone ? 'put more boards on the rail or add a second rail (Rows) for a bigger footprint' : 'space the rails further apart'}, or weigh the stands down. A rule of thumb (taller than 1.5 times the footprint's narrow side), not a calculation.` });
+      if (bad) warnings.push(`${who} stands ${Math.round(H)} mm tall on table stands ${Math.round(B)} mm across: the rack will tip when you plug in near the top (Check › Tipping says how to steady it).`);
+    }
+  }
 
   // ---- report ----
   const act = placed.flatMap((q) => q.seats).find((s) => s.mi === p.active) ?? placed[0]?.seats[0];

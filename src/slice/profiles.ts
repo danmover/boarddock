@@ -106,7 +106,9 @@ export function kiriProcess(pr: Printer | null, mat: Material, brim: boolean): R
     sliceTopLayers: 5,
     sliceBottomLayers: 4,
     sliceFillSparse: 0.15,
-    sliceFillType: 'gyroid',
+    // grid, not gyroid: Kiri slices a plate about 4 times faster (7 s against 27 s for a 7-board rack's first plate)
+    // for the same print time and filament to a gram or two; the springs and clips are all walls anyway
+    sliceFillType: 'grid',
     sliceLayerStart: 'origin', // seams line up toward one corner instead of wandering
     outputBrimCount: brim ? 7 : 1, // brim: seven 0.45 mm loops (~3 mm) touching the part; else one skirt loop
     outputBrimOffset: brim ? 0 : 3,
