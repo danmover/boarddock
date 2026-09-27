@@ -8,7 +8,7 @@
 //  socket-local: same axes, Z = 0 at the socket top; tongues plug in along -Z; holder A faces +Y
 import type { V2 } from '../model/types';
 import { box, circle2, ext, extCh, K, poly, rect2, roundCS, unionCS, unionMF, type CS, type MF } from './kernel';
-import { gripSpan, HD, headSpan, LEN_X, NOSE_TIP, TONGUE } from './dockdims';
+import { EAR, gripSpan, HD, headSpan, LEN_X, NOSE_TIP, TONGUE } from './dockdims';
 export { gripSpan, headSpan };
 
 const P = (pts: number[][]): CS => poly(pts as V2[], 'NonZero');
@@ -235,6 +235,26 @@ export function holderDock(far: number, pedestal: number, side = 0, fit = 0) {
     box(-HD.voidHx, HD.backY - 0.1, Math.max(HD.base.t, pedestal) + 1.5, HD.voidHx, HD.voidY1, zg0 - 1.5), // back channel (saves filament)
   ]);
   return { add, cut, zg0, zg1 };
+}
+
+/**
+ * Holder-side dock features for a holder lying flat (socket-local, holder A): the pedestal and tongue under the tip of
+ * the ear, the ear itself reaching back `reach` mm to fuse with the holder's wall, and the tunnel the release rod runs
+ * up through to its button on top of the ear. `top`: the ear's top face (the rod's head rests a stroke above it).
+ */
+export function flatHolderDock(reach: number, fit = 0) {
+  const top = EAR.ped + EAR.t, y1 = Math.max(EAR.len + 0.8, reach);
+  // the ear: rounded outer corners, its top edges chamfered
+  const plate = extCh(roundCS(rect2(-EAR.hx, HD.backY, EAR.hx, y1 + 3), 2.5).intersect(rect2(-EAR.hx - 1, HD.backY, EAR.hx + 1, y1)), EAR.ped, top, 0.6, 0);
+  const add = unionMF([
+    tongue(Math.min(1.0, EAR.ped), fit),
+    extXZ(rect2(-HD.base.hx, 0, HD.base.hx, EAR.ped + 0.02), HD.backY, HD.base.y1), // pedestal on the socket top
+    plate,
+    // gussets from the ear up the wall, either side of the button, so a press on the far edge doesn't bend it there
+    ...[-1, 1].map((sg) => extYZ(P([[y1 - 6, top - 0.01], [y1 + 0.01, top - 0.01], [y1 + 0.01, top + 5]]), 1.0).translate([sg * (EAR.hx - 1.4), 0, 0])),
+  ]);
+  const cut = box(-HD.tunnelHx, HD.tunnelY[0], -0.2, HD.tunnelHx, HD.tunnelY[1], top + 0.2); // release-rod tunnel
+  return { add, cut, top };
 }
 
 /** Release rod with its button head, socket-local (rest position). */

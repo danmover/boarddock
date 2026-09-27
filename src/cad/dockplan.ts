@@ -4,7 +4,7 @@
 import type { Access, AccessDir, Board, EdgeName, HolderSettings, Loop, Module, Project, RailMount, Turn, V2 } from '../model/types';
 import { bbox, compRect, extentAlong, rad, uid } from '../geom/poly';
 import { basis, dir, I4, inv, mul, rotZ, tr, type M4 } from '../geom/mat';
-import { DOCK_MIN_ZB, gripSpan, HD, headSpan, SOCKET_Z, SPINE_TOP } from './dockdims';
+import { DOCK_MIN_ZB, EAR, gripSpan, HD, headSpan, SOCKET_Z, SPINE_TOP } from './dockdims';
 import { computeLevels } from './levels';
 import { baseOf, ridersOf } from '../model/holes';
 import { probesOf, targetOf } from '../model/probes';
@@ -29,6 +29,21 @@ export function dockFrame(edge: EdgeName, tc: number, L0: number): M4 {
   const D = basis([e[0], e[1], 0], [0, 0, 1], [-n[0], -n[1], 0], [tc * e[0] + L0 * n[0], tc * e[1] + L0 * n[1], -0.5]);
   return inv(D);
 }
+
+/**
+ * Holder frame -> socket-local frame of a dock slot whose holder lies flat, docked by the ear on `edge` (tongue at `tc`
+ * along it, holder's outer face `L0` out along its normal): the ear's tip over the socket's divider, the holder's
+ * underside on the pedestal, its top face up out of the socket.
+ */
+export function flatFrame(edge: EdgeName, tc: number, L0: number): M4 {
+  const n = edgeNormal(edge), e = [n[1], -n[0]];
+  // socket-local -> holder: x -> -e, y -> -n (in from the ear's tip), z -> +z
+  const D = basis([-e[0], -e[1], 0], [-n[0], -n[1], 0], [0, 0, 1], [tc * e[0] + (L0 + EAR.len) * n[0], tc * e[1] + (L0 + EAR.len) * n[1], -EAR.ped]);
+  return inv(D);
+}
+
+/** Holder frame -> socket-local for a slot, standing or lying flat. */
+export const slotFrame = (edge: EdgeName, tc: number, L0: number, lie?: 'flat' | 'up'): M4 => (lie === 'flat' ? flatFrame(edge, tc, L0) : dockFrame(edge, tc, L0));
 
 /** Rail frame -> panel. */
 export function railMatrix(r: { x: number; y: number; dir: 'h' | 'v' }): M4 {
@@ -67,8 +82,8 @@ export function classify(v: number[], railDir: 'h' | 'v'): { dir: AccessDir; ok:
 const SCORE = { front: 3, good: 2, down: 0.25, side: -2, blocked: -25 };
 
 /** Rotation from the holder frame to the panel for a dock slot (tongue position does not matter for directions). */
-function dockRot(edge: EdgeName, turn: number, slot: number, railDir: 'h' | 'v'): M4 {
-  return mul(railMatrix({ x: 0, y: 0, dir: railDir }), slotMatrix(turn, slot, dockFrame(edge, 0, 0)));
+function dockRot(edge: EdgeName, turn: number, slot: number, railDir: 'h' | 'v', lie?: 'flat' | 'up'): M4 {
+  return mul(railMatrix({ x: 0, y: 0, dir: railDir }), slotMatrix(turn, slot, slotFrame(edge, 0, 0, lie)));
 }
 
 /** Rotation from the holder frame to the panel for a flat clip (board lies on the panel, rail along board direction `turn`). */
@@ -88,6 +103,13 @@ function score(b: Board, acc: Access[], reach: number, alongRail: number): numbe
   return s - 0.015 * reach - 0.008 * alongRail;
 }
 
+const earCache = new WeakMap<Module, Partial<Record<EdgeName, number>>>();
+function earConflicts(m: Module, edge: EdgeName): number {
+  const c = earCache.get(m) ?? {};
+  if (c[edge] == null) { c[edge] = earSite(m.board, m.holder, edge).conflicts.length; earCache.set(m, c); }
+  return c[edge]!;
+}
+
 const siteCache = new WeakMap<Module, Partial<Record<EdgeName, number>>>();
 function siteConflicts(m: Module, edge: EdgeName): number {
   const c = siteCache.get(m) ?? {};
@@ -95,7 +117,7 @@ function siteConflicts(m: Module, edge: EdgeName): number {
   return c[edge]!;
 }
 
-export interface Orientation { edge: EdgeName; turn: Turn; score: number; access: Access[] }
+export interface Orientation { edge: EdgeName; turn: Turn; score: number; access: Access[]; lie?: 'flat' }
 
 /** Size of a board's holder in its own frame: along x, along y, and height (rough, for choosing orientations). */
 function holderSize(m: Module) {
@@ -144,15 +166,7 @@ export function dockSite(b: Board, H: HolderSettings, edge: EdgeName, shift = 0)
   const posts = b.holes.filter((h) => h.use !== 'none').map((h) => ({ t: de([h.x, h.y]), s: L0 - dn([h.x, h.y]), r: h.d / 2 + 2.2 }));
   const under = b.comps.filter((c) => !c.hidden && ((c.side === 'bottom' && c.h > 0) || (c.side === 'top' && c.tht)))
     .map((c) => ({ ...ts(compRect(c, 0.5)), need: c.side === 'bottom' ? c.h + 0.5 : H.leadLen + 0.4 }));
-  const plugs = b.comps.filter((c) => c.conn?.entry === 'edge' && !c.hidden).map((c) => {
-    const d = dirOf(c.conn!.angle);
-    const m0 = extentAlong(c, c.conn!.angle);
-    const mouth: V2 = [c.x + d[0] * m0, c.y + d[1] * m0];
-    const half = c.conn!.plug.w / 2 + 2.5, t = [-d[1], d[0]];
-    const len = c.conn!.plug.len + 24;
-    const loop: Loop = [[-1, -half], [len, -half], [len, half], [-1, half]].map(([a, q]) => [mouth[0] + d[0] * a + t[0] * q, mouth[1] + d[1] * a + t[1] * q] as V2);
-    return { ...ts(loop), ref: c.ref };
-  });
+  const plugs = plugZones(b, dn, de, L0);
   const ov = (a0: number, a1: number, b0: number, b1: number) => a0 < b1 && b0 < a1;
   const zbLow = computeLevels(b, H).zb;
   const spineW = HD.spineHx + 0.4;
@@ -208,28 +222,106 @@ export function dockSite(b: Board, H: HolderSettings, edge: EdgeName, shift = 0)
   return { edge, n, e, tc, L0, far, ped: Math.min(HD.base.t + inset, 30), minZb, under: best.under, side: best.side, conflicts: [...new Set(best.conflicts)], release: { want: wanted, got, blocked } };
 }
 
+/** Where a holder lying flat has its ear: along `edge`, clear of the plugs there. */
+export interface EarSite {
+  edge: EdgeName;
+  n: V2;
+  e: V2;
+  tc: number; // the ear's middle (and the tongue's) along e
+  L0: number; // the holder's outer face on that edge, along n
+  far: number; // from the ear's tip to the holder's far side
+  inset: number; // how far in the outline is from L0 under the ear (a round board): the ear reaches in that much more
+  conflicts: string[];
+}
+
+/** The ear of a holder lying flat: the middle of `edge`, or as near it as keeps the plugs there clear. Pure geometry. */
+export function earSite(b: Board, H: HolderSettings, edge: EdgeName, shift = 0): EarSite {
+  const n = edgeNormal(edge), e: V2 = [n[1], -n[0]];
+  const gw = H.gap + H.wall;
+  const dn = (p: V2) => p[0] * n[0] + p[1] * n[1], de = (p: V2) => p[0] * e[0] + p[1] * e[1];
+  const ol = b.outline;
+  const L0 = Math.max(...ol.map(dn)) + gw, far = L0 - (Math.min(...ol.map(dn)) - gw) + EAR.len;
+  const bt0 = Math.min(...ol.map(de)), bt1 = Math.max(...ol.map(de)), tMid = (bt0 + bt1) / 2;
+  const plugs = plugZones(b, dn, de, L0);
+  const ov = (a0: number, a1: number, b0: number, b1: number) => a0 < b1 && b0 < a1;
+  const lo = Math.min(tMid, bt0 - gw + EAR.hx), hi = Math.max(tMid, bt1 + gw - EAR.hx);
+  let best = { pen: Infinity, tc: tMid, conflicts: [] as string[] };
+  for (let tc = lo; tc <= hi + 1e-9; tc += 0.5) {
+    let pen = 0.3 * Math.abs(tc - tMid - shift);
+    const conflicts: string[] = [];
+    for (const q of plugs) if (ov(q.t0, q.t1, tc - EAR.hx - 1, tc + EAR.hx + 1) && ov(q.s0, q.s1, -EAR.len - 2, 2)) { pen += 500; conflicts.push(`${q.ref} (at the ear)`); }
+    if (pen < best.pen) best = { pen, tc, conflicts };
+  }
+  // how far in the outline is under the ear (a round or notched edge): the ear reaches in to meet the wall
+  let inset = 0;
+  for (let t = best.tc - EAR.hx; t <= best.tc + EAR.hx; t += 0.5) {
+    let hit = -Infinity;
+    for (let i = 0; i < ol.length; i++) {
+      const a = ol[i], c = ol[(i + 1) % ol.length], ta = de(a), tb = de(c);
+      if ((ta - t) * (tb - t) > 0 || ta === tb) continue;
+      const u = (t - ta) / (tb - ta);
+      hit = Math.max(hit, dn(a) + u * (dn(c) - dn(a)));
+    }
+    if (hit > -Infinity) inset = Math.max(inset, L0 - gw - hit);
+  }
+  return { edge, n, e, tc: best.tc, L0, far, inset: Math.min(inset, 20), conflicts: [...new Set(best.conflicts)] };
+}
+
+/** The room each edge plug's cable needs, in (t along the edge, s in from the holder's outer face) terms. */
+function plugZones(b: Board, dn: (p: V2) => number, de: (p: V2) => number, L0: number) {
+  return b.comps.filter((c) => c.conn?.entry === 'edge' && !c.hidden).map((c) => {
+    const d = dirOf(c.conn!.angle);
+    const m0 = extentAlong(c, c.conn!.angle);
+    const mouth: V2 = [c.x + d[0] * m0, c.y + d[1] * m0];
+    const half = c.conn!.plug.w / 2 + 2.5, t = [-d[1], d[0]];
+    const len = c.conn!.plug.len + 24;
+    const loop: Loop = [[-1, -half], [len, -half], [len, half], [-1, half]].map(([a, q]) => [mouth[0] + d[0] * a + t[0] * q, mouth[1] + d[1] * a + t[1] * q] as V2);
+    const ts = loop.map(de), ss = loop.map((p) => L0 - dn(p));
+    return { t0: Math.min(...ts), t1: Math.max(...ts), s0: Math.min(...ss), s1: Math.max(...ss), ref: c.ref };
+  });
+}
+
 /** Best dock edge and socket turn for a board in dock slot `slot`, optionally with the turn fixed. */
-export function bestDock(m: Module, railDir: 'h' | 'v', slot = 0, turns: Turn[] = TURNS, edges: EdgeName[] = EDGES): Orientation {
+export function bestDock(m: Module, railDir: 'h' | 'v', slot = 0, turns: Turn[] = TURNS, edges: EdgeName[] = EDGES, lie?: 'flat' | 'up'): Orientation {
   const sz = holderSize(m);
   let best: Orientation | null = null;
   for (const edge of edges) for (const turn of turns) {
-    const acc = accessOf(m.board, dockRot(edge, turn, slot, railDir), railDir);
+    const acc = accessOf(m.board, dockRot(edge, turn, slot, railDir, lie), railDir);
     const vert = edge === 'bottom' || edge === 'top';
-    const reach = (vert ? sz.y : sz.x) + SOCKET_Z + 20;
-    const across = vert ? sz.x : sz.y;
-    const along = (turn + (slot ? 180 : 0)) % 180 === 0 ? across : sz.z;
-    const s = score(m.board, acc, reach, along) - 6 * siteConflicts(m, edge);
-    if (!best || s > best.score + 1e-9) best = { edge, turn, score: s, access: acc };
+    let s: number;
+    if (lie === 'flat') {
+      // lying flat it hardly stands out of the wall, but it takes its width (or its depth, turned) of the rail
+      const v = dir(inv(slotMatrix(turn, slot, flatFrame(edge, 0, 0))), [1, 0, 0]);
+      const n = edgeNormal(edge), depth = (vert ? sz.y : sz.x) + EAR.len, width = vert ? sz.x : sz.y;
+      const along = Math.abs(v[0] * n[0] + v[1] * n[1]) * depth + Math.abs(v[0] * n[1] - v[1] * n[0]) * width;
+      s = score(m.board, acc, SOCKET_Z + EAR.ped + sz.z, along) - 6 * earConflicts(m, edge);
+    } else {
+      const reach = (vert ? sz.y : sz.x) + SOCKET_Z + 20;
+      const across = vert ? sz.x : sz.y;
+      const along = (turn + (slot ? 180 : 0)) % 180 === 0 ? across : sz.z;
+      s = score(m.board, acc, reach, along) - 6 * siteConflicts(m, edge);
+    }
+    if (!best || s > best.score + 1e-9) best = { edge, turn, score: s, access: acc, ...(lie === 'flat' ? { lie } : {}) };
   }
   return best!;
+}
+
+/** Standing or lying flat, whichever the rack's setting asks for (or suits the board better, on auto). */
+export function bestSeat(m: Module, railDir: 'h' | 'v', want: 'up' | 'flat' | 'auto' | undefined, slot = 0, turns: Turn[] = TURNS, edges: EdgeName[] = EDGES): Orientation {
+  if (want === 'flat') return bestDock(m, railDir, slot, turns, edges, 'flat');
+  const up = bestDock(m, railDir, slot, turns, edges);
+  if (want !== 'auto') return up;
+  const flat = bestDock(m, railDir, slot, turns, edges, 'flat');
+  // lying flat takes more rail: only when it keeps the plugs clearly easier to reach
+  return flat.score > up.score + 0.5 ? flat : up;
 }
 
 export function flatAccess(m: Module, turn: number, railDir: 'h' | 'v'): Access[] {
   return accessOf(m.board, flatRot(turn, railDir), railDir);
 }
 
-export function slotAccess(m: Module, mt: Pick<RailMount, 'kind' | 'turn'>, slot: number, edge: EdgeName, railDir: 'h' | 'v'): Access[] {
-  return mt.kind === 'flat' ? flatAccess(m, mt.turn, railDir) : accessOf(m.board, dockRot(edge, mt.turn, slot, railDir), railDir);
+export function slotAccess(m: Module, mt: Pick<RailMount, 'kind' | 'turn'>, slot: number, edge: EdgeName, railDir: 'h' | 'v', lie?: 'flat' | 'up'): Access[] {
+  return mt.kind === 'flat' ? flatAccess(m, mt.turn, railDir) : accessOf(m.board, dockRot(edge, mt.turn, slot, railDir, lie), railDir);
 }
 
 /**
@@ -306,30 +398,35 @@ export function probeSlots<T extends Module>(p: Project, bases: T[]): Map<string
 /** Docks for a run of boards: in pairs back to back where that costs little plug access, else one per dock; a
  * board with debug probes gets its probe stack in the back slot. */
 function docksFor<T extends Module>(p: Project, mods: T[], railDir: 'h' | 'v', out: RailMount[], backs = new Map<string, T>()) {
-  const best = mods.map((m) => bestDock(m, railDir, 0));
+  // each board standing up or lying flat, as the rack's setting asks (or whichever suits it, on auto)
+  const best = mods.map((m) => bestSeat(m, railDir, p.panel.lie, 0));
+  const lieOf = (o: Orientation) => (o.lie ? { lie: o.lie } : {});
   const used = new Set<number>();
   mods.forEach((m, i) => {
     if (used.has(i)) return;
     used.add(i);
+    const lie = best[i].lie;
     const back = backs.get(m.id);
     if (back) {
-      // the turn that suits the board and its probes together; nothing may point into the table
+      // the turn that suits the board and its probes together (the probes stand, even behind a board lying flat);
+      // nothing may point into the table
       let pick: { turn: Turn; a: Orientation; b: Orientation; s: number } | null = null;
       for (const t of TURNS) {
-        const a = bestDock(m, railDir, 0, [t]), b = bestDock(back, railDir, 1, [t]);
+        const a = bestDock(m, railDir, 0, [t], EDGES, lie), b = bestDock(back, railDir, 1, [t]);
         const s = a.score + b.score - (a.access.some((x) => x.ok === 'blocked') || b.access.some((x) => x.ok === 'blocked') ? 1000 : 0);
         if (!pick || s > pick.s + 1e-9) pick = { turn: t, a, b, s };
       }
-      out.push({ id: `auto${out.length}`, rail: '', at: null, kind: 'dock', turn: pick!.turn, slots: [{ module: m.id, edge: pick!.a.edge }, { module: back.id, edge: pick!.b.edge }] });
+      out.push({ id: `auto${out.length}`, rail: '', at: null, kind: 'dock', turn: pick!.turn, slots: [{ module: m.id, edge: pick!.a.edge, ...lieOf(pick!.a) }, { module: back.id, edge: pick!.b.edge }] });
       return;
     }
     let pick: { j: number; turn: Turn; a: Orientation; b: Orientation } | null = null;
     if (p.panel.pairs) {
       let bestLoss = 1.5;
       mods.forEach((m2, j) => {
-        if (used.has(j) || j <= i || backs.has(m2.id)) return;
+        // two boards share a dock back to back when both stand or both lie flat (ears back to back)
+        if (used.has(j) || j <= i || backs.has(m2.id) || best[j].lie !== lie) return;
         for (const t of TURNS) {
-          const a = bestDock(m, railDir, 0, [t]), b = bestDock(m2, railDir, 1, [t]);
+          const a = bestDock(m, railDir, 0, [t], EDGES, lie), b = bestDock(m2, railDir, 1, [t], EDGES, lie);
           if (a.access.some((x) => x.ok === 'blocked') || b.access.some((x) => x.ok === 'blocked')) continue;
           const loss = best[i].score + best[j].score - a.score - b.score;
           if (loss < bestLoss - 1e-9) { bestLoss = loss; pick = { j, turn: t, a, b }; }
@@ -339,9 +436,9 @@ function docksFor<T extends Module>(p: Project, mods: T[], railDir: 'h' | 'v', o
     if (pick) {
       const pk = pick as { j: number; turn: Turn; a: Orientation; b: Orientation };
       used.add(pk.j);
-      out.push({ id: `auto${out.length}`, rail: '', at: null, kind: 'dock', turn: pk.turn, slots: [{ module: m.id, edge: pk.a.edge }, { module: mods[pk.j].id, edge: pk.b.edge }] });
+      out.push({ id: `auto${out.length}`, rail: '', at: null, kind: 'dock', turn: pk.turn, slots: [{ module: m.id, edge: pk.a.edge, ...lieOf(pk.a) }, { module: mods[pk.j].id, edge: pk.b.edge, ...lieOf(pk.b) }] });
     } else {
-      out.push({ id: `auto${out.length}`, rail: '', at: null, kind: 'dock', turn: best[i].turn, slots: [{ module: m.id, edge: best[i].edge }, { module: null, edge: 'auto' }] });
+      out.push({ id: `auto${out.length}`, rail: '', at: null, kind: 'dock', turn: best[i].turn, slots: [{ module: m.id, edge: best[i].edge, ...lieOf(best[i]) }, { module: null, edge: 'auto' }] });
     }
   });
 }
@@ -366,8 +463,9 @@ export function orderByLinks<T extends Module>(p: Project, mods: T[]): T[] {
 }
 
 /** Friendly name of a dock turn on a rail, e.g. "standing, parts face left". */
-export function turnLabel(turn: number, railDir: 'h' | 'v', kind: 'dock' | 'flat' = 'dock'): string {
+export function turnLabel(turn: number, railDir: 'h' | 'v', kind: 'dock' | 'flat' = 'dock', lie?: 'flat'): string {
   if (kind === 'flat') return `flat, turned ${turn}°`;
+  if (lie === 'flat') return `lying flat, turned ${turn}°`;
   // component side of the front slot: hub +y turned by `turn`
   const v = dir(mul(railMatrix({ x: 0, y: 0, dir: railDir }), rotZ(turn)), [0, 1, 0]);
   const face = classify(v, railDir).dir;

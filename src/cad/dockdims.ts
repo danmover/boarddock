@@ -32,3 +32,12 @@ export function headSpan(side: number): [number, number] {
   const { spineHx, head } = HD;
   return side > 0 ? [-spineHx, 2 * head.hx - spineHx] : side < 0 ? [spineHx - 2 * head.hx, spineHx] : [-head.hx, head.hx];
 }
+
+/**
+ * A holder that lies flat in a dock (top face up, out of the wall): a tab, the ear, sticks out from the edge it docks
+ * by. Under the ear's tip are the same pedestal and tongue as a standing holder's, in the same socket; on top of it is
+ * the release button, on a short rod straight down to the latch, clear of the board. `len`: how far the ear reaches out
+ * from the holder's wall (the button head ends 1 mm short of the wall); `hx`: half its width; `t`: its thickness;
+ * `ped`: the pedestal it stands on over the socket top.
+ */
+export const EAR = { len: 15, hx: 12, t: 4.5, ped: 3 };

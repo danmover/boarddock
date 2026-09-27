@@ -112,6 +112,9 @@ export function RackBuilder() {
             <Num label="Gap between docks" value={P.gap} min={0} max={40} step={0.5} onChange={(v) => setAuto((q) => { q.gap = v; })} />
           </div>
         )}
+        <div className="field" style={{ marginTop: 10 }}><span>Boards in their docks</span></div>
+        <Seg value={P.lie ?? 'up'} options={[['up', 'Stand up'], ['flat', 'Lie flat'], ['auto', 'Whichever suits each']]} onChange={(v) => setAuto((q) => { q.lie = v; })} />
+        <p className="hint" style={{ margin: '4px 0 0' }}>{(P.lie ?? 'up') === 'up' ? 'Standing takes the least rail.' : P.lie === 'flat' ? 'Top face up, on the same docks: a tab on one edge plugs into the socket, and its button releases it. It takes more rail but stands far less out of the wall, and headers face you.' : 'Each board stands, or lies flat where that keeps its plugs clearly easier to reach.'}</p>
         <div style={{ marginTop: 8 }}><Check label="Two boards back to back in one dock when their plugs allow it" value={P.pairs} onChange={(v) => setAuto((q) => { q.pairs = v; })} /></div>
         <p className="hint">{P.auto ? 'Every board is turned so its plugs stay reachable and packed onto rails. Drag anything below, or in the Rails view, to take over by hand.' : 'Your own layout. Auto-arrange starts over (⌘Z undoes it).'}</p>
       </Section>
@@ -259,20 +262,20 @@ function DockRow({ mt, railDir, rep, col, mod, accOf, stackRows }: {
     <div className={`dockrow ${isSel(sel, mt.id) ? 'sel' : ''}`}>
       <div className="dh" onClick={(e) => select([{ kind: 'mount', id: mt.id }], e.shiftKey || e.metaKey ? 'toggle' : 'set')}>
         <b>{mt.kind === 'dock' ? 'Dock' : 'Flat clip'} {mountLabels(rep).get(mt.id) ?? mt.id.replace(/^d/, '')}</b>{fresh && <span className="chip acc" title="Holds a board added since the rack was built">new board</span>}
-        <span className="grow">{turnLabel(mt.turn, railDir, mt.kind)}</span>
+        <span className="grow">{turnLabel(mt.turn, railDir, mt.kind, mt.slots[0]?.lie ?? mt.slots[1]?.lie)}</span>
         <button className="btn small ghost icon" title="Turn 90° (R)" onClick={(e) => { e.stopPropagation(); turnMounts([mt.id], 90); }}><Icon d={I.turn} /></button>
         {mt.kind === 'dock' && <button className="btn small ghost icon" title="Swap front and back (F)" onClick={(e) => { e.stopPropagation(); swapSlots([mt.id]); }}><Icon d={I.swap} /></button>}
         <button className="btn small ghost icon" title="Remove the dock (its boards go to the tray)" onClick={(e) => { e.stopPropagation(); removeMounts([mt.id]); }}><Icon d={I.x} /></button>
       </div>
       {slots.map((slot) => {
         const m = mod(mt.slots[slot]?.module ?? null);
-        return <Slot key={slot} mountId={mt.id} slot={slot} label={mt.kind === 'flat' ? 'board' : slot ? 'back' : 'front'} m={m} edge={mt.slots[slot]?.edge ?? 'auto'} col={col} acc={m ? accOf(m.id) : undefined} stackRows={stackRows} dock={mt.kind === 'dock'} />;
+        return <Slot key={slot} mountId={mt.id} slot={slot} label={mt.kind === 'flat' ? 'board' : slot ? 'back' : 'front'} m={m} edge={mt.slots[slot]?.edge ?? 'auto'} lie={mt.slots[slot]?.lie} col={col} acc={m ? accOf(m.id) : undefined} stackRows={stackRows} dock={mt.kind === 'dock'} />;
       })}
     </div>
   );
 }
 
-function Slot({ mountId, slot, label, m, edge, col, acc, stackRows, dock }: { mountId: string; slot: number; label: string; m: Module | null; edge: EdgeName | 'auto'; col: (id: string) => string; acc?: Access[]; stackRows: (m: Module) => ReactNode; dock: boolean }) {
+function Slot({ mountId, slot, label, m, edge, lie, col, acc, stackRows, dock }: { mountId: string; slot: number; label: string; m: Module | null; edge: EdgeName | 'auto'; lie?: 'flat'; col: (id: string) => string; acc?: Access[]; stackRows: (m: Module) => ReactNode; dock: boolean }) {
   const d = useDrop((id) => seat(id, { mount: mountId, slot }));
   return (
     <div className="slotbox">
@@ -282,7 +285,13 @@ function Slot({ mountId, slot, label, m, edge, col, acc, stackRows, dock }: { mo
           <>
             <BoardChip m={m} color={col(m.id)} acc={acc}>
               {dock && (
-                <select value={edge} title="Board edge that plugs into the dock" onClick={(e) => e.stopPropagation()} onChange={(e) => setSlot(mountId, slot, (x) => { x.edge = e.target.value as EdgeName | 'auto'; })}>
+                <button className={`btn small ghost icon lie ${lie ? 'on' : ''}`} title={lie ? 'Lies flat on the dock (top face up, a tab on its edge in the socket): click to stand it up' : 'Stands up in the dock: click to lay it flat, top face up'} aria-pressed={!!lie}
+                  onClick={(e) => { e.stopPropagation(); setSlot(mountId, slot, (x) => { if (x.lie) delete x.lie; else x.lie = 'flat'; x.edge = 'auto'; }); }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">{lie ? <path d="M3 14h18M5 14v-3h14v3M11 14v5h2v-5" /> : <path d="M9 3h6v14H9zM11 17v4h2v-4" />}</svg>
+                </button>
+              )}
+              {dock && (
+                <select value={edge} title={lie ? 'Board edge with the tab that plugs into the dock' : 'Board edge that plugs into the dock'} onClick={(e) => e.stopPropagation()} onChange={(e) => setSlot(mountId, slot, (x) => { x.edge = e.target.value as EdgeName | 'auto'; })}>
                   {EDGE_OPTS.map(([k, n]) => <option key={k} value={k}>{n}</option>)}
                 </select>
               )}
@@ -338,7 +347,7 @@ function DockInspector({ one, rep }: { one: PanelReport['mounts'][number]; rep: 
           <button key={t} className={`turn ${one.turn === t ? 'on' : ''}`} onClick={() => turnMounts([one.id], t - one.turn)}>
             <svg viewBox="-12 -12 24 24"><rect x="-6" y="-7" width="12" height="14" rx="2" transform={`rotate(${-t - (v ? 90 : 0)})`} /><line x1="0" y1="0" x2="0" y2="-7" transform={`rotate(${-t - (v ? 90 : 0)})`} /></svg>
             <span>{t}°</span>
-            <small>{turnLabel(t, railDir, one.kind)}</small>
+            <small>{turnLabel(t, railDir, one.kind, one.slots[0]?.lie ?? one.slots[1]?.lie)}</small>
           </button>
         ))}
       </div>
@@ -357,7 +366,8 @@ function DockInspector({ one, rep }: { one: PanelReport['mounts'][number]; rep: 
         if (!s.module || !acc) return null;
         return (
           <div key={slot} className="slot">
-            <div className="slothead">{one.kind === 'flat' ? 'Board' : slot ? 'Back slot' : 'Front slot'} · {p.modules.find((m) => m.id === s.module)?.board.name} · {acc.edge} edge in</div>
+            <div className="slothead">{one.kind === 'flat' ? 'Board' : slot ? 'Back slot' : 'Front slot'} · {p.modules.find((m) => m.id === s.module)?.board.name} · {s.lie ? `lying flat, tab on its ${acc.edge} edge` : `${acc.edge} edge in`}</div>
+            {one.kind === 'dock' && <Seg value={s.lie ?? 'up'} options={[['up', 'Stands up'], ['flat', 'Lies flat']]} onChange={(v) => setSlot(one.id, slot, (x) => { if (v === 'flat') x.lie = 'flat'; else delete x.lie; x.edge = 'auto'; })} />}
             <AccessList list={acc.access} />
             <div className="btns" style={{ marginTop: 6 }}><button className="btn small ghost" onClick={() => duplicateModule(p.modules.findIndex((m) => m.id === s.module))}><Icon d={I.copy} /> Another like this</button></div>
           </div>

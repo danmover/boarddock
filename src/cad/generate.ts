@@ -14,9 +14,9 @@ import { buildClip, clipDims, clipSlots, hookOffset4, railProfile } from './dinc
 import { textCS, textWidth } from './font';
 import { computeLevels } from './levels';
 import { boardDetail, plugDetail, plugUp } from './boardviz';
-import { DOCK_MIN_ZB, gripSpan, holderDock, HD, rod } from './dock';
-import { TONGUE } from './dockdims';
-import { dockFrame, dockSite, type DockSite } from './dockplan';
+import { DOCK_MIN_ZB, flatHolderDock, gripSpan, holderDock, HD, rod } from './dock';
+import { EAR, TONGUE } from './dockdims';
+import { dockFrame, dockSite, earSite, flatFrame, type DockSite, type EarSite } from './dockplan';
 import { inv, type M4 } from '../geom/mat';
 import { rectSection, roundSection, solveFrame, type FElem, type FNode } from '../fea/frame3d';
 
@@ -34,7 +34,7 @@ export interface Job {
   level?: number; // 0 = bottom of a stack (default), 1 = the board above it...
   bolted?: { b: Board; dx: number; dy: number; dz: number; mid: string }[]; // boards screwed on top on standoffs (shown, no holder of their own)
   mount?: MountSettings; // overrides p.mount (panel flat clips)
-  dock?: { edge: EdgeName; fit?: number; shift?: number }; // holder plugs into a rail dock with this board edge (shift: its tongue that far off the middle)
+  dock?: { edge: EdgeName; fit?: number; shift?: number; lie?: 'flat' }; // holder plugs into a rail dock with this board edge (shift: its tongue that far off the middle; lie: flat, by an ear on that edge)
 }
 
 interface Ctx {
@@ -227,7 +227,9 @@ function build(job: Job): ModuleOut {
     const k = holeKeepout(h, H.leadLen);
     if (k) keepouts.push({ rect: [[h.x - k.r, h.y - k.r], [h.x + k.r, h.y - k.r], [h.x + k.r, h.y + k.r], [h.x - k.r, h.y + k.r]], need: k.need, why: `${h.role} hole at ${round(h.x, 1)}, ${round(h.y, 1)}` });
   }
-  const site = job.dock ? dockSite(b, H, job.dock.edge, job.dock.shift) : null;
+  const flatDock = job.dock?.lie === 'flat';
+  const site = job.dock && !flatDock ? dockSite(b, H, job.dock.edge, job.dock.shift) : null;
+  const ear = job.dock && flatDock ? earSite(b, H, job.dock.edge, job.dock.shift) : null;
   const { needMax, base, s, zb, zt, zw } = computeLevels(b, H, site?.minZb ?? 0);
   const O = poly(b.outline);
   const inner = O.offset(H.gap, 'Round');
@@ -255,6 +257,7 @@ function build(job: Job): ModuleOut {
   if (b.kind === 'box' && !isProbeBox(b)) strapLoops(C);
   overhangs(C);
   if (site) dockBlocks(C, site);
+  if (ear) earBlocks(C, ear);
   // label first so it gets a long free wall; if that leaves no room for two fingers, drop the label
   const mark = { pos: C.pos.length, neg: C.neg.length, late: C.late.length, blocked: C.blocked.length, warn: C.warnings.length, checks: C.checks.length, feat: C.features.length };
   const reset = () => { C.pos.length = mark.pos; C.neg.length = mark.neg; C.late.length = mark.late; C.blocked.length = mark.blocked; C.warnings.length = mark.warn; C.checks.length = mark.checks; C.features.length = mark.feat; };
@@ -279,6 +282,7 @@ function build(job: Job): ModuleOut {
   pockets(C);
   if (job.din && (job.mount ?? p.mount).kind === 'din') mountDin(C);
   if (site) dockFeatures(C, site);
+  if (ear) earFeatures(C, ear);
   if (job.stand && p.stand.enabled) stand(C);
   arrangeFeatures(C);
   if (H.notches && !frame) notches(C, tabsUsed);
@@ -300,7 +304,7 @@ function build(job: Job): ModuleOut {
     holder = main;
   }
   const lv = job.level ?? 0;
-  const inDir: [number, number, number] = site ? [-site.n[0], -site.n[1], 0] : [0, 0, 1];
+  const inDir: [number, number, number] = site ? [-site.n[0], -site.n[1], 0] : [0, 0, 1]; // (a flat one comes down onto its dock)
   const split = job.din && (job.mount ?? p.mount).mode === 'flat' ? splitAxis(C) : null;
   if (split) {
     // two halves, cut square across the middle, each on its own clip (they meet end to end on the rail)
@@ -323,7 +327,7 @@ function build(job: Job): ModuleOut {
   }
   checks.push({ group: 'Print', name: 'Material', value: H.material, status: H.material === 'PLA' ? 'warn' : 'ok', detail: H.material === 'PLA' ? `PLA is stiff and brittle for springs and softens at ~${mat.tg} °C. PETG, ASA or PA are better for clips.` : `strain limit used for springs: ${(mat.strainAllow * 100).toFixed(1)}%` });
   const clip = C.parts.find((x) => x.id.endsWith('_clip'));
-  return { parts: C.parts, ghosts: C.ghosts, warnings, checks, levels: { base, boardBottom: zb, boardTop: zt, wallTop: zw }, clipAt: (C as any).clipAt ?? null, clipT: clip ? clip.toAssembly : null, dockM: site ? dockFrame(site.edge, site.tc, site.L0) : null, features: C.features, plugs: C.plugs };
+  return { parts: C.parts, ghosts: C.ghosts, warnings, checks, levels: { base, boardBottom: zb, boardTop: zt, wallTop: zw }, clipAt: (C as any).clipAt ?? null, clipT: clip ? clip.toAssembly : null, dockM: site ? dockFrame(site.edge, site.tc, site.L0) : ear ? flatFrame(ear.edge, ear.tc, ear.L0) : null, features: C.features, plugs: C.plugs };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1464,4 +1468,34 @@ function dockFeatures(C: Ctx, s: DockSite) {
   C.checks.push({ group: 'Dock', name: 'Release', value: `press the button, ${HD.stroke} mm`, status: 'info', detail: `thumb on the button at the ${({ bottom: 'top', top: 'bottom', left: 'right', right: 'left' } as Record<EdgeName, string>)[s.edge]} edge, two fingers under the grip bar, squeeze and lift. About ${(4.0 * eRatio).toFixed(1)} N (${H.material}); the latch spring returns the button. Rod: ${round(r.len, 0)} mm, printed flat.` });
   C.checks.push({ group: 'Dock', name: `Tongue root, ${F} N push on the far edge`, value: `${round(sig, 0)} MPa`, status: sig < 0.4 * mat.yield ? 'ok' : sig < 0.8 * mat.yield ? 'warn' : 'bad', detail: `${round(s.far, 0)} mm lever onto the ${tb} × ${th} mm tongue (${H.material} yields at ~${mat.yield} MPa). Hold the holder while plugging in stiff cables at the far end.` });
   if (s.under && C.zb > DOCK_MIN_ZB - 0.2) C.checks.push({ group: 'Dock', name: 'Board raised over the rod spine', value: `${round(C.zb, 1)} mm`, status: 'info', detail: 'the release-rod spine runs under the board' });
+}
+
+// ------------------------------- rail dock, lying flat (holder side) -----------------------------
+/** The ear's footprint and the wall it joins (t along the edge, s in from the holder's outer face; outside is negative). */
+const earPoly = (s: EarSite, t0: number, t1: number, s0: number, s1: number): Loop =>
+  [[t0, s0], [t1, s0], [t1, s1], [t0, s1]].map(([t, d]) => [s.e[0] * t + s.n[0] * (s.L0 - d), s.e[1] * t + s.n[1] * (s.L0 - d)] as V2);
+
+function earBlocks(C: Ctx, s: EarSite) {
+  // the wall the ear joins takes no finger, label or cut-out
+  C.blocked.push({ poly: earPoly(s, s.tc - EAR.hx - 1, s.tc + EAR.hx + 1, -3, s.inset + C.H.wall + 2), why: 'dock' });
+}
+
+function earFeatures(C: Ctx, s: EarSite) {
+  const H = C.H, mat = MATERIALS[H.material];
+  const D = inv(flatFrame(s.edge, s.tc, s.L0)); // socket-local -> holder
+  // the ear reaches from over the socket to the wall, into it by most of the wall's thickness
+  const f = flatHolderDock(EAR.len + s.inset + H.wall * 0.7, C.job.dock?.fit ?? 0);
+  C.pos.push(f.add.transform(D as any));
+  C.neg.push(f.cut.transform(D as any));
+  const r = rod(f.top, 0);
+  C.parts.push(part('rod', 'Release rod + button', r.m.transform(D as any), ID, '#ff5d6c', 1, { kind: 'rod', module: C.mid }, { seq: 3.5, dir: [0, 0, 1] }));
+  feat(C, 'dock', earPoly(s, s.tc - EAR.hx, s.tc + EAR.hx, -EAR.len, 0), -EAR.ped - 14, f.top + HD.stroke + HD.head.t - EAR.ped);
+  if (s.conflicts.length) C.warnings.push(`Dock ear on the ${s.edge} edge: ${s.conflicts.join(', ')} ${s.conflicts.length > 1 ? 'are' : 'is'} in the way. Pick another dock edge in the Rails step.`);
+  C.checks.push({ group: 'Dock', name: 'Lying flat', value: `ear on the ${s.edge} edge`, status: 'info', detail: `the holder lies top face up on its dock by a tab on its ${s.edge} edge, with the same tongue and socket as a standing one: so it takes the same shoe and socket, and a J-Link or adapter can stand behind it in the socket's other half.` });
+  const eRatio = mat.E / MATERIALS.PETG.E;
+  C.checks.push({ group: 'Dock', name: 'Release', value: `press the button, ${HD.stroke} mm`, status: 'info', detail: `thumb on the button on the tab, fingers under the tab, squeeze and lift the holder straight up. About ${(4.0 * eRatio).toFixed(1)} N (${H.material}); the latch spring returns the button. Rod: ${round(r.len, 0)} mm, printed flat.` });
+  // a press on the far side of the holder (plugging in from above) bends the tongue at the socket mouth the same way
+  // a push on a standing holder's far edge does
+  const tb = 2 * TONGUE.hx, th = TONGUE.y1 - TONGUE.y0, F = 20, lever = s.far - (TONGUE.y0 + TONGUE.y1) / 2, sig = (F * lever) / ((tb * th * th) / 6);
+  C.checks.push({ group: 'Dock', name: `Tongue root, ${F} N press on the far side`, value: `${round(sig, 0)} MPa`, status: sig < 0.4 * mat.yield ? 'ok' : sig < 0.8 * mat.yield ? 'warn' : 'bad', detail: `${round(lever, 0)} mm lever onto the ${tb} × ${th} mm tongue (${H.material} yields at ~${mat.yield} MPa). Hold the holder while pushing stiff plugs in at the far side${sig >= 0.4 * mat.yield ? ', or let this board stand instead (Rails step)' : ''}.` });
 }

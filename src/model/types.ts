@@ -207,6 +207,7 @@ export interface Rail {
 export interface Slot {
   module: string | null;
   edge: EdgeName | 'auto'; // board edge that plugs into the dock
+  lie?: 'flat'; // the holder lies flat, top face out, docked by a tab (ear) on that edge; unset: it stands up
 }
 
 /** Something clipped onto a rail: a dock (shoe + turnable socket, two back-to-back slots) or a flat clip (board lies on the panel). */
@@ -225,6 +226,7 @@ export interface PanelSettings {
   auto: boolean; // lay everything out automatically (orientation for plug access, pairing, packing, new rows)
   rowDir: 'h' | 'v'; // auto: rail direction
   pairs: boolean; // auto: two boards back to back in one dock when their plugs allow it
+  lie?: 'up' | 'flat' | 'auto'; // auto: boards stand up in their docks (default), lie flat on them, or whichever keeps the plugs easier to reach
   gap: number; // free space between neighbours along a rail
   maxRail: number; // auto: longest rail before a new row starts
   rowGap: number; // auto: space between rows of rails
@@ -368,7 +370,7 @@ export interface Access { ref: string; type: string; dir: AccessDir; ok: 'good' 
 export interface PanelReport {
   rails: (Rail & { length: number })[];
   mounts: (RailMount & { at: number; x: number; y: number; foot: [number, number, number, number]; leverSide: 1 | -1 })[];
-  modules: { id: string; mount: string; slot: number; edge: EdgeName; turn: Turn; foot: [number, number, number, number]; z1: number; access: Access[]; stack?: string[] }[];
+  modules: { id: string; mount: string; slot: number; edge: EdgeName; lie?: 'flat'; turn: Turn; foot: [number, number, number, number]; z1: number; access: Access[]; stack?: string[] }[];
   unplaced: string[];
   depth: number; // tallest point above the rail base
   height?: number; // tallest point above the table (on stands) or the rail base

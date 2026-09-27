@@ -1,6 +1,6 @@
 // Panel edits (all undoable). The first manual edit turns the automatic layout into editable rails and docks
 // exactly where they are, so nothing jumps.
-import type { EdgeName, Project, RailMount, Turn } from '../model/types';
+import type { Project, RailMount, Slot, Turn } from '../model/types';
 import { round, uid } from '../geom/poly';
 import { appendDock, bestDock, withRiders } from '../cad/dockplan';
 import { baseOf, refreshStandoffs } from '../model/holes';
@@ -31,7 +31,7 @@ function pin(p: Project, rails: string[]) {
     const into = host && p.panel.mounts.find((q) => q.id === host.id);
     if (into && mod) {
       const k = host!.slots.findIndex((sl) => sl.module === mod);
-      into.slots[k] = { module: mod, edge: host!.slots[k].edge };
+      into.slots[k] = { module: mod, edge: host!.slots[k].edge, ...(host!.slots[k].lie ? { lie: host!.slots[k].lie } : {}) };
       p.panel.mounts.splice(p.panel.mounts.indexOf(m), 1);
     }
   }
@@ -173,7 +173,7 @@ export function unseat(moduleId: string) {
   panelEdit((p) => { for (const mt of p.panel.mounts) for (const sl of mt.slots) if (sl.module === moduleId) sl.module = null; });
 }
 
-export function setSlot(mountId: string, slot: number, fn: (s: { module: string | null; edge: EdgeName | 'auto' }) => void) {
+export function setSlot(mountId: string, slot: number, fn: (s: Slot) => void) {
   panelEdit((p) => {
     const mt = p.panel.mounts.find((x) => x.id === mountId);
     if (!mt) return;

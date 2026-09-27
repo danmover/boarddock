@@ -17,7 +17,7 @@ import { buildModule, builtLevels, transformMesh, type ArrangeHooks, type Module
 import { baseOf, ridersOf, stackLayers, type StackLayer } from '../model/holes';
 import { freeAll, toMesh, type MF } from './kernel';
 import { END_POSE, LEN_X, rail as railSolid, shoe, shoeBody, shoeLever, socket, SOCKET_Z } from './dock';
-import { autoAssign, bestDock, classify, clipToRail, dockSite, edgeNormal, plugDirs, railMatrix, slotMatrix, withRiders } from './dockplan';
+import { autoAssign, bestDock, classify, clipToRail, dockSite, EDGES, edgeNormal, plugDirs, railMatrix, slotMatrix, withRiders } from './dockplan';
 import { capStress, pieceMesh, planStands, railI, standBoxes, STAND, type StandLane } from './railstand';
 import { assemble, bestRoute, escapes, hits, ribbonRoute, slope, type Box, type CableEnd, type Choice, type Obstacle, type RibbonEnd, type Route } from './cableroute';
 import { isDebugPort, isProbe, isUartPort, jumperToBuy, jumperWiring, ribbonOf, uartWiring } from '../model/probes';
@@ -25,7 +25,7 @@ import { isDebugPort, isProbe, isUartPort, jumperToBuy, jumperWiring, ribbonOf, 
 const SHOE_BOX = { x: [-LEN_X / 2, LEN_X / 2], y: [-29, 29], z: [0, 42.8] };
 
 interface Layer { mod: Module; mi: number; out: ModuleOut; T: M4 } // a board stacked on the seat's board: T = its holder -> base holder frame
-interface Seat { mod: Module; mi: number; slot: number; edge: EdgeName; out: ModuleOut; M: M4; above: Layer[]; riders: Module[] }
+interface Seat { mod: Module; mi: number; slot: number; edge: EdgeName; lie?: 'flat'; out: ModuleOut; M: M4; above: Layer[]; riders: Module[] } // lie: its holder lies flat in the dock
 interface Placed { mt: RailMount; seats: Seat[]; lo: number; hi: number; ylo: number; yhi: number; zhi: number; boxes: { id: string; b: number[] }[]; lever: 1 | -1; soft: [number, number] } // soft: room kept at each end for ribbons going round (between docks, not on the rail)
 
 /**
@@ -174,14 +174,15 @@ export function generatePanel(p: Project): GenResult {
       const hit = mods.get(sl.module);
       if (!hit) return;
       const { m, i } = hit;
-      let edge: EdgeName = sl.edge === 'auto' ? bestDock(withRiders(p, m), railDir, slot, [mt.turn]).edge : sl.edge;
+      const lie = mt.kind === 'dock' ? sl.lie : undefined; // a holder lying flat in its dock, by an ear on that edge
+      let edge: EdgeName = sl.edge === 'auto' ? bestDock(withRiders(p, m), railDir, slot, [mt.turn], EDGES, lie).edge : sl.edge;
       try {
         const layers = stackLayers(p, m);
         const riders = ridersOf(p, m);
-        const plan = layers.length > 1 ? stackPlan(p, layers, mt.kind === 'dock' ? edge : null) : null;
+        const plan = layers.length > 1 ? stackPlan(p, layers, mt.kind === 'dock' && !lie ? edge : null) : null;
         const build = (e: EdgeName, H = m.holder, shift = 0) => buildModule({
           p, mi: i, b: m.board, H, din: mt.kind === 'flat', stand: false, hooks: plan?.[0].hooks ?? {}, name: m.board.name, bolted: boltedOf(layers[0]),
-          dock: mt.kind === 'dock' ? { edge: e, fit: P.fit ?? 0, ...(shift ? { shift } : {}) } : undefined,
+          dock: mt.kind === 'dock' ? { edge: e, fit: P.fit ?? 0, ...(shift ? { shift } : {}), ...(lie ? { lie } : {}) } : undefined,
           mount: mt.kind === 'flat' ? { ...p.mount, kind: 'din', mode: 'flat', rotation: mt.turn, at: null } : undefined,
         });
         let out = build(edge);
@@ -210,12 +211,12 @@ export function generatePanel(p: Project): GenResult {
         const loose = (o: ModuleOut) => o.warnings.some((w) => /^Nothing clips this board in/.test(w));
         if ((sl.edge === 'auto' || P.auto) && mt.kind === 'dock' && layers.length === 1 && loose(out)) {
           const others = (['bottom', 'top', 'left', 'right'] as EdgeName[]).filter((e) => e !== edge)
-            .map((e) => ({ e, o: bestDock(withRiders(p, m), railDir, slot, [mt.turn], [e]) }))
+            .map((e) => ({ e, o: bestDock(withRiders(p, m), railDir, slot, [mt.turn], [e], lie) }))
             .filter((c) => !c.o.access.some((a) => a.ok === 'blocked')).sort((a, b) => b.o.score - a.o.score);
           let found = false;
           for (const c of others) { const o = build(c.e); if (!loose(o)) { edge = c.e; out = o; found = true; break; } }
           // with the release button left at its default, a button beside the board frees the far edge for fingers
-          if (!found && m.holder.release == null) for (const e of [edge, ...others.map((c) => c.e)]) {
+          if (!found && !lie && m.holder.release == null) for (const e of [edge, ...others.map((c) => c.e)]) {
             const o = build(e, { ...m.holder, release: 'side' });
             if (!loose(o)) { edge = e; out = { ...o, checks: o.checks.map((c) => (c.name === 'Release button' ? { ...c, detail: 'beside the board, so the far edge is free for the snap fingers that hold it (it has no holes for pins)' } : c)) }; break; }
           }
@@ -226,8 +227,8 @@ export function generatePanel(p: Project): GenResult {
           return { mod: r, mi: ri, T: plan![k + 1].T, out: buildModule({ p, mi: ri, b: r.board, H: r.holder, din: false, stand: false, hooks: plan![k + 1].hooks, name: r.board.name, level: k + 1, bolted: boltedOf(L) }) };
         });
         // (the towers stand round the biggest layer, so it is the biggest that has to be small for this)
-        if (mt.kind === 'dock' && riders.length && dockSite(m.board, m.holder, edge).side === 0 && Math.max(...[m, ...riders].map((x) => { const b = bbox(x.board.outline); return Math.min(b.x1 - b.x0, b.y1 - b.y0); })) < 30) warnings.push(`${m.board.name}: the stack's corner towers are close to the dock's release button; check them in 3D.`);
-        seats.push({ mod: m, mi: i, slot, edge, out, M, above, riders });
+        if (mt.kind === 'dock' && !lie && riders.length && dockSite(m.board, m.holder, edge).side === 0 && Math.max(...[m, ...riders].map((x) => { const b = bbox(x.board.outline); return Math.min(b.x1 - b.x0, b.y1 - b.y0); })) < 30) warnings.push(`${m.board.name}: the stack's corner towers are close to the dock's release button; check them in 3D.`);
+        seats.push({ mod: m, mi: i, slot, edge, ...(lie ? { lie } : {}), out, M, above, riders });
       } catch (e: any) {
         failed.push(`${m.board.name}: ${e?.message ?? e}`);
       }
@@ -344,14 +345,14 @@ export function generatePanel(p: Project): GenResult {
       const allBoxes = (skip: Placed) => placed.filter((o) => o !== q && o.mt.at != null && railOf(o.mt)).flatMap((o) => o.boxes.filter((bx) => o !== skip || bx.id).map((bx) => { const f = toPanel(railOf(o.mt)!, o.mt.at!, bx.b); return [f[0], f[1], bx.b[2], f[2], f[3], bx.b[5]]; }));
       for (const o of docksWithRoom) {
         const k = o.mt.slots.findIndex((sl) => !sl.module), r = railOf(o.mt)!;
-        const bd = bestDock(withRiders(p, s0.mod), r.dir, k, [o.mt.turn]);
+        const bd = bestDock(withRiders(p, s0.mod), r.dir, k, [o.mt.turn], EDGES, s0.lie);
         if (bd.access.some((a) => a.ok === 'blocked')) continue;
         let out = s0.out, above = s0.above;
         if (bd.edge !== s0.edge) {
           try {
             // a stack is planned round its dock edge (the towers on that side step in), so it is built again
-            const layers = stackLayers(p, s0.mod), plan = layers.length > 1 ? stackPlan(p, layers, bd.edge) : null;
-            out = buildModule({ p, mi: s0.mi, b: s0.mod.board, H: s0.mod.holder, din: false, stand: false, hooks: plan?.[0].hooks ?? {}, name: s0.mod.board.name, bolted: boltedOf(layers[0]), dock: { edge: bd.edge, fit: P.fit ?? 0 } });
+            const layers = stackLayers(p, s0.mod), plan = layers.length > 1 ? stackPlan(p, layers, s0.lie ? null : bd.edge) : null;
+            out = buildModule({ p, mi: s0.mi, b: s0.mod.board, H: s0.mod.holder, din: false, stand: false, hooks: plan?.[0].hooks ?? {}, name: s0.mod.board.name, bolted: boltedOf(layers[0]), dock: { edge: bd.edge, fit: P.fit ?? 0, ...(s0.lie ? { lie: s0.lie } : {}) } });
             if (plan) above = layers.slice(1).map((L, j) => { const ri = mods.get(L.mod.id)!.i; return { mod: L.mod, mi: ri, T: plan[j + 1].T, out: buildModule({ p, mi: ri, b: L.mod.board, H: L.mod.holder, din: false, stand: false, hooks: plan[j + 1].hooks, name: L.mod.board.name, level: j + 1, bolted: boltedOf(L) }) }; });
           } catch { continue; }
         }
@@ -375,7 +376,7 @@ export function generatePanel(p: Project): GenResult {
           r.length = need;
         }
         o.seats.push({ ...s0, slot: k, edge: bd.edge, out, M, above });
-        o.mt.slots = o.mt.slots.map((sl, j) => (j === k ? { module: s0.mod.id, edge: bd.edge } : sl));
+        o.mt.slots = o.mt.slots.map((sl, j) => (j === k ? { module: s0.mod.id, edge: bd.edge, ...(s0.lie ? { lie: s0.lie } : {}) } : sl));
         o.boxes.push({ id: s0.mod.id, b });
         o.lo = Math.min(o.lo, b[0]); o.hi = Math.max(o.hi, b[3]); o.ylo = Math.min(o.ylo, b[1]); o.yhi = Math.max(o.yhi, b[4]); o.zhi = Math.max(o.zhi, b[5]);
         placed.splice(placed.indexOf(q), 1);
@@ -553,7 +554,7 @@ export function generatePanel(p: Project): GenResult {
         const bx = q.boxes.find((b) => b.id === s.mod.id)!.b;
         const accOf = (b: Module['board']) => plugDirs(b).map((d) => ({ ref: d.ref, type: d.type, ...classify(dir(T, d.v), r.dir) }));
         const acc = [s.mod, ...s.riders].flatMap((mm) => accOf(mm.board).map((a) => (mm === s.mod ? a : { ...a, ref: `${a.ref}·${mm.board.name.slice(0, 10)}` })));
-        access.push({ id: s.mod.id, mount: q.mt.id, slot: s.slot, edge: s.edge, turn: q.mt.turn, foot: toPanel(r, q.mt.at!, bx), z1: bx[5], access: acc, stack: s.riders.map((x) => x.board.name) });
+        access.push({ id: s.mod.id, mount: q.mt.id, slot: s.slot, edge: s.edge, ...(s.lie ? { lie: s.lie } : {}), turn: q.mt.turn, foot: toPanel(r, q.mt.at!, bx), z1: bx[5], access: acc, stack: s.riders.map((x) => x.board.name) });
         const blocked = acc.filter((a) => a.ok === 'blocked');
         if (blocked.length) warnings.push(`${s.mod.board.name}: ${blocked.map((a) => a.ref).join(', ')} point${blocked.length > 1 ? '' : 's'} down into the table. Turn the dock or pick another dock edge.`);
         for (const L of layers) {
