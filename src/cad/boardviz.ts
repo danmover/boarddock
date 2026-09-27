@@ -107,6 +107,17 @@ function partDetail(bin: Bin, c: Comp, zt: number, zb: number) {
     }
     return;
   }
+  if (type === 'pins_ra') {
+    // right-angle pins: the plastic row along the edge, each pin bent down into the board and out over the edge
+    const n = Math.max(1, Math.round(w / 2.54));
+    B('black', -hx, hy - 2.5, 0, hx, hy, 2.5);
+    for (let i = 0; i < n; i++) {
+      const px = (i - (n - 1) / 2) * 2.54;
+      B('gold', px - 0.32, hy - 3.6, 0.95, px + 0.32, hy + 6, 1.6);
+      B('gold', px - 0.32, hy - 3.6, -1.8, px + 0.32, hy - 2.96, 1.6);
+    }
+    return;
+  }
   if (c.conn?.entry === 'edge' || c.kind === 'connector') {
     const metalShell = /usb|hdmi|microsd|sma|rj45/.test(type) || /usb|hdmi|sd/i.test(name);
     if (type === 'barrel' || type === 'audio35') {
@@ -333,7 +344,9 @@ function outlet(bin: Bin, c: Comp, zt: number) {
  */
 export function boardDetail(b: Board, zb: number, zt: number, tag: PickTag, anim: Anim): Ghost[] {
   const bin = new Bin();
-  if (b.kind === 'box') {
+  // a bare board (a probe, an adapter) is drawn as the circuit board it is, its colour the solder mask's
+  const bare = b.kind === 'box' && !!b.box && b.box.h < 5;
+  if (b.kind === 'box' && !bare) {
     // a closed device: rounded plastic housing with its ports as openings
     bin.add('box', ext(poly(b.outline), zb, zt - 0.6));
     bin.add('box', ext(poly(b.outline).offset(-0.6, 'Round'), zt - 0.61, zt));
@@ -425,7 +438,7 @@ export function boardDetail(b: Board, zb: number, zt: number, tag: PickTag, anim
   const nm = b.name.slice(0, 28), nw = textWidth(nm, nameH);
   const spot = findFree(b, list, nw, nameH);
   if (spot) silkText(bin, nm, spot, nameH, zt);
-  return bin.ghosts('board', tag, anim);
+  return bin.ghosts('board', tag, anim, bare && b.color ? { mask: b.color } : {});
 }
 
 type PlugSize = { w: number; h: number; len: number; cable: number };
