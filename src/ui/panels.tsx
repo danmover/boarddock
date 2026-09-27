@@ -27,7 +27,7 @@ import { delta, partsFor, type Delta } from '../model/built';
 import { baseOf as stackBase, ridersOf } from '../model/holes';
 import { DockFeaSection } from './DockFea';
 import { powerBudget, powerText } from '../model/power';
-import { saveBoard } from '../model/myboards';
+import { copyOf, myBoards, saveBoard } from '../model/myboards';
 import { needOf, poweredHub, supplyOf, watts } from '../model/powerdata';
 import { picture } from './snapshot';
 import { boardPicture, holderPicture, type PicPart } from '../worker/client';
@@ -89,6 +89,13 @@ export function ImportPanel() {
       {busy && <div className="progress" style={{ margin: '8px 0' }}><div /></div>}
       {err && <div className="err" style={{ margin: '10px 0' }}>{err}</div>}
       <div style={{ height: 10 }} />
+      {myBoards().length > 0 && (
+        <Section title="My boards">
+          <div className="tiles">
+            {myBoards().map((sv) => <button key={sv.id} className="tile" onClick={() => put(copyOf(sv))} title={`Saved ${sv.at.slice(0, 10)}`}><span>{sv.name}</span><small>{sv.board.role === 'probe' ? 'debug probe' : sv.board.role === 'adapter' ? 'USB-serial adapter' : sv.board.kind === 'box' ? 'box' : 'board'}</small></button>)}
+          </div>
+        </Section>
+      )}
       <Section title="Start from a known board">
         <div className="tiles">
           {TEMPLATES.filter((t) => !t.accessory).map((t) => { const [n, sz] = t.name.split(' ('); return <button key={t.id} className="tile" onClick={() => put(t.make())}><BoardThumb id={t.id} /><span>{n}</span>{sz && <small>{sz.replace(')', '')}</small>}</button>; })}

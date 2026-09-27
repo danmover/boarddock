@@ -86,6 +86,9 @@ export function escapes(e: CableEnd, own: Box | null, zc: number, radius: number
   if (Math.abs(e.d[2]) < 0.7) {
     out.push(drop([p1]));
     out.push(drop([p1, add(p1, e.d, 18)]));
+    // a plug facing something close (the next dock along the rail): out a little, then off to one side and down
+    const h = Math.hypot(e.d[0], e.d[1]) || 1, side = [-e.d[1] / h, e.d[0] / h, 0], p0 = add(e.p, e.d, 5);
+    for (const s of [1, -1]) for (const k of [14, 28, 44]) out.push(drop([p0, add(p0, side, s * k)]));
   } else {
     // a plug pointing up or down: go straight, or step off the board sideways at the plug's height first (just
     // clear of it, or a little further, past what stands off its face: a probe's ribbon socket)
