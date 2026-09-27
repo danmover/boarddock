@@ -1,7 +1,7 @@
 // One import path for the drop zone, the file picker and drag-and-drop anywhere in the window. Several files make
 // several boards (a Gerber set or an IDF pair stays one board); they join the project unless "replace" is ticked.
 import { importMany } from '../import';
-import { lastReplace, loadProject, putBoards, store, toast } from '../state';
+import { lastReplace, loadProject, putBoards, reviseBoard, store, toast } from '../state';
 import { bedNote, placementNote } from './panelOps';
 
 let inFlight = false;
@@ -57,4 +57,26 @@ async function openNow(files: File[], opts: { stay?: boolean }): Promise<void> {
     : `${had ? 'Added' : 'Imported'} ${boards.length > 1 ? `${boards.length} boards: ${names.join(', ')}` : names[0]}`;
   const added = had && (!replace || boards.length > 1);
   toast(`${what}${n > 1 ? ` (${n} boards in the project)` : ''}.${replace && had ? lastReplace : ''}${added ? placementNote(store.get().project!) : ''}${bedNote(store.get().project!, boards)}${had ? ' ⌘Z undoes it.' : ''}${errors.length ? ` Skipped: ${errors.join('; ')}` : ''}`, opts.stay && !replace ? { label: boards.length > 1 ? 'Check them' : 'Check its board', run: () => store.set({ step: 'board', view: 'assembly' }) } : undefined);
+}
+
+/**
+ * A new version of one board on the rack: its files replace the board, which keeps its place, cables and holder
+ * settings. The toast says what changed and offers to go straight to printing its new holder.
+ */
+export async function openRevision(fl: FileList | File[], moduleId: string): Promise<void> {
+  const files = Array.from(fl);
+  if (!files.length || inFlight) return;
+  inFlight = true;
+  try {
+    const { boards, errors } = await importMany(await Promise.all(files.map(async (f) => ({ name: f.name, bytes: new Uint8Array(await f.arrayBuffer()) }))));
+    if (!boards.length) throw new Error(errors[0] ?? 'No board in those files.');
+    const r = reviseBoard(moduleId, boards[0]);
+    if (!r) throw new Error('That board is no longer in the project.');
+    const what = r.changes.length ? r.changes.join('. ') : 'No mechanical changes: the holder comes out the same';
+    const cables = r.kept || r.dropped ? ` Cables kept: ${r.kept}${r.dropped ? `; ${r.dropped} dropped (their plugs are gone)` : ''}.` : '';
+    const more = boards.length > 1 ? ` The files held ${boards.length} boards; the first was used.` : '';
+    toast(`New version of ${r.name}. ${what}.${cables}${more} ⌘Z undoes it.`, { label: 'Print its holder', run: () => store.set({ step: 'export', view: 'assembly', exportPick: [moduleId] }) });
+  } finally {
+    inFlight = false;
+  }
 }

@@ -10,7 +10,7 @@ import { CONNECTORS, DEFAULT_FEATURES, HOLDER_PRESETS, MATERIALS, PRINTERS, conn
 import { printerByName, printSettings } from '../model/printers';
 import { TEMPLATES, edgeConn } from '../model/templates';
 import { ACCEPT } from '../import';
-import { openFiles } from './importFlow';
+import { openFiles, openRevision } from './importFlow';
 import { bbox, circleLoop, compRect, roundedRectLoop, round, uid } from '../geom/poly';
 import { activeModule, addBoard, closeProject, dropModule, edit, editMod, isSel, lastReplace, putBoards, select, setActive, store, toast, useApp, type SelItem } from '../state';
 import { addBoards } from './AddBoard';
@@ -352,6 +352,7 @@ export function BoardPanel() {
           <div className="field"><span>Size</span><div className="static mono">{round(bb.x1 - bb.x0, 1)} × {round(bb.y1 - bb.y0, 1)}</div></div>
         </div>
         {b.kind !== 'box' && <PowerDraw />}
+        {b.kind !== 'box' && <Revision />}
         <p className="hint">{b.source}. {b.holes.length} holes, {b.comps.filter((c) => !c.hidden).length} parts, {b.comps.filter((c) => c.conn).length} connectors.</p>
         {b.notes.length > 0 && <div className="warns">{b.notes.map((n, i) => <div key={i}>{n}</div>)}</div>}
       </Section>
@@ -618,6 +619,53 @@ function CablesSection() {
         </>
       )}
     </Section>
+  );
+}
+
+/**
+ * "New version…": pick (or drop) the files of a newer revision of this board. It replaces the board where it is:
+ * dock, cables, holder settings and plug choices stay; what changed is listed here and in the toast.
+ */
+export function NewVersionButton({ moduleId, small }: { moduleId: string; small?: boolean }) {
+  const input = useRef<HTMLInputElement>(null);
+  const [over, setOver] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const go = async (fl: FileList | File[]) => { setErr(null); try { await openRevision(fl, moduleId); } catch (e: any) { setErr(e?.message ?? String(e)); toast(`Could not read the new version: ${e?.message ?? e}`); } };
+  return (
+    <>
+      <button className={`btn ${small ? 'small' : 'small soft'} ${over ? 'over' : ''}`} title="Pick or drop the files of a newer version of this board: it takes this one's place, cables and holder settings"
+        onClick={() => input.current?.click()} onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setOver(true); }} onDragLeave={() => setOver(false)}
+        onDrop={(e) => { e.preventDefault(); e.stopPropagation(); setOver(false); go(e.dataTransfer.files); }}>
+        <Icon d={I.download} /> New version…
+      </button>
+      <input ref={input} type="file" multiple accept={ACCEPT} hidden onChange={(e) => { if (e.target.files) go(e.target.files); e.target.value = ''; }} />
+      {err && !small && <div className="err" style={{ marginTop: 6 }}>{err}</div>}
+    </>
+  );
+}
+
+/** The Board step's note on the last new version swapped in, and the way to it. */
+function Revision() {
+  const p = useApp((s) => s.project)!;
+  const m = activeModule(p);
+  const r = m.revision;
+  return (
+    <div className="revision">
+      <div className="btns" style={{ alignItems: 'center' }}>
+        <NewVersionButton moduleId={m.id} />
+        {!r && <small className="hint" style={{ margin: 0 }}>A newer revision of this board? Swap it in here.</small>}
+      </div>
+      {r && (
+        <div className="revnote">
+          <b>New version, {new Date(r.at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}</b> <small>({r.to})</small>
+          {r.changes.length ? <ul className="fmt">{r.changes.map((c) => <li key={c}>{c}</li>)}</ul> : <p className="hint" style={{ margin: '4px 0' }}>No mechanical changes: the holder comes out the same.</p>}
+          <div className="btns">
+            <button className="btn small primary" onClick={() => store.set({ step: 'export', view: 'assembly', exportPick: [m.id] })}><Icon d={I.download} /> Print its holder</button>
+            <button className="btn small ghost" onClick={() => editMod((q) => { delete q.revision; })}>Dismiss</button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1047,10 +1095,14 @@ export function ExportPanel() {
   const setP = (fn: (x: Project['printer']) => void) => edit((q) => fn(q.printer));
   const d = useMemo(() => (res ? delta(p, res) : null), [res, p.built]);
   // what to print: everything, only what is new since the rack was built, or just some boards
-  const [scopeSel, setScope] = useState<'all' | 'new' | 'pick' | null>(null);
+  // coming from "Print its holder" (a new version of a board): just that board, without its dock (the one on the
+  // rack stays); on a built rack "What's new" already lists exactly its new parts
+  const pick0 = useApp((s) => s.exportPick);
+  const [scopeSel, setScope] = useState<'all' | 'new' | 'pick' | null>(() => (pick0 ? (p.built ? 'new' : 'pick') : null));
   const scope = scopeSel ?? (d?.any ? 'new' : 'all');
-  const [picked, setPicked] = useState<string[]>(() => [activeModule(p).id]);
-  const [withDocks, setWithDocks] = useState(true);
+  const [picked, setPicked] = useState<string[]>(() => pick0 ?? [activeModule(p).id]);
+  const [withDocks, setWithDocks] = useState(() => !pick0);
+  useEffect(() => { if (pick0) store.set({ exportPick: null }); }, []);
   const [withStands, setWithStands] = useState(false);
   const pickSet = useMemo(() => new Set(picked.flatMap((id) => { const m = p.modules.find((x) => x.id === id); return m ? [id, ...ridersOf(p, m).map((r) => r.id)] : []; })), [picked, p.modules]);
   const onlyNew = scope === 'new' && !!d;
@@ -1233,7 +1285,7 @@ function BuildSection({ d }: { d: Delta | null }) {
     <Section title={`Built ${when}`} right={<button className="btn small ghost" title="Forget what was built: Export lists everything again" onClick={unmarkBuilt}>Forget</button>}>
       {d && d.any ? (
         <>
-          <p className="hint" style={{ marginTop: 0 }}>Since then{d.boards.length ? ` you added ${d.boards.join(', ')}` : ''}{d.removed.length ? `${d.boards.length ? ' and' : ' you'} took off ${d.removed.join(', ')}` : ''}{d.boards.length + d.removed.length ? '' : ' the rack changed'}. On the rack:</p>
+          <p className="hint" style={{ marginTop: 0 }}>Since then {[d.boards.length ? `you added ${d.boards.join(', ')}` : '', d.removed.length ? `took off ${d.removed.join(', ')}` : '', d.revised.length ? `swapped in a new version of ${d.revised.join(', ')}` : ''].filter(Boolean).join(', ').replace(/^(took|swapped)/, 'you $1') || 'the rack changed'}. On the rack:</p>
           <ul className="fmt deltalist">
             {d.removed.length > 0 && <li><b>Take off</b> {d.removed.join(', ')}{d.spare.length ? `; spare now: ${d.spare.map((x) => `${x.name}${x.qty > 1 ? ` ×${x.qty}` : ''}`).join(', ')}` : ''}{d.spareCables.length ? `; cable${d.spareCables.length > 1 ? 's' : ''} ${d.spareCables.map((c) => (c.no != null ? `#${c.no}` : `${c.a} to ${c.b}`)).join(', ')} no longer used` : ''}.</li>}
             {d.moved.map((m) => <li key={m.name}><b>Move</b> {m.name} from {m.from} to {m.to}.</li>)}

@@ -4,6 +4,7 @@ import type { Board, Feature, GenResult, Module, PartOut, Project } from './mode
 import { activeModule, migrate, newModule, newProject } from './model/library';
 import { appendDock } from './cad/dockplan';
 import { describeChange } from './model/diff';
+import { carryOver, compareBoards } from './model/revision';
 
 export { activeModule };
 
@@ -41,6 +42,7 @@ export interface State {
   toastAction: { label: string; run: () => void } | null;
   addSheet: boolean; // the Add board sheet is open
   printParts: PartOut[] | null; // what Export will print, when it is not everything (the print view shows the same)
+  exportPick: string[] | null; // Export opens with just these boards picked (after swapping in a new version of one)
 }
 
 const KEY = 'boarddock.project.v1';
@@ -80,6 +82,7 @@ let state: State = {
   toastAction: null,
   addSheet: false,
   printParts: null,
+  exportPick: null,
   theme: savedTheme() ?? (typeof matchMedia !== 'undefined' && matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'),
 };
 // a saved project opens on Start, which shows the rack and the ways on (add a board, cables, what's new to print)
@@ -193,6 +196,32 @@ export function setBoard(b: Board) {
   } else p = newProject(b);
   store.set({ project: p, past: cur ? [...state.past, cur] : [], future: [], sel: [], step: 'board', view: 'assembly', result: null });
   persist(p);
+}
+
+/**
+ * Swap in a new version of a board (one undo step): it keeps its id, name, dock and stack, its holder settings, the
+ * cables to plugs it still has and the choices made on the old version (plug protection, hidden parts, hole roles
+ * set by hand). Returns what changed, or null when there is no such board.
+ */
+export function reviseBoard(id: string, b: Board): { changes: string[]; kept: number; dropped: number; name: string } | null {
+  const cur = state.project;
+  const m0 = cur?.modules.find((x) => x.id === id);
+  if (!cur || !m0) return null;
+  const changes = compareBoards(m0.board, b);
+  let kept = 0, dropped = 0;
+  edit((p) => {
+    const m = p.modules.find((x) => x.id === id)!;
+    const nb = { ...carryOver(m.board, b), name: m.board.name };
+    const has = (ref: string) => nb.comps.some((c) => c.ref === ref.replace(/:2$/, '') && c.conn);
+    const mine = (p.links ?? []).filter((l) => l.a.module === id || l.b.module === id);
+    p.links = (p.links ?? []).filter((l) => (l.a.module !== id || has(l.a.ref)) && (l.b.module !== id || has(l.b.ref)));
+    kept = (p.links ?? []).filter((l) => l.a.module === id || l.b.module === id).length;
+    dropped = mine.length - kept;
+    m.revision = { at: new Date().toISOString(), from: m.board.source, to: b.source, changes };
+    m.board = nb;
+    m.original = structuredClone(b);
+  });
+  return { changes, kept, dropped, name: m0.board.name };
 }
 
 /** Add another board to the project. */

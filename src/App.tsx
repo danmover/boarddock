@@ -5,7 +5,7 @@ import { AddBoardSheet } from './ui/AddBoard';
 import { Viewer3D } from './ui/Viewer3D';
 import { BoardEditor, type Tool } from './ui/BoardEditor';
 import { PanelEditor } from './ui/PanelEditor';
-import { BoardPanel, CheckPanel, ExportPanel, HolderPanel, ImportPanel, MountPanel, PlugsPanel } from './ui/panels';
+import { BoardPanel, CheckPanel, ExportPanel, HolderPanel, ImportPanel, MountPanel, NewVersionButton, PlugsPanel } from './ui/panels';
 import { download, safeName } from './ui/controls';
 import { HeroArt, Mark } from './ui/art';
 import { MATERIALS } from './model/library';
@@ -282,6 +282,7 @@ function SelPanel({ items }: { items: SelItem[] }) {
         <span className="grow hint" style={{ margin: 0 }}>{one ? ds[0].d.sub : 'Shift-click adds or removes · Del removes · Esc clears'}</span>
         <div className="acts">
           {one && <button className="btn small" onClick={edit1}>Edit <Icon d={I.right} /></button>}
+          {one?.kind === 'module' && p.modules.find((m) => m.id === one.id)?.board.kind !== 'box' && <NewVersionButton moduleId={one.id} small />}
           {removable.length > 0 && <button className="btn small danger" onClick={() => removeItems(removable.map((x) => x.it))}><Icon d={I.trash} /> {one ? ds[0].d.removable : `Remove ${removable.length}`}</button>}
           <button className="btn small ghost icon" onClick={() => select([])} title="Clear (Esc)"><Icon d={I.x} /></button>
         </div>

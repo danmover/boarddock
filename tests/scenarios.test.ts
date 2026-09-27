@@ -224,3 +224,41 @@ describe('holders come out in one piece', () => {
     for (const t of TEMPLATES) expect([t.id, ...loose(newProject(t.make()))]).toEqual([t.id]);
   }, 600000);
 });
+
+describe('a new version of a board', () => {
+  it('says what changed and keeps the choices made on the old one', async () => {
+    const { compareBoards, carryOver } = await import('../src/model/revision');
+    const { importKicad } = await import('../src/import/kicad');
+    const v1 = importKicad(MOTOR, 'motor_driver.kicad_pcb');
+    const v2 = importKicad(MOTOR.replace('(at 140 103.5 180)', '(at 142 103.5 180)').replace('(at 176 156)', '(at 176.8 156)').replace('(title "Motor driver")', '(title "Motor driver v2")'), 'motor_driver_v2.kicad_pcb');
+    const ch = compareBoards(v1, v2);
+    expect(ch.some((c) => /J2 moved 2 mm/.test(c))).toBe(true);
+    expect(ch.some((c) => /Holes: 1 moved \(up to 0\.8 mm\)/.test(c))).toBe(true);
+    expect(compareBoards(v1, v1)).toEqual([]);
+    // the user switched off J1's cap and hid U1 on the old one: the new one keeps that
+    v1.comps.find((c) => c.ref === 'J1')!.conn!.cap = false;
+    v1.comps.find((c) => c.ref === 'U1')!.hidden = true;
+    const kept = carryOver(v1, v2);
+    expect(kept.comps.find((c) => c.ref === 'J1')!.conn!.cap).toBe(false);
+    expect(kept.comps.find((c) => c.ref === 'U1')!.hidden).toBe(true);
+  });
+
+  it('takes the old one’s place: same id, name, dock and cables', async () => {
+    const { reviseBoard } = await import('../src/state');
+    const { importKicad } = await import('../src/import/kicad');
+    const p = newProject(importKicad(MOTOR, 'motor_driver.kicad_pcb'));
+    p.modules.push(newModule(T('usb_charger6')));
+    p.links = autoLinks(p);
+    loadProject(p);
+    const id = store.get().project!.modules[0].id, n = store.get().project!.links!.length;
+    const v2 = importKicad(MOTOR.replace('(at 140 103.5 180)', '(at 142 103.5 180)').replace('(title "Motor driver")', '(title "Motor driver v2")'), 'motor_driver_v2.kicad_pcb');
+    const r = reviseBoard(id, v2)!;
+    const q = store.get().project!;
+    expect(q.modules[0].id).toBe(id);
+    expect(q.modules[0].board.name).toBe('Motor driver');
+    expect(q.links!.length).toBe(n);
+    expect(r.kept).toBe(n);
+    expect(q.modules[0].revision?.changes.some((c) => /J2 moved/.test(c))).toBe(true);
+    expect(q.modules[0].board.comps.find((c) => c.ref === 'J2')!.x).toBeCloseTo(42, 1);
+  });
+});

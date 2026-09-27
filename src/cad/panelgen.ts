@@ -9,8 +9,8 @@ const CABLE_SEQ = 1e6, PLUG_SEQ = 1e6 + 90, CAP_SEQ = 1e6 + 100, TAG_SEQ = 1e6 +
 import { MATERIALS } from '../model/library';
 import { bbox, round } from '../geom/poly';
 import { basis, dir, I4, inv, mul, pt as ptM, rotZ, tr, type M4 } from '../geom/mat';
-import { smooth, sphereMesh, tubeMesh } from './boardviz';
-import { baseRef, cableNumbers, cablePurpose, cableToBuy, KIND_COLOR, KIND_NAME, refText } from '../model/links';
+import { filletPath, hangingCable, sphereMesh, tubeMesh } from './boardviz';
+import { baseRef, cableNumbers, cablePurpose, cableToBuy, KIND_COLOR, KIND_NAME, plugRole, refText } from '../model/links';
 import { cableTag } from './cabletag';
 import { powerBudget, powerText } from '../model/power';
 import { buildModule, computeLevels, transformMesh, type ArrangeHooks, type ModuleOut } from './generate';
@@ -394,6 +394,13 @@ export function generatePanel(p: Project): GenResult {
   const hasRef = (id: string, ref: string) => !!mods.get(id)?.m.board.comps.some((c) => c.ref === baseRef(ref));
   const live = (p.links ?? []).filter((l) => placedIds.has(l.a.module) && placedIds.has(l.b.module) && hasRef(l.a.module, l.a.ref) && hasRef(l.b.module, l.b.ref));
   const linked = new Set(live.flatMap((l) => [`${l.a.module}/${l.a.ref}`, `${l.b.module}/${l.b.ref}`]));
+  // plugs whose cable leaves the rack: a board's cradled plug with nothing in the rack on the other end, a box's supply
+  const offRack = (module: string, ref: string) => {
+    const m = mods.get(module)?.m, c = m?.board.comps.find((x) => x.ref === ref);
+    if (!m || !c?.conn) return false;
+    return m.board.kind === 'box' ? plugRole(m, c) === 'other' : !!c.conn.cradle;
+  };
+  const hang = new Set<string>();
   // assembly steps: stands 100-130, docks 200-210, each board 300 + 10k (+1 rod, +2 board, +3 stack, +4 into its dock),
   // cables CABLE_SEQ + kind (power first), then other plugs, then caps
   const steps: NonNullable<GenResult['steps']> = [];
@@ -440,9 +447,15 @@ export function generatePanel(p: Project): GenResult {
           }
           for (const g of L.out.ghosts) {
             if (g.name.startsWith('DIN rail')) continue;
-            // a plug with a routed cable loses its straight stub: the routed cable leaves the plug instead
             const key = `${g.tag?.module}/${g.tag?.refs?.[0]}`;
-            if (g.mat === 'cable' && g.tag?.kind === 'plug' && (linked.has(key) || linked.has(`${key}:2`))) continue;
+            if (g.tag?.kind === 'plug') {
+              // a plug where a cable goes: in the rack (the routed cable leaves it), or off it where the board has a
+              // cradle for one (a screen, a supply) or a box takes its supply (mains, DC in). A free port stays empty.
+              const k2 = /upper/.test(g.name) ? `${key}:2` : key;
+              const shown = linked.has(k2) || (!/upper|lower/.test(g.name) && linked.has(`${key}:2`)) || offRack(g.tag.module!, g.tag.refs?.[0] ?? '');
+              if (!shown) continue;
+              if (!linked.has(k2) && !linked.has(`${key}:2`)) hang.add(k2);
+            }
             const own = moveAnim(g.anim, L.T);
             let a: Anim | undefined = own;
             if (g.tag?.kind === 'plug') a = { seq: plugSeq.get(key) ?? plugSeq.get(`${key}:2`) ?? PLUG_SEQ, dir: own?.dir ?? [0, 0, 1], dist: 30 };
@@ -575,11 +588,12 @@ export function generatePanel(p: Project): GenResult {
       const eb = ch.eb === 'slope' ? slope(B, vl, zc) ?? escapes(B, null, zc, d / 2)[0] : ch.eb;
       const route = assemble(ea, eb, vl, zc);
       const hit = hits(route, obs, [A, B], d / 2);
-      const path = smooth(route.pts, 3).map(xy);
+      // bends as a cable takes them: arcs of about four diameters, no kinks
+      const path = filletPath(route.pts, Math.min(25, Math.max(10, 4 * d))).map(xy);
       let len = 0;
       for (let i = 1; i < path.length; i++) len += Math.hypot(path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1], path[i][2] - path[i - 1][2]);
       const kind = l.kind ?? 'usb';
-      ghosts.push({ name: `cable ${l.id}`, mesh: tubeMesh(path, d / 2, 10), color: KIND_COLOR[kind], opacity: 1, tag: { kind: 'cable', refs: [l.id] }, anim: { seq: cableSeq(kind), dir: [0, 0, 1], dist: 0, grow: true }, mat: 'cable' });
+      ghosts.push({ name: `cable ${l.id}`, mesh: tubeMesh(path, d / 2), color: KIND_COLOR[kind], opacity: 1, tag: { kind: 'cable', refs: [l.id] }, anim: { seq: cableSeq(kind), dir: [0, 0, 1], dist: 0, grow: true }, mat: 'cable', smooth: true });
       const clash = [...new Set(hit.map((h) => h.ob.label))];
       for (const h of hit.slice(0, 3)) ghosts.push({ name: `clash ${l.id}`, mesh: sphereMesh(xy(h.at), Math.max(3, d * 0.9)), color: '#ff3b3b', opacity: 0.55, tag: { kind: 'cable', refs: [l.id] }, anim: { seq: cableSeq(kind), dir: [0, 0, 1], dist: 0 } });
       // a point and direction s mm along the cable
@@ -625,6 +639,17 @@ export function generatePanel(p: Project): GenResult {
     if (long.length) warnings.push(`${long.map((c) => `${c.a} to ${c.b}`).join(', ')}: over 1.2 m of ${long.length > 1 ? 'cable each' : 'cable'}. Put the two boards closer (Auto-arrange keeps connected boards together).`);
     for (const pw of powerBudget(p)) { const t = powerText(pw); checks.push({ group: 'Power', name: t.name, value: t.value, status: pw.status, detail: t.detail, module: pw.module.id }); }
     if (cables.length) checks.push({ group: 'Panel', name: 'Cables', value: `${cables.length}, ${round(cables.reduce((a, c) => a + c.length, 0) / 1000, 1)} m`, status: 'info', detail: cables.map((c) => `${KIND_NAME[c.kind]} ${c.a} to ${c.b}: ${round(c.length / 10, 0)} cm (buy ${c.buy} m)`).join('; ') });
+  }
+
+  // ---- cables that leave the rack (to a screen, a supply, the mains): out of the plug, a bend down, along the table ----
+  const floorZ = stands ? -STAND.H : 0;
+  const allEnds = [...ends.values()];
+  const mid = allEnds.length ? [allEnds.reduce((a, e) => a + e.p[0], 0) / allEnds.length, allEnds.reduce((a, e) => a + e.p[1], 0) / allEnds.length] : [0, 0];
+  for (const k of hang) {
+    const e = ends.get(k);
+    if (!e) continue;
+    const i = k.indexOf('/'), module = k.slice(0, i), ref = k.slice(i + 1);
+    ghosts.push({ name: `off-rack cable ${k}`, mesh: tubeMesh(hangingCable(e.p, e.d, e.cable, floorZ, mid), Math.max(1.1, e.cable / 2)), color: '#2b2e33', opacity: 1, tag: { kind: 'plug', module, refs: [baseRef(ref)] }, anim: { seq: PLUG_SEQ, dir: [0, 0, 1], dist: 0, grow: true }, mat: 'cable', smooth: true });
   }
 
   // ---- table stands: sleepers across the rails, with cable combs where the streets cross them ----

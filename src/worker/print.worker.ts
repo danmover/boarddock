@@ -11,7 +11,7 @@ import type { Board, HolderSettings, MeshData } from '../model/types';
 const ready = initKernel(wasmUrl);
 type Pic = { mesh: MeshData; color: string; mat?: string; opacity: number };
 const pics = (list: { mesh: MeshData; color: string; mat?: string; opacity?: number }[]): Pic[] =>
-  list.map((g) => ({ mesh: { pos: g.mesh.pos.slice(), idx: g.mesh.idx.slice() }, color: g.color, mat: g.mat, opacity: g.opacity ?? 1 }));
+  list.map((g) => ({ mesh: { pos: g.mesh.pos.slice(), idx: g.mesh.idx.slice() }, color: g.color, mat: g.mat, opacity: g.opacity ?? 1, ...((g as { smooth?: boolean }).smooth ? { smooth: true } : {}) }));
 
 self.onmessage = async (e: MessageEvent) => {
   const { id, type, payload } = e.data;

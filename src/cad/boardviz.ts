@@ -17,7 +17,7 @@ class Bin {
   box(mat: Mat, T: number[], x0: number, y0: number, z0: number, x1: number, y1: number, z1: number) {
     (this.meshes.get(mat) ?? this.meshes.set(mat, []).get(mat)!).push(boxMesh(T, x0, y0, z0, x1, y1, z1));
   }
-  ghosts(name: string, tag: PickTag, anim: Anim, color: Partial<Record<Mat, string>> = {}): Ghost[] {
+  ghosts(name: string, tag: PickTag, anim: Anim, color: Partial<Record<Mat, string>> = {}, smooth = false): Ghost[] {
     const out: Ghost[] = [];
     const mats = new Set<Mat>([...this.meshes.keys(), ...this.solids.keys()]);
     for (const mat of mats) {
@@ -25,7 +25,7 @@ class Bin {
       const sol = this.solids.get(mat);
       if (sol?.length) list.push(toMesh(sol.length === 1 ? sol[0] : K().Manifold.compose(sol)));
       if (!list.length) continue;
-      out.push({ name: `${name} ${mat}`, mesh: merge(list), color: color[mat] ?? MAT_COLOR[mat], opacity: mat === 'led' ? 0.85 : 1, tag, anim, mat });
+      out.push({ name: `${name} ${mat}`, mesh: merge(list), color: color[mat] ?? MAT_COLOR[mat], opacity: mat === 'led' ? 0.85 : 1, tag, anim, mat, ...(smooth ? { smooth } : {}) });
     }
     return out;
   }
@@ -34,7 +34,7 @@ class Bin {
 export const MAT_COLOR: Record<Mat, string> = {
   mask: '#15603a', gold: '#d9aa3c', metal: '#c9d0d8', black: '#1d2024', chip: '#25282d', white: '#ece9e2', silk: '#f2f2ea',
   led: '#ffe066', passive: '#b89a6a', blue: '#2f5bd8', plug: '#2f3338', cable: '#24272b', copper: '#c87533',
-  trace: '#2f9e63', tin: '#c9ced4', box: '#2b2f36',
+  trace: '#2f9e63', tin: '#c9ced4', box: '#2b2f36', red: '#b8322b',
 };
 
 function boxMesh(T: number[], x0: number, y0: number, z0: number, x1: number, y1: number, z1: number): MeshData {
@@ -409,35 +409,255 @@ export function boardDetail(b: Board, zb: number, zt: number, tag: PickTag, anim
   return bin.ghosts('board', tag, anim);
 }
 
-/** A plug in a receptacle: metal tip inside the mouth, overmoulded body, and a cable leaving the body. */
-export function plugDetail(mouth: V2, d: V2, zAx: number, p: { w: number; h: number; len: number; cable: number }, tag: PickTag, anim: Anim): Ghost[] {
-  return plugAt([d[0], d[1], 0, 0, -d[1], d[0], 0, 0, 0, 0, 1, 0, mouth[0], mouth[1], zAx, 1], p, tag, anim); // x along the plug axis
+type PlugSize = { w: number; h: number; len: number; cable: number };
+
+/** A plug in a receptacle: its metal tip inside the mouth, the overmoulded body and the boot, shaped after its type. */
+export function plugDetail(mouth: V2, d: V2, zAx: number, p: PlugSize, tag: PickTag, anim: Anim, type = ''): Ghost[] {
+  return plugAt([d[0], d[1], 0, 0, -d[1], d[0], 0, 0, 0, 0, 1, 0, mouth[0], mouth[1], zAx, 1], p, tag, anim, type); // x along the plug axis
 }
 
 /** A plug pointing straight up out of a port in a top face at (x, y, z). */
-export function plugUp(x: number, y: number, z: number, p: { w: number; h: number; len: number; cable: number }, tag: PickTag, anim: Anim): Ghost[] {
-  return plugAt([0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 0, 0, x, y, z, 1], p, tag, anim);
+export function plugUp(x: number, y: number, z: number, p: PlugSize, tag: PickTag, anim: Anim, type = ''): Ghost[] {
+  return plugAt([0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 0, 0, x, y, z, 1], p, tag, anim, type); // plug x up, its width along the box's length
 }
 
-/** A plug in its own frame T: x along its axis out of the mouth, y across its width, z across its height. */
-function plugAt(T: number[], p: { w: number; h: number; len: number; cable: number }, tag: PickTag, anim: Anim): Ghost[] {
+/** A cross-section of a loft: a rounded rectangle w × h (corner radius r) at x along the axis, centred at (y, z). */
+type Sec = { x: number; w: number; h: number; r: number; y?: number; z?: number };
+
+/**
+ * A smooth solid through rounded-rectangle sections along x (a circle when r is half of w and h): plug bodies,
+ * boots, metal shells. Transformed by T; closed at both ends.
+ */
+export function loft(T: number[], secs: Sec[], seg = 5): MeshData {
+  const ringN = 4 * (seg + 1);
+  const ring = (q: Sec) => {
+    const r = Math.max(0.01, Math.min(q.r, q.w / 2 - 0.001, q.h / 2 - 0.001));
+    const cy = q.y ?? 0, cz = q.z ?? 0, out: number[][] = [];
+    const corners: [number, number, number][] = [[q.w / 2 - r, q.h / 2 - r, 0], [-(q.w / 2 - r), q.h / 2 - r, 90], [-(q.w / 2 - r), -(q.h / 2 - r), 180], [q.w / 2 - r, -(q.h / 2 - r), 270]];
+    for (const [a, b, a0] of corners) for (let k = 0; k <= seg; k++) {
+      const an = ((a0 + (90 * k) / seg) * Math.PI) / 180;
+      out.push([q.x, cy + a + r * Math.cos(an), cz + b + r * Math.sin(an)]);
+    }
+    return out;
+  };
+  const rings = secs.map(ring);
+  const n = rings.length;
+  const pos = new Float32Array((n * ringN + 2) * 3), idx: number[] = [];
+  const put = (i: number, v: number[]) => { pos[3 * i] = T[0] * v[0] + T[4] * v[1] + T[8] * v[2] + T[12]; pos[3 * i + 1] = T[1] * v[0] + T[5] * v[1] + T[9] * v[2] + T[13]; pos[3 * i + 2] = T[2] * v[0] + T[6] * v[1] + T[10] * v[2] + T[14]; };
+  rings.forEach((rg, i) => rg.forEach((v, k) => put(i * ringN + k, v)));
+  for (let i = 0; i + 1 < n; i++) for (let k = 0; k < ringN; k++) {
+    const a = i * ringN + k, b = i * ringN + ((k + 1) % ringN), c = a + ringN, d = b + ringN;
+    idx.push(a, b, d, a, d, c); // outward: the rings run anticlockwise about +x
+  }
+  const e0 = n * ringN, e1 = e0 + 1, c0 = secs[0], c1 = secs[n - 1];
+  put(e0, [c0.x, c0.y ?? 0, c0.z ?? 0]); put(e1, [c1.x, c1.y ?? 0, c1.z ?? 0]);
+  for (let k = 0; k < ringN; k++) { idx.push(e0, (k + 1) % ringN, k); idx.push(e1, (n - 1) * ringN + k, (n - 1) * ringN + ((k + 1) % ringN)); }
+  return { pos, idx: Uint32Array.from(idx) };
+}
+
+const pill = (x: number, w: number, h: number, extra: Partial<Sec> = {}): Sec => ({ x, w, h, r: Math.min(w, h) / 2, ...extra });
+
+/**
+ * The moulded body of a plug from x0 to x1 (w × h, corner radius r): a small bevel at the front, optional grip
+ * ridges, a taper at the back, then a strain-relief boot that narrows onto the cable.
+ */
+function overmold(W: number, H: number, r: number, x0: number, x1: number, cable: number, grip = 0): Sec[] {
+  const cr = Math.max(1.1, cable / 2), s: Sec[] = [];
+  s.push({ x: x0, w: W - 1.2, h: H - 1.2, r: Math.max(0.3, r - 0.6) }, { x: x0 + 0.8, w: W, h: H, r });
+  const g0 = x0 + (x1 - x0) * 0.3, g1 = x0 + (x1 - x0) * 0.72;
+  if (grip > 0) {
+    s.push({ x: g0, w: W, h: H, r });
+    const n = Math.max(3, Math.round((g1 - g0) / 2.2));
+    for (let i = 1; i <= n; i++) {
+      const x = g0 + ((g1 - g0) * i) / (n + 1);
+      s.push({ x: x - 0.45, w: W, h: H, r }, { x, w: W - 2 * grip, h: H - 2 * grip, r: Math.max(0.3, r - grip) }, { x: x + 0.45, w: W, h: H, r });
+    }
+  }
+  const tw = Math.max(2 * cr + 2.6, W * 0.62), th = Math.max(2 * cr + 2.6, H * 0.62);
+  s.push({ x: x1 - (x1 - x0) * 0.22, w: W, h: H, r }, { x: x1, w: tw, h: th, r: Math.min(tw, th) / 2 });
+  // boot: a round taper onto the cable, with a few rings
+  const bl = Math.max(6, cable * 2);
+  s.push(pill(x1 + 0.4, 2 * cr + 2.2, 2 * cr + 2.2), pill(x1 + bl * 0.45, 2 * cr + 1.4, 2 * cr + 1.4), pill(x1 + bl * 0.5, 2 * cr + 1.7, 2 * cr + 1.7), pill(x1 + bl * 0.55, 2 * cr + 1.1, 2 * cr + 1.1), pill(x1 + bl, 2 * cr + 0.4, 2 * cr + 0.4));
+  return s;
+}
+
+/** A plug in its own frame T: x along its axis out of the mouth (0 at the mouth), y across its width, z across its height. */
+function plugAt(T: number[], p: PlugSize, tag: PickTag, anim: Anim, type: string): Ghost[] {
   const bin = new Bin();
-  const tipW = p.w * 0.55, tipH = Math.min(p.h * 0.45, 3);
-  bin.box('metal', T, -4, -tipW / 2, -tipH / 2, 0.6, tipW / 2, tipH / 2);
-  const body = ext(roundRect(p.w, p.h, Math.min(p.w, p.h) * 0.3), 0, p.len).transform([0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0.6, 0, 0, 1] as any);
-  bin.add('plug', body.transform(T as any));
-  const cr = Math.max(1.2, p.cable / 2);
-  const cable = cyl(0, 0, 0, 30, cr, cr, 20).transform([0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0.6 + p.len - 0.5, 0, 0, 1] as any);
-  bin.add('cable', cable.transform(T as any));
-  // strain relief boot
-  bin.add('plug', cyl(0, 0, 0, 5, cr + 1.2, cr + 0.3, 20).transform([0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0.6 + p.len - 0.2, 0, 0, 1] as any).transform(T as any));
-  return bin.ghosts('plug', tag, anim);
+  const push = (mat: Mat, m: MeshData) => (bin.meshes.get(mat) ?? bin.meshes.set(mat, []).get(mat)!).push(m);
+  const x0 = 0.6, x1 = 0.6 + p.len, W = p.w, H = p.h;
+  const metal = (secs: Sec[]) => push('metal', loft(T, secs));
+  const body = (secs: Sec[], mat: Mat = 'plug') => push(mat, loft(T, secs));
+  const rect = (x0: number, x1: number, w: number, h: number, r: number, z = 0): Sec[] => [{ x: x0, w, h, r, z }, { x: x1, w, h, r, z }];
+  switch (type) {
+    case 'usb_c':
+      metal(rect(-6.6, x0 + 0.3, 8.25, 2.4, 1.2));
+      body(overmold(W, H, H / 2, x0, x1, p.cable));
+      break;
+    case 'usb_micro_b':
+      metal(rect(-5.6, x0 + 0.3, 6.85, 1.8, 0.35));
+      body(overmold(W, H, 1.8, x0, x1, p.cable, 0.25));
+      break;
+    case 'usb_mini_b':
+      metal(rect(-6.2, x0 + 0.3, 6.8, 3, 0.6));
+      body(overmold(W, H, 2, x0, x1, p.cable, 0.25));
+      break;
+    case 'usb_a':
+      metal(rect(-11.5, x0 + 0.4, 12, 4.5, 0.4));
+      body(overmold(W, H, 1.8, x0, x1, p.cable, 0.3));
+      break;
+    case 'usb_a_dual': {
+      // a stacked pair of sockets: a plug in each, named apart so a rack can show only the one in use (lower = the
+      // part's own ref, upper = "REF:2")
+      const hh = Math.min(7.6, H / 2 - 0.4), out: Ghost[] = [];
+      for (const [z, nm] of [[-4.05, 'plug lower'], [4.05, 'plug upper']] as const) {
+        const b2 = new Bin();
+        const put = (mat: Mat, m: MeshData) => (b2.meshes.get(mat) ?? b2.meshes.set(mat, []).get(mat)!).push(m);
+        put('metal', loft(T, rect(-11.5, x0 + 0.4, 12, 4.5, 0.4, z)));
+        put('plug', loft(T, overmold(W, hh, 1.8, x0, x1, p.cable, 0.3).map((q) => ({ ...q, z }))));
+        out.push(...b2.ghosts(nm, tag, anim, {}, true));
+      }
+      return out;
+    }
+    case 'usb_b':
+      metal(rect(-8.5, x0 + 0.3, 11.5, 10.4, 1.6));
+      body(overmold(W, H, 2.4, x0, x1, p.cable, 0.3));
+      break;
+    case 'hdmi_micro': case 'hdmi_mini': case 'hdmi_a': {
+      const t = type === 'hdmi_micro' ? [6.2, 2.2, 6.5] : type === 'hdmi_mini' ? [10.4, 2.6, 7.2] : [13.9, 4.45, 9];
+      metal(rect(-t[2], x0 + 0.4, t[0], t[1], 0.5));
+      body(overmold(W, H, Math.min(2.5, H / 3), x0, x1, p.cable, 0.3));
+      break;
+    }
+    case 'rj45':
+      // the clear plug sits in the jack; what shows is the boot, tapering onto the cable, and its latch cover
+      push('white', loft(T, rect(-14, x0 + 1.5, 11.7, 8, 0.6)));
+      body([{ x: x0, w: 12.4, h: 9, r: 1 }, { x: x0 + 3, w: W, h: H * 0.9, r: 2.6 }, { x: x0 + p.len * 0.35, w: W * 0.86, h: H * 0.78, r: 3 }, pill(x0 + p.len * 0.8, 2 * p.cable / 2 + 3, 2 * p.cable / 2 + 3), pill(x1, p.cable + 0.8, p.cable + 0.8)]);
+      body([{ x: x0 + 0.5, w: 7, h: 1.6, r: 0.6, z: H * 0.45 }, { x: x0 + 9, w: 6, h: 1.2, r: 0.5, z: H * 0.38 }]);
+      break;
+    case 'barrel':
+      metal([pill(-9, 5.5, 5.5), pill(x0 + 0.5, 5.5, 5.5)]);
+      body(overmold(W, H, W / 2, x0, x1, p.cable, 0.35));
+      break;
+    case 'audio35':
+      metal([pill(-14.5, 2.6, 2.6), pill(-13.2, 3.5, 3.5), pill(-9.6, 3.5, 3.5)]);
+      push('black', loft(T, [pill(-9.6, 3.52, 3.52), pill(-8.6, 3.52, 3.52)]));
+      metal([pill(-8.6, 3.5, 3.5), pill(-5.4, 3.5, 3.5)]);
+      push('black', loft(T, [pill(-5.4, 3.52, 3.52), pill(-4.4, 3.52, 3.52)]));
+      metal([pill(-4.4, 3.5, 3.5), pill(x0 + 0.3, 3.5, 3.5), pill(x0 + 0.3, 5, 5), pill(x0 + 1.5, 5, 5)]);
+      body(overmold(W, H, W / 2, x0 + 1.5, x1, p.cable));
+      break;
+    case 'microsd':
+      // a card in its slot, a millimetre or two showing
+      push('black', loft(T, rect(-13, 1.8, 11, 0.8, 0.3)));
+      return bin.ghosts('plug', tag, anim, {}, true);
+    case 'sma': {
+      // knurled nut and a short rubber-duck antenna
+      metal([pill(-2, 6.2, 6.2), pill(x0 + 5.5, 6.2, 6.2)]);
+      body([pill(x0 + 5.5, 8.4, 8.4), pill(x0 + 12, 8.4, 8.4), pill(x0 + 12.4, 7, 7), pill(x0 + 13.4, 7, 7), pill(x0 + 14, 8, 8), pill(x0 + 50, 6.6, 6.6), pill(x0 + 54, 4.2, 4.2)], 'black');
+      return bin.ghosts('plug', tag, anim, {}, true);
+    }
+    case 'terminal': {
+      // wires with crimped ferrules in the screw terminals, red and black
+      const n = Math.max(2, Math.round(W / 5)), pitch = W / n;
+      for (let i = 0; i < n; i++) {
+        const y = -W / 2 + pitch * (i + 0.5);
+        push('tin', loft(T, [pill(-5, 1.6, 1.6, { y }), pill(1.5, 1.6, 1.6, { y }), pill(1.5, 2.4, 2.4, { y }), pill(4.5, 2.4, 2.4, { y })]));
+        push(i % 2 ? 'cable' : 'red', loft(T, [pill(4.5, 2.6, 2.6, { y }), pill(7, 3, 3, { y }), pill(9.5, 2.2, 2.2, { y }), pill(x1 + 8, 2.2, 2.2, { y })]));
+      }
+      return bin.ghosts('plug', tag, anim, {}, true);
+    }
+    case 'qwiic': case 'jst_ph': case 'jst_xh': case 'header':
+      push('white', loft(T, rect(-1, x0 + Math.min(6, p.len), W, H, 0.4)));
+      if (type === 'header') push('black', loft(T, rect(-1, x0 + Math.min(12, p.len), W, H, 0.3)));
+      body([{ x: x0 + Math.min(6, p.len) - 0.5, w: Math.max(2, W - 1.5), h: 1.2, r: 0.5 }, { x: x1 + 6, w: Math.max(2, W - 1.5), h: 1.2, r: 0.5 }], 'cable');
+      return bin.ghosts('plug', tag, anim, {}, true);
+    case 'iec_c7':
+      body([{ x: -2, w: W - 1.4, h: H - 1.4, r: (H - 1.4) / 2 }, { x: x0, w: W - 1.4, h: H - 1.4, r: (H - 1.4) / 2 }, ...overmold(W, H, H / 2, x0, x1, p.cable, 0.3)]);
+      break;
+    default:
+      metal(rect(-4, x0 + 0.3, W * 0.55, Math.min(H * 0.45, 3), 0.4));
+      body(overmold(W, H, Math.min(W, H) * 0.3, x0, x1, p.cable));
+  }
+  return bin.ghosts('plug', tag, anim, {}, true);
+}
+
+/**
+ * A cable leaving a plug that nothing in the rack connects to (a screen, a supply, the mains): out of the boot,
+ * a bend down, and along the table away from the rack. p, d: the boot's end and the plug's direction; floor: the
+ * table's height.
+ */
+export function hangingCable(p: number[], d: number[], cable: number, floor: number, centre?: number[]): number[][] {
+  const r = Math.max(1.1, cable / 2);
+  const bend = Math.max(12, 6 * r);
+  const h = Math.hypot(d[0], d[1]);
+  // horizontal way out: along the plug, or (for a plug pointing up or down) away from the middle of the rack, so it
+  // falls clear of the neighbours
+  const aw = centre ? [p[0] - centre[0], p[1] - centre[1]] : [1, 0], la = Math.hypot(aw[0], aw[1]);
+  const out = h > 0.2 ? [d[0] / h, d[1] / h, 0] : la > 1 ? [aw[0] / la, aw[1] / la, 0] : [1, 0, 0];
+  const z0 = floor + r + 0.2;
+  const pts: number[][] = [p];
+  if (d[2] > 0.5) {
+    // pointing up: rise a little, arc over and down
+    pts.push([p[0] + d[0] * 10, p[1] + d[1] * 10, p[2] + 10], [p[0] + out[0] * bend * 1.6, p[1] + out[1] * bend * 1.6, p[2] + 14]);
+  } else pts.push([p[0] + d[0] * 8, p[1] + d[1] * 8, p[2] + d[2] * 8]);
+  const last = pts[pts.length - 1];
+  const fall = Math.max(0, last[2] - z0);
+  // a cable droops: it curves over and falls, landing a little further out than it left
+  const reach = Math.min(60, 8 + fall * 0.35);
+  if (fall > 1) pts.push([last[0] + out[0] * reach, last[1] + out[1] * reach, z0]);
+  const end = pts[pts.length - 1];
+  pts.push([end[0] + out[0] * 45, end[1] + out[1] * 45, z0]);
+  return filletPath(pts, bend);
+}
+
+/**
+ * Round every corner of a polyline with an arc of radius `r` (smaller where the segments are short), the way a
+ * cable bends: no kinks, however the route was drawn.
+ */
+export function filletPath(pts: number[][], r: number): number[][] {
+  if (pts.length < 3) return pts;
+  const sub = (a: number[], b: number[]) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+  const len = (a: number[]) => Math.hypot(a[0], a[1], a[2]);
+  const at = (a: number[], u: number[], t: number) => [a[0] + u[0] * t, a[1] + u[1] * t, a[2] + u[2] * t];
+  // drop repeated points first
+  const P = pts.filter((q, i) => i === 0 || len(sub(q, pts[i - 1])) > 1e-6);
+  if (P.length < 3) return P;
+  const out: number[][] = [P[0]];
+  const segLen = P.slice(1).map((q, i) => len(sub(q, P[i])));
+  for (let i = 1; i + 1 < P.length; i++) {
+    const a = P[i - 1], b = P[i], c = P[i + 1];
+    const u = sub(a, b), v = sub(c, b), lu = len(u), lv = len(v);
+    const un = u.map((x) => x / lu), vn = v.map((x) => x / lv);
+    const cos = Math.max(-1, Math.min(1, un[0] * vn[0] + un[1] * vn[1] + un[2] * vn[2]));
+    const th = Math.acos(cos); // angle between the two legs at the corner
+    if (th > Math.PI - 0.02) { out.push(b); continue; } // straight on
+    // tangent length for radius r, at most half of each neighbouring segment (the other half is the next corner's)
+    let t = r / Math.tan(th / 2);
+    t = Math.min(t, segLen[i - 1] * 0.5, segLen[i] * 0.5);
+    const rr = t * Math.tan(th / 2);
+    const p0 = at(b, un, t), p1 = at(b, vn, t);
+    // arc centre: along the bisector
+    const bis = [un[0] + vn[0], un[1] + vn[1], un[2] + vn[2]], lb = len(bis) || 1;
+    const cen = at(b, bis.map((x) => x / lb), rr / Math.sin(th / 2));
+    const e0 = sub(p0, cen), e1 = sub(p1, cen);
+    const sweep = Math.PI - th, n = Math.max(2, Math.ceil(sweep / (Math.PI / 18)));
+    // slerp between the two radius vectors
+    const s = Math.sin(sweep) || 1;
+    for (let k = 0; k <= n; k++) {
+      const f = k / n, w0 = Math.sin((1 - f) * sweep) / s, w1 = Math.sin(f * sweep) / s;
+      out.push([cen[0] + e0[0] * w0 + e1[0] * w1, cen[1] + e0[1] * w0 + e1[1] * w1, cen[2] + e0[2] * w0 + e1[2] * w1]);
+    }
+  }
+  out.push(P[P.length - 1]);
+  return out;
 }
 
 /** A round tube along a polyline (for cables), `sides` facets, parallel-transport frames so it doesn't twist. */
-export function tubeMesh(pts: number[][], r: number, sides = 10): MeshData {
+export function tubeMesh(pts: number[][], r: number, sides = 16): MeshData {
   const n = pts.length;
-  const pos = new Float32Array(n * sides * 3 + 6), idx: number[] = [];
+  // rings, then each end's rim again (so its flat cap shades apart from the round side) and the two centres
+  const pos = new Float32Array((n * sides + 2 * sides + 2) * 3), idx: number[] = [];
   let nrm = [0, 0, 1];
   for (let i = 0; i < n; i++) {
     const a = pts[Math.max(0, i - 1)], b = pts[Math.min(n - 1, i + 1)];
@@ -461,10 +681,11 @@ export function tubeMesh(pts: number[][], r: number, sides = 10): MeshData {
     const a = i * sides + k, b = i * sides + ((k + 1) % sides), c = a + sides, d = b + sides;
     idx.push(a, b, d, a, d, c);
   }
-  // end caps (fans to the centre points)
-  const e0 = n * sides, e1 = n * sides + 1;
+  const r0 = n * sides, r1 = r0 + sides, e0 = r1 + sides, e1 = e0 + 1;
+  pos.copyWithin(r0 * 3, 0, sides * 3);
+  pos.copyWithin(r1 * 3, (n - 1) * sides * 3, n * sides * 3);
   for (let j = 0; j < 3; j++) { pos[e0 * 3 + j] = pts[0][j]; pos[e1 * 3 + j] = pts[n - 1][j]; }
-  for (let k = 0; k < sides; k++) { idx.push(e0, (k + 1) % sides, k); idx.push(e1, (n - 1) * sides + k, (n - 1) * sides + ((k + 1) % sides)); }
+  for (let k = 0; k < sides; k++) { idx.push(e0, r0 + ((k + 1) % sides), r0 + k); idx.push(e1, r1 + k, r1 + ((k + 1) % sides)); }
   return { pos, idx: Uint32Array.from(idx) };
 }
 

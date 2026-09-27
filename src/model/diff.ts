@@ -18,7 +18,8 @@ export function describeChange(a: Project, b: Project): string {
   for (const m of b.modules) {
     const o = ia.get(m.id);
     if (!o) continue;
-    if (o.board.name !== m.board.name && o.board.source !== m.board.source) out.push(`replaced ${o.board.name} with ${m.board.name}`);
+    if (m.revision && m.revision.at !== o.revision?.at) out.push(`new version of ${m.board.name}`);
+    else if (o.board.name !== m.board.name && o.board.source !== m.board.source) out.push(`replaced ${o.board.name} with ${m.board.name}`);
     else if (o.board.name !== m.board.name && same({ ...o.board, name: '' }, { ...m.board, name: '' })) out.push(`renamed ${o.board.name} to ${m.board.name}`);
     else if (!same(o.board, m.board)) boards.push(m.board.name);
     if (!same(o.holder, m.holder)) holders.push(m.board.name);

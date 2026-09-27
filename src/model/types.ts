@@ -163,6 +163,7 @@ export interface Module {
   on?: string | null; // stacked on top of this module
   onMode?: 'bolted' | 'towers'; // bolted: screwed to the board below on standoffs (HAT, shield); towers: its own printed layer
   onGap?: number; // bolted: gap between the boards (standoff length), mm
+  revision?: { at: string; from: string; to: string; changes: string[] }; // the last new version swapped in: files and what changed
 }
 
 /** How several holders combine into one assembly. */
@@ -299,7 +300,8 @@ export interface Ghost {
   opacity: number;
   tag?: PickTag;
   anim?: Anim;
-  mat?: 'mask' | 'gold' | 'metal' | 'black' | 'chip' | 'white' | 'silk' | 'led' | 'passive' | 'blue' | 'plug' | 'cable' | 'copper' | 'trace' | 'tin' | 'box';
+  mat?: 'mask' | 'gold' | 'metal' | 'black' | 'chip' | 'white' | 'silk' | 'led' | 'passive' | 'blue' | 'plug' | 'cable' | 'copper' | 'trace' | 'tin' | 'box' | 'red';
+  smooth?: boolean; // round things (plugs, cables): smooth shading, no outline edges
 }
 
 /** A pickable feature fused into a holder (cradle, pin, finger...), as a box in the holder frame. */

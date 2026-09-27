@@ -69,6 +69,7 @@ export interface Delta {
   rails: { id: string; length: number; was: number | null }[]; // rails to cut (new, or longer than before)
   boards: string[]; // names of boards added since
   removed: string[]; // boards taken off since
+  revised: string[]; // boards with a new version swapped in since
   moved: { name: string; from: string; to: string }[]; // boards that sit somewhere else now
   spare: { name: string; qty: number }[]; // printed parts the rack no longer uses
   spareCables: { no?: number; a: string; b: string }[]; // cables it no longer uses
@@ -127,11 +128,13 @@ export function delta(p: Project, res: GenResult): Delta | null {
     const id = pt.tag?.module, m = id ? p.modules.find((x) => x.id === id) : null;
     if (!m) why.set(pt, pt.tag?.kind === 'railstand' ? 'the stands changed' : pt.tag?.kind === 'shoe' || pt.tag?.kind === 'socket' ? 'a new dock' : pt.tag?.kind === 'cabletag' ? 'a new cable' : 'changed');
     else if (!b.boards.includes(m.id)) why.set(pt, `new: ${m.board.name}`);
+    else if (m.revision && m.revision.at > b.at) why.set(pt, `new version of ${m.board.name}`);
     else if (b.names?.[m.id] && b.names[m.id] !== m.board.name) why.set(pt, `${b.names[m.id]} became ${m.board.name}`);
     else if (moved.some((x) => x.name === m.board.name)) why.set(pt, `${m.board.name} moved`);
     else why.set(pt, `${m.board.name} changed`);
   }
-  return { parts, why, cables, rails, boards, removed, moved, spare, spareCables, any: parts.length + cables.length + rails.length + removed.length + moved.length > 0 };
+  const revised = p.modules.filter((m) => b.boards.includes(m.id) && m.revision && m.revision.at > b.at).map((m) => m.board.name);
+  return { parts, why, cables, rails, boards, removed, revised, moved, spare, spareCables, any: parts.length + cables.length + rails.length + removed.length + moved.length > 0 };
 }
 
 /**

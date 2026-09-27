@@ -2,6 +2,7 @@
 // then kept as images: a real look at the board or holder instead of a sketch.
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import { toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { Ghost } from '../model/types';
 import type { PicPart } from '../worker/client';
 import { surface } from './Viewer3D';
@@ -53,11 +54,12 @@ async function render(parts: PicPart[], w: number, h: number, view: [number, num
   const root = new THREE.Group();
   const made: { dispose(): void }[] = [];
   for (const q of parts) {
-    const g = new THREE.BufferGeometry();
+    let g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(q.mesh.pos, 3));
     g.setIndex(new THREE.BufferAttribute(q.mesh.idx, 1));
-    g.computeVertexNormals();
-    const m = surface(q.mat as Ghost['mat'], q.color, q.opacity, false, !q.mat);
+    if (q.smooth) g = toCreasedNormals(g, (40 * Math.PI) / 180);
+    else g.computeVertexNormals();
+    const m = surface(q.mat as Ghost['mat'], q.color, q.opacity, false, !q.mat, !!q.smooth);
     const mesh = new THREE.Mesh(g, m);
     if (q.M) { mesh.matrixAutoUpdate = false; mesh.matrix.fromArray(q.M); }
     mesh.castShadow = mesh.receiveShadow = true;

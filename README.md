@@ -310,6 +310,8 @@ On a big rack the Wiring view fits the width of the window (⌘ + wheel, or − 
 | Show or hide holders, docks, caps, boards, plugs, cables, cable numbers or rails | **Layers** |
 | See every keyboard shortcut | **?** |
 
+Plugs are drawn after their type: a USB-C's slim oval overmould, a USB-A's metal shell and grip ridges (a stacked pair takes one plug per socket), an HDMI's flat shell, an RJ45's clear plug and boot, a barrel plug's sleeve, a 3.5 mm plug's rings, wires with ferrules in a screw terminal. A port shows a plug only where a cable goes: a cable to another board on the rack, a cradle the board has for one (a screen or a supply off the rack), or a box's own supply (mains, DC in); a free port stays empty. A cable that leaves the rack bends down and runs off along the table; cables in the rack bend in arcs of about four diameters, as real ones do.
+
 ![Stepping through the assembly](docs/images/steps.png)
 
 It uses studio lighting with ambient occlusion. Boards get:
@@ -319,6 +321,15 @@ It uses studio lighting with ambient occlusion. Boards get:
 - chips, passives and LEDs.
 
 Plugs show their shells, tongues and pins. The view draws a frame only when something changes.
+
+## A new version of a board
+
+When a new revision of one of your boards comes out, select it (in 3D, or its chip in the Board step) and press **New version…**, or drop its files on that button. The new version takes the old one's place:
+- it keeps its name, dock, stack, holder settings and every cable to a plug it still has;
+- the choices made on the old one carry over where the part is still there: plug cradles, caps, guards and tie anchors, hidden parts, and holes set by hand;
+- what changed is listed (the Board step keeps the list): "Connectors: J2 moved 2 mm; J4 new (USB-C)", "Holes: 1 moved (up to 0.8 mm)", "Tallest part underneath: 2 → 3.5 mm", or "No mechanical changes: the holder comes out the same".
+
+**Print its holder** goes straight to Export with just that board (its dock on the rack stays, so it is left out); on a rack marked as built, **What's new** lists exactly its new parts, and the old holder is listed as spare. Slice it there for the G-code. One ⌘Z goes back to the old version.
 
 ## Coming back to add a board
 

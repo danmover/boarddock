@@ -10,6 +10,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
 import { OutlinePass } from 'three/examples/jsm/postprocessing/OutlinePass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
+import { toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { Anim, Feature, GenResult, Ghost, MeshData, PickTag, V2 } from '../model/types';
 import { packPlates, placedMesh, printability, type Plate } from '../cad/export';
 import type { Layer, SelItem } from '../state';
@@ -57,13 +58,16 @@ function meshKey(m: MeshData) {
   for (let i = 0; i < n; i++) { h ^= Math.round(p[i] * 1000); h = Math.imul(h, 16777619); }
   return `${n}:${m.idx.length}:${h >>> 0}`;
 }
-function geom(m: MeshData, edges: boolean) {
-  const key = meshKey(m);
+function geom(m: MeshData, edges: boolean, smooth = false) {
+  const key = meshKey(m) + (smooth ? ':s' : '');
   let c = geoCache.get(key);
   if (!c) {
-    const g = new THREE.BufferGeometry();
+    let g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(m.pos, 3));
     g.setIndex(new THREE.BufferAttribute(m.idx, 1));
+    // round things (cables, plug bodies) shade smooth across gentle bends and stay sharp at real edges
+    if (smooth) g = toCreasedNormals(g, (40 * Math.PI) / 180);
+    else g.computeVertexNormals(); // shading stays flat; the ambient-occlusion pass reads these
     g.computeBoundingBox();
     g.computeBoundingSphere();
     c = { g, e: null, used: buildNo };
@@ -108,8 +112,8 @@ function backdrop(theme: 'dark' | 'light') {
 const ease = (x: number) => 1 - Math.pow(1 - x, 3);
 
 /** Physically based look per surface kind (boards, pads, connector shells, plastics). */
-export function surface(mat: Ghost['mat'] | undefined, color: string, opacity: number, ghost: boolean, board: boolean): THREE.MeshStandardMaterial {
-  const base = { color, flatShading: true, transparent: opacity < 1, opacity, depthWrite: opacity >= 0.9, side: THREE.DoubleSide, emissive: new THREE.Color(0x4c8dff), emissiveIntensity: 0 };
+export function surface(mat: Ghost['mat'] | undefined, color: string, opacity: number, ghost: boolean, board: boolean, smooth = false): THREE.MeshStandardMaterial {
+  const base = { color, flatShading: !smooth, transparent: opacity < 1, opacity, depthWrite: opacity >= 0.9, side: THREE.DoubleSide, emissive: new THREE.Color(0x4c8dff), emissiveIntensity: 0 };
   switch (mat) {
     case 'mask': return new THREE.MeshPhysicalMaterial({ ...base, roughness: 0.42, metalness: 0, clearcoat: 0.6, clearcoatRoughness: 0.3 });
     case 'trace': return new THREE.MeshPhysicalMaterial({ ...base, roughness: 0.3, metalness: 0.15, clearcoat: 0.8, clearcoatRoughness: 0.2 });
@@ -118,7 +122,11 @@ export function surface(mat: Ghost['mat'] | undefined, color: string, opacity: n
     case 'gold': return new THREE.MeshStandardMaterial({ ...base, metalness: 1, roughness: 0.3 });
     case 'metal': return new THREE.MeshStandardMaterial({ ...base, metalness: 0.9, roughness: 0.32 });
     case 'led': return new THREE.MeshStandardMaterial({ ...base, roughness: 0.2, emissive: new THREE.Color(color), emissiveIntensity: 0.55 });
-    case 'chip': case 'black': case 'plug': case 'cable': return new THREE.MeshStandardMaterial({ ...base, roughness: 0.5, metalness: 0.05 });
+    // moulded plugs: satin plastic with a light gloss; cable jackets: matt
+    case 'plug': return new THREE.MeshPhysicalMaterial({ ...base, roughness: 0.5, metalness: 0, clearcoat: 0.25, clearcoatRoughness: 0.45 });
+    case 'cable': return new THREE.MeshStandardMaterial({ ...base, roughness: 0.62, metalness: 0 });
+    case 'red': return new THREE.MeshStandardMaterial({ ...base, roughness: 0.5, metalness: 0 });
+    case 'chip': case 'black': return new THREE.MeshStandardMaterial({ ...base, roughness: 0.5, metalness: 0.05 });
     case 'silk': return new THREE.MeshStandardMaterial({ ...base, roughness: 0.75 });
     case undefined: return new THREE.MeshStandardMaterial({ ...base, roughness: board ? 0.42 : 0.5, metalness: board ? 0.05 : 0 });
     default: return new THREE.MeshStandardMaterial({ ...base, roughness: 0.55 });
@@ -155,17 +163,20 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
     controls.zoomToCursor = true;
     const pmrem = new THREE.PMREMGenerator(renderer);
     scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    scene.environmentIntensity = 1.05;
-    const hemi = new THREE.HemisphereLight(0xf4f7ff, 0x3a4048, 0.9);
+    // light levels set with the ambient occlusion reading real normals (it used to read none and darken every part,
+    // which the light made up for); the backdrop keeps its brightness
+    const L = 0.4;
+    scene.environmentIntensity = 1.05 * L;
+    const hemi = new THREE.HemisphereLight(0xf4f7ff, 0x3a4048, 0.9 * L);
     scene.add(hemi);
-    const key = new THREE.DirectionalLight(0xfff6ec, 2.4);
+    const key = new THREE.DirectionalLight(0xfff6ec, 2.4 * L);
     key.castShadow = true;
     key.shadow.mapSize.set(2048, 2048);
     key.shadow.bias = -0.0004;
     key.shadow.normalBias = 0.6;
     key.shadow.radius = 5;
     scene.add(key, key.target);
-    const rim = new THREE.DirectionalLight(0xa9d4ff, 0.7);
+    const rim = new THREE.DirectionalLight(0xa9d4ff, 0.7 * L);
     rim.position.set(-300, 250, 160);
     scene.add(rim);
     const world = new THREE.Group();
@@ -357,10 +368,10 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
     if (!result) { c.invalidate(); return; }
     const edgeCol = new THREE.Color(theme === 'dark' ? 0x0a0d10 : 0x2a3138);
 
-    const add = (m: MeshData, color: string, opacity: number, matrix: number[] | null, tag: PickTag | undefined, anim: Anim | undefined, ghost: boolean, edges = true, kind?: Ghost['mat']) => {
-      const cg = geom(m, edges && opacity >= 1);
+    const add = (m: MeshData, color: string, opacity: number, matrix: number[] | null, tag: PickTag | undefined, anim: Anim | undefined, ghost: boolean, edges = true, kind?: Ghost['mat'], smooth = false) => {
+      const cg = geom(m, edges && opacity >= 1 && !smooth, smooth);
       const board = tag?.kind === 'board';
-      const mat = surface(kind, color, opacity, ghost, board);
+      const mat = surface(kind, color, opacity, ghost, board, smooth);
       const mesh = new THREE.Mesh(cg.g, mat);
       mesh.castShadow = opacity >= 0.8;
       mesh.receiveShadow = false;
@@ -384,7 +395,7 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
         add(m, p.color, 1, p.toAssembly, p.tag, p.anim, false);
         (p.instances ?? []).forEach((T, k) => add(m, p.color, 1, T, p.tags?.[k] ?? p.tag, p.anims?.[k] ?? p.anim, false));
       }
-      for (const gh of result.ghosts) add(gh.mesh, gh.color, gh.opacity, null, gh.tag, gh.anim, true, false, gh.mat);
+      for (const gh of result.ghosts) add(gh.mesh, gh.color, gh.opacity, null, gh.tag, gh.anim, true, false, gh.mat, !!gh.smooth);
       // animation ranks: every distinct step (moves and appearances) in order
       const movesOf = (a?: Anim) => [...(a?.pre ?? []), { seq: a?.seq ?? 0, dir: a?.dir ?? [0, 0, 1], dist: a?.dist }];
       const seqs = [...new Set((c.objs as Obj[]).flatMap((o) => [...movesOf(o.anim).map((m) => m.seq), ...(o.anim?.show != null ? [o.anim.show] : [])]))].sort((a, b) => a - b);

@@ -345,7 +345,7 @@ function connectors(C: Ctx) {
       if (cn.tie && F.ties) tieAnchor(C, [c.x, c.y], null, c.ref);
       const zTop = (c.side === 'top' ? zt + c.h : zb - c.h) + cn.plug.len + 0.6;
       // a port in the top of a box gets its plug drawn standing in it
-      if (b.kind === 'box' && c.side === 'top') C.ghosts.push(...plugUp(c.x, c.y, zt + c.h, cn.plug, { kind: 'plug', module: C.mid, refs: [c.ref] }, { seq: 30, dir: [0, 0, 1] }));
+      if (b.kind === 'box' && c.side === 'top') C.ghosts.push(...plugUp(c.x, c.y, zt + c.h, cn.plug, { kind: 'plug', module: C.mid, refs: [c.ref] }, { seq: 30, dir: [0, 0, 1] }, cn.type));
       C.plugs.push({ module: C.mid, ref: c.ref, p: [c.x, c.y, zTop], d: [0, 0, c.side === 'top' ? 1 : -1], cable: cn.plug.cable });
       continue;
     }
@@ -361,7 +361,7 @@ function connectors(C: Ctx) {
     C.neg.push(orientedBox(mouth, d, Math.min(-0.6, sEdge - 0.5), toOut + 4, -(pw / 2 + cl), pw / 2 + cl, zLo, zHi + 20));
     C.blocked.push({ poly: orientedRect(mouth, d, -2, toOut + 2, -(pw / 2 + cl + 3), pw / 2 + cl + 3), why: c.ref });
     // plug ghost
-    C.ghosts.push(...plugDetail(mouth, d, zAx, cn.plug, { kind: 'plug', module: C.mid, refs: [c.ref] }, { seq: 30, dir: [d[0], d[1], 0] }));
+    C.ghosts.push(...plugDetail(mouth, d, zAx, cn.plug, { kind: 'plug', module: C.mid, refs: [c.ref] }, { seq: 30, dir: [d[0], d[1], 0] }, cn.type));
     const pe = [mouth[0] + d[0] * (cn.plug.len + 0.6), mouth[1] + d[1] * (cn.plug.len + 0.6)];
     if (cn.type === 'usb_a_dual') {
       const off = c.side === 'top' ? 3.9 : -3.9;
@@ -1255,7 +1255,7 @@ function boltedGhosts(C: Ctx, bo: NonNullable<Job['bolted']>[number]) {
     const mouth = add([c.x + dx, c.y + dy], d, extentAlong(c, cn.angle));
     const zAx = c.side === 'top' ? z1 + cn.zc : z0 - cn.zc;
     const { w: pw, h: ph, len: pl } = cn.plug;
-    C.ghosts.push(...plugDetail(mouth, d, zAx, { w: pw, h: ph, len: pl, cable: cn.plug.cable }, { kind: 'plug', module: mid, refs: [c.ref] }, { seq: 30, dir: [d[0], d[1], 0] }));
+    C.ghosts.push(...plugDetail(mouth, d, zAx, { w: pw, h: ph, len: pl, cable: cn.plug.cable }, { kind: 'plug', module: mid, refs: [c.ref] }, { seq: 30, dir: [d[0], d[1], 0] }, cn.type));
     const pe = [mouth[0] + d[0] * (pl + 0.6), mouth[1] + d[1] * (pl + 0.6)];
     const off = cn.type === 'usb_a_dual' ? (c.side === 'top' ? 3.9 : -3.9) : 0;
     C.plugs.push({ module: mid, ref: c.ref, p: [pe[0], pe[1], zAx - off], d: [d[0], d[1], 0], cable: cn.plug.cable });

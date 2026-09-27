@@ -52,7 +52,7 @@ export async function runDockFea(E: number, nu: number, h: number, onProgress?: 
 
 let printer: ReturnType<typeof makeWorker> | null = null;
 const side = () => (printer ??= makeWorker(new Worker(new URL('./print.worker.ts', import.meta.url), { type: 'module' })));
-export type PicPart = { mesh: MeshData; color: string; mat?: string; opacity: number; M?: number[] };
+export type PicPart = { mesh: MeshData; color: string; mat?: string; opacity: number; M?: number[]; smooth?: boolean };
 /** Meshes for a picture of a board on its own. */
 export const boardPicture = (b: Board) => side().call<PicPart[]>('board', b);
 /** Meshes for a picture of a board in its holder with these settings (loose, no mount). */
