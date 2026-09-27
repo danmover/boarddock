@@ -282,7 +282,9 @@ On table stands the streets run under the rails' level. Wherever a street crosse
 
 Every cable's length is measured along its route and rounded up to a standard length to buy (10% slack). Auto-arrange keeps cabled boards next to each other and puts each hub or charger right after the boards it feeds, on the same rail when it fits, so the cables stay short.
 
-On a big rack the Wiring view fits the width of the window (⌘ + wheel, or − and +, zooms). Type in **Find a board**, or click a board's name, to show just its cables and the boards at their other ends.
+The Wiring view is a canvas: pinch (or ⌘ + scroll) zooms where the pointer is, scrolling or dragging the background pans, and the percentage button fits everything in. Drag a card by its title to move it; it stays where you put it. **Arrange…** lays every card out again, either as the cables flow (chargers and hosts on the left, then hubs, then probes and adapters, then the boards they serve, each column ordered so cables cross least) or as the boards stand on the rails. Hover a card, a plug or a pin for details. Type in **Find a board**, or click a board's title, to show just its cables and the boards at their other ends.
+
+A pin header (▸) opens into its pins, with their net names from your KiCad file. Click a pin, then a pin on another header, to add a jumper wire (a ground pin gets a black wire, a supply pin a red one). Click a wire and press Delete to take just that one off.
 
 ![Cable numbers and tags](docs/images/cables.png)
 

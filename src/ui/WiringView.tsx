@@ -1,86 +1,169 @@
-// Wiring view: every board as a card with its plugs, cables drawn between them. Click a plug, then another, to
-// connect them; click a cable to select it (Del removes). Cards are laid out by rail, boxes (hubs, chargers) last.
-// A big rack zooms out to fit; click a board's name (or find it) to show just its cables.
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Link, Module, PlugRef } from '../model/types';
+// Wiring view: every board as a card with its plugs, cables drawn between them, on a canvas you pan and zoom. Drag a
+// card by its title to move it (it stays there); Arrange lays them all out as the power and data flow, or as they
+// stand on the rails. Click a plug, then another, to connect them; a pin header opens into its pins, and a pin then a
+// pin adds a jumper wire. Click a cable (or a wire) to select it, Del removes it.
+import { useEffect, useMemo, useRef, useState, type PointerEvent as RPE } from 'react';
+import type { Link, Pin, PlugRef, Project } from '../model/types';
 import { compatible, KIND_COLOR, KIND_NAME, linkKind, numberLinks, plugsOf, sameRef, type PlugInfo } from '../model/links';
+import { fillWires, headerPins } from '../model/probes';
+import { flowLayout, rackLayout, type Pos, type Size } from '../model/wirelayout';
 import { edit, isSel, select, store, toast, useApp } from '../state';
 import { Icon, I } from './icons';
 import { addLinks, removeLinks } from './linkOps';
 
-const W = 220, HEAD = 34, ROW = 24, GAPX = 70, GAPY = 46;
+const W = 236, HEAD = 40, ROW = 24, PROW = 19;
 // USB cables are drawn near-black in 3D; on this graph they take the text colour so they show in both themes
 const wire = (k: keyof typeof KIND_COLOR) => (k === 'usb' ? 'var(--muted)' : KIND_COLOR[k]);
+const PIN_TYPES = new Set(['header', 'pins_ra', 'jst_ph', 'jst_xh']);
+// jumper wire colours, in the order a new wire takes them (ground black, a supply red)
+const JUMPER = ['#e0a030', '#3b7dd8', '#8a5cc7', '#e87b2a', '#2f9e44', '#e6e6e2', '#8b5a2b', '#9aa0a6'];
 
-const ROLE_TEXT: Record<string, string> = { host: 'USB host', device: 'USB device', 'power-in': 'power in', 'power-in-dc': 'DC in', 'power-out': 'power out', 'hub-up': 'to host', 'hub-down': 'hub port', net: 'Ethernet', video: 'video', audio: 'audio', wire: 'wires', other: '' };
+const ROLE_TEXT: Record<string, string> = { host: 'USB host', device: 'USB device', 'power-in': 'power in', 'power-in-dc': 'DC in', 'power-out': 'power out', 'hub-up': 'to host', 'hub-down': 'hub port', net: 'Ethernet', video: 'video', audio: 'audio', wire: 'wires', debug: 'debug', uart: 'serial', other: '' };
+
+type Row = { q: PlugInfo; pin?: Pin };
+type View = { x: number; y: number; k: number };
+
+const keyOf = (q: PlugInfo) => `${q.ref.module}/${q.ref.ref}`;
+const pinsOf = (q: PlugInfo): Pin[] => (q.comp.conn && PIN_TYPES.has(q.comp.conn.type) ? headerPins(q.comp) : []);
+
+/** The rows of cards as the boards stand on the rails: rail by rail, along each, stacked boards after their base. */
+function railRows(p: Project, panel: NonNullable<NonNullable<ReturnType<typeof store.get>['result']>['report']['panel']> | undefined): string[][] {
+  const rows: string[][] = [];
+  const placed = new Set<string>();
+  if (panel) for (const r of panel.rails) {
+    const ids = panel.mounts.filter((m) => m.rail === r.id).sort((a, b) => a.at - b.at).flatMap((m) => m.slots.map((s) => s.module)).filter(Boolean) as string[];
+    const row: string[] = [];
+    // each board, then whatever is stacked on it (and on that)
+    const put = (id: string) => { if (placed.has(id)) return; row.push(id); placed.add(id); for (const r2 of p.modules.filter((x) => x.on === id)) put(r2.id); };
+    for (const id of ids) put(id);
+    if (row.length) rows.push(row);
+  }
+  return rows;
+}
 
 export function WiringView() {
   const p = useApp((s) => s.project)!;
   const rep = useApp((s) => s.result?.report ?? null);
   const sel = useApp((s) => s.sel);
   const [pending, setPending] = useState<PlugInfo | null>(null);
+  const [pendingPin, setPendingPin] = useState<{ q: PlugInfo; pin: string } | null>(null);
+  const [open, setOpen] = useState<Set<string>>(new Set());
   const [hover, setHover] = useState<string | null>(null);
   const [focus, setFocus] = useState<string | null>(null);
   const [find, setFind] = useState('');
-  const [z, setZ] = useState<number | null>(null); // null: fit to the window on first show
+  const [view, setView] = useState<View | null>(null);
+  const [drag, setDrag] = useState<{ id: string; dx: number; dy: number } | null>(null);
+  const [selWire, setSelWire] = useState<{ link: string; i: number } | null>(null);
   const box = useRef<HTMLDivElement>(null);
+  const gesture = useRef<{ kind: 'pan' | 'card'; id?: string; sx: number; sy: number; vx: number; vy: number; moved: boolean } | null>(null);
   const plugs = useMemo(() => plugsOf(p), [p]);
   const links = p.links ?? [];
 
-  // rows: one per rail (panel order), then boxes, then boards not on the panel
-  const layout = useMemo(() => {
-    const rows: Module[][] = [];
-    const placed = new Set<string>();
-    const panel = rep?.panel;
-    if (panel) for (const r of panel.rails) {
-      const ids = panel.mounts.filter((m) => m.rail === r.id).sort((a, b) => a.at - b.at).flatMap((m) => m.slots.map((s) => s.module)).filter(Boolean) as string[];
-      const row: Module[] = [];
-      for (const id of ids) {
-        const m = p.modules.find((x) => x.id === id);
-        if (!m || placed.has(id)) continue;
-        row.push(m); placed.add(id);
-        for (const r2 of p.modules.filter((x) => x.on === id)) { row.push(r2); placed.add(r2.id); }
-      }
-      if (row.length) rows.push(row);
-    }
-    const rest = p.modules.filter((m) => !placed.has(m.id));
-    const boards = rest.filter((m) => m.board.kind !== 'box'), boxes = rest.filter((m) => m.board.kind === 'box');
-    for (let i = 0; i < boards.length; i += 4) rows.push(boards.slice(i, i + 4));
-    if (boxes.length) rows.push(boxes);
-    const pos = new Map<string, { x: number; y: number; h: number }>();
-    let y = 20;
-    for (const row of rows) {
-      let hmax = 0;
-      row.forEach((m, i) => {
-        const n = plugs.filter((q) => q.module === m).length;
-        const h = HEAD + Math.max(1, n) * ROW + 10;
-        pos.set(m.id, { x: 20 + i * (W + GAPX), y, h });
-        hmax = Math.max(hmax, h);
-      });
-      y += hmax + GAPY;
-    }
-    const width = Math.max(...rows.map((r) => r.length), 1) * (W + GAPX) + 20;
-    return { pos, width, height: y };
-  }, [p.modules, rep, plugs]);
+  const jumperOf = (q: PlugInfo) => links.find((l) => l.kind === 'jumper' && (sameRef(l.a, q.ref) || sameRef(l.b, q.ref)));
+  const showsPins = (q: PlugInfo) => pinsOf(q).length >= 2 && (open.has(keyOf(q)) || !!jumperOf(q) || pendingPin?.q.module === q.module && pendingPin.q.ref.ref === q.ref.ref);
 
-  const fitZ = () => {
-    const el = box.current;
-    if (!el) return 1;
-    // fit the width (scroll down for the rest): small enough to see every row, big enough to read
-    return Math.max(0.45, Math.min(1, (el.clientWidth - 30) / Math.max(layout.width, 600)));
+  // each card's rows: its plugs, and under a pin header that is open, its pins
+  const rows = useMemo(() => {
+    const out = new Map<string, Row[]>();
+    for (const m of p.modules) out.set(m.id, []);
+    for (const q of plugs) {
+      const r = out.get(q.module.id)!;
+      r.push({ q });
+      if (showsPins(q)) for (const pin of pinsOf(q)) r.push({ q, pin });
+    }
+    return out;
+  }, [plugs, open, links, pendingPin]);
+  const cardH = (id: string) => HEAD + (rows.get(id) ?? []).reduce((s, r) => s + (r.pin ? PROW : ROW), 0) + Math.max(0, (rows.get(id)?.length ? 0 : ROW)) + 10;
+  const sizes = useMemo(() => new Map<string, Size>(p.modules.map((m) => [m.id, { w: W, h: cardH(m.id) }])), [rows, p.modules]);
+
+  // where each card is: where it was put, else as on the rails; cards new since then go in a row underneath
+  const pos: Pos = useMemo(() => {
+    const saved = p.wiring?.pos ?? {};
+    const def = rackLayout(p, railRows(p, rep?.panel ?? undefined), sizes);
+    const have = p.modules.filter((m) => saved[m.id]);
+    if (!have.length) return def;
+    const out: Pos = new Map(have.map((m) => [m.id, saved[m.id]]));
+    let x = 20, y = Math.max(...have.map((m) => saved[m.id][1] + sizes.get(m.id)!.h)) + 50;
+    for (const m of p.modules) if (!out.has(m.id)) { out.set(m.id, [x, y]); x += W + 60; }
+    return out;
+  }, [p.wiring, p.modules, rep, sizes]);
+  const at = (id: string) => { const q = pos.get(id) ?? [20, 20]; return drag?.id === id ? [q[0] + drag.dx, q[1] + drag.dy] : q; };
+
+  // ---- the canvas: fit, pan, zoom at the pointer ----
+  const bounds = () => {
+    const ids = [...pos.keys()];
+    if (!ids.length) return [0, 0, 600, 400];
+    return [Math.min(...ids.map((id) => pos.get(id)![0])), Math.min(...ids.map((id) => pos.get(id)![1])), Math.max(...ids.map((id) => pos.get(id)![0] + W)), Math.max(...ids.map((id) => pos.get(id)![1] + sizes.get(id)!.h))];
   };
-  useEffect(() => { if (z == null) setZ(fitZ()); }, [layout, z]);
-  const zoom = z ?? 1;
-  const zoomBy = (f: number) => setZ((v) => Math.max(0.3, Math.min(1.6, Math.round((v ?? 1) * f * 20) / 20)));
-  // ⌘/Ctrl + wheel (or a trackpad pinch) zooms
+  const fit = (): View => {
+    const el = box.current, [x0, y0, x1, y1] = bounds();
+    const w = el?.clientWidth ?? 800, h = el?.clientHeight ?? 600;
+    const k = Math.max(0.2, Math.min(1.15, (w - 40) / (x1 - x0 + 40), (h - 170) / (y1 - y0 + 40)));
+    return { k, x: (w - (x1 - x0) * k) / 2 - x0 * k, y: 104 - y0 * k };
+  };
+  useEffect(() => { if (!view && box.current) setView(fit()); }, [pos, view]);
+  const v = view ?? { x: 0, y: 0, k: 1 };
+  const zoomAt = (f: number, cx?: number, cy?: number) => setView((o) => {
+    const c = o ?? fit(), el = box.current;
+    const px = cx ?? (el ? el.clientWidth / 2 : 0), py = cy ?? (el ? el.clientHeight / 2 : 0);
+    const k = Math.max(0.2, Math.min(3, c.k * f));
+    return { k, x: px - ((px - c.x) * k) / c.k, y: py - ((py - c.y) * k) / c.k };
+  });
+  // a pinch (or ⌘/Ctrl + wheel) zooms where the pointer is; scrolling pans
   useEffect(() => {
     const el = box.current;
     if (!el) return;
-    const w = (e: WheelEvent) => { if (!e.ctrlKey && !e.metaKey) return; e.preventDefault(); zoomBy(e.deltaY < 0 ? 1.1 : 1 / 1.1); };
+    const w = (e: WheelEvent) => {
+      e.preventDefault();
+      const r = el.getBoundingClientRect();
+      if (e.ctrlKey || e.metaKey) zoomAt(Math.exp(-e.deltaY * (e.deltaMode ? 0.05 : 0.0025)), e.clientX - r.left, e.clientY - r.top);
+      else setView((o) => { const c = o ?? fit(); const s = e.deltaMode ? 30 : 1; return { ...c, x: c.x - e.deltaX * s, y: c.y - e.deltaY * s }; });
+    };
     el.addEventListener('wheel', w, { passive: false });
     return () => el.removeEventListener('wheel', w);
   }, []);
-  // a board picked (its name clicked, or found): its cables and the boards at their other ends stay bright
+  const down = (e: RPE, kind: 'pan' | 'card', id?: string) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+    gesture.current = { kind, id, sx: e.clientX, sy: e.clientY, vx: v.x, vy: v.y, moved: false };
+  };
+  const move = (e: RPE) => {
+    const g = gesture.current;
+    if (!g) return;
+    const dx = e.clientX - g.sx, dy = e.clientY - g.sy;
+    if (!g.moved && Math.hypot(dx, dy) < 3) return;
+    g.moved = true;
+    if (g.kind === 'pan') setView((o) => ({ ...(o ?? fit()), x: g.vx + dx, y: g.vy + dy }));
+    else setDrag({ id: g.id!, dx: dx / v.k, dy: dy / v.k });
+  };
+  const up = () => {
+    const g = gesture.current;
+    gesture.current = null;
+    if (!g) return;
+    if (g.kind === 'card' && g.moved && drag) {
+      // the first card moved keeps every other card where it is now
+      const all = Object.fromEntries(p.modules.map((m) => [m.id, pos.get(m.id) ?? [20, 20]])) as Record<string, [number, number]>;
+      const q = all[drag.id];
+      all[drag.id] = [Math.round(q[0] + drag.dx), Math.round(q[1] + drag.dy)];
+      edit((pp) => { pp.wiring = { ...(pp.wiring ?? {}), pos: all }; });
+      setDrag(null);
+      return;
+    }
+    setDrag(null);
+    if (!g.moved) {
+      if (g.kind === 'card') setFocus((f) => (f === g.id ? null : g.id!));
+      else { setPending(null); setPendingPin(null); setSelWire(null); select([]); setFocus(null); }
+    }
+  };
+  const arrange = (how: 'flow' | 'rack') => {
+    const next = how === 'flow' ? flowLayout(p, sizes) : rackLayout(p, railRows(p, rep?.panel ?? undefined), sizes);
+    edit((pp) => { pp.wiring = { ...(pp.wiring ?? {}), pos: Object.fromEntries([...next].map(([id, q]) => [id, [Math.round(q[0]), Math.round(q[1])]])) }; });
+    setView(null);
+    toast(how === 'flow' ? 'Laid out as the power and data flow: chargers and hosts, then hubs, then probes and adapters, then the boards they serve. ⌘Z undoes it.' : 'Laid out as the boards stand on the rails. ⌘Z undoes it.');
+  };
+
+  // a board picked (its title clicked, or found): its cables and the boards at their other ends stay bright
   const near = useMemo(() => {
     if (!focus) return null;
     const ids = new Set([focus]);
@@ -92,28 +175,34 @@ export function WiringView() {
     const t = q.trim().toLowerCase();
     const m = t ? p.modules.find((x) => x.board.name.toLowerCase().includes(t)) : null;
     setFocus(m ? m.id : null);
-    const c = m && layout.pos.get(m.id);
-    if (c && box.current) box.current.scrollTo({ left: Math.max(0, c.x * zoom - 80), top: Math.max(0, c.y * zoom - 60), behavior: 'smooth' });
+    const c = m && pos.get(m.id), el = box.current;
+    if (c && el) setView({ k: Math.max(v.k, 0.8), x: el.clientWidth / 2 - (c[0] + W / 2) * Math.max(v.k, 0.8), y: el.clientHeight / 3 - c[1] * Math.max(v.k, 0.8) });
   };
 
-  const portAt = (q: PlugInfo, side: 1 | -1) => {
-    const c = layout.pos.get(q.module.id)!;
-    const i = plugs.filter((x) => x.module === q.module).indexOf(q);
-    return { x: c.x + (side > 0 ? W : 0), y: c.y + HEAD + i * ROW + ROW / 2 };
+  // ---- where a plug or a pin is on its card ----
+  const rowY = (q: PlugInfo, pin?: string) => {
+    let y = HEAD;
+    for (const r of rows.get(q.module.id) ?? []) {
+      const h = r.pin ? PROW : ROW;
+      if (r.q === q && (pin ? r.pin?.n === pin : !r.pin)) return y + h / 2 - (r.pin ? 0 : 1);
+      y += h;
+    }
+    return y;
   };
+  const portAt = (q: PlugInfo, side: 1 | -1, pin?: string) => { const c = at(q.module.id); return { x: c[0] + (side > 0 ? W : 0), y: c[1] + rowY(q, pin) }; };
   const info = (r: PlugRef) => plugs.find((q) => sameRef(q.ref, r));
-  const linkPath = (l: Link) => {
-    const A = info(l.a), B = info(l.b);
-    if (!A || !B) return null;
-    const ca = layout.pos.get(A.module.id)!, cb = layout.pos.get(B.module.id)!;
-    const sa: 1 | -1 = cb.x > ca.x + 1 ? 1 : cb.x < ca.x - 1 ? -1 : 1;
-    const sb: 1 | -1 = ca.x > cb.x + 1 ? 1 : ca.x < cb.x - 1 ? -1 : 1;
-    const a = portAt(A, sa), b = portAt(B, sb);
+  const curve = (A: PlugInfo, B: PlugInfo, pa?: string, pb?: string) => {
+    const ca = at(A.module.id), cb = at(B.module.id);
+    const sa: 1 | -1 = cb[0] > ca[0] + 1 ? 1 : cb[0] < ca[0] - 1 ? -1 : 1;
+    const sb: 1 | -1 = ca[0] > cb[0] + 1 ? 1 : ca[0] < cb[0] - 1 ? -1 : 1;
+    const a = portAt(A, sa, pa), b = portAt(B, sb, pb);
     const k = Math.max(40, Math.abs(b.x - a.x) * 0.4);
     return { d: `M${a.x},${a.y} C${a.x + sa * k},${a.y} ${b.x + sb * k},${b.y} ${b.x},${b.y}`, mid: { x: (a.x + b.x) / 2 + (sa === sb ? sa * k * 0.75 : 0), y: (a.y + b.y) / 2 } };
   };
 
+  // ---- connecting ----
   const clickPlug = (q: PlugInfo) => {
+    setPendingPin(null);
     const existing = links.find((l) => sameRef(l.a, q.ref) || sameRef(l.b, q.ref));
     if (!pending) { if (existing) select([{ kind: 'link', id: existing.id }]); setPending(q); return; }
     if (pending === q) { setPending(null); return; }
@@ -121,103 +210,193 @@ export function WiringView() {
     if (!compatible(pending.role, q.role)) { toast(`${pending.label} (${ROLE_TEXT[pending.role] || pending.role}) does not plug into ${q.label} (${ROLE_TEXT[q.role] || q.role}).`); setPending(null); return; }
     edit((pp) => {
       pp.links = (pp.links ?? []).filter((l) => !sameRef(l.a, pending.ref) && !sameRef(l.b, pending.ref) && !sameRef(l.a, q.ref) && !sameRef(l.b, q.ref));
-      pp.links = numberLinks([...pp.links, { id: `l${Math.random().toString(36).slice(2, 8)}`, a: pending.ref, b: q.ref, kind: linkKind(pending.role, q.role) }]);
+      pp.links = numberLinks([...pp.links, { id: `l${Math.random().toString(36).slice(2, 8)}`, a: pending.ref, b: q.ref, kind: linkKind(pending.role, q.role) }]).map((l) => fillWires(pp, l));
     });
     setPending(null);
   };
+  const clickPin = (q: PlugInfo, pin: string) => {
+    setPending(null);
+    const pp0 = pendingPin;
+    if (!pp0) { setPendingPin({ q, pin }); return; }
+    if (pp0.q === q && pp0.pin === pin) { setPendingPin(null); return; }
+    if (pp0.q.module === q.module) { setPendingPin({ q, pin }); return; }
+    const A = pp0.q, B = q;
+    edit((pp) => {
+      let l = (pp.links ?? []).find((x) => x.kind === 'jumper' && ((sameRef(x.a, A.ref) && sameRef(x.b, B.ref)) || (sameRef(x.a, B.ref) && sameRef(x.b, A.ref))));
+      if (!l) {
+        // a header wired to another header: whatever either was plugged into goes
+        pp.links = (pp.links ?? []).filter((x) => !sameRef(x.a, A.ref) && !sameRef(x.b, A.ref) && !sameRef(x.a, B.ref) && !sameRef(x.b, B.ref));
+        l = { id: `l${Math.random().toString(36).slice(2, 8)}`, a: A.ref, b: B.ref, kind: 'jumper', wires: [] };
+        pp.links = numberLinks([...pp.links, l]);
+        l = pp.links.find((x) => x.id === l!.id)!;
+      }
+      const [pa, pb] = sameRef(l.a, A.ref) ? [pp0.pin, pin] : [pin, pp0.pin];
+      const net = `${pinsOf(A).find((x) => x.n === pp0.pin)?.net ?? ''} ${pinsOf(B).find((x) => x.n === pin)?.net ?? ''}`;
+      const used = new Set((l.wires ?? []).map((w) => w.colour));
+      const colour = /gnd|vss|ground/i.test(net) ? '#1f2124' : /vcc|vdd|3v3|5v|\+/i.test(net) ? '#d0443a' : JUMPER.find((c) => !used.has(c)) ?? JUMPER[(l.wires ?? []).length % JUMPER.length];
+      // a pin takes one wire
+      l.wires = [...(l.wires ?? []).filter((w) => w.a !== pa && w.b !== pb), { a: pa, b: pb, colour }];
+    });
+    setPendingPin(null);
+  };
+  const removeWire = (id: string, i: number) => {
+    edit((pp) => {
+      const l = (pp.links ?? []).find((x) => x.id === id);
+      if (!l?.wires) return;
+      l.wires = l.wires.filter((_, k) => k !== i);
+      if (!l.wires.length) pp.links = (pp.links ?? []).filter((x) => x.id !== id);
+    });
+    setSelWire(null);
+  };
+
   const cableOf = (id: string) => rep?.cables?.find((c) => c.id === id);
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement).tagName === 'INPUT') return;
-      if (e.key === 'Escape') { setPending(null); select([]); }
-      const ids = store.get().sel.filter((x) => x.kind === 'link').map((x) => x.id);
-      if ((e.key === 'Delete' || e.key === 'Backspace') && ids.length) { e.preventDefault(); removeLinks(ids); }
+      if (e.key === 'Escape') { setPending(null); setPendingPin(null); setSelWire(null); select([]); }
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selWireRef.current) { e.preventDefault(); removeWire(selWireRef.current.link, selWireRef.current.i); return; }
+        const ids = store.get().sel.filter((x) => x.kind === 'link').map((x) => x.id);
+        if (ids.length) { e.preventDefault(); removeLinks(ids); }
+      }
     };
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
   }, []);
+  const selWireRef = useRef(selWire);
+  selWireRef.current = selWire;
 
-  // number pills: pushed apart where cables cross close together, so every number stays readable
-  const paths = links.map((l) => ({ l, lp: linkPath(l) }));
+  // cables (a jumper link as its wires, pin to pin), and number pills pushed apart where cables cross close together
+  const drawn = links.map((l) => {
+    const A = info(l.a), B = info(l.b);
+    if (!A || !B) return null;
+    const ws = l.kind === 'jumper' && l.wires?.length && showsPins(A) && showsPins(B) ? l.wires : null;
+    return { l, A, B, main: curve(A, B, ws?.[0]?.a, ws?.[0]?.b), ws };
+  }).filter(Boolean) as { l: Link; A: PlugInfo; B: PlugInfo; main: ReturnType<typeof curve>; ws: Link['wires'] | null }[];
   const pills: { x: number; y: number }[] = [];
   const pillAt = new Map<string, { x: number; y: number }>();
-  for (const { l, lp } of [...paths].sort((a, b) => (a.lp?.mid.y ?? 0) - (b.lp?.mid.y ?? 0))) {
-    if (!lp) continue;
-    const at = { ...lp.mid };
-    for (let k = 0; k < 12 && pills.some((q) => Math.abs(q.x - at.x) < 80 && Math.abs(q.y - at.y) < 24); k++) at.y += 24;
-    pills.push(at); pillAt.set(l.id, at);
+  for (const { l, main } of [...drawn].sort((a, b) => a.main.mid.y - b.main.mid.y)) {
+    const q = { ...main.mid };
+    for (let k = 0; k < 12 && pills.some((o) => Math.abs(o.x - q.x) < 80 && Math.abs(o.y - q.y) < 24); k++) q.y += 24;
+    pills.push(q); pillAt.set(l.id, q);
   }
-  const W0 = Math.max(layout.width, 600), H0 = Math.max(layout.height, 400);
+  const where = (id: string) => {
+    const mt = rep?.panel?.mounts.find((m) => m.slots.some((s) => s.module === id));
+    if (!mt) return p.modules.find((m) => m.id === id)?.on ? 'stacked on another board' : 'not on a rail yet';
+    const s = mt.slots.findIndex((x) => x.module === id);
+    return `rail ${mt.rail.replace(/^r/, '')}, ${mt.slots.length > 1 ? `${s ? 'back' : 'front'} of the dock` : 'on a flat clip'}`;
+  };
 
   return (
     <div className="editor wiring" style={{ position: 'absolute', inset: 0 }}>
-      <div ref={box} style={{ position: 'absolute', inset: 0, overflow: 'auto' }} onClick={(e) => { if (e.target === e.currentTarget) { setPending(null); select([]); setFocus(null); } }}>
-      <svg width={W0 * zoom} height={H0 * zoom} viewBox={`0 0 ${W0} ${H0}`} style={{ display: 'block', margin: '60px 0 0 10px' }} onClick={(e) => { if ((e.target as Element).tagName === 'svg') { setPending(null); select([]); setFocus(null); } }}>
-        {paths.map(({ l, lp }) => {
-          if (!lp) return null;
-          const on = isSel(sel, l.id) || hover === l.id;
-          const dim = near && !(l.a.module === focus || l.b.module === focus);
-          const c = cableOf(l.id), at = pillAt.get(l.id) ?? lp.mid;
-          return (
-            <g key={l.id} style={{ cursor: 'pointer' }} opacity={dim ? 0.12 : 1} onClick={(e) => { e.stopPropagation(); select([{ kind: 'link', id: l.id }], e.shiftKey ? 'toggle' : 'set'); }} onMouseEnter={() => setHover(l.id)} onMouseLeave={() => setHover(null)}>
-              <path d={lp.d} fill="none" stroke="transparent" strokeWidth={12} />
-              <path d={lp.d} fill="none" stroke={wire(l.kind ?? 'usb')} strokeWidth={on || (near && !dim) ? 4 : 2.6} strokeLinecap="round" opacity={on ? 1 : 0.85} />
-              {c && (at.y !== lp.mid.y) && <line x1={lp.mid.x} y1={lp.mid.y} x2={at.x} y2={at.y} stroke={wire(l.kind ?? 'usb')} strokeWidth={1} strokeDasharray="2 3" />}
-              {c && <g transform={`translate(${at.x},${at.y})`}><title>{`Cable ${c.no}: ${c.label ?? ''}`}</title><rect x={-38} y={-11} width={76} height={22} rx={11} fill="var(--surface)" stroke={wire(l.kind ?? 'usb')} /><circle cx={-26} cy={0} r={8.5} fill={wire(l.kind ?? 'usb')} /><text x={-26} y={3.8} textAnchor="middle" fontSize={10.5} fontWeight={700} className="mono" fill="#fff">{c.no}</text><text x={8} textAnchor="middle" y={4} fontSize={11} className="mono" fill="var(--fg)">{c.buy} m</text></g>}
-            </g>
-          );
-        })}
-        {p.modules.map((m) => {
-          const c = layout.pos.get(m.id);
-          if (!c) return null;
-          const qs = plugs.filter((q) => q.module === m);
-          const isBox = m.board.kind === 'box';
-          return (
-            <g key={m.id} transform={`translate(${c.x},${c.y})`} opacity={near && !near.has(m.id) ? 0.25 : 1}>
-              <rect width={W} height={c.h} rx={12} fill="var(--surface-2)" stroke={focus === m.id ? 'var(--accent)' : isBox ? 'var(--line-2)' : 'var(--accent-line)'} strokeWidth={focus === m.id ? 2 : 1} />
-              <g style={{ cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); setFocus(focus === m.id ? null : m.id); }}>
-                <title>{focus === m.id ? 'Show every cable again' : `Show only ${m.board.name}'s cables`}</title>
-                <rect width={W} height={HEAD - 4} rx={12} fill={isBox ? 'var(--surface-3)' : 'var(--accent-soft)'} />
-                <text x={14} y={20} fontSize={13} fontWeight={650} fill="var(--fg)">{m.board.name.slice(0, 24)}</text>
-              </g>
-              {m.on && <text x={W - 12} y={20} fontSize={10.5} textAnchor="end" fill="var(--subtle)">stacked</text>}
-              {qs.map((q, i) => {
-                const y = HEAD + i * ROW;
-                const l = links.find((x) => sameRef(x.a, q.ref) || sameRef(x.b, q.ref));
-                const isP = pending === q;
-                const ok = pending && pending !== q && pending.module !== q.module && compatible(pending.role, q.role);
-                return (
-                  <g key={q.ref.ref} style={{ cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); clickPlug(q); }}>
-                    <rect x={6} y={y} width={W - 12} height={ROW - 3} rx={6} fill={isP ? 'var(--accent-soft)' : ok ? 'color-mix(in srgb, var(--good) 14%, transparent)' : 'transparent'} stroke={isP ? 'var(--accent)' : 'transparent'} />
-                    <text x={16} y={y + 15} fontSize={11.5} fill="var(--fg)" className="mono">{q.label}</text>
-                    <text x={W - 16} y={y + 15} fontSize={10.5} textAnchor="end" fill={l ? wire(l.kind ?? 'usb') : 'var(--subtle)'}>{l ? '● ' : ''}{ROLE_TEXT[q.role]}</text>
-                    {[0, W].map((x) => <circle key={x} cx={x} cy={y + ROW / 2 - 1} r={l || isP ? 4.5 : 3.5} fill={l ? wire(l.kind ?? 'usb') : 'var(--surface)'} stroke={l ? 'none' : 'var(--line-2)'} strokeWidth={1.5} />)}
+      <div ref={box} style={{ position: 'absolute', inset: 0, overflow: 'hidden', touchAction: 'none', cursor: gesture.current?.kind === 'pan' ? 'grabbing' : 'default' }}>
+        <svg width="100%" height="100%" style={{ display: 'block' }} onPointerDown={(e) => down(e, 'pan')} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
+          <g transform={`translate(${v.x},${v.y}) scale(${v.k})`}>
+            {drawn.map(({ l, A, B, main, ws }) => {
+              const on = isSel(sel, l.id) || hover === l.id;
+              const dim = near && !(l.a.module === focus || l.b.module === focus);
+              const c = cableOf(l.id), q = pillAt.get(l.id) ?? main.mid, col = wire(l.kind ?? 'usb');
+              return (
+                <g key={l.id} style={{ cursor: 'pointer' }} opacity={dim ? 0.12 : 1} onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); setSelWire(null); select([{ kind: 'link', id: l.id }], e.shiftKey ? 'toggle' : 'set'); }} onMouseEnter={() => setHover(l.id)} onMouseLeave={() => setHover(null)}>
+                  {ws ? ws.map((w, i) => {
+                    const cv = curve(A, B, w.a, w.b), picked = selWire?.link === l.id && selWire.i === i;
+                    return (
+                      <g key={i} onClick={(e) => { e.stopPropagation(); select([{ kind: 'link', id: l.id }]); setSelWire({ link: l.id, i }); }}>
+                        <title>{`Jumper wire: ${A.module.board.name} pin ${w.a} → ${B.module.board.name} pin ${w.b} (Del removes it)`}</title>
+                        <path d={cv.d} fill="none" stroke="transparent" strokeWidth={10} />
+                        <path d={cv.d} fill="none" stroke="var(--bg)" strokeWidth={picked || on ? 5 : 3.6} strokeLinecap="round" opacity={0.7} />
+                        <path d={cv.d} fill="none" stroke={w.colour ?? KIND_COLOR.jumper} strokeWidth={picked ? 3.4 : on ? 2.8 : 2} strokeLinecap="round" />
+                      </g>
+                    );
+                  }) : <>
+                    <path d={main.d} fill="none" stroke="transparent" strokeWidth={12} />
+                    <path d={main.d} fill="none" stroke={col} strokeWidth={on || (near && !dim) ? 4 : 2.6} strokeLinecap="round" opacity={on ? 1 : 0.85} strokeDasharray={l.kind === 'debug' ? '8 3' : undefined} />
+                  </>}
+                  {c && q.y !== main.mid.y && <line x1={main.mid.x} y1={main.mid.y} x2={q.x} y2={q.y} stroke={col} strokeWidth={1} strokeDasharray="2 3" />}
+                  {c && <g transform={`translate(${q.x},${q.y})`}><title>{`Cable ${c.no}: ${c.label ?? ''}${c.wires ? ` — ${c.wires}` : ''}`}</title><rect x={-40} y={-11} width={80} height={22} rx={11} fill="var(--surface)" stroke={col} /><circle cx={-28} cy={0} r={8.5} fill={col} /><text x={-28} y={3.8} textAnchor="middle" fontSize={10.5} fontWeight={700} className="mono" fill="#fff">{c.no}</text><text x={8} textAnchor="middle" y={4} fontSize={11} className="mono" fill="var(--fg)">{c.ribbon != null ? `${Math.round(c.length / 10)} cm` : l.kind === 'jumper' ? `${Math.round(c.buy * 100)} cm` : `${c.buy} m`}</text></g>}
+                </g>
+              );
+            })}
+            {p.modules.map((m) => {
+              const c = at(m.id);
+              const rs = rows.get(m.id) ?? [];
+              const isBox = m.board.kind === 'box', h = sizes.get(m.id)!.h;
+              const nCables = links.filter((l) => l.a.module === m.id || l.b.module === m.id).length;
+              let y = HEAD;
+              return (
+                <g key={m.id} transform={`translate(${c[0]},${c[1]})`} opacity={near && !near.has(m.id) ? 0.25 : 1}>
+                  <rect width={W} height={h} rx={12} fill="var(--surface-2)" stroke={focus === m.id ? 'var(--accent)' : isBox ? 'var(--line-2)' : 'var(--accent-line)'} strokeWidth={focus === m.id ? 2 : 1} style={{ filter: drag?.id === m.id ? 'drop-shadow(0 6px 14px rgb(0 0 0 / 0.35))' : undefined }} />
+                  <g style={{ cursor: drag?.id === m.id ? 'grabbing' : 'grab' }} onPointerDown={(e) => down(e, 'card', m.id)}>
+                    <title>{`${m.board.name}\n${isBox ? 'accessory' : 'board'}${m.board.box ? `, ${m.board.box.l} × ${m.board.box.w} × ${m.board.box.h} mm` : ''} · ${where(m.id)}\n${rs.filter((r) => !r.pin).length} plugs, ${nCables} cable${nCables === 1 ? '' : 's'}\nDrag to move · click to show only its cables`}</title>
+                    <rect width={W} height={HEAD - 6} rx={12} fill={isBox ? 'var(--surface-3)' : 'var(--accent-soft)'} />
+                    <text x={14} y={16} fontSize={12.5} fontWeight={650} fill="var(--fg)">{m.board.name.length > 30 ? `${m.board.name.slice(0, 29)}…` : m.board.name}</text>
+                    <text x={14} y={29} fontSize={10} fill="var(--subtle)">{where(m.id)}</text>
                   </g>
-                );
-              })}
-              {!qs.length && <text x={14} y={HEAD + 15} fontSize={11.5} fill="var(--subtle)">no plugs</text>}
-            </g>
-          );
-        })}
-      </svg>
+                  {rs.map((r) => {
+                    const q = r.q, top = y;
+                    y += r.pin ? PROW : ROW;
+                    if (r.pin) {
+                      const pin = r.pin, pk = pendingPin && pendingPin.q === q && pendingPin.pin === pin.n;
+                      const jl = jumperOf(q), wired = jl?.wires?.find((w) => (sameRef(jl.a, q.ref) ? w.a : w.b) === pin.n);
+                      const can = pendingPin && pendingPin.q.module !== q.module;
+                      return (
+                        <g key={`${q.ref.ref}#${pin.n}`} style={{ cursor: 'pointer' }} onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); clickPin(q, pin.n); }}>
+                          <title>{`${q.label} pin ${pin.n}${pin.net ? ` · ${pin.net.replace(/^\//, '')}` : ''}${wired ? ' · wired' : ' · click, then a pin on another header, to add a jumper wire'}`}</title>
+                          <rect x={22} y={top + 1} width={W - 44} height={PROW - 2} rx={5} fill={pk ? 'var(--accent-soft)' : can ? 'color-mix(in srgb, var(--good) 12%, transparent)' : 'transparent'} stroke={pk ? 'var(--accent)' : 'transparent'} />
+                          <text x={30} y={top + 13} fontSize={10.5} className="mono" fill="var(--muted)">{pin.n}</text>
+                          <text x={52} y={top + 13} fontSize={10.5} className="mono" fill="var(--fg)">{pin.net ? pin.net.replace(/^\//, '').slice(0, 18) : '—'}</text>
+                          {[0, W].map((x) => <circle key={x} cx={x} cy={top + PROW / 2} r={wired ? 3.6 : 2.6} fill={wired ? wired.colour ?? KIND_COLOR.jumper : 'var(--surface)'} stroke={wired ? 'var(--bg)' : 'var(--line-2)'} strokeWidth={1.2} />)}
+                        </g>
+                      );
+                    }
+                    const l = links.find((x) => sameRef(x.a, q.ref) || sameRef(x.b, q.ref));
+                    const isP = pending === q;
+                    const ok = pending && pending !== q && pending.module !== q.module && compatible(pending.role, q.role);
+                    const pins = pinsOf(q), shown = showsPins(q), cab = l && cableOf(l.id);
+                    return (
+                      <g key={q.ref.ref} style={{ cursor: 'pointer' }} onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); clickPlug(q); }}>
+                        <title>{`${q.label} · ${ROLE_TEXT[q.role] || q.role}${cab ? ` · cable ${cab.no}, ${cab.label ?? ''}` : ' · free'}${pins.length >= 2 ? `\n${pins.length} pins: ▸ opens them, to wire pin by pin` : ''}`}</title>
+                        <rect x={6} y={top} width={W - 12} height={ROW - 3} rx={6} fill={isP ? 'var(--accent-soft)' : ok ? 'color-mix(in srgb, var(--good) 14%, transparent)' : 'transparent'} stroke={isP ? 'var(--accent)' : 'transparent'} />
+                        {pins.length >= 2 && <g onClick={(e) => { e.stopPropagation(); setOpen((o) => { const n = new Set(o); if (n.has(keyOf(q))) n.delete(keyOf(q)); else n.add(keyOf(q)); return n; }); }}>
+                          <rect x={8} y={top + 2} width={14} height={ROW - 7} fill="transparent" />
+                          <text x={11} y={top + 15} fontSize={10} fill="var(--muted)">{shown ? '▾' : '▸'}</text>
+                        </g>}
+                        <text x={pins.length >= 2 ? 24 : 16} y={top + 15} fontSize={11.5} fill="var(--fg)" className="mono">{q.label}</text>
+                        <text x={W - 16} y={top + 15} fontSize={10.5} textAnchor="end" fill={l ? wire(l.kind ?? 'usb') : 'var(--subtle)'}>{l ? '● ' : ''}{ROLE_TEXT[q.role]}</text>
+                        {!shown && [0, W].map((x) => <circle key={x} cx={x} cy={top + ROW / 2 - 1} r={l || isP ? 4.5 : 3.5} fill={l ? wire(l.kind ?? 'usb') : 'var(--surface)'} stroke={l ? 'none' : 'var(--line-2)'} strokeWidth={1.5} />)}
+                      </g>
+                    );
+                  })}
+                  {!rs.length && <text x={14} y={HEAD + 15} fontSize={11.5} fill="var(--subtle)">no plugs</text>}
+                </g>
+              );
+            })}
+          </g>
+        </svg>
       </div>
       <div className="toolbar floating">
         <button className="tbtn" onClick={() => addLinks()}><Icon d={I.wand} /> Auto-connect</button>
         <span className="tsep" />
+        <select className="tbtn tsel2" value="" title="Lay every card out again" onChange={(e) => { const v2 = e.target.value; if (v2) arrange(v2 as 'flow' | 'rack'); }}>
+          <option value="">Arrange…</option>
+          <option value="flow">As the cables flow</option>
+          <option value="rack">As on the rack</option>
+        </select>
+        <span className="tsep" />
         <button className="tbtn" disabled={!links.length} onClick={() => { edit((pp) => { pp.links = []; }); select([]); }}>Clear all</button>
         <span className="tsep" />
         {p.modules.length > 4 && <input className="wfind" type="search" placeholder="Find a board" value={find} onChange={(e) => findIt(e.target.value)} aria-label="Find a board" />}
-        <button className="tbtn" onClick={() => zoomBy(1 / 1.2)} title="Zoom out (⌘ + wheel)" aria-label="Zoom out">−</button>
-        <button className="tbtn mono" onClick={() => setZ(fitZ())} title="Fit everything in the window">{Math.round(zoom * 100)}%</button>
-        <button className="tbtn" onClick={() => zoomBy(1.2)} title="Zoom in" aria-label="Zoom in">+</button>
+        <button className="tbtn" onClick={() => zoomAt(1 / 1.25)} title="Zoom out (pinch, or ⌘ + scroll)" aria-label="Zoom out">−</button>
+        <button className="tbtn mono" onClick={() => setView(fit())} title="Fit everything in the window">{Math.round(v.k * 100)}%</button>
+        <button className="tbtn" onClick={() => zoomAt(1.25)} title="Zoom in (pinch, or ⌘ + scroll)" aria-label="Zoom in">+</button>
         {focus && <button className="tbtn" onClick={() => { setFocus(null); setFind(''); }}>Show all</button>}
       </div>
       <div className="hud floating mono">
-        <span>{pending ? `${pending.module.board.name} ${pending.label}: now click the plug it goes to (green ones fit) · Esc cancels` : 'click a plug, then the plug it goes to · click a cable to select it, Del removes · Auto-connect fills in the rest'}</span>
+        <span>{pendingPin ? `${pendingPin.q.module.board.name} pin ${pendingPin.pin}: now click the pin on another header it goes to · Esc cancels` : pending ? `${pending.module.board.name} ${pending.label}: now click the plug it goes to (green ones fit) · Esc cancels` : 'click a plug, then the plug it goes to · ▸ opens a header, then a pin, then a pin adds a jumper wire · drag a card by its title · pinch or ⌘ + scroll zooms, scroll or drag pans'}</span>
         <span className="xy">{links.length} cable{links.length === 1 ? '' : 's'}{rep?.cables?.length ? ` · ${(rep.cables.reduce((a, c) => a + c.length, 0) / 1000).toFixed(1)} m` : ''}</span>
       </div>
       <div className="legend2 floating" style={{ bottom: 52 }}>
-        {(Object.keys(KIND_COLOR) as (keyof typeof KIND_COLOR)[]).map((k) => <span key={k}><i style={{ background: wire(k) }} />{KIND_NAME[k]}</span>)}
+        {(Object.keys(KIND_COLOR) as (keyof typeof KIND_COLOR)[]).filter((k) => k !== 'uart' || links.some((l) => l.kind === 'uart')).map((k) => <span key={k}><i style={{ background: wire(k) }} />{KIND_NAME[k]}</span>)}
       </div>
     </div>
   );

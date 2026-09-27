@@ -251,6 +251,7 @@ export interface Project {
   name?: string; // what the user calls this rack (file names, the header); unset: made from the boards
   built?: Built;
   links?: Link[]; // cables between boards
+  wiring?: { pos?: Record<string, [number, number]> }; // the Wiring view: where each board's card was put (module id -> x, y)
   modules: Module[];
   active: number; // module being edited
   layout: 'panel' | 'loose'; // boards on DIN rail docks (default), or loose holders (stack / side by side / back to back)

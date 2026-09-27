@@ -732,6 +732,8 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 .bnum { min-width: 30px; height: 26px; padding: 0 8px; border-radius: 7px; border: 1px solid var(--line); background: var(--surface); color: var(--text); font-family: var(--mono); font-size: 12px; cursor: pointer; }
 .bnum.on { background: var(--accent); border-color: var(--accent); color: #fff; }
 
+.editor.wiring .toolbar { top: 58px; }
+.tsel2 { width: auto !important; height: 28px !important; font-size: 12.5px !important; padding: 0 22px 0 8px !important; background-position: right 6px center !important; border: none !important; background-color: transparent !important; }
 .wfind { width: 130px; height: 28px !important; font-size: 12px !important; padding: 0 8px !important; }
 
 .phoneonly { display: none; }

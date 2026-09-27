@@ -202,6 +202,16 @@ export const numberLinks = (links: Link[] = []): Link[] => { const no = cableNum
 export const shortName = (n: string) => n.replace(/^(Raspberry|Arduino|Adafruit|SparkFun|Espressif|Seeed(?: Studio)?)\s+/i, '');
 
 const SOURCE: PlugRole[] = ['power-out', 'hub-down', 'host'];
+/** Which way a cable points: from the end that gives (power, a port, a probe's ribbon) to the end that takes. */
+export function cableFlow(p: Project, l: Link): { from: PlugRef; to: PlugRef } {
+  const role = (r: PlugRef) => { const m = p.modules.find((x) => x.id === r.module); const c = m?.board.comps.find((x) => x.ref === baseRef(r.ref)); return { role: m && c ? plugRole(m, c) : ('other' as PlugRole), box: m?.board.kind === 'box' }; };
+  let a = { r: l.a, ...role(l.a) }, b = { r: l.b, ...role(l.b) };
+  if (SOURCE.indexOf(b.role) >= 0 && SOURCE.indexOf(a.role) < 0) [a, b] = [b, a];
+  if (a.role === 'hub-up' || (b.role === 'host' && a.role !== 'host')) [a, b] = [b, a];
+  if ((a.role === 'debug' || a.role === 'uart') && b.box && !a.box) [a, b] = [b, a];
+  return { from: a.r, to: b.r };
+}
+
 /** What a cable is for, from the plugs' roles, pointing from the end that gives (power, a port) to the end that takes. */
 export function cablePurpose(p: Project, l: Link): { from: string; to: string; text: string } {
   const end = (r: PlugRef) => {
