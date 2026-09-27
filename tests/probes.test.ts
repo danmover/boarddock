@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { TEMPLATES } from '../src/model/templates';
 import { debugType, newModule, newProject } from '../src/model/library';
 import { autoLinks, isDebugPort, numberLinks, plugRole } from '../src/model/links';
-import { addProbes, addUartLinks, adapterFor, debugHeaders, headerPins, isProbe, isUartPort, markDebug, probesOf, stackProbes, uartHeaders, uartPins, uartWiring } from '../src/model/probes';
+import { addAdapters, addProbes, addUartLinks, adapterFor, debugHeaders, fillWires, headerPins, isAdapter, isProbe, isUartPort, markDebug, probesOf, stackProbes, uartHeaders, uartPins, uartWiring } from '../src/model/probes';
 import { powerBudget } from '../src/model/power';
 import { importKicad } from '../src/import/kicad';
 import { autoAssign } from '../src/cad/dockplan';
@@ -196,3 +196,43 @@ describe('probe rack', () => {
     expect((r.steps ?? []).some((s) => /slide the J-Link .* down into it/.test(s.text))).toBe(true);
   }, 120_000);
 });
+
+describe('USB-serial adapters', () => {
+  beforeAll(async () => { await initKernel(); });
+  const rack = () => {
+    const p = newProject(T('example_dual_swd'));
+    p.modules.push(newModule(T('example_jtag')), newModule(T('usb_hub7')));
+    for (const m of p.modules.filter((x) => x.board.kind !== 'box')) { addProbes(p, m.id); addAdapters(p, m.id); }
+    p.links = numberLinks([...(p.links ?? []), ...autoLinks(p)]).map((l) => fillWires(p, l));
+    return p;
+  };
+
+  it('go on top of the board\'s probe stack, jumper wires crossed over from their pins to its UART header', () => {
+    const p = rack(), board = p.modules[0];
+    const ad = p.modules.filter(isAdapter);
+    expect(ad.length).toBe(2);
+    expect(probesOf(p, board).map((m) => m.board.name.replace(/ \(.*$/, ''))).toEqual(['J-Link', 'J-Link', 'USB-serial adapter']);
+    expect(ad[0].on).toBe(probesOf(p, board)[1].id);
+    const l = p.links!.find((x) => x.kind === 'jumper' && x.b.module === board.id)!;
+    // its GND (pin 6), TXD (3), RXD (2) to the board's GND (1), RXI (4), TXO (5)
+    expect(l.wires!.map((w) => [w.a, w.b])).toEqual([['6', '1'], ['3', '4'], ['2', '5']]);
+    // and its USB to the hub
+    expect(p.links!.some((x) => x.kind === 'usb' && x.a.module === ad[0].id)).toBe(true);
+    // a second press adds nothing
+    expect(addAdapters(p, board.id)).toEqual([]);
+  });
+
+  it('slot in behind their boards, the wires going round the dock to the pins, bought by the wire', () => {
+    const p = rack(), r = generatePanel(p);
+    expect(r.report.warnings.filter((x) => /runs into|don't fit|towers are close/.test(x))).toEqual([]);
+    expect(r.report.checks.filter((c) => c.name === 'Box ports')).toEqual([]);
+    const jumpers = r.report.cables!.filter((c) => c.kind === 'jumper');
+    expect(jumpers.length).toBe(2);
+    for (const c of jumpers) { expect(c.clash).toBeUndefined(); expect([0.1, 0.15, 0.2, 0.3]).toContain(c.buy); expect(c.wires).toMatch(/black wire from pin 6 \(GND\)/); }
+    // three wires each, with a housing on every pin at both ends
+    expect(r.ghosts.filter((g) => / wire \d$/.test(g.name)).length).toBe(6);
+    expect((r.steps ?? []).some((s) => /Push the jumper wires on/.test(s.text))).toBe(true);
+    expect(r.report.checks.filter((c) => c.name === 'Slot').length).toBe(5);
+  }, 120_000);
+});
+

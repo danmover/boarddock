@@ -206,6 +206,8 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
     const c: any = { renderer, scene, camera, controls, world, floor, key, composer, gtao, outline, objs: [] as Obj[], features: [] as Feature[], frames: {} as Record<string, number[]>, dirty: true, fitted: '', tween: null, hover: null as THREE.Mesh | null, radius: 100, ranks: 0, highlights: new THREE.Group(), anim: { t: Infinity, explode: 0 } };
     world.add(c.highlights);
     ctx.current = c;
+    // dev-only handle for scripted checks and screenshots: point the camera, then it renders
+    if (import.meta.env.DEV) (window as any).__bdView = { ctx: c, look: (pos: number[], target: number[]) => { c.tween = null; camera.position.set(pos[0], pos[1], pos[2]); controls.target.set(target[0], target[1], target[2]); controls.update(); c.dirty = true; composer.render(); } };
     const invalidate = () => { c.dirty = true; };
     c.invalidate = invalidate;
     controls.addEventListener('change', invalidate);

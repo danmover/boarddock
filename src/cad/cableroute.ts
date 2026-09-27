@@ -158,8 +158,9 @@ export function bestRoute(A: CableEnd, B: CableEnd, streets: number[], zc: numbe
   return best;
 }
 
-/** A ribbon's end: a cable end, plus its socket's long side (the ribbon's width lies along it) and its depth across. */
-export interface RibbonEnd extends CableEnd { w: number[]; span: number }
+/** A ribbon's end: a cable end, plus its socket's long side (the ribbon's width lies along it) and its depth across.
+ * `straight`: a bundle of jumper wires instead, leaving its housings straight out. */
+export interface RibbonEnd extends CableEnd { w: number[]; span: number; straight?: boolean }
 
 export interface RibbonChoice extends Choice { free: [number, number] } // free: the stretch (mm along it) where it hangs free
 
@@ -178,6 +179,8 @@ export function ribbonRoute(A: RibbonEnd, B: RibbonEnd, t: number, rw: number, o
   const R = 7;
   // leave the socket flat along x (the way `pref` points where it can, else up, else towards the other end)
   const lay = (e: RibbonEnd, other: number[], pref: number[] | null) => {
+    // jumper wires leave their housings straight out, then bend
+    if (e.straight) return { x: unit(e.d), S: e.p, E: add(e.p, e.d, 4) };
     let x = unit(cross(e.d, e.w));
     const k = pref ? x[0] * pref[0] + x[1] * pref[1] + x[2] * pref[2] : 0;
     if (pref && Math.abs(k) > 0.3 ? k < 0 : Math.abs(x[2]) > 0.3 ? x[2] < 0 : (other[0] - e.p[0]) * x[0] + (other[1] - e.p[1]) * x[1] < 0) x = x.map((q) => -q);

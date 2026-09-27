@@ -1,15 +1,19 @@
-// Debug probes (J-Link, ST-Link): a box with a debug port on a ribbon and a USB port. A board's debug headers (SWD,
-// JTAG, Tag-Connect) each take one probe. The probes for a board stack on one another in the back slot of that
-// board's dock, so each ribbon only goes round the dock, and the probes' USB cables go to a hub like any device.
-import type { Board, Comp, Module, Pin, Project } from './types';
+// Debug probes (J-Link, ST-Link) and USB-serial adapters: small boards that serve one board. A board's debug headers
+// (SWD, JTAG, Tag-Connect) each take a probe on its ribbon; its UART headers each take an adapter on jumper wires
+// (or a serial cable with loose ends). A board's probes and adapters stack in the back slot of its dock, so the
+// ribbons and wires only go round the dock, and their USB cables go to a hub like any device's.
+import type { Board, Comp, Link, Module, Pin, Project, Wire } from './types';
 import { connById, connSetup, newModule } from './library';
 import { BOX_PRESETS, makeBox } from './boxes';
 import { baseRef, DEBUG_TYPES, isDebugPort, isUartPort, numberLinks, plugsOf } from './links';
 
 export { DEBUG_TYPES, isDebugPort, isUartPort } from './links';
 
-/** A probe: a box with a debug port. */
-export const isProbe = (m: Module) => m.board.kind === 'box' && m.board.comps.some(isDebugPort);
+/** A board's companion that lives in a slot behind it: a probe (a box with a debug port) or a USB-serial adapter (a box
+ * with serial pins). */
+export const isProbe = (m: Module) => m.board.kind === 'box' && m.board.comps.some((c) => isDebugPort(c) || isUartPort(c));
+/** A USB-serial adapter: a box with serial pins. */
+export const isAdapter = (m: Module) => m.board.kind === 'box' && m.board.comps.some(isUartPort) && !m.board.comps.some(isDebugPort);
 
 /** A board's debug headers (a probe's own port does not count). */
 export const debugHeaders = (b: Board): Comp[] => (b.kind === 'box' ? [] : b.comps.filter(isDebugPort));
@@ -107,10 +111,10 @@ export function uartWiring(c: Comp): string {
 /** How long a probe's ribbon is: what the box says, else a typical J-Link cable. */
 export const ribbonOf = (b: Board) => b.box?.ribbon ?? 200;
 
-/** The probes cabled to a board's debug headers, in the order of its headers. */
+/** The probes and adapters cabled to a board's debug and UART headers, in the order of its headers. */
 export function probesOf(p: Project, m: Module): Module[] {
   const out: Module[] = [];
-  for (const c of debugHeaders(m.board)) {
+  for (const c of [...debugHeaders(m.board), ...uartHeaders(m.board)]) {
     for (const l of p.links ?? []) {
       const mine = l.a.module === m.id && baseRef(l.a.ref) === c.ref ? l.b : l.b.module === m.id && baseRef(l.b.ref) === c.ref ? l.a : null;
       const pm = mine && p.modules.find((x) => x.id === mine.module);
@@ -126,14 +130,14 @@ export function targetOf(p: Project, probe: Module): Module | null {
     const other = l.a.module === probe.id ? l.b : l.b.module === probe.id ? l.a : null;
     const m = other && p.modules.find((x) => x.id === other.module);
     const c = m?.board.comps.find((x) => x.ref === baseRef(other!.ref));
-    if (m && c && m.board.kind !== 'box' && isDebugPort(c)) return m;
+    if (m && c && m.board.kind !== 'box' && (isDebugPort(c) || isUartPort(c))) return m;
   }
   return null;
 }
 
 /**
- * Stack the probes of each board one on another (the first in its own holder, the next on a printed layer on its
- * corner towers, and so on), so they take one dock slot. Probes that are already in a stack are left as they are.
+ * Stack the probes and adapters of each board one on another (the first in its own holder, the next on a printed
+ * layer on its corner towers, and so on), so they take one dock slot. New ones go on top of a stack already there.
  * Returns whether anything changed.
  */
 export function stackProbes(p: Project): boolean {
@@ -141,8 +145,13 @@ export function stackProbes(p: Project): boolean {
   for (const m of p.modules) {
     if (m.board.kind === 'box') continue;
     const ps = probesOf(p, m);
-    if (ps.length < 2 || ps.some((x) => x.on || p.modules.some((y) => y.on === x.id))) continue;
-    for (let k = 1; k < ps.length; k++) { ps[k].on = ps[k - 1].id; ps[k].onMode = 'towers'; }
+    if (ps.length < 2) continue;
+    // new ones go on top of the stack already there
+    const stacked = ps.filter((x) => x.on || p.modules.some((y) => y.on === x.id)), loose = ps.filter((x) => !stacked.includes(x));
+    if (!loose.length) continue;
+    let top = stacked.length ? stacked.find((x) => !p.modules.some((y) => y.on === x.id)) : loose.shift();
+    if (!top) continue;
+    for (const x of loose) { x.on = top.id; x.onMode = 'towers'; top = x; }
     changed = true;
   }
   return changed;
@@ -179,6 +188,72 @@ export function addProbes(p: Project, boardId: string): Module[] {
   stackProbes(p);
   return out;
 }
+
+/**
+ * The jumper wires between an adapter's serial pins and a board's UART header: ground to ground, and each one's TX to
+ * the other's RX (black, green, white, as on the common cables). `a`, `b`: the link's two ends.
+ */
+export function autoWires(a: Comp, b: Comp): Wire[] {
+  const ua = uartPins(a), ub = uartPins(b);
+  if (!ua || !ub) return [];
+  return [
+    { a: ua.gnd.n, b: ub.gnd.n, colour: UART_WIRES[0].colour },
+    { a: ua.tx.n, b: ub.rx.n, colour: UART_WIRES[1].colour },
+    { a: ua.rx.n, b: ub.tx.n, colour: UART_WIRES[2].colour },
+  ];
+}
+
+/** A jumper link with its wires filled in when it has none (two UART headers: the crossover). Mutates the link. */
+export function fillWires(p: Project, l: Link): Link {
+  if (l.kind !== 'jumper' || l.wires?.length) return l;
+  const comp = (r: { module: string; ref: string }) => p.modules.find((m) => m.id === r.module)?.board.comps.find((c) => c.ref === baseRef(r.ref));
+  const a = comp(l.a), b = comp(l.b);
+  if (a && b) l.wires = autoWires(a, b);
+  return l;
+}
+
+/**
+ * A USB-serial adapter for every UART header of a board that has nothing on it yet: jumper wires from its pins to the
+ * header (the crossover), stacked with the board's probes behind it; its USB left for Auto-connect. Mutates the
+ * project; returns the new adapters.
+ */
+export function addAdapters(p: Project, boardId: string): Module[] {
+  const m = p.modules.find((x) => x.id === boardId);
+  if (!m) return [];
+  const taken = new Set((p.links ?? []).flatMap((l) => [`${l.a.module}/${baseRef(l.a.ref)}`, `${l.b.module}/${baseRef(l.b.ref)}`]));
+  const free = uartHeaders(m.board).filter((c) => !taken.has(`${m.id}/${c.ref}`));
+  const names = new Set(p.modules.map((x) => x.board.name));
+  const short = m.board.name.length > 18 ? `${m.board.name.slice(0, 17)}…` : m.board.name;
+  const out: Module[] = [];
+  for (const c of free) {
+    let name = `${BOX_PRESETS.ftdi.name} (${short} ${c.ref})`;
+    for (let n = 2; names.has(name); n++) name = `${BOX_PRESETS.ftdi.name} ${n} (${short} ${c.ref})`;
+    names.add(name);
+    const ab = makeBox('ftdi', name), pins = ab.comps.find(isUartPort)!;
+    const mod = newModule(ab, m.holder);
+    // after the board and its probes
+    const at = Math.max(p.modules.indexOf(m), ...probesOf(p, m).map((x) => p.modules.indexOf(x))) + 1;
+    p.modules.splice(at, 0, mod);
+    if (p.active >= at) p.active++;
+    p.links = numberLinks([...(p.links ?? []), { id: `l${Math.random().toString(36).slice(2, 8)}`, a: { module: mod.id, ref: pins.ref }, b: { module: m.id, ref: c.ref }, kind: 'jumper', wires: autoWires(pins, c) }]);
+    out.push(mod);
+  }
+  stackProbes(p);
+  return out;
+}
+
+const COLOUR_NAME: Record<string, string> = { '#1f2124': 'black', '#2f9e44': 'green', '#e6e6e2': 'white', '#d0443a': 'red', '#e0a030': 'yellow', '#3b7dd8': 'blue' };
+
+/** Which pin each jumper wire of a link goes between, in words. */
+export function jumperWiring(p: Project, l: Link): string {
+  const end = (r: { module: string; ref: string }) => { const m = p.modules.find((x) => x.id === r.module); const c = m?.board.comps.find((x) => x.ref === baseRef(r.ref)); return { m, pins: c ? headerPins(c) : [] }; };
+  const A = end(l.a), B = end(l.b);
+  const pin = (e: typeof A, n: string) => { const q = e.pins.find((x) => x.n === n); return `pin ${n}${q?.net ? ` (${q.net.replace(/^\//, '')})` : ''}`; };
+  return (l.wires ?? []).map((w) => `${COLOUR_NAME[w.colour ?? ''] ?? 'a'} wire from ${A.m?.board.kind === 'box' ? '' : `${l.a.ref} `}${pin(A, w.a)} to ${B.m?.board.kind === 'box' ? '' : `${l.b.ref} `}${pin(B, w.b)}`).join(', ');
+}
+
+/** Jumper wires to buy: the shortest standard length that reaches. */
+export const jumperToBuy = (mm: number) => [100, 150, 200, 300].find((l) => l >= mm * 1.05) ?? Math.ceil((mm * 1.05) / 100) * 100;
 
 /** Debug ribbons that need an adapter: a 20-pin probe on a 10-pin header (the J-Link 9-pin Cortex-M adapter). */
 export function adapterFor(probePort: Comp, header: Comp): string | null {

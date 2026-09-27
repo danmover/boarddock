@@ -62,7 +62,7 @@ function BoardChip({ m, color, rider, children, acc }: { m: Module; color: strin
   const i = p.modules.indexOf(m);
   const d = useDrop((id) => { if (id !== m.id && !stackOn(id, m.id)) store.set({ toast: 'That would put a board on top of itself.' }); });
   return (
-    <div className={`bchip ${rider ? 'rider' : ''} ${p.active === i ? 'sel' : ''} ${d.over ? 'over' : ''}`} draggable {...d.props}
+    <div className={`rchip ${rider ? 'rider' : ''} ${p.active === i ? 'sel' : ''} ${d.over ? 'over' : ''}`} draggable {...d.props}
       onDragStart={(e) => { e.dataTransfer.setData(MODULE_DRAG, m.id); e.dataTransfer.effectAllowed = 'move'; e.stopPropagation(); }}
       onClick={(e) => { e.stopPropagation(); setActive(i); select([{ kind: 'module', id: m.id }]); }}
       title="Drag onto a slot, a rail, or another board to stack it on top">

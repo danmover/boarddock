@@ -8,8 +8,8 @@ export type PlugRole = 'host' | 'device' | 'power-in' | 'power-in-dc' | 'power-o
 
 const ROLES: PlugRole[] = ['host', 'device', 'power-in', 'power-in-dc', 'power-out', 'hub-up', 'hub-down', 'net', 'video', 'audio', 'wire', 'debug', 'uart', 'other'];
 
-export const KIND_COLOR: Record<NonNullable<Link['kind']>, string> = { usb: '#3a3f47', power: '#d0443a', net: '#3b7dd8', video: '#7a5cc7', audio: '#2fae9a', wire: '#e0a030', debug: '#a3a9b1', uart: '#c0772f' };
-export const KIND_NAME: Record<NonNullable<Link['kind']>, string> = { usb: 'USB', power: 'power', net: 'Ethernet', video: 'video', audio: 'audio', wire: 'wires', debug: 'debug ribbon', uart: 'USB-serial' };
+export const KIND_COLOR: Record<NonNullable<Link['kind']>, string> = { usb: '#3a3f47', power: '#d0443a', net: '#3b7dd8', video: '#7a5cc7', audio: '#2fae9a', wire: '#e0a030', debug: '#a3a9b1', uart: '#c0772f', jumper: '#4f9d57' };
+export const KIND_NAME: Record<NonNullable<Link['kind']>, string> = { usb: 'USB', power: 'power', net: 'Ethernet', video: 'video', audio: 'audio', wire: 'wires', debug: 'debug ribbon', uart: 'USB-serial', jumper: 'jumper wires' };
 
 /** Connector types that are debug connectors (a probe's ribbon plugs in). */
 export const DEBUG_TYPES = new Set(['swd10', 'jtag20', 'tagconnect']);
@@ -28,7 +28,7 @@ export const isUartPort = (c: Comp) => !!c.conn && !c.hidden && (c.role ? c.role
 const plugTypeName: Record<string, string> = {
   usb_c: 'USB-C', usb_micro_b: 'micro-USB', usb_mini_b: 'mini-USB', usb_a: 'USB-A', usb_a_dual: 'USB-A', usb_b: 'USB-B',
   hdmi_micro: 'micro-HDMI', hdmi_mini: 'mini-HDMI', hdmi_a: 'HDMI', rj45: 'RJ45', barrel: 'DC barrel', audio35: '3.5 mm', terminal: 'wires', header: 'jumper',
-  swd10: '10-pin debug', jtag20: '20-pin debug', tagconnect: 'Tag-Connect', iec_c7: 'mains (C7)',
+  swd10: '10-pin debug', jtag20: '20-pin debug', tagconnect: 'Tag-Connect', iec_c7: 'mains (C7)', pins_ra: 'pins',
 };
 
 export function plugRole(m: Module, c: Comp): PlugRole {
@@ -64,6 +64,7 @@ export function linkKind(ra: PlugRole, rb: PlugRole): Link['kind'] {
   if (r.includes('video')) return 'video';
   if (r.includes('audio')) return 'audio';
   if (r.includes('debug')) return 'debug';
+  if (ra === 'uart' && rb === 'uart') return 'jumper';
   if (r.includes('uart')) return 'uart';
   if (r.includes('wire')) return 'wire';
   return 'usb';
@@ -73,7 +74,7 @@ export function linkKind(ra: PlugRole, rb: PlugRole): Link['kind'] {
 export function compatible(ra: PlugRole, rb: PlugRole): boolean {
   const pair = (x: PlugRole, y: PlugRole) => (ra === x && rb === y) || (ra === y && rb === x);
   return pair('power-in', 'power-out') || pair('power-in', 'host') || pair('power-in', 'hub-down') || pair('device', 'host') || pair('device', 'hub-down') || pair('hub-up', 'host')
-    || pair('net', 'net') || pair('wire', 'wire') || pair('video', 'video') || pair('audio', 'audio') || pair('power-in-dc', 'wire') || pair('debug', 'debug') || pair('uart', 'hub-down') || pair('uart', 'host');
+    || pair('net', 'net') || pair('wire', 'wire') || pair('video', 'video') || pair('audio', 'audio') || pair('power-in-dc', 'wire') || pair('debug', 'debug') || pair('uart', 'uart') || pair('uart', 'hub-down') || pair('uart', 'host');
 }
 
 export interface PlugInfo { ref: PlugRef; module: Module; comp: Comp; role: PlugRole; label: string }
@@ -148,9 +149,10 @@ export function autoLinks(p: Project): Link[] {
     if (src.role === 'power-out') left.set(src.module.id, room(src) - n.load);
   }
   for (const dev of free('device')) { const h = nearest(dev, free('hub-down')) ?? nearest(dev, free('host')); if (h) take(dev, h); }
-  // debug probes: each free probe to the nearest free debug header on a board (never probe to probe)
-  for (const pr of free('debug').filter((x) => x.module.board.kind === 'box')) {
-    const h = nearest(pr, free('debug').filter((x) => x.module.board.kind !== 'box'));
+  // debug probes and serial adapters: each free one to the nearest free header of its kind on a board (never probe to
+  // probe); an adapter's jumper wires are filled in by the caller
+  for (const r of ['debug', 'uart'] as const) for (const pr of free(r).filter((x) => x.module.board.kind === 'box')) {
+    const h = nearest(pr, free(r).filter((x) => x.module.board.kind !== 'box'));
     if (h) take(pr, h);
   }
   return out;

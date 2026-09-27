@@ -4,7 +4,7 @@ import type { Board, BoxFace, BoxSpec, Comp, Hole, HoleRole, PartOut, Project, V
 import { applyHoleRoles, boltedOn, detectHoleRoles, ROLE_INFO } from '../model/holes';
 import { baseRef, refText, cableNumbers, cablePurpose, shortName, compatible, KIND_COLOR, linkKind, linkOf, plugName, plugRole, plugsOf, portBudget, sameRef } from '../model/links';
 import { applyBox, BOX_PORT_TYPES, BOX_PRESETS, BOX_ROLES, boxProblems, FACE_NAME, inferBox, layoutPorts, makeBox, tightFaces } from '../model/boxes';
-import { addJLinks, addLinks, addUartCables, removeLinks, setLink } from './linkOps';
+import { addJLinks, addLinks, addSerialAdapters, addUartCables, removeLinks, setLink } from './linkOps';
 import { adapterFor, debugHeaders, isDebugPort, isProbe, isUartPort, markDebug, uartHeaders, uartPins, type DebugKind } from '../model/probes';
 import { Icon, I } from './icons';
 import { CONNECTORS, DEFAULT_FEATURES, HOLDER_PRESETS, MATERIALS, PRINTERS, connById, connSetup } from '../model/library';
@@ -435,10 +435,11 @@ function DebugProbes() {
       {(freeDbg.length > 0 || freeUart.length > 0) && (
         <div className="btns" style={{ marginTop: 8, flexWrap: 'wrap' }}>
           {freeDbg.length > 0 && <button className="btn small soft" onClick={() => addJLinks(m.id)}>Add {freeDbg.length > 1 ? `${freeDbg.length} J-Links` : 'a J-Link'}</button>}
-          {freeUart.length > 0 && <button className="btn small soft" onClick={() => addUartCables(m.id)}>Add {freeUart.length > 1 ? `${freeUart.length} USB-serial cables` : 'a USB-serial cable'}</button>}
+          {freeUart.length > 0 && <button className="btn small soft" onClick={() => addSerialAdapters(m.id)} title="The FT232RL board: jumper wires from its pins to the header">Add {freeUart.length > 1 ? `${freeUart.length} USB-serial adapters` : 'a USB-serial adapter'}</button>}
+          {freeUart.length > 0 && <button className="btn small ghost" onClick={() => addUartCables(m.id)} title="A USB to TTL cable with loose jumper ends, straight to a hub">or a serial cable</button>}
         </div>
       )}
-      <p className="hint">{heads.length > 0 && 'Each J-Link slides down into a slot in the back of this board\'s dock, USB end up (more than one: the slots stack on towers); its ribbon loops over the top of the dock to its header, and its USB goes to a hub (Auto-connect). '}{uarts.length > 0 && 'A USB-serial cable (USB to TTL, 3.3 V: the adapter is in its USB plug) goes from the nearest free USB port to each UART header, its loose jumper ends pushed onto the GND, RX and TX pins. '}Found by shape (2 × 5 at 1.27 mm) or name (SWD, JTAG, debug, UART, serial, TX/RX); mark others by selecting them and choosing <b>Debug / UART</b>.</p>
+      <p className="hint">{heads.length > 0 && 'Each J-Link slides down into a slot in the back of this board\'s dock, USB end up (more than one: the slots stack on towers); its ribbon loops over the top of the dock to its header, and its USB goes to a hub (Auto-connect). '}{uarts.length > 0 && 'A USB-serial adapter (the little FT232RL board) goes in the slot behind the board too, with jumper wires from its pins to the header: GND to GND, its TXD to the board\'s RX, its RXD to the board\'s TX. (Or a serial cable with loose ends, straight to a hub.) '}Found by shape (2 × 5 at 1.27 mm) or name (SWD, JTAG, debug, UART, serial, TX/RX); mark others by selecting them and choosing <b>Debug / UART</b>.</p>
     </Section>
   );
 }
@@ -1414,8 +1415,11 @@ function shopping(p: Project, res: Res, d: Delta | null, tot: { g: number; m: nu
   const typeOf = (id: string, end: 'a' | 'b') => { const l = (p.links ?? []).find((x) => x.id === id); const r = l?.[end]; return plugName(p.modules.find((m) => m.id === r?.module)?.board.comps.find((c) => c.ref === baseRef(r?.ref ?? ''))?.conn?.type ?? ''); };
   if (cables.length) {
     const g = new Map<string, number[]>();
-    for (const c of cables) { const k = c.kind === 'uart' ? `USB to TTL serial cable, 3.3 V, with loose jumper ends (PL2303 or CP2102 type, like Adafruit 954), ${c.buy} m or longer` : `${c.buy} m ${typeOf(c.id, 'a')} to ${typeOf(c.id, 'b')} cable`; g.set(k, [...(g.get(k) ?? []), c.no ?? 0]); }
-    out.push({ head: 'Cables', items: [...g.entries()].map(([k, ns]) => `${ns.length} × ${k} (number${ns.length > 1 ? 's' : ''} ${ns.sort((a, b) => a - b).join(', ')})`) });
+    for (const c of cables) {
+      // jumper wires are bought by the wire: one per pin they join
+      if (c.kind === 'jumper') { const n = (p.links ?? []).find((x) => x.id === c.id)?.wires?.length ?? 3; const k = `female–female jumper wires (Dupont), ${Math.round(c.buy * 100)} cm`; g.set(k, [...(g.get(k) ?? []), ...Array(n).fill(c.no ?? 0)]); continue; }
+      const k = c.kind === 'uart' ? `USB to TTL serial cable, 3.3 V, with loose jumper ends (PL2303 or CP2102 type, like Adafruit 954), ${c.buy} m or longer` : `${c.buy} m ${typeOf(c.id, 'a')} to ${typeOf(c.id, 'b')} cable`; g.set(k, [...(g.get(k) ?? []), c.no ?? 0]); }
+    out.push({ head: 'Cables', items: [...g.entries()].map(([k, ns]) => { const u = [...new Set(ns)].sort((a, b) => a - b); return `${ns.length} × ${k} (number${u.length > 1 ? 's' : ''} ${u.join(', ')})`; }) });
   }
   const newIds = new Set(p.built ? p.modules.filter((m) => !p.built!.boards.includes(m.id)).map((m) => m.id) : p.modules.map((m) => m.id));
   const mods = p.modules.filter((m) => !d || newIds.has(m.id));

@@ -5,7 +5,7 @@ import type { Board, BoxFace, BoxPortGroup, BoxSpec, Comp } from './types';
 import { connById, connSetup } from './library';
 import { roundedRectLoop, uid } from '../geom/poly';
 
-export const BOX_PORT_TYPES = ['usb_a', 'usb_c', 'usb_micro_b', 'usb_b', 'barrel', 'iec_c7', 'rj45', 'hdmi_a', 'audio35', 'terminal', 'jtag20', 'swd10'] as const;
+export const BOX_PORT_TYPES = ['usb_a', 'usb_c', 'usb_micro_b', 'usb_b', 'barrel', 'iec_c7', 'rj45', 'hdmi_a', 'audio35', 'terminal', 'jtag20', 'swd10', 'pins_ra'] as const;
 
 export const BOX_ROLES: [string, string][] = [
   ['hub-down', 'hub port: a device plugs in'],
@@ -16,6 +16,7 @@ export const BOX_ROLES: [string, string][] = [
   ['device', 'device: goes to a hub or computer'],
   ['net', 'network'],
   ['debug', "debug: a ribbon to a board's debug header"],
+  ['uart', "serial pins: jumper wires to a board's UART header"],
   ['other', 'leaves the rack (mains, supply, screen)'],
 ];
 
@@ -32,13 +33,19 @@ export const BOX_PRESETS: Record<string, { name: string; color: string; spec: ()
   charger6: { name: 'USB charger (A + C)', color: '#e9e7e2', spec: () => ({ l: 110, w: 70, h: 30, groups: [g('usb_a', 4, 'back', 'power-out'), g('usb_c', 2, 'back', 'power-out'), g('iec_c7', 1, 'front', 'other')] }) },
   // a debug probe: a slim board about 5 cm square and 3 mm thick, the 10-pin ribbon socket on its top face by one
   // edge and the micro-USB on the edge opposite
+  // a USB to TTL serial adapter (the red FT232RL board): mini-USB at one end, six right-angle pins at the other
+  ftdi: { name: 'USB-serial adapter', color: '#c8201e', spec: () => ({ l: 36, w: 18, h: 1.6, groups: [{ ...g('pins_ra', 1, 'left', 'uart'), pins: ['DTR', 'RXD', 'TXD', 'VCC', 'CTS', 'GND'] }, g('usb_mini_b', 1, 'right', 'device')] }),
+    note: "A USB to TTL serial adapter (FT232RL): it slides into a slot behind its board, like a J-Link; jumper wires go from its pins to the board's UART header (GND to GND, its TXD to the board's RX, its RXD to the board's TX), its USB to a hub. Set its size, pins and their names under Box to match yours." },
   jlink: { name: 'J-Link', color: '#9c2b25', spec: () => ({ l: 50, w: 50, h: 3, ribbon: 200, groups: [{ ...g('swd10', 1, 'top', 'debug'), near: 'front' }, g('usb_micro_b', 1, 'back', 'device')] }),
     note: "A debug probe: it slides down into a slot in the back of its board's dock, USB end up; its ribbon goes up over the dock to the board's debug header, its USB to a hub. Set its size, thickness (Height), ports and ribbon length under Box to match yours." },
 };
 
+/** A bare board rather than a box: a probe or an adapter a few mm thick, its ports standing on it. */
+export const isBare = (s: BoxSpec) => s.h < 5;
+
 /** Length of a face and the ports' spacing on it. */
 const faceLen = (s: BoxSpec, f: BoxFace) => (f === 'left' || f === 'right' ? s.w : s.l);
-const portWidth = (type: string) => connById(type).body.w;
+const portWidth = (type: string, g?: BoxPortGroup) => (type === 'pins_ra' ? (g?.pins?.length ?? 6) * 2.54 : connById(type).body.w);
 
 /** Port positions along each face: groups side by side, centred, 5 mm between ports (less if they don't fit). */
 export function layoutPorts(s: BoxSpec): { group: BoxPortGroup; i: number; along: number; row: number }[] {
@@ -47,12 +54,12 @@ export function layoutPorts(s: BoxSpec): { group: BoxPortGroup; i: number; along
     const gs = s.groups.filter((x) => x.face === face && x.count > 0);
     if (!gs.length) continue;
     const L = faceLen(s, face);
-    const span = (gap: number, between: number) => gs.reduce((a, x) => a + x.count * portWidth(x.type) + (x.count - 1) * gap, 0) + (gs.length - 1) * between;
+    const span = (gap: number, between: number) => gs.reduce((a, x) => a + x.count * portWidth(x.type, x) + (x.count - 1) * gap, 0) + (gs.length - 1) * between;
     let gap = 5, between = 9;
     if (span(gap, between) > L - 6) { gap = 1.5; between = 3; }
     let at = (L - span(gap, between)) / 2;
     for (const x of gs) for (let i = 0; i < x.count; i++) {
-      const w = portWidth(x.type);
+      const w = portWidth(x.type, x);
       out.push({ group: x, i, along: at + w / 2, row: 0 });
       at += w + (i < x.count - 1 ? gap : between);
     }
@@ -64,7 +71,8 @@ export function layoutPorts(s: BoxSpec): { group: BoxPortGroup; i: number; along
 export function tightFaces(s: BoxSpec): { face: BoxFace; need: number; have: number; dim: 'l' | 'w' }[] {
   return (Object.keys(FACE_NAME) as BoxFace[]).flatMap((face) => {
     const gs = s.groups.filter((x) => x.face === face && x.count > 0);
-    const need = Math.ceil(gs.reduce((a, x) => a + x.count * (portWidth(x.type) + 1.5), 0) + 3);
+    // a bare board's header can run nearly edge to edge; a box's ports want a margin
+    const bare = isBare(s), need = Math.ceil(gs.reduce((a, x) => a + x.count * (portWidth(x.type, x) + (bare ? 0 : 1.5)), 0) + (bare ? 1 : 3));
     return gs.length && need > faceLen(s, face) ? [{ face, need, have: faceLen(s, face), dim: face === 'left' || face === 'right' ? 'w' as const : 'l' as const }] : [];
   });
 }
@@ -76,12 +84,12 @@ export function boxProblems(s: BoxSpec): string[] {
     const gs = s.groups.filter((x) => x.face === face && x.count > 0);
     const hMax = Math.max(0, ...gs.map((x) => connById(x.type).body.h));
     // a slim probe's connectors stand proud of it, as on a bare board
-    if (face !== 'top' && hMax > s.h - 1 && !s.groups.some((x) => x.role === 'debug')) out.push(`${FACE_NAME[face]}: a ${connById(gs.find((x) => connById(x.type).body.h === hMax)!.type).name} is taller than the box.`);
+    if (face !== 'top' && hMax > s.h - 1 && !isBare(s)) out.push(`${FACE_NAME[face]}: a ${connById(gs.find((x) => connById(x.type).body.h === hMax)!.type).name} is taller than the box.`);
   }
   return out;
 }
 
-const PREFIX: Record<string, string> = { 'hub-down': 'P', 'hub-up': 'UP', 'power-out': 'OUT', 'power-in': 'PWR', host: 'USB', device: 'USB', net: 'LAN', debug: 'DBG' };
+const PREFIX: Record<string, string> = { 'hub-down': 'P', 'hub-up': 'UP', 'power-out': 'OUT', 'power-in': 'PWR', host: 'USB', device: 'USB', net: 'LAN', debug: 'DBG', uart: 'SER' };
 const prefixOf = (x: BoxPortGroup) => PREFIX[x.role] ?? (x.type === 'iec_c7' ? 'AC' : x.type === 'barrel' ? 'DC' : x.type === 'rj45' ? 'LAN' : 'J');
 
 /**
@@ -131,9 +139,18 @@ export function boxPorts(s: BoxSpec): Comp[] {
     const edge = group.face === 'front' ? 0 : group.face === 'back' ? s.w : group.face === 'left' ? 0 : s.l;
     const out = angle === 0 || angle === 90 ? 1 : -1;
     const c = edge - out * (t.body.l / 2);
-    const conn = { ...connSetup(t, angle), entry: 'edge' as const, zc: -s.h / 2, cradle: false, cap: false, guard: false, tie: false };
-    return { id: uid('c'), ref, pkg: t.name, side: 'top', x: horizontal ? c : along, y: horizontal ? along : c, rot: 0,
-      w: horizontal ? 2 : t.body.w, l: horizontal ? t.body.w : 2, h: 0.2, kind: 'connector', tht: false, role: group.role, conn } as Comp;
+    // on a bare board (a probe, an adapter: a few mm thick) a port stands on its top face at the edge; on a box it is
+    // in its side
+    const bare = isBare(s), bw = portWidth(group.type, group);
+    const conn = { ...connSetup(t, angle), entry: 'edge' as const, zc: bare ? t.zc : -s.h / 2, cradle: false, cap: false, guard: false, tie: false };
+    const comp = { id: uid('c'), ref, pkg: t.name, side: 'top', x: horizontal ? c : along, y: horizontal ? along : c, rot: 0,
+      w: horizontal ? 2 : bw, l: horizontal ? bw : 2, h: bare ? t.body.h : 0.2, kind: 'connector', tht: false, role: group.role, conn } as Comp;
+    if (group.pins?.length) {
+      // pin 1 at the left of the row, looking at the face from outside; each pin where it leaves the edge
+      const d = [Math.cos((angle * Math.PI) / 180), Math.sin((angle * Math.PI) / 180)], wv = [-d[1], d[0]], n = group.pins.length;
+      comp.pins = group.pins.map((net, i) => { const a = (i - (n - 1) / 2) * -2.54; return { n: String(i + 1), x: comp.x + d[0] * (t.body.l / 2) + wv[0] * a, y: comp.y + d[1] * (t.body.l / 2) + wv[1] * a, net }; });
+    }
+    return comp;
   });
 }
 

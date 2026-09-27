@@ -1,10 +1,11 @@
 // Builds every printable part for a project: the board holder (tray), DIN clip, plug caps, plus display ghosts
 // (board, components, plugs, rail) and a report of checks. All parts come out in print orientation.
-import type { Anim, Board, Check, Comp, EdgeName, Feature, GenResult, Ghost, HolderSettings, Loop, MeshData, MountSettings, PartOut, PickTag, Project, V2 } from '../model/types';
+import type { Anim, Board, Check, Comp, EdgeName, Feature, GenResult, Ghost, HolderSettings, Loop, MeshData, MountSettings, PartOut, PickTag, Pin, Project, V2 } from '../model/types';
 import { holeKeepout, isMountHole } from '../model/holes';
 import { boxProblems } from '../model/boxes';
 import { DEBUG_TYPES, isDebugPort, isUartPort } from '../model/links';
-import { UART_WIRES, uartPins } from '../model/probes';
+import { headerPins, UART_WIRES, uartPins } from '../model/probes';
+import { baseRef } from '../model/links';
 import { DEFAULT_FEATURES, MATERIALS } from '../model/library';
 import { bbox, centroid, compRect, extentAlong, inside, rad, rayExit, round, segDist } from '../geom/poly';
 import type { CS, MF } from './kernel';
@@ -143,7 +144,7 @@ export { computeLevels } from './levels';
 /** Where a cable leaves a plug: point, outward direction, cable size, and (for a ribbon) the plug's width axis. */
 /** Where a cable leaves a plug: the point, its axis out, the plug's width axis; `span`: how deep an IDC socket is across
  * its ribbon; `wires`: a serial cable's loose ends, the top of each jumper on its pin. */
-export interface PlugEnd { module: string; ref: string; p: [number, number, number]; d: [number, number, number]; cable: number; w?: [number, number, number]; span?: number; wires?: { p: [number, number, number]; colour: string }[] }
+export interface PlugEnd { module: string; ref: string; p: [number, number, number]; d: [number, number, number]; cable: number; w?: [number, number, number]; span?: number; wires?: { p: [number, number, number]; colour: string; pin?: string }[] }
 export interface ModuleOut { parts: PartOut[]; ghosts: Ghost[]; warnings: string[]; checks: Check[]; levels: GenResult['report']['levels']; clipAt: V2 | null; clipT: number[] | null; dockM: M4 | null; features: Feature[]; plugs: PlugEnd[] }
 
 // Built modules are cached by their inputs: moving, turning or re-pairing docks does not rebuild holders.
@@ -170,7 +171,20 @@ export function buildModule(job: Job): ModuleOut {
  * A debug probe (J-Link): a thin box that slides down into a slot from its open end, plugs first out, and stays there
  * (see slotBody). Several for one board stack as slots on corner towers.
  */
-const isProbeBox = (b: Board) => b.kind === 'box' && b.comps.some(isDebugPort);
+const isProbeBox = (b: Board) => b.kind === 'box' && b.comps.some((c) => isDebugPort(c) || isUartPort(c));
+
+/** The pins of a header that have a wire pushed on (a jumper link's, or a serial cable's loose ends), with its colour. */
+function wiredPins(C: Ctx, c: Comp): { pin: Pin; colour: string }[] {
+  const mine = (r: { module: string; ref: string }) => r.module === C.mid && baseRef(r.ref) === c.ref;
+  const l = (C.p.links ?? []).find((x) => mine(x.a) || mine(x.b));
+  if (!l) return [];
+  if (l.kind === 'jumper' && l.wires?.length) {
+    const pins = headerPins(c), end = mine(l.a) ? 'a' : 'b';
+    return l.wires.flatMap((w) => { const q = pins.find((x) => x.n === w[end]); return q ? [{ pin: q, colour: w.colour ?? '#4f9d57' }] : []; });
+  }
+  const u = l.kind === 'uart' ? uartPins(c) : null;
+  return u ? UART_WIRES.map((wd) => ({ pin: u[wd.key], colour: wd.colour })) : [];
+}
 
 /** Boxes (hubs, chargers, probes) sit in low guards: no snap fingers, notches or label. Hubs and chargers are strapped down. */
 const holderFor = (H: HolderSettings, b: Board): HolderSettings =>
@@ -365,12 +379,12 @@ function connectors(C: Ctx) {
       // the header's long side)
       const ang = b.kind === 'box' && !isDebugPort(c) ? 0 : c.w >= c.l ? c.rot : c.rot + 90;
       const tag = { kind: 'plug' as const, module: C.mid, refs: [c.ref] }, anim = { seq: 30, dir: [0, 0, 1] as [number, number, number] };
-      const u = c.side === 'top' && isUartPort(c) ? uartPins(c) : null;
-      if (u) {
-        // a serial cable's loose jumper ends, each pushed down over its pin onto the header's plastic
+      const wp = c.side === 'top' && cn.type === 'header' ? wiredPins(C, c) : [];
+      if (wp.length) {
+        // jumper wires' housings, each pushed down over its pin onto the header's plastic
         const z0 = zt + Math.min(2.5, c.h), top = z0 + 14.6;
-        const wires = UART_WIRES.map((wd) => { const q = u[wd.key]; C.ghosts.push(...plugUp(q.x, q.y, z0 - 0.6, { w: 2.5, h: 2.5, len: 14, cable: 1.4 }, tag, anim, 'dupont')); return { p: [q.x, q.y, top] as [number, number, number], colour: wd.colour }; });
-        const cx = wires.reduce((a2, q) => a2 + q.p[0], 0) / 3, cy = wires.reduce((a2, q) => a2 + q.p[1], 0) / 3;
+        const wires = wp.map(({ pin: q, colour }) => { C.ghosts.push(...plugUp(q.x, q.y, z0 - 0.6, { w: 2.5, h: 2.5, len: 14, cable: 1.4 }, tag, anim, 'dupont')); return { p: [q.x, q.y, top] as [number, number, number], colour, pin: q.n }; });
+        const cx = wires.reduce((a2, q) => a2 + q.p[0], 0) / wires.length, cy = wires.reduce((a2, q) => a2 + q.p[1], 0) / wires.length;
         C.plugs.push({ module: C.mid, ref: c.ref, p: [cx, cy, top], d: [0, 0, 1], cable: cn.plug.cable, w: [Math.cos(rad(ang)), Math.sin(rad(ang)), 0], wires });
         continue;
       }
@@ -389,6 +403,16 @@ function connectors(C: Ctx) {
     const zLo = zAx - ph / 2 - cl, zHi = Math.max(zAx + ph / 2 + cl, zw + 1);
     C.neg.push(orientedBox(mouth, d, Math.min(-0.6, sEdge - 0.5), toOut + 4, -(pw / 2 + cl), pw / 2 + cl, zLo, zHi + 20));
     C.blocked.push({ poly: orientedRect(mouth, d, -2, toOut + 2, -(pw / 2 + cl + 3), pw / 2 + cl + 3), why: c.ref });
+    // right-angle pins: a jumper's housing on each pin with a wire, straight out
+    if (cn.type === 'pins_ra') {
+      const wires = wiredPins(C, c).map(({ pin: q, colour }) => {
+        C.ghosts.push(...plugDetail([q.x, q.y], d, zAx, { w: 2.5, h: 2.5, len: 14, cable: 1.4 }, { kind: 'plug', module: C.mid, refs: [c.ref] }, { seq: 30, dir: [d[0], d[1], 0] }, 'dupont'));
+        return { p: [q.x + d[0] * 14.6, q.y + d[1] * 14.6, zAx] as [number, number, number], colour, pin: q.n };
+      });
+      const n = Math.max(1, wires.length), cx = wires.reduce((a2, q) => a2 + q.p[0], 0) / n || mouth[0] + d[0] * 14.6, cy = wires.reduce((a2, q) => a2 + q.p[1], 0) / n || mouth[1] + d[1] * 14.6;
+      C.plugs.push({ module: C.mid, ref: c.ref, p: [cx, cy, zAx], d: [d[0], d[1], 0], cable: 1.4, w: [-d[1], d[0], 0], ...(wires.length ? { wires } : {}) });
+      continue;
+    }
     // plug ghost
     C.ghosts.push(...plugDetail(mouth, d, zAx, cn.plug, { kind: 'plug', module: C.mid, refs: [c.ref] }, { seq: 30, dir: [d[0], d[1], 0] }, cn.type));
     const pe = [mouth[0] + d[0] * (cn.plug.len + 0.6), mouth[1] + d[1] * (cn.plug.len + 0.6)];
@@ -773,6 +797,8 @@ function slotBody(C: Ctx) {
   }
   // the stop at the closed end
   C.pos.push(orientedBox([0, 0], open, u0 - gw, u0 - H.gap, t0 - gw, t1 + gw, 0, zTop));
+  // no lip over a part standing at an edge (an adapter's USB socket, its pins): the slot is open there
+  for (const c of C.b.comps) if (!c.hidden && c.side === 'top' && c.h > 0.5) C.neg.push(ext(poly(compRect(c, 0.6)), zt + 0.05, zTop + 2));
   C.checks.push({ group: 'Holder', name: 'Slot', value: `${round(zt - zb, 1)} mm, open ${Math.abs(open[1]) > 0.7 ? (open[1] > 0 ? 'at the back' : 'at the front') : open[0] > 0 ? 'at the right' : 'at the left'}`, status: 'info', detail: `the probe slides in from its open end (plugs out), under a ${LIP} mm lip along each side, down to the stop; ${C.dock ? 'in the dock the open end points up, so it stays put' : 'friction holds it'}. Set its thickness under Box (Height) to match yours. Not print-tested yet.` });
 }
 

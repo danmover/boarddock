@@ -43,6 +43,7 @@ export const CONNECTORS: ConnType[] = [
   { id: 'jtag20', name: 'Debug 20-pin (JTAG, 2.54 mm)', entry: 'top', body: { w: 33.2, l: 8.9, h: 9 }, zc: 0, overhang: 0, plug: { w: 31, h: 7.6, len: 6.5, cable: 1.2 }, match: /$^/, cradle: false, note: "A J-Link's own 20-pin ribbon plugs straight in." },
   { id: 'tagconnect', name: 'Tag-Connect pads', entry: 'top', body: { w: 10, l: 5, h: 0.1 }, zc: 0, overhang: 0, plug: { w: 10, h: 5, len: 22, cable: 1 }, match: /$^/, cradle: false, note: 'Pads only: the Tag-Connect cable clips onto the board from above.' },
   { id: 'header', name: 'Pin header (Dupont)', entry: 'top', body: { w: 10.2, l: 2.54, h: 8.5 }, zc: 0, overhang: 0, plug: { w: 10.2, h: 2.54, len: 14, cable: 1.5 }, match: /pin[\s_-]?header|pin[\s_-]?socket|conn_\d+x\d+|header_\d|idc|box[\s_-]?header/i, cradle: false },
+  { id: 'pins_ra', name: 'Pin header, right-angle (Dupont)', entry: 'edge', body: { w: 15.24, l: 2.5, h: 2.5 }, zc: 1.27, overhang: 6, plug: { w: 15.2, h: 2.5, len: 14, cable: 1.4 }, match: /$^/, cradle: false, note: 'Jumper wires push onto its pins one by one.' },
   { id: 'iec_c7', name: 'Mains (figure-8, C7)', entry: 'edge', body: { w: 11.5, l: 12, h: 8 }, zc: 4, overhang: 0, plug: { w: 13, h: 9, len: 30, cable: 6 }, match: /iec[\s_-]?60320|figure[\s_-]?8/i, cradle: false },
   { id: 'custom', name: 'Custom connector', entry: 'edge', body: { w: 10, l: 8, h: 5 }, zc: 2.5, overhang: 0.5, plug: { w: 12, h: 8, len: 20, cable: 4 }, match: /$^/, cradle: true },
 ];
