@@ -125,9 +125,10 @@ const dirOf = (a: number): V2 => [Math.cos(rad(a)), Math.sin(rad(a))];
 /**
  * Where the tongue, spine, grip bar and button go on a holder docked by `edge`: clear of standoffs and plugs.
  * Under the middle of the board is best balanced but lifts the board over the spine; beside the board keeps the
- * board low and dodges a crowded top edge. Pure geometry, no kernel.
+ * board low and dodges a crowded top edge. `shift`: slide the holder along the dock by moving the tongue that far
+ * from the middle (a probe lining up with its board's headers). Pure geometry, no kernel.
  */
-export function dockSite(b: Board, H: HolderSettings, edge: EdgeName): DockSite {
+export function dockSite(b: Board, H: HolderSettings, edge: EdgeName, shift = 0): DockSite {
   const n = edgeNormal(edge), e: V2 = [n[1], -n[0]];
   const gw = H.gap + H.wall;
   const dn = (p: V2) => p[0] * n[0] + p[1] * n[1], de = (p: V2) => p[0] * e[0] + p[1] * e[1];
@@ -166,7 +167,7 @@ export function dockSite(b: Board, H: HolderSettings, edge: EdgeName): DockSite 
     const side = isUnder ? 0 : tc > tMid ? 1 : -1;
     const [g0, g1] = gripSpan(side), [h0, h1] = headSpan(side);
     const want = H.release ?? 'centre';
-    let pen = 0.3 * Math.abs(tc - tMid) + (!isUnder && fingerHeld ? 12 : 0) + (want === 'centre' && !isUnder ? 200 : want === 'side' && isUnder ? 200 : 0);
+    let pen = 0.3 * Math.abs(tc - tMid - shift) + (!isUnder && fingerHeld ? 12 : 0) + (want === 'centre' && !isUnder ? 200 : want === 'side' && isUnder ? 200 : 0);
     const conflicts: string[] = [];
     if (isUnder) {
       for (const p of posts) if (Math.abs(p.t - tc) < p.r + 3.3) pen += 1000;

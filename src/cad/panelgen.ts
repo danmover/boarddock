@@ -17,10 +17,10 @@ import { buildModule, builtLevels, transformMesh, type ArrangeHooks, type Module
 import { baseOf, ridersOf, stackLayers, type StackLayer } from '../model/holes';
 import { freeAll, toMesh, type MF } from './kernel';
 import { END_POSE, LEN_X, rail as railSolid, shoe, shoeBody, shoeLever, socket, SOCKET_Z } from './dock';
-import { autoAssign, bestDock, classify, clipToRail, dockSite, plugDirs, railMatrix, slotMatrix, withRiders } from './dockplan';
+import { autoAssign, bestDock, classify, clipToRail, dockSite, edgeNormal, plugDirs, railMatrix, slotMatrix, withRiders } from './dockplan';
 import { capStress, pieceMesh, planStands, railI, standBoxes, STAND, type StandLane } from './railstand';
-import { assemble, bestRoute, directRoute, escapes, hits, slope, type CableEnd, type Choice, type Obstacle, type Route } from './cableroute';
-import { isDebugPort, isProbe, ribbonOf } from '../model/probes';
+import { assemble, bestRoute, escapes, hits, ribbonRoute, slope, type Box, type CableEnd, type Choice, type Obstacle, type RibbonEnd, type Route } from './cableroute';
+import { isDebugPort, isProbe, isUartPort, ribbonOf, uartWiring } from '../model/probes';
 
 const SHOE_BOX = { x: [-LEN_X / 2, LEN_X / 2], y: [-29, 29], z: [0, 42.8] };
 
@@ -178,12 +178,27 @@ export function generatePanel(p: Project): GenResult {
         const layers = stackLayers(p, m);
         const riders = ridersOf(p, m);
         const plan = layers.length > 1 ? stackPlan(p, layers, mt.kind === 'dock' ? edge : null) : null;
-        const build = (e: EdgeName, H = m.holder) => buildModule({
+        const build = (e: EdgeName, H = m.holder, shift = 0) => buildModule({
           p, mi: i, b: m.board, H, din: mt.kind === 'flat', stand: false, hooks: plan?.[0].hooks ?? {}, name: m.board.name, bolted: boltedOf(layers[0]),
-          dock: mt.kind === 'dock' ? { edge: e, fit: P.fit ?? 0 } : undefined,
+          dock: mt.kind === 'dock' ? { edge: e, fit: P.fit ?? 0, ...(shift ? { shift } : {}) } : undefined,
           mount: mt.kind === 'flat' ? { ...p.mount, kind: 'din', mode: 'flat', rotation: mt.turn, at: null } : undefined,
         });
         let out = build(edge);
+        // a probe stack slides along its dock (its tongue off the middle) to line up with the debug headers of the
+        // board in the other slot, so its ribbons are short
+        if (mt.kind === 'dock' && isProbe(m) && seats.length) {
+          const other = seats[0], mine = new Set([m.id, ...riders.map((r) => r.id)]);
+          const heads: number[] = [];
+          for (const [o, T] of [[other.out, I4] as const, ...other.above.map((L) => [L.out, L.T] as const)]) for (const pe of o.plugs) {
+            if ((p.links ?? []).some((l) => l.kind === 'debug' && ((l.a.module === pe.module && l.a.ref === pe.ref && mine.has(l.b.module)) || (l.b.module === pe.module && l.b.ref === pe.ref && mine.has(l.a.module))))) heads.push(ptM(mul(other.M, T), pe.p)[0]);
+          }
+          const own = out.plugs.find((pe) => { const c = m.board.comps.find((x) => x.ref === pe.ref); return c && isDebugPort(c); });
+          const M0 = slotMatrix(mt.turn, slot, out.dockM!), n = edgeNormal(edge), ex = dir(M0, [n[1], -n[0], 0])[0];
+          if (heads.length && own && Math.abs(ex) > 0.5) {
+            const want = heads.reduce((q, x) => q + x, 0) / heads.length - ptM(M0, own.p)[0];
+            if (Math.abs(want) > 2) out = build(edge, m.holder, -want / ex);
+          }
+        }
         // an automatic dock edge that leaves nothing to clip the board in (a small board with no pin holes, its
         // fingers' walls taken by plugs and the dock) gives way to the next best edge that does hold it
         const loose = (o: ModuleOut) => o.warnings.some((w) => /^Nothing clips this board in/.test(w));
@@ -235,6 +250,19 @@ export function generatePanel(p: Project): GenResult {
       for (let k = 0; k < 3; k++) { all[k] = Math.min(all[k], b[k]); all[k + 3] = Math.max(all[k + 3], b[k + 3]); }
     }
     if (!isFinite(all[0])) { all.splice(0, 6, -LEN_X / 2, -20, 0, LEN_X / 2, 20, 30); }
+    // room at one end of a dock for its probes' ribbons to go round it, at the end nearer both of each one's sockets
+    if (mt.kind === 'dock') {
+      const at = new Map<string, number[]>();
+      for (const s of seats) for (const [out, T] of [[s.out, I4] as const, ...s.above.map((L) => [L.out, L.T] as const)]) for (const pe of out.plugs) at.set(`${pe.module}/${pe.ref}`, ptM(mul(s.M, T), pe.p));
+      const need = [0, 0];
+      for (const l of p.links ?? []) {
+        const A = at.get(`${l.a.module}/${l.a.ref}`), B = at.get(`${l.b.module}/${l.b.ref}`);
+        if (l.kind !== 'debug' || !A || !B) continue;
+        need[Math.abs(A[0] - all[0]) + Math.abs(B[0] - all[0]) <= Math.abs(all[3] - A[0]) + Math.abs(all[3] - B[0]) ? 0 : 1] += Math.min(ribbonWidth(l.a), ribbonWidth(l.b)) + 2;
+      }
+      if (need[0]) all[0] -= need[0] + 4;
+      if (need[1]) all[3] += need[1] + 4;
+    }
     // release lever on the side where the boards overhang the shoe least (easiest to reach)
     const mb = boxes.filter((bx) => bx.id);
     const over = (sgn: number) => Math.max(0, ...mb.map((bx) => (sgn > 0 ? bx.b[4] : -bx.b[1]) - 20));
@@ -420,7 +448,7 @@ export function generatePanel(p: Project): GenResult {
   const shoeInst: M4[] = [], sockInst: M4[] = [], dockIds: string[] = [];
   const features: Feature[] = [];
   const frames: Record<string, number[]> = {};
-  const ends = new Map<string, { p: number[]; d: number[]; cable: number; w?: number[] }>();
+  const ends = new Map<string, { p: number[]; d: number[]; cable: number; w?: number[]; span?: number; wires?: { p: number[]; colour: string }[] }>();
   // only links whose two boards are on the rack and still have that plug get a cable (and hold back their plugs)
   const hasRef = (id: string, ref: string) => !!mods.get(id)?.m.board.comps.some((c) => c.ref === baseRef(ref));
   const live = (p.links ?? []).filter((l) => placedIds.has(l.a.module) && placedIds.has(l.b.module) && hasRef(l.a.module, l.a.ref) && hasRef(l.b.module, l.b.ref));
@@ -466,7 +494,7 @@ export function generatePanel(p: Project): GenResult {
         layers.forEach((L, li) => {
           const nrm = dir(L.T, [0, 0, 1]) as [number, number, number];
           const layerPre: Motion[] = li > 0 ? [{ seq: b0 + 3, dir: nrm, dist: 30 }] : [];
-          for (const pe of L.out.plugs) ends.set(`${pe.module}/${pe.ref}`, { p: ptM(L.T, pe.p), d: dir(L.T, pe.d), cable: pe.cable, w: pe.w && dir(L.T, pe.w) });
+          for (const pe of L.out.plugs) ends.set(`${pe.module}/${pe.ref}`, { p: ptM(L.T, pe.p), d: dir(L.T, pe.d), cable: pe.cable, w: pe.w && dir(L.T, pe.w), span: pe.span, wires: pe.wires?.map((q) => ({ p: ptM(L.T, q.p), colour: q.colour })) });
           for (const pt of L.out.parts) {
             const own = moveAnim(pt.anim, L.T);
             const k = pt.tag?.kind;
@@ -596,21 +624,49 @@ export function generatePanel(p: Project): GenResult {
       for (const id of ids) ownBox.set(id, u);
     }
 
-    const routes: { l: NonNullable<Project['links']>[number]; A: CableEnd; B: CableEnd; ch: Choice; d: number; zc: number }[] = [];
-    for (const l of p.links ?? []) {
-      const ka = `${l.a.module}/${l.a.ref}`, kb = `${l.b.module}/${l.b.ref}`;
-      const EA = ends.get(ka), EB = ends.get(kb);
-      if (!EA || !EB) continue;
+    const routes: { l: NonNullable<Project['links']>[number]; A: CableEnd; B: CableEnd; ch: Choice; d: number; zc: number; free?: [number, number] }[] = [];
+    const endsOf = (l: NonNullable<Project['links']>[number]) => {
+      const EA = ends.get(`${l.a.module}/${l.a.ref}`), EB = ends.get(`${l.b.module}/${l.b.ref}`);
+      if (!EA || !EB) return null;
       const A: CableEnd = { p: uv(EA.p), d: uv(EA.d), module: l.a.module, plug: `${l.a.module}/${baseRef(l.a.ref)}` }, B: CableEnd = { p: uv(EB.p), d: uv(EB.d), module: l.b.module, plug: `${l.b.module}/${baseRef(l.b.ref)}` };
+      return { EA, EB, A, B };
+    };
+    // debug ribbons first, shortest first, each looping over the top of its dock above the ones before it and above
+    // any cable rising from a plug under it; then they are in the way of the other cables
+    const rising: Box[] = [];
+    for (const l of live) for (const r of [l.a, l.b]) {
+      const e = ends.get(`${r.module}/${r.ref}`);
+      if (!e || l.kind === 'debug' || e.d[2] < 0.7) continue;
+      const q = uv(e.p), top = q[2] + 14 + e.cable / 2 + 2;
+      rising.push([q[0] - 8, q[1] - 8, q[2], q[0] + 8, q[1] + 8, top]);
+    }
+    const ribbonEnd = (E: { p: number[]; d: number[]; w?: number[]; span?: number }, c: CableEnd): RibbonEnd => ({ ...c, w: uv(E.w ?? (Math.abs(E.d[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0])), span: E.span ?? 5 });
+    const dbg = (p.links ?? []).filter((l) => l.kind === 'debug').map((l) => ({ l, e: endsOf(l) })).filter((x) => x.e)
+      .sort((x, y) => Math.hypot(x.e!.A.p[0] - x.e!.B.p[0], x.e!.A.p[1] - x.e!.B.p[1]) - Math.hypot(y.e!.A.p[0] - y.e!.B.p[0], y.e!.A.p[1] - y.e!.B.p[1]));
+    const laid: Box[] = [];
+    for (const { l, e } of dbg) {
+      const { EA, EB, A, B } = e!;
+      const rw = Math.min(ribbonWidth(l.a), ribbonWidth(l.b));
+      const ch = ribbonRoute(ribbonEnd(EA, A), ribbonEnd(EB, B), 0.9, rw, obs, [...rising, ...laid], ownBox.get(l.a.module) ?? null, ownBox.get(l.b.module) ?? null);
+      routes.push({ l, A, B, ch, d: 1.8, zc: 0, free: ch.free });
+      ch.route.pts.forEach((q, i) => {
+        if (!i) return;
+        const o = ch.route.pts[i - 1], h = rw / 2 + 0.5;
+        const bx: Box = [Math.min(o[0], q[0]) - h, Math.min(o[1], q[1]) - h, Math.min(o[2], q[2]) - 0.5, Math.max(o[0], q[0]) + h, Math.max(o[1], q[1]) + h, Math.max(o[2], q[2]) + 0.5];
+        laid.push(bx);
+        // where it crosses between the boards it is in the way of other cables (lying on a board, a cable just drapes over it)
+        if (ch.route.kinds[i - 1] === 'escape') obs.push({ box: bx, label: 'a debug ribbon', plug: A.plug });
+      });
+    }
+    for (const l of p.links ?? []) {
+      if (l.kind === 'debug') continue;
+      const e = endsOf(l);
+      if (!e) continue;
+      const { EA, EB, A, B } = e;
       const d = 2 * Math.max(1.4, Math.max(EA.cable, EB.cable) / 2);
       // on stands the streets run under the rails; without them just over the rail lips
       const zc = stands ? STAND.floor + d / 2 + 0.25 : 8.5 + d / 2;
-      let ch = bestRoute(A, B, streets, zc, d / 2, obs, ownBox.get(l.a.module) ?? null, ownBox.get(l.b.module) ?? null, stations);
-      // a probe's ribbon is short and stays by its board: over or round the dock rather than down to a street
-      if (l.kind === 'debug') {
-        const dc = directRoute(A, B, d / 2, obs, ownBox.get(l.a.module) ?? null, ownBox.get(l.b.module) ?? null);
-        if (dc && (!ch || dc.score <= ch.score)) ch = dc;
-      }
+      const ch = bestRoute(A, B, streets, zc, d / 2, obs, ownBox.get(l.a.module) ?? null, ownBox.get(l.b.module) ?? null, stations);
       if (ch) routes.push({ l, A, B, ch, d, zc });
     }
     // lanes: side by side in each street, ordered so the fewest cables cross
@@ -626,25 +682,45 @@ export function generatePanel(p: Project): GenResult {
     const nos = cableNumbers(p.links);
     const tagMeshes = new Map<string, { mesh: MeshData; volume: number; size: [number, number, number] }>();
     for (const q of routes) {
-      const { l, A, B, ch, d, zc } = q;
+      const { l, A, B, ch, d, zc, free } = q;
       const vl = laneOf.get(l.id)!;
       const ea = ch.ea === 'slope' ? slope(A, vl, zc) ?? escapes(A, null, zc, d / 2)[0] : ch.ea;
       const eb = ch.eb === 'slope' ? slope(B, vl, zc) ?? escapes(B, null, zc, d / 2)[0] : ch.eb;
       const route = ch.direct ? ch.route : assemble(ea, eb, vl, zc);
       const hit = hits(route, obs, [A, B], d / 2);
       // bends as a cable takes them: arcs of about four diameters, no kinks
-      const path = filletPath(route.pts, Math.min(25, Math.max(10, 4 * d))).map(xy);
+      const path = filletPath(route.pts, l.kind === 'debug' ? 7 : Math.min(25, Math.max(10, 4 * d))).map(xy);
       let len = 0;
       for (let i = 1; i < path.length; i++) len += Math.hypot(path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1], path[i][2] - path[i - 1][2]);
       const kind = l.kind ?? 'usb';
       const anim: Anim = { seq: cableSeq(kind), dir: [0, 0, 1], dist: 0, grow: true };
+      const EA = ends.get(`${l.a.module}/${l.a.ref}`)!, EB = ends.get(`${l.b.module}/${l.b.ref}`)!;
       if (kind === 'debug') {
-        // a flat grey ribbon as wide as the narrower end's connector, its pin 1 edge red
-        const EA = ends.get(`${l.a.module}/${l.a.ref}`)!;
+        // a flat grey ribbon as wide as the narrower end's connector, square across both sockets, its pin 1 edge red
         const rw = Math.min(ribbonWidth(l.a), ribbonWidth(l.b));
-        const side = EA.w ?? (Math.abs(EA.d[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0]);
-        ghosts.push({ name: `cable ${l.id}`, mesh: ribbonMesh(path, rw, 0.9, side), color: KIND_COLOR.debug, opacity: 1, tag: { kind: 'cable', refs: [l.id] }, anim, mat: 'cable', smooth: true });
-        ghosts.push({ name: `cable ${l.id} stripe`, mesh: ribbonMesh(path, 1.2, 1.0, side, rw / 2 - 0.6), color: '#b8322b', opacity: 1, tag: { kind: 'cable', refs: [l.id] }, anim, mat: 'red', smooth: true });
+        const wOf = (E: typeof EA) => E.w ?? (Math.abs(E.d[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0]);
+        const land = { side: wOf(EB), from: free?.[0] ?? 0, to: free?.[1] ?? Infinity };
+        ghosts.push({ name: `cable ${l.id}`, mesh: ribbonMesh(path, rw, 0.9, wOf(EA), 0, land), color: KIND_COLOR.debug, opacity: 1, tag: { kind: 'cable', refs: [l.id] }, anim, mat: 'cable', smooth: true });
+        ghosts.push({ name: `cable ${l.id} stripe`, mesh: ribbonMesh(path, 1.2, 1.0, wOf(EA), rw / 2 - 0.6, land), color: '#b8322b', opacity: 1, tag: { kind: 'cable', refs: [l.id] }, anim, mat: 'red', smooth: true });
+      } else if (kind === 'uart' && (EA.wires || EB.wires)) {
+        // a USB-serial cable: one round lead that splits a hand-width from the board into loose jumper wires, one on
+        // each pin (ground, and TX and RX crossed over)
+        const wires = (EA.wires ?? EB.wires)!, atA = !!EA.wires;
+        const P = atA ? [...path].reverse() : path; // runs from the USB end to the header
+        const S = [0];
+        for (let i = 1; i < P.length; i++) S.push(S[i - 1] + Math.hypot(P[i][0] - P[i - 1][0], P[i][1] - P[i - 1][1], P[i][2] - P[i - 1][2]));
+        const L = S[S.length - 1];
+        const at = (s2: number) => { const i = Math.max(1, S.findIndex((x) => x >= s2)); const f = (s2 - S[i - 1]) / (S[i] - S[i - 1] || 1); return P[i - 1].map((v, j) => v + (P[i][j] - v) * f); };
+        const part = (s0: number, s1: number) => [at(s0), ...P.filter((_, i) => S[i] > s0 && S[i] < s1), at(s1)];
+        const cut = Math.max(L * 0.5, L - 110), fan = Math.max(cut + 1, L - 26);
+        ghosts.push({ name: `cable ${l.id}`, mesh: tubeMesh(part(0, cut), d / 2), color: KIND_COLOR[kind], opacity: 1, tag: { kind: 'cable', refs: [l.id] }, anim, mat: 'cable', smooth: true });
+        // the loose wires run on together side by side, then each goes down onto its pin
+        const E = atA ? EA : EB, side = E.w ?? [1, 0, 0];
+        wires.forEach((w2, i) => {
+          const o = (i - 1) * 1.5, run = part(cut, fan).map((q) => q.map((v, j) => v + side[j] * o));
+          const wp = filletPath([...run, w2.p.map((v, j) => v + E.d[j] * 10), w2.p], 5);
+          ghosts.push({ name: `cable ${l.id} wire ${i}`, mesh: tubeMesh(wp, 0.7, 8), color: w2.colour, opacity: 1, tag: { kind: 'cable', refs: [l.id] }, anim, mat: 'cable', smooth: true });
+        });
       } else ghosts.push({ name: `cable ${l.id}`, mesh: tubeMesh(path, d / 2), color: KIND_COLOR[kind], opacity: 1, tag: { kind: 'cable', refs: [l.id] }, anim, mat: 'cable', smooth: true });
       const clash = [...new Set(hit.map((h) => h.ob.label))];
       for (const h of hit.slice(0, 3)) ghosts.push({ name: `clash ${l.id}`, mesh: sphereMesh(xy(h.at), Math.max(3, d * 0.9)), color: '#ff3b3b', opacity: 0.55, tag: { kind: 'cable', refs: [l.id] }, anim: { seq: cableSeq(kind), dir: [0, 0, 1], dist: 0 } });
@@ -663,7 +739,10 @@ export function generatePanel(p: Project): GenResult {
       // a probe's ribbon comes with it: nothing to buy, but it has to reach
       const probe = kind === 'debug' ? [l.a.module, l.b.module].map((id) => mods.get(id)?.m).find((m) => m && isProbe(m)) : undefined;
       const ribbon = probe ? ribbonOf(probe.board) : undefined;
-      cables.push({ id: l.id, a: `${nameOf2(l.a.module)} ${refText(mods.get(l.a.module)?.m, l.a.ref)}`, b: `${nameOf2(l.b.module)} ${refText(mods.get(l.b.module)?.m, l.b.ref)}`, ends: `${l.a.module}/${l.a.ref}|${l.b.module}/${l.b.ref}`, kind, length: round(len, 0), buy: ribbon != null ? 0 : cableToBuy(len), no, label: purpose.text, mid: [m0.p[0], m0.p[1], m0.p[2] + d / 2 + 2], ...(ribbon != null ? { ribbon } : {}), ...(clash.length ? { clash: clash.join(', ') } : {}) });
+      // a serial cable's loose ends: which pin each goes on
+      const head = kind === 'uart' ? [l.a, l.b].map((r) => mods.get(r.module)?.m.board.comps.find((c) => c.ref === baseRef(r.ref))).find((c) => c && isUartPort(c)) : undefined;
+      const wires = head ? uartWiring(head) : undefined;
+      cables.push({ id: l.id, a: `${nameOf2(l.a.module)} ${refText(mods.get(l.a.module)?.m, l.a.ref)}`, b: `${nameOf2(l.b.module)} ${refText(mods.get(l.b.module)?.m, l.b.ref)}`, ends: `${l.a.module}/${l.a.ref}|${l.b.module}/${l.b.ref}`, kind, length: round(len, 0), buy: ribbon != null ? 0 : cableToBuy(len), no, label: purpose.text, mid: [m0.p[0], m0.p[1], m0.p[2] + d / 2 + 2], ...(ribbon != null ? { ribbon } : {}), ...(wires ? { wires } : {}), ...(clash.length ? { clash: clash.join(', ') } : {}) });
       if (probe && ribbon != null && len > ribbon) warnings.push(`The ${probe.board.name} ribbon is ${ribbon} mm but has to run about ${Math.round(len)} mm to ${purpose.to === probe.board.name ? purpose.from : purpose.to}. Use a longer ribbon (set its length under Box), or put the probe closer: in the back slot of that board's dock.`);
       // numbered tags, a hand-width from each plug: ring round the cable, flag standing up
       if (P.cableTags !== false) {
@@ -820,7 +899,8 @@ export function generatePanel(p: Project): GenResult {
     const cs = cables.filter((c) => c.kind === k);
     if (!cs.length) continue;
     const combed = pieces.some((x) => /comb/.test(x.name));
-    if (k === 'debug') { steps.push({ seq: cableSeq(k), text: `Plug in the debug ribbon${cs.length > 1 ? 's' : ''}, red edge to pin 1: ${cs.map((c) => `${c.no ? `#${c.no} ` : ''}${c.a} to ${c.b}`).join(', ')}.` }); continue; }
+    if (k === 'debug') { steps.push({ seq: cableSeq(k), text: `Plug in the debug ribbon${cs.length > 1 ? 's' : ''}, red edge to pin 1, and lay ${cs.length > 1 ? 'them' : 'it'} over the top of the dock: ${cs.map((c) => `${c.no ? `#${c.no} ` : ''}${c.a} to ${c.b}`).join(', ')}.` }); continue; }
+    if (k === 'uart') { steps.push({ seq: cableSeq(k), text: `Plug in the USB-serial cable${cs.length > 1 ? 's' : ''} and push the loose ends onto the header pins: ${cs.map((c) => `${c.no ? `#${c.no} ` : ''}${c.a} to ${c.b} (${c.buy} m): ${c.wires ?? 'ground, TX and RX'}`).join('. ')}.` }); continue; }
     steps.push({ seq: cableSeq(k), text: `Plug in the ${KIND_NAME[k]} cable${cs.length > 1 ? 's' : ''}: ${cs.map((c) => `${c.no ? `#${c.no} ` : ''}${c.a} to ${c.b} (${c.buy} m)`).join(', ')}${combed ? '. Press each one into its comb slot as you go' : ''}.` });
   }
   if (ghosts.some((g) => g.tag?.kind === 'plug' && g.anim?.seq === PLUG_SEQ)) steps.push({ seq: PLUG_SEQ, text: 'Plug in the cables that leave the rack (power supplies, screens, your computer).' });

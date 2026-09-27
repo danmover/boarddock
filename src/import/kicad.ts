@@ -1,6 +1,6 @@
 // KiCad .kicad_pcb importer (KiCad 5 to 9). Reads the Edge.Cuts outline, board thickness, footprints
 // (courtyard -> body size), pads with drills (mounting holes, through-hole leads) and 3D model names.
-import type { Board, Comp, Hole, Loop, V2 } from '../model/types';
+import type { Board, Comp, Hole, Loop, Pin, V2 } from '../model/types';
 import { arc3, arcCenter, bezier, chainLoops, outlineFromLoops, rad, uid } from '../geom/poly';
 import { finishBoard } from './common';
 
@@ -130,6 +130,7 @@ export function importKicad(text: string, fileName = 'board.kicad_pcb'): Board {
       if (/Fab/.test(L)) for (const path of paths) fab.push(...path.map(toLocalUp));
     }
     const padPts: V2[] = [];
+    const pins: Pin[] = [];
     let tht = false;
     const isMountFp = /mountinghole|mounting_hole|mount_hole|mtg|^hole/i.test(fpName.split(':').pop() ?? '');
     const padsList = kids(fp, 'pad');
@@ -140,6 +141,13 @@ export function importKicad(text: string, fileName = 'board.kicad_pcb'): Board {
       const local: V2 = [pAt[0] ?? 0, pAt[1] ?? 0];
       const lu = toLocalUp(local);
       padPts.push([lu[0] - (size[0] ?? 0) / 2, lu[1] - (size[1] ?? 0) / 2], [lu[0] + (size[0] ?? 0) / 2, lu[1] + (size[1] ?? 0) / 2]);
+      // a header's pins, with their nets (a UART header's GND, RX and TX are found by them)
+      const pn = String(pad[1] ?? '');
+      if (pn && !pins.some((q) => q.n === pn)) {
+        const [px, py] = toBoard(local), net = kid(pad, 'net');
+        const nm = net ? String(net[net.length - 1]) : '';
+        pins.push({ n: pn, x: px, y: py, ...(nm && !/^\d+$/.test(nm) ? { net: nm } : {}) });
+      }
       const drill = kid(pad, 'drill');
       if (!drill || kind === 'smd' || kind === 'connect') continue;
       const dv = nums(drill);
@@ -163,6 +171,7 @@ export function importKicad(text: string, fileName = 'board.kicad_pcb'): Board {
     comps.push({
       id: uid('c'), ref: ref || '?', pkg: `${fpName.split(':').pop()} ${models}`.trim(), value,
       side: bottom ? 'bottom' : 'top', x: c[0], y: c[1], rot: frot, w, l, h: 0, kind: 'generic', tht,
+      ...(/header|conn|socket|idc|jst|molex|uart|serial|ftdi/i.test(fpName) && pins.length >= 2 && pins.length <= 40 ? { pins } : {}),
     });
   }
 

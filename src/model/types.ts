@@ -61,12 +61,17 @@ export interface Comp {
   conn?: ConnSetup;
   hidden?: boolean;
   role?: string; // plug role, when it is known (the ports of a box): host, device, hub-up, hub-down, power-in, power-out...
+  pins?: Pin[]; // a header's pins, where the file gives them (KiCad pads, with their nets)
+  uart?: { gnd: string; rx: string; tx: string }; // a UART header's pins, set by hand (pin numbers; rx / tx are the board's own)
 }
+
+/** One pin of a header: its number, where it is on the board, and its net when the file names one. */
+export interface Pin { n: string; x: number; y: number; net?: string }
 
 /** Where a box's ports sit: its long faces (front: y = 0, back: y = width), its ends (left: x = 0, right: x = length), or its top. */
 export type BoxFace = 'front' | 'back' | 'left' | 'right' | 'top';
 /** A row of identical ports on one face of a box. */
-export interface BoxPortGroup { id: string; type: string; count: number; face: BoxFace; role: string; refs?: string[] } // refs: the group's port names, kept as ports are added or removed
+export interface BoxPortGroup { id: string; type: string; count: number; face: BoxFace; role: string; refs?: string[]; near?: 'front' | 'back' } // refs: the group's port names, kept as ports are added or removed; near: a top row's place by that long edge (else across the middle)
 export interface BoxSpec {
   l: number; w: number; h: number; groups: BoxPortGroup[];
   supply?: number; // A at 5 V the whole box can give (charger, powered hub); unset: a typical figure
@@ -336,7 +341,7 @@ export interface GenReport {
   panel?: PanelReport | null;
   features?: Feature[];
   frames?: Record<string, number[]>; // module id -> holder frame to assembly
-  cables?: { id: string; a: string; b: string; ends?: string; kind: NonNullable<Link['kind']>; length: number; buy: number; clash?: string; no?: number; label?: string; mid?: number[]; ribbon?: number }[]; // ends: "module/ref|module/ref"; no: cable number; label: what it is for; mid: where its number shows (assembly frame); ribbon: a probe's own ribbon (mm), nothing to buy
+  cables?: { id: string; a: string; b: string; ends?: string; kind: NonNullable<Link['kind']>; length: number; buy: number; clash?: string; no?: number; label?: string; mid?: number[]; ribbon?: number; wires?: string }[]; // ends: "module/ref|module/ref"; no: cable number; label: what it is for; mid: where its number shows (assembly frame); ribbon: a probe's own ribbon (mm), nothing to buy; wires: a serial cable's loose ends, which pin each goes on
 }
 
 export type AccessDir = 'front' | 'up' | 'down' | 'left' | 'right' | 'wall';

@@ -30,9 +30,10 @@ export const BOX_PRESETS: Record<string, { name: string; color: string; spec: ()
   hubc: { name: 'USB-C hub', color: '#3a3f47', spec: () => ({ l: 110, w: 32, h: 14, groups: [g('usb_a', 3, 'front', 'hub-down'), g('usb_c', 1, 'front', 'hub-down'), g('usb_c', 1, 'left', 'hub-up'), g('rj45', 1, 'right', 'net')] }) },
   charger4: { name: 'USB charger', color: '#e9e7e2', spec: () => ({ l: 90, w: 60, h: 28, groups: [g('usb_a', 4, 'back', 'power-out'), g('iec_c7', 1, 'front', 'other')] }) },
   charger6: { name: 'USB charger (A + C)', color: '#e9e7e2', spec: () => ({ l: 110, w: 70, h: 30, groups: [g('usb_a', 4, 'back', 'power-out'), g('usb_c', 2, 'back', 'power-out'), g('iec_c7', 1, 'front', 'other')] }) },
-  // a debug probe: a slim board about 5 cm square and 3 mm thick, its 10-pin ribbon and USB on one end
-  jlink: { name: 'J-Link', color: '#9c2b25', spec: () => ({ l: 50, w: 50, h: 3, ribbon: 200, groups: [g('swd10', 1, 'back', 'debug'), g('usb_micro_b', 1, 'back', 'device')] }),
-    note: "A debug probe: it slides down into a slot in the back of its board's dock, plugs up; its ribbon goes to the board's debug header, its USB to a hub. Set its size, thickness (Height), ports and ribbon length under Box to match yours." },
+  // a debug probe: a slim board about 5 cm square and 3 mm thick, the 10-pin ribbon socket on its top face by one
+  // edge and the micro-USB on the edge opposite
+  jlink: { name: 'J-Link', color: '#9c2b25', spec: () => ({ l: 50, w: 50, h: 3, ribbon: 200, groups: [{ ...g('swd10', 1, 'top', 'debug'), near: 'front' }, g('usb_micro_b', 1, 'back', 'device')] }),
+    note: "A debug probe: it slides down into a slot in the back of its board's dock, USB end up; its ribbon goes up over the dock to the board's debug header, its USB to a hub. Set its size, thickness (Height), ports and ribbon length under Box to match yours." },
 };
 
 /** Length of a face and the ports' spacing on it. */
@@ -121,7 +122,9 @@ export function boxPorts(s: BoxSpec): Comp[] {
     const ref = group.refs![i];
     const t = connById(group.type);
     if (group.face === 'top') {
-      return { id: uid('c'), ref, pkg: t.name, side: 'top', x: along, y: s.w / 2, rot: 0, w: t.body.w, l: t.body.l, h: 0.2, kind: 'connector', tht: false, role: group.role,
+      // across the middle, or by one long edge (a probe's ribbon socket); a probe's header stands on it, a box's port is flush
+      const y = group.near === 'front' ? 3 + t.body.l / 2 : group.near === 'back' ? s.w - 3 - t.body.l / 2 : s.w / 2;
+      return { id: uid('c'), ref, pkg: t.name, side: 'top', x: along, y, rot: 0, w: t.body.w, l: t.body.l, h: group.role === 'debug' ? t.body.h : 0.2, kind: 'connector', tht: false, role: group.role,
         conn: { ...connSetup(t, 0), entry: 'top', zc: 0, cradle: false, cap: false, guard: false, tie: false } } as Comp;
     }
     const angle = ANGLE[group.face], horizontal = group.face === 'left' || group.face === 'right';

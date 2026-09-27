@@ -341,11 +341,11 @@ UART headers are found by name (UART, serial, console, FTDI, TX/RX). To mark any
 
 The Board step lists them under **Debug & UART headers**:
 - **Add 2 J-Links** puts a J-Link on each free debug header, cabled to it.
-  - A J-Link (about 50 × 50 × 3 mm, 10-pin ribbon and USB on one end: set yours under Box) slides down into a slot in the back of its board's dock, plugs up, under a lip along each side.
+  - A J-Link (about 50 × 50 × 3 mm, its 10-pin ribbon socket on the top face by one edge and its micro-USB on the edge opposite: set yours under Box) slides down into a slot in the back of its board's dock, USB end up, under a lip along each side.
   - A second J-Link for the same board gets the next slot, pressed onto corner towers.
-  - Each ribbon goes up and round the dock to its header. It is drawn flat and grey with a red pin-1 edge, checked against the ribbon's length (200 mm unless you set yours) and never on the shopping list. An adapter is listed where the pin counts differ.
+  - Each ribbon leaves its socket flat, lies up along the J-Link, loops over the top of the dock and comes down the board to its header; a second one loops over the first. It is drawn grey with a red pin-1 edge, checked against the ribbon's length (200 mm unless you set yours) and never on the shopping list. An adapter is listed where the pin counts differ.
   - **Auto-connect** plugs the J-Links' USB into a hub, and pairs any loose J-Link with a free debug header.
-- **Add a USB-serial cable** runs a USB to TTL serial cable (3.3 V, FTDI style: the adapter is in the cable) from each free UART header to the nearest free hub port, or a computer's. It is routed, numbered and bought like any cable, and never counted as powering the board.
+- **Add a USB-serial cable** runs a USB to TTL serial cable (3.3 V, the kind with loose jumper ends) from the nearest free hub port, or a computer's, to each free UART header. Its black end goes on GND, green (its TX) on the board's RX, white (its RX) on the board's TX, and red (power) stays off. The pins come from the nets in a KiCad file (GND, RX, TX); otherwise they are a guess from the header's size, which you can change under the header. It is routed, numbered and bought like any cable, and never counted as powering the board.
 
 The examples to try it on are under **Start › Example: dual-MCU board…** and **Example: sensor board…**, and as KiCad files in `examples/`. None of this has been printed yet.
 

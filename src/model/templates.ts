@@ -4,6 +4,10 @@ import type { Board, Comp, Hole, Side } from './types';
 import { connById, connSetup } from './library';
 import { roundedRectLoop, uid } from '../geom/poly';
 import { makeBox } from './boxes';
+import { headerPins } from './probes';
+
+/** A header with its pins' nets, pin 1 first. */
+const named = (c: Comp, nets: string[]): Comp => ({ ...c, pins: headerPins(c).map((q, i) => ({ ...q, net: nets[i] })) });
 
 const holes = (d: number, pts: [number, number][]): Hole[] =>
   pts.map(([x, y]) => ({ id: uid('h'), x, y, d, plated: true, use: 'auto' as const }));
@@ -173,7 +177,8 @@ export const TEMPLATES: Template[] = [
       return b;
     },
   },
-  // two made-up boards to try debug probes and serial cables on: one debug header per MCU, and a UART header
+  // two made-up boards to try debug probes and serial cables on: one debug header per MCU, and a UART header whose
+  // pins are named (as a KiCad file names them by their nets)
   {
     id: 'example_dual_swd', name: 'Example: dual-MCU board, two 10-pin SWD headers and a UART (80 × 60)',
     make: () => {
@@ -184,7 +189,7 @@ export const TEMPLATES: Template[] = [
       b.comps.push(comp('U2', 'LQFP-48_7x7mm_P0.5mm', 58, 28, 9, 9, 1.6));
       const swd = connById('swd10');
       for (const [ref, x] of [['J_SWD1', 22], ['J_SWD2', 58]] as const) b.comps.push(comp(ref, 'PinHeader_2x05_P1.27mm_Vertical_SMD', x, 47, swd.body.w, swd.body.l, swd.body.h, { kind: 'connector', conn: connSetup(swd, 0) }));
-      b.comps.push(comp('J_UART', 'PinHeader_1x06_P2.54mm_Vertical', 64, 10, 15.24, 2.54, 8.5, { kind: 'header', tht: true, value: 'FTDI', conn: connSetup(connById('header'), 0) }));
+      b.comps.push(named(comp('J_UART', 'PinHeader_1x06_P2.54mm_Vertical', 64, 10, 15.24, 2.54, 8.5, { kind: 'header', tht: true, value: 'FTDI', conn: connSetup(connById('header'), 0) }), ['GND', 'CTS', '+3V3', 'RXI', 'TXO', 'DTR']));
       b.notes = ['An example board to try J-Links and a serial cable on: two MCUs, each with its own 10-pin SWD header, and a 6-pin FTDI UART header. Board › Debug & UART headers.'];
       return b;
     },
@@ -198,7 +203,7 @@ export const TEMPLATES: Template[] = [
       b.comps.push(comp('U1', 'QFN-48_7x7mm_P0.5mm', 48, 15, 7, 7, 0.9));
       const jtag = connById('jtag20');
       b.comps.push(comp('J_JTAG', 'IDC-Header_2x10_P2.54mm_Vertical', 35, 33, jtag.body.w, jtag.body.l, jtag.body.h, { kind: 'connector', tht: true, conn: connSetup(jtag, 0) }));
-      b.comps.push(comp('J_UART', 'PinHeader_1x04_P2.54mm_Vertical', 58, 40, 10.16, 2.54, 8.5, { kind: 'header', tht: true, value: 'UART', conn: connSetup(connById('header'), 0) }));
+      b.comps.push(named(comp('J_UART', 'PinHeader_1x04_P2.54mm_Vertical', 58, 40, 10.16, 2.54, 8.5, { kind: 'header', tht: true, value: 'UART', conn: connSetup(connById('header'), 0) }), ['+3V3', 'UART_TX', 'UART_RX', 'GND']));
       b.notes = ['An example board to try a J-Link and a serial cable on: one 20-pin JTAG box header and a 4-pin UART header. Board › Debug & UART headers.'];
       return b;
     },

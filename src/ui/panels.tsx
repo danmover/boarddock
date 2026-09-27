@@ -5,7 +5,7 @@ import { applyHoleRoles, boltedOn, detectHoleRoles, ROLE_INFO } from '../model/h
 import { baseRef, refText, cableNumbers, cablePurpose, shortName, compatible, KIND_COLOR, linkKind, linkOf, plugName, plugRole, plugsOf, portBudget, sameRef } from '../model/links';
 import { applyBox, BOX_PORT_TYPES, BOX_PRESETS, BOX_ROLES, boxProblems, FACE_NAME, inferBox, layoutPorts, makeBox, tightFaces } from '../model/boxes';
 import { addJLinks, addLinks, addUartCables, removeLinks, setLink } from './linkOps';
-import { adapterFor, debugHeaders, isDebugPort, isProbe, isUartPort, markDebug, uartHeaders, type DebugKind } from '../model/probes';
+import { adapterFor, debugHeaders, isDebugPort, isProbe, isUartPort, markDebug, uartHeaders, uartPins, type DebugKind } from '../model/probes';
 import { Icon, I } from './icons';
 import { CONNECTORS, DEFAULT_FEATURES, HOLDER_PRESETS, MATERIALS, PRINTERS, connById, connSetup } from '../model/library';
 import { printerByName, printSettings } from '../model/printers';
@@ -431,14 +431,36 @@ function DebugProbes() {
         {heads.map((c) => { const o = other(c); return row(c, o?.m ? <Chip status="ok">{o.m.board.name.replace(/\s*\(.*\)$/, '')}</Chip> : <Chip status="info">no probe</Chip>); })}
         {uarts.map((c) => { const o = other(c); return row(c, o?.m ? <Chip status="ok">{shortName(o.m.board.name)} {refText(o.m, o.ref)}</Chip> : <Chip status="info">no cable</Chip>); })}
       </div>
+      {uarts.map((c) => <UartPins key={c.id} c={c} many={uarts.length > 1} />)}
       {(freeDbg.length > 0 || freeUart.length > 0) && (
         <div className="btns" style={{ marginTop: 8, flexWrap: 'wrap' }}>
           {freeDbg.length > 0 && <button className="btn small soft" onClick={() => addJLinks(m.id)}>Add {freeDbg.length > 1 ? `${freeDbg.length} J-Links` : 'a J-Link'}</button>}
           {freeUart.length > 0 && <button className="btn small soft" onClick={() => addUartCables(m.id)}>Add {freeUart.length > 1 ? `${freeUart.length} USB-serial cables` : 'a USB-serial cable'}</button>}
         </div>
       )}
-      <p className="hint">{heads.length > 0 && 'Each J-Link slides down into a slot in the back of this board\'s dock, plugs up (more than one: the slots stack on towers); its ribbon goes round the dock to its header and its USB to a hub (Auto-connect). '}{uarts.length > 0 && 'A USB-serial cable (USB to TTL, 3.3 V: the adapter is in the cable) goes from each UART header straight to the nearest free USB port. '}Found by shape (2 × 5 at 1.27 mm) or name (SWD, JTAG, debug, UART, serial, TX/RX); mark others by selecting them and choosing <b>Debug / UART</b>.</p>
+      <p className="hint">{heads.length > 0 && 'Each J-Link slides down into a slot in the back of this board\'s dock, USB end up (more than one: the slots stack on towers); its ribbon loops over the top of the dock to its header, and its USB goes to a hub (Auto-connect). '}{uarts.length > 0 && 'A USB-serial cable (USB to TTL, 3.3 V: the adapter is in its USB plug) goes from the nearest free USB port to each UART header, its loose jumper ends pushed onto the GND, RX and TX pins. '}Found by shape (2 × 5 at 1.27 mm) or name (SWD, JTAG, debug, UART, serial, TX/RX); mark others by selecting them and choosing <b>Debug / UART</b>.</p>
     </Section>
+  );
+}
+
+/** Which pins of a UART header the serial cable's loose ends go on: from its nets, a guess, or set here. */
+function UartPins({ c, many }: { c: Comp; many: boolean }) {
+  const u = uartPins(c);
+  if (!u) return null;
+  const opts = u.pins.map((q) => [q.n, `${q.n}${q.net ? ` · ${q.net.replace(/^\//, '')}` : ''}`] as [string, string]);
+  const set = (key: 'gnd' | 'rx' | 'tx', v: string) => editMod((mm) => {
+    const cc = mm.board.comps.find((x) => x.id === c.id), cur = cc && uartPins(cc);
+    if (cc && cur) cc.uart = { gnd: cur.gnd.n, rx: cur.rx.n, tx: cur.tx.n, [key]: v };
+  });
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div className="row">
+        <Pick label={`${many ? `${c.ref} ` : ''}GND pin`} value={u.gnd.n} options={opts} onChange={(v) => set('gnd', v)} />
+        <Pick label="Board's RX" value={u.rx.n} options={opts} onChange={(v) => set('rx', v)} />
+        <Pick label="Board's TX" value={u.tx.n} options={opts} onChange={(v) => set('tx', v)} />
+      </div>
+      <p className="hint">{u.from === 'nets' ? 'From the nets in your file. ' : u.from === 'guess' ? "A guess from its size: check the board's markings. " : ''}The cable's black end goes on GND, its green (TX) on the board's RX, its white (RX) on the board's TX.</p>
+    </div>
   );
 }
 
@@ -1392,7 +1414,7 @@ function shopping(p: Project, res: Res, d: Delta | null, tot: { g: number; m: nu
   const typeOf = (id: string, end: 'a' | 'b') => { const l = (p.links ?? []).find((x) => x.id === id); const r = l?.[end]; return plugName(p.modules.find((m) => m.id === r?.module)?.board.comps.find((c) => c.ref === baseRef(r?.ref ?? ''))?.conn?.type ?? ''); };
   if (cables.length) {
     const g = new Map<string, number[]>();
-    for (const c of cables) { const k = c.kind === 'uart' ? `USB to TTL serial cable, 3.3 V (FTDI TTL-232R-3V3 or similar), ${c.buy} m or longer` : `${c.buy} m ${typeOf(c.id, 'a')} to ${typeOf(c.id, 'b')} cable`; g.set(k, [...(g.get(k) ?? []), c.no ?? 0]); }
+    for (const c of cables) { const k = c.kind === 'uart' ? `USB to TTL serial cable, 3.3 V, with loose jumper ends (PL2303 or CP2102 type, like Adafruit 954), ${c.buy} m or longer` : `${c.buy} m ${typeOf(c.id, 'a')} to ${typeOf(c.id, 'b')} cable`; g.set(k, [...(g.get(k) ?? []), c.no ?? 0]); }
     out.push({ head: 'Cables', items: [...g.entries()].map(([k, ns]) => `${ns.length} × ${k} (number${ns.length > 1 ? 's' : ''} ${ns.sort((a, b) => a - b).join(', ')})`) });
   }
   const newIds = new Set(p.built ? p.modules.filter((m) => !p.built!.boards.includes(m.id)).map((m) => m.id) : p.modules.map((m) => m.id));

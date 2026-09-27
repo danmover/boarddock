@@ -581,6 +581,11 @@ function plugAt(T: number[], p: PlugSize, tag: PickTag, anim: Anim, type: string
       push('black', loft(T, rect(x1 - 1.8, x1, W + 0.8, H - 1.4, 0.4)));
       push('black', loft(T, rect(0.5, x1 - 3, Math.min(4.5, W * 0.3), 1.4, 0.3, H / 2 + 0.6)));
       return bin.ghosts('plug', tag, anim, {}, true);
+    case 'dupont':
+      // a single jumper housing pushed over one pin (its wire is drawn with the cable)
+      push('black', loft(T, rect(x0, x1 - 1.2, W, H, 0.25)));
+      push('black', loft(T, [{ x: x1 - 1.2, w: W, h: H, r: 0.25 }, { x: x1, w: W * 0.72, h: H * 0.72, r: 0.6 }]));
+      return bin.ghosts('plug', tag, anim, {}, true);
     case 'tagconnect':
       // the spring-pin head held on the pads, then its ribbon
       push('plug', loft(T, rect(-0.2, x0 + 8, W, H, 1.6)));
@@ -705,29 +710,45 @@ export function tubeMesh(pts: number[][], r: number, sides = 16): MeshData {
 
 /**
  * A flat ribbon cable along a polyline: `w` wide, `t` thick, its width along `side` at the start and carried along
- * without twisting (a ribbon bends across its flat, and twists where it has to). `off` shifts it sideways across its
- * width, for the red stripe that marks pin 1.
+ * without twisting (a ribbon bends across its flat). `end`: its width axis where it lands (either way round) and the
+ * stretch, in mm along it, where it may twist to get there (where it hangs free, not where it lies on a board). `off`
+ * shifts it sideways across its width, for the red stripe that marks pin 1.
  */
-export function ribbonMesh(pts: number[][], w: number, t: number, side: number[], off = 0): MeshData {
+export function ribbonMesh(pts: number[][], w: number, t: number, side: number[], off = 0, end?: { side: number[]; from: number; to: number }): MeshData {
   const n = pts.length, K = 4;
   const pos = new Float32Array((n * K + 2 * K + 2) * 3), idx: number[] = [];
+  const dot = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const cross = (a: number[], b: number[]) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const square = (q: number[], tg: number[]) => { const d = dot(q, tg); const r = [q[0] - d * tg[0], q[1] - d * tg[1], q[2] - d * tg[2]]; const L = Math.hypot(r[0], r[1], r[2]); return L < 1e-6 ? null : r.map((x) => x / L); };
+  // tangents, the width axis carried along square to them, and the distance along
+  const T: number[][] = [], U: number[][] = [], S: number[] = [];
   let u = side;
-  const corner: [number, number][] = [[1, 1], [-1, 1], [-1, -1], [1, -1]];
   for (let i = 0; i < n; i++) {
     const a = pts[Math.max(0, i - 1)], b = pts[Math.min(n - 1, i + 1)];
     let tg = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
     const L = Math.hypot(tg[0], tg[1], tg[2]) || 1;
     tg = tg.map((v) => v / L);
-    // the width axis, kept square to the cable
-    const dp = u[0] * tg[0] + u[1] * tg[1] + u[2] * tg[2];
-    let q = [u[0] - dp * tg[0], u[1] - dp * tg[1], u[2] - dp * tg[2]];
-    let lq = Math.hypot(q[0], q[1], q[2]);
-    if (lq < 1e-6) { q = Math.abs(tg[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0]; const d2 = q[0] * tg[0] + q[1] * tg[1] + q[2] * tg[2]; q = [q[0] - d2 * tg[0], q[1] - d2 * tg[1], q[2] - d2 * tg[2]]; lq = Math.hypot(q[0], q[1], q[2]); }
-    u = q.map((v) => v / lq);
-    const v = [tg[1] * u[2] - tg[2] * u[1], tg[2] * u[0] - tg[0] * u[2], tg[0] * u[1] - tg[1] * u[0]];
+    u = square(u, tg) ?? square(Math.abs(tg[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0], tg)!;
+    T.push(tg); U.push(u);
+    S.push(i ? S[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1], pts[i][2] - pts[i - 1][2]) : 0);
+  }
+  // the twist that lands it square on the far plug, spread over the free stretch
+  let phi = 0;
+  const want = end && square(end.side, T[n - 1]);
+  if (want) {
+    phi = Math.atan2(dot(cross(U[n - 1], want), T[n - 1]), dot(U[n - 1], want));
+    if (phi > Math.PI / 2) phi -= Math.PI; else if (phi < -Math.PI / 2) phi += Math.PI;
+  }
+  const s0 = end ? Math.max(0, Math.min(end.from, S[n - 1])) : 0, s1 = end ? Math.max(s0 + 1e-6, Math.min(end.to, S[n - 1])) : 1;
+  const corner: [number, number][] = [[1, 1], [-1, 1], [-1, -1], [1, -1]];
+  for (let i = 0; i < n; i++) {
+    const th = phi * Math.min(1, Math.max(0, (S[i] - s0) / (s1 - s0)));
+    const tg = T[i], tu = cross(tg, U[i]);
+    const uu = [0, 1, 2].map((j) => U[i][j] * Math.cos(th) + tu[j] * Math.sin(th));
+    const v = cross(tg, uu);
     corner.forEach(([sx, sy], k) => {
       const o = (i * K + k) * 3, cx = sx * w / 2 + off, cy = sy * t / 2;
-      for (let j = 0; j < 3; j++) pos[o + j] = pts[i][j] + u[j] * cx + v[j] * cy;
+      for (let j = 0; j < 3; j++) pos[o + j] = pts[i][j] + uu[j] * cx + v[j] * cy;
     });
   }
   for (let i = 0; i + 1 < n; i++) for (let k = 0; k < K; k++) {

@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { TEMPLATES } from '../src/model/templates';
 import { debugType, newModule, newProject } from '../src/model/library';
 import { autoLinks, isDebugPort, numberLinks, plugRole } from '../src/model/links';
-import { addProbes, addUartLinks, adapterFor, debugHeaders, isProbe, isUartPort, markDebug, probesOf, stackProbes, uartHeaders } from '../src/model/probes';
+import { addProbes, addUartLinks, adapterFor, debugHeaders, headerPins, isProbe, isUartPort, markDebug, probesOf, stackProbes, uartHeaders, uartPins, uartWiring } from '../src/model/probes';
 import { powerBudget } from '../src/model/power';
 import { importKicad } from '../src/import/kicad';
 import { autoAssign } from '../src/cad/dockplan';
@@ -54,6 +54,23 @@ describe('debug headers', () => {
   });
 });
 
+describe('UART pins', () => {
+  it('come from the nets in a KiCad file, else a guess from the header size, else what you set', () => {
+    const b = example('dual-mcu-swd.kicad_pcb'), c = uartHeaders(b)[0];
+    expect(c.pins!.map((q) => q.net)).toEqual(['GND', 'CTS', '+3V3', '/RXI', '/TXO', '/DTR']);
+    const u = uartPins(c)!;
+    expect([u.from, u.gnd.n, u.rx.n, u.tx.n]).toEqual(['nets', '1', '4', '5']);
+    const s = uartPins(uartHeaders(example('sensor-jtag.kicad_pcb'))[0])!;
+    expect([s.from, s.gnd.n, s.rx.n, s.tx.n]).toEqual(['nets', '4', '3', '2']);
+    // no nets: an FTDI six is guessed, and says so
+    const bare = { ...c, pins: undefined };
+    expect(headerPins(bare).length).toBe(6);
+    expect([uartPins(bare)!.from, uartPins(bare)!.rx.n]).toEqual(['guess', '4']);
+    expect(uartWiring(bare)).toMatch(/a guess/);
+    expect(uartPins({ ...bare, uart: { gnd: '6', rx: '2', tx: '3' } })!.gnd.n).toBe('6');
+  });
+});
+
 describe('USB-serial cables', () => {
   it('go from each free UART header to the nearest free hub port, once', () => {
     const p = newProject(T('example_dual_swd'));
@@ -83,6 +100,12 @@ describe('J-Links for a board', () => {
     p.modules.push(newModule(T('example_jtag')), newModule(T('usb_hub7')));
     return p;
   };
+
+  it('is a slim board with its ribbon socket on its face by one edge and its micro-USB on the edge opposite', () => {
+    const j = T('jlink'), dbg = j.comps.find(isDebugPort)!, usb = j.comps.find((c) => c.conn?.type === 'usb_micro_b')!;
+    expect([dbg.conn!.entry, dbg.y < 10, dbg.h]).toEqual(['top', true, 5.6]);
+    expect([usb.conn!.entry, usb.y > 40]).toEqual(['edge', true]);
+  });
 
   it('adds one per free header, cabled to it, stacked, the board still the one being edited', () => {
     const p = rack();
@@ -156,12 +179,16 @@ describe('probe rack', () => {
     expect(r.report.checks.filter((c) => c.name === 'Stacking towers').length).toBe(2);
     const ribbons = r.report.cables!.filter((c) => c.kind === 'debug');
     expect(ribbons.length).toBe(3);
-    for (const c of ribbons) { expect(c.buy).toBe(0); expect(c.ribbon).toBe(200); expect(c.length).toBeLessThan(200); expect(c.clash).toBeUndefined(); }
+    // short: each J-Link lines up with its board and its ribbon goes the short way, round the end of the dock
+    for (const c of ribbons) { expect(c.buy).toBe(0); expect(c.ribbon).toBe(200); expect(c.length).toBeLessThan(175); expect(c.clash).toBeUndefined(); }
+    expect(r.report.cables!.every((c) => !c.clash)).toBe(true);
     expect(r.report.checks.find((c) => c.name === 'Debug ribbons')?.status).toBe('ok');
     // the serial cables are ordinary cables to buy
     const serial = r.report.cables!.filter((c) => c.kind === 'uart');
     expect(serial.length).toBe(2);
-    for (const c of serial) { expect(c.buy).toBeGreaterThan(0); expect(c.ribbon).toBeUndefined(); }
+    for (const c of serial) { expect(c.buy).toBeGreaterThan(0); expect(c.ribbon).toBeUndefined(); expect(c.wires).toMatch(/black \(GND\) on pin/); }
+    // drawn as a lead that splits into three loose jumper wires, one on each pin
+    expect(r.ghosts.filter((g) => / wire \d$/.test(g.name)).length).toBe(6);
     // the ribbons are drawn flat, with a red pin-1 edge
     expect(r.ghosts.filter((g) => /^cable .* stripe$/.test(g.name)).length).toBe(3);
     // no strap for a probe

@@ -1,7 +1,7 @@
 // Debug probes (J-Link, ST-Link): a box with a debug port on a ribbon and a USB port. A board's debug headers (SWD,
 // JTAG, Tag-Connect) each take one probe. The probes for a board stack on one another in the back slot of that
 // board's dock, so each ribbon only goes round the dock, and the probes' USB cables go to a hub like any device.
-import type { Board, Comp, Module, Project } from './types';
+import type { Board, Comp, Module, Pin, Project } from './types';
 import { connById, connSetup, newModule } from './library';
 import { BOX_PRESETS, makeBox } from './boxes';
 import { baseRef, DEBUG_TYPES, isDebugPort, isUartPort, numberLinks, plugsOf } from './links';
@@ -18,7 +18,7 @@ export const debugHeaders = (b: Board): Comp[] => (b.kind === 'box' ? [] : b.com
 export const uartHeaders = (b: Board): Comp[] => (b.kind === 'box' ? [] : b.comps.filter(isUartPort));
 
 /**
- * A USB-serial cable (an FTDI-style USB to TTL lead: USB-A on one end, a socket on the pins on the other) from each
+ * A USB-serial cable (a USB to TTL lead: USB-A on one end, loose jumper ends for GND, RX and TX on the other) from each
  * free UART header of a board to the nearest free USB-A port: a hub's first, else a computer's (a Pi's). Nothing to
  * hold: the adapter is in the cable. Mutates the project; returns how many went in and how many found no port.
  */
@@ -39,6 +39,69 @@ export function addUartLinks(p: Project, boardId: string): { added: number; left
     added++;
   }
   return { added, left: heads.length - added };
+}
+
+/**
+ * A header's pins on the board: from the file where it gave them (KiCad pads), else laid out from its footprint name
+ * (PinHeader_1x06_P2.54mm: six in a row at 2.54 mm) along its long side, pin 1 at one end.
+ */
+export function headerPins(c: Comp): Pin[] {
+  if (c.pins && c.pins.length >= 2) return [...c.pins].sort((a, b) => (Number(a.n) || 0) - (Number(b.n) || 0));
+  const m = /(\d+)x(\d+)/i.exec(c.pkg), pm = /_P(\d+(?:\.\d+)?)mm/i.exec(c.pkg);
+  const pitch = pm ? Number(pm[1]) : 2.54;
+  const rows = m ? Math.min(2, Math.max(1, Math.min(Number(m[1]), Number(m[2])))) : 1;
+  const n = m ? Number(m[1]) * Number(m[2]) : Math.max(1, Math.round(Math.max(c.w, c.l) / pitch));
+  const k = Math.ceil(n / rows), a = ((c.w >= c.l ? c.rot : c.rot + 90) * Math.PI) / 180;
+  const ax = [Math.cos(a), Math.sin(a)], ac = [-Math.sin(a), Math.cos(a)];
+  return Array.from({ length: n }, (_, i) => {
+    const j = rows > 1 ? Math.floor(i / 2) : i, r = rows > 1 ? (i % 2) - 0.5 : 0;
+    const along = (j - (k - 1) / 2) * pitch, across = r * pitch;
+    return { n: String(i + 1), x: c.x + ax[0] * along + ac[0] * across, y: c.y + ax[1] * along + ac[1] * across };
+  });
+}
+
+const words = (net: string) => net.split(/[^a-z0-9]+/i).filter(Boolean);
+const NET = {
+  gnd: (t: string) => /^d?(gnd|vss|ground)\d*$/i.test(t),
+  tx: (t: string) => /^((uart|usart|ser|u)\d*)?txd?\d*o?$/i.test(t),
+  rx: (t: string) => /^((uart|usart|ser|u)\d*)?rxd?\d*i?$/i.test(t),
+};
+
+/** A serial cable's loose ends (colours as on the common PL2303 / CP2102 cables): ground, and its TX onto the board's RX. */
+export const UART_WIRES = [
+  { key: 'gnd', colour: '#1f2124', name: 'black', what: 'GND' },
+  { key: 'rx', colour: '#2f9e44', name: 'green', what: "the cable's TX" },
+  { key: 'tx', colour: '#e6e6e2', name: 'white', what: "the cable's RX" },
+] as const;
+
+/**
+ * Which pins of a UART header take the cable's ground, TX and RX: set by hand, else from the nets in the file (GND,
+ * RX, TX), else a guess from its size (an FTDI six: GND on 1, the board's RX on 4 and TX on 5; else 1, 2, 3).
+ * rx / tx are the board's own: its RX takes the cable's TX.
+ */
+export function uartPins(c: Comp): { gnd: Pin; rx: Pin; tx: Pin; from: 'set' | 'nets' | 'guess'; pins: Pin[] } | null {
+  const pins = headerPins(c);
+  if (pins.length < 3) return null;
+  const byN = (n: number | string) => pins.find((q) => q.n === String(n));
+  if (c.uart) {
+    const [gnd, rx, tx] = [byN(c.uart.gnd), byN(c.uart.rx), byN(c.uart.tx)];
+    if (gnd && rx && tx) return { gnd, rx, tx, from: 'set', pins };
+  }
+  const find = (f: (t: string) => boolean) => pins.find((q) => q.net && words(q.net).some(f));
+  const [gnd, rx, tx] = [find(NET.gnd), find(NET.rx), find(NET.tx)];
+  if (gnd && rx && tx && new Set([gnd, rx, tx]).size === 3) return { gnd, rx, tx, from: 'nets', pins };
+  const six = pins.length === 6 || /ftdi/i.test(`${c.value ?? ''} ${c.ref}`);
+  const [g, r, t] = six && pins.length >= 5 ? [1, 4, 5] : [1, 2, 3];
+  return { gnd: byN(g) ?? pins[0], rx: byN(r) ?? pins[1], tx: byN(t) ?? pins[2], from: 'guess', pins };
+}
+
+/** Where each loose end of the serial cable goes, in words. */
+export function uartWiring(c: Comp): string {
+  const u = uartPins(c);
+  if (!u) return 'the loose ends onto its pins';
+  const pin = (q: Pin) => `pin ${q.n}${q.net ? ` (${q.net.replace(/^\//, '')})` : ''}`;
+  const txt = `black (GND) on ${pin(u.gnd)}, green (the cable's TX) on the board's RX, ${pin(u.rx)}, white (the cable's RX) on its TX, ${pin(u.tx)}; leave the red (power) one off`;
+  return u.from === 'guess' ? `${txt} (a guess at its pinout: check the board's markings, and set the pins under Board › Debug & UART headers)` : txt;
 }
 
 /** How long a probe's ribbon is: what the box says, else a typical J-Link cable. */

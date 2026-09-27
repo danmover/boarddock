@@ -87,14 +87,14 @@ export function escapes(e: CableEnd, own: Box | null, zc: number, radius: number
     out.push(drop([p1]));
     out.push(drop([p1, add(p1, e.d, 18)]));
   } else {
-    // a plug pointing up or down: go straight, or step off the board sideways at the plug's height first
+    // a plug pointing up or down: go straight, or step off the board sideways at the plug's height first (just
+    // clear of it, or a little further, past what stands off its face: a probe's ribbon socket)
     out.push(drop([p1]));
     if (own) for (const [k, s] of [[0, 1], [0, -1], [1, 1], [1, -1]] as const) {
       const edge = s > 0 ? own[k + 3] : own[k];
       const need = (edge - p1[k]) * s + radius + 3;
       if (need <= 0 || need > 90) continue;
-      const q = [...p1]; q[k] += s * need;
-      out.push(drop([p1, q]));
+      for (const more of [0, 12]) { const q = [...p1]; q[k] += s * (need + more); out.push(drop([p1, q])); }
     }
   }
   // a drop column that lands on a sleeper steps along the rail before it goes down
@@ -158,46 +158,64 @@ export function bestRoute(A: CableEnd, B: CableEnd, streets: number[], zc: numbe
   return best;
 }
 
+/** A ribbon's end: a cable end, plus its socket's long side (the ribbon's width lies along it) and its depth across. */
+export interface RibbonEnd extends CableEnd { w: number[]; span: number }
+
+export interface RibbonChoice extends Choice { free: [number, number] } // free: the stretch (mm along it) where it hangs free
+
+const cross = (a: number[], b: number[]) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const unit = (a: number[]) => { const L = Math.hypot(a[0], a[1], a[2]) || 1; return a.map((x) => x / L); };
+
 /**
- * Short ways across for a cable that stays by its boards instead of going down to a street (a probe's ribbon to the
- * board beside it): out of each plug, then over the top of both boards, round either end of them, round either side,
- * or straight across. The one that is shortest and hits least wins; `own` is the two ends' boards together.
+ * A flat ribbon from one IDC socket to another, the way one is really laid: it leaves each socket flat over its top,
+ * square to the socket's long side, and lies along its board. Then either it loops over the top from one board to
+ * the other, high enough to clear everything between them and whatever is in `above` (earlier ribbons, cables rising
+ * from plugs) so ribbons nest rather than cross; or it folds along its board and goes round one end of the two
+ * (`ownA`, `ownB`: their envelopes), at the height of the sockets, outside the ribbons already there. The shortest
+ * that hits nothing wins.
  */
-export function directRoute(A: CableEnd, B: CableEnd, radius: number, obs: Obstacle[], ownA: Box | null, ownB: Box | null): Choice | null {
-  // a ribbon bends flat right behind its plug, once it is clear of its own board and holder
-  const out = (e: CableEnd, ob: Box | null) => {
-    let t = 5;
-    if (ob && [0, 1, 2].every((k) => e.p[k] > ob[k] - 0.1 && e.p[k] < ob[k + 3] + 0.1)) {
-      const k = [0, 1, 2].reduce((m, j) => (Math.abs(e.d[j]) > Math.abs(e.d[m]) ? j : m), 0);
-      t = Math.min(30, Math.max(t, ((e.d[k] > 0 ? ob[k + 3] : ob[k]) - e.p[k]) / e.d[k] + radius + 1));
-    }
-    return add(e.p, e.d, t);
+export function ribbonRoute(A: RibbonEnd, B: RibbonEnd, t: number, rw: number, obs: Obstacle[], above: Box[] = [], ownA: Box | null = null, ownB: Box | null = null): RibbonChoice {
+  const R = 7;
+  // leave the socket flat along x (the way `pref` points where it can, else up, else towards the other end)
+  const lay = (e: RibbonEnd, other: number[], pref: number[] | null) => {
+    let x = unit(cross(e.d, e.w));
+    const k = pref ? x[0] * pref[0] + x[1] * pref[1] + x[2] * pref[2] : 0;
+    if (pref && Math.abs(k) > 0.3 ? k < 0 : Math.abs(x[2]) > 0.3 ? x[2] < 0 : (other[0] - e.p[0]) * x[0] + (other[1] - e.p[1]) * x[1] < 0) x = x.map((q) => -q);
+    const base = add(e.p, e.d, t / 2 - 0.6); // on the socket's cable clamp
+    return { x, S: add(base, x, -e.span / 2), E: add(base, x, e.span / 2 + 2) }; // S: its cut end, at the socket's far side
   };
-  const a1 = out(A, ownA), b1 = out(B, ownB);
-  const own = ownA && ownB ? [0, 1, 2].map((k) => Math.min(ownA[k], ownB[k])).concat([0, 1, 2].map((k) => Math.max(ownA[k + 3], ownB[k + 3]))) : ownA ?? ownB;
-  const box = own ?? [Math.min(a1[0], b1[0]), Math.min(a1[1], b1[1]), Math.min(a1[2], b1[2]), Math.max(a1[0], b1[0]), Math.max(a1[1], b1[1]), Math.max(a1[2], b1[2])];
-  const clear = radius + 6;
-  const mk = (mid: number[][]): Route => {
-    const pts = [A.p, a1, ...mid, b1, B.p];
-    return { pts, kinds: pts.slice(1).map((_, i) => (i === 0 || i === pts.length - 2 ? 'exit' : 'escape') as SegKind) };
-  };
-  // across at a height: from the lower plug up to over both boards, every 6 mm (the lowest that is clear wins), straight
-  // across or in two legs (across the rail first, or along it first)
-  const zs: number[] = [];
-  for (let z = Math.min(a1[2], b1[2]); z < box[5] + clear; z += 6) zs.push(z);
-  zs.push(Math.max(box[5], a1[2], b1[2]) + clear);
-  const cands: Route[] = [mk([])];
-  for (const z of zs) {
-    const up = [a1[0], a1[1], z], down = [b1[0], b1[1], z];
-    cands.push(mk([up, down]), mk([up, [a1[0], b1[1], z], down]), mk([up, [b1[0], a1[1], z], down]));
+  const cands: { pts: number[][]; iA: number; iB: number }[] = [];
+  // over the top: up (after a fold, or a bend on a board lying flat, if it left sideways), across, down
+  {
+    const a = lay(A, B.p, [0, 0, 1]), b = lay(B, A.p, [0, 0, 1]);
+    const foot = (q: typeof a) => (q.x[2] > 0.7 ? q.E : add(q.E, q.x, 3));
+    const fa = foot(a), fb = foot(b);
+    const pad = rw / 2 + 2;
+    const u0 = Math.min(fa[0], fb[0]) - pad, u1 = Math.max(fa[0], fb[0]) + pad, v0 = Math.min(fa[1], fb[1]) - pad, v1 = Math.max(fa[1], fb[1]) + pad;
+    let Z = Math.max(fa[2], fb[2]) + R;
+    for (const box of [...obs.map((o) => o.box), ...above]) if (!(box[3] < u0 || box[0] > u1 || box[4] < v0 || box[1] > v1)) Z = Math.max(Z, box[5] + 3 + t / 2 + R * 0.3);
+    const col = (q: typeof a) => (q.x[2] > 0.7 ? add(q.E, q.x, (Z - q.E[2]) / q.x[2]) : [foot(q)[0], foot(q)[1], Z]);
+    const pa = [a.S, a.E, ...(a.x[2] > 0.7 ? [] : [fa]), col(a)], pb = [col(b), ...(b.x[2] > 0.7 ? [] : [fb]), b.E, b.S];
+    cands.push({ pts: [...pa, ...pb], iA: pa.length - 1, iB: pa.length });
   }
-  for (const u of [box[0] - clear, box[3] + clear]) cands.push(mk([[u, a1[1], a1[2]], [u, b1[1], b1[2]]]));
-  for (const v of [box[1] - clear, box[4] + clear]) cands.push(mk([[a1[0], v, a1[2]], [b1[0], v, b1[2]]]));
-  let best: Choice | null = null;
-  for (const route of cands) {
-    const len = routeLength(route), h = hits(route, obs, [A, B], radius);
-    const score = len + h.length * 300 + h.reduce((q, x) => q + x.depth, 0) * 4;
-    if (!best || score < best.score) best = { route, street: -1, hits: h, len, score, ea: route, eb: route, direct: true };
+  // round either end, a ribbon's width further out for each try (outside the ones already there)
+  if (ownA && ownB) for (const sg of [1, -1]) for (let k = 0; k < 3; k++) {
+    const uS = sg > 0 ? Math.max(ownA[3], ownB[3]) + rw / 2 + 3 + k * (rw + 2) : Math.min(ownA[0], ownB[0]) - rw / 2 - 3 - k * (rw + 2);
+    const a = lay(A, B.p, [sg, 0, 0]), b = lay(B, A.p, [sg, 0, 0]);
+    const fa = add(a.E, a.x, 3), fb = add(b.E, b.x, 3);
+    const pa = [a.S, a.E, fa, [uS, fa[1], fa[2]]], pb = [[uS, fb[1], fb[2]], fb, b.E, b.S];
+    cands.push({ pts: [...pa, ...pb], iA: pa.length - 1, iB: pa.length });
   }
-  return best;
+  let best: RibbonChoice | null = null;
+  for (const { pts, iA, iB } of cands) {
+    // along each board it may touch its own holder (it lies on it); between them it has to clear everything
+    const kinds = pts.slice(1).map((_, i) => (i < iA || i >= iB ? 'exit' : 'escape') as SegKind);
+    const route: Route = { pts, kinds };
+    const len = routeLength(route), h = hits(route, obs, [A, B], 1.2);
+    const score = len + h.length * 300 + h.reduce((q, x2) => q + x2.depth, 0) * 4;
+    if (best && score >= best.score) continue;
+    const lenTo = (k: number) => pts.slice(1, k + 1).reduce((q, p2, i) => q + dist(p2, pts[i]), 0);
+    best = { route, street: -1, hits: h, len, score, ea: route, eb: route, direct: true, free: [lenTo(iA) - R, lenTo(iB) + R] };
+  }
+  return best!;
 }

@@ -1,6 +1,7 @@
 // Holder heights (kernel-free).
 import type { Board, HolderSettings } from '../model/types';
 import { round } from '../geom/poly';
+import { isDebugPort, isUartPort } from '../model/links';
 
 /** Heights of a holder (no geometry kernel needed). */
 export function computeLevels(b: Board, H: HolderSettings, minZb = 0) {
@@ -14,8 +15,13 @@ export function computeLevels(b: Board, H: HolderSettings, minZb = 0) {
   const s = Math.max(H.standoff ?? round(sAuto, 1), round(minZb - base, 2));
   const zb = base + s, zt = zb + b.thickness;
   const zw = Math.max(zb + 0.6, zt + H.wallAbove);
-  // highest thing above the tray: parts, plugs from above
+  // highest thing above the tray: parts, and what stays plugged in from above (a debug ribbon lying over its socket,
+  // a serial cable's jumper ends and the bend of their wires)
   let topMax = zw;
-  for (const c of b.comps) if (!c.hidden && c.side === 'top') topMax = Math.max(topMax, zt + c.h + (c.conn?.entry === 'top' ? 0 : 0));
+  for (const c of b.comps) {
+    if (c.hidden || c.side !== 'top') continue;
+    const above = c.conn?.entry !== 'top' ? 0 : isDebugPort(c) ? c.conn.plug.len + 0.6 + 1.2 : isUartPort(c) ? 14 + 8 - Math.max(0, c.h - 2.5) : 0;
+    topMax = Math.max(topMax, zt + c.h + above);
+  }
   return { needMax, base, s, zb, zt, zw, topMax };
 }
