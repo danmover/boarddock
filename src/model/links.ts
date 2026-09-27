@@ -1,7 +1,7 @@
 // Connections between boards: which plug goes where. Every plug gets a role from its type, name and board
 // (a Pi's USB-A ports are hosts, its USB-C is its power input, a hub's ports feed devices, a charger's ports give
 // power), and Auto-connect pairs them up. The panel then routes each cable and sizes it.
-import type { Comp, Link, Module, PlugRef, Project } from './types';
+import type { Board, Comp, Link, Module, PlugRef, Project } from './types';
 import { needOf, portCap, poweredHub, supplyOf } from './powerdata';
 
 export type PlugRole = 'host' | 'device' | 'power-in' | 'power-in-dc' | 'power-out' | 'hub-up' | 'hub-down' | 'net' | 'video' | 'audio' | 'wire' | 'debug' | 'uart' | 'mains-in' | 'mains-out' | 'other';
@@ -10,6 +10,9 @@ const ROLES: PlugRole[] = ['host', 'device', 'power-in', 'power-in-dc', 'power-o
 
 export const KIND_COLOR: Record<NonNullable<Link['kind']>, string> = { usb: '#3a3f47', power: '#d0443a', net: '#3b7dd8', video: '#7a5cc7', audio: '#2fae9a', wire: '#e0a030', debug: '#a3a9b1', uart: '#c0772f', jumper: '#4f9d57', mains: '#8d6e63' };
 export const KIND_NAME: Record<NonNullable<Link['kind']>, string> = { usb: 'USB', power: 'power', net: 'Ethernet', video: 'video', audio: 'audio', wire: 'wires', debug: 'debug ribbon', uart: 'USB-serial', jumper: 'jumper wires', mains: 'mains' };
+
+/** An accessory rather than a board being served: a box (hub, charger, probe), or a board marked as a probe or adapter. */
+export const isAccessory = (b: Board) => b.kind === 'box' || !!b.role;
 
 /** Connector types that are debug connectors (a probe's ribbon plugs in). */
 export const DEBUG_TYPES = new Set(['swd10', 'jtag20', 'tagconnect']);
@@ -158,8 +161,8 @@ export function autoLinks(p: Project): Link[] {
   for (const lead of free('mains-in').filter((x) => !outlets(x.module))) { const o = nearest(lead, free('mains-out')); if (o) take(lead, o); }
   // debug probes and serial adapters: each free one to the nearest free header of its kind on a board (never probe to
   // probe); an adapter's jumper wires are filled in by the caller
-  for (const r of ['debug', 'uart'] as const) for (const pr of free(r).filter((x) => x.module.board.kind === 'box')) {
-    const h = nearest(pr, free(r).filter((x) => x.module.board.kind !== 'box'));
+  for (const r of ['debug', 'uart'] as const) for (const pr of free(r).filter((x) => isAccessory(x.module.board))) {
+    const h = nearest(pr, free(r).filter((x) => !isAccessory(x.module.board)));
     if (h) take(pr, h);
   }
   return out;
@@ -211,7 +214,7 @@ export const shortName = (n: string) => n.replace(/^(Raspberry|Arduino|Adafruit|
 const SOURCE: PlugRole[] = ['mains-out', 'power-out', 'hub-down', 'host'];
 /** Which way a cable points: from the end that gives (power, a port, a probe's ribbon) to the end that takes. */
 export function cableFlow(p: Project, l: Link): { from: PlugRef; to: PlugRef } {
-  const role = (r: PlugRef) => { const m = p.modules.find((x) => x.id === r.module); const c = m?.board.comps.find((x) => x.ref === baseRef(r.ref)); return { role: m && c ? plugRole(m, c) : ('other' as PlugRole), box: m?.board.kind === 'box' }; };
+  const role = (r: PlugRef) => { const m = p.modules.find((x) => x.id === r.module); const c = m?.board.comps.find((x) => x.ref === baseRef(r.ref)); return { role: m && c ? plugRole(m, c) : ('other' as PlugRole), box: !!m && isAccessory(m.board) }; };
   let a = { r: l.a, ...role(l.a) }, b = { r: l.b, ...role(l.b) };
   if (SOURCE.indexOf(b.role) >= 0 && SOURCE.indexOf(a.role) < 0) [a, b] = [b, a];
   if (a.role === 'hub-up' || (b.role === 'host' && a.role !== 'host')) [a, b] = [b, a];
@@ -224,7 +227,7 @@ export function cablePurpose(p: Project, l: Link): { from: string; to: string; t
   const end = (r: PlugRef) => {
     const m = p.modules.find((x) => x.id === r.module);
     const c = m?.board.comps.find((x) => x.ref === baseRef(r.ref));
-    return { name: m?.board.name ?? '?', ref: r.ref, role: m && c ? plugRole(m, c) : ('other' as PlugRole), box: m?.board.kind === 'box' };
+    return { name: m?.board.name ?? '?', ref: r.ref, role: m && c ? plugRole(m, c) : ('other' as PlugRole), box: !!m && isAccessory(m.board) };
   };
   let a = end(l.a), b = end(l.b);
   if (SOURCE.indexOf(b.role) >= 0 && SOURCE.indexOf(a.role) < 0) [a, b] = [b, a];

@@ -11,6 +11,7 @@ import { openFiles } from './importFlow';
 import { bedNote, placementNote } from './panelOps';
 import { BoardThumb, ManualBoard } from './panels';
 import { Icon, I } from './icons';
+import { copyOf, forgetBoard, myBoards } from '../model/myboards';
 
 /** "Raspberry Pi 4B", "2 × Raspberry Pi Pico and Relay board", "7 boards". */
 export function countNames(bs: Board[]): string {
@@ -36,6 +37,7 @@ export function AddBoardSheet() {
   const [busy, setBusy] = useState(false);
   const [over, setOver] = useState(false);
   const [pick, setPick] = useState<Record<string, number>>({});
+  const [mine, setMine] = useState(myBoards);
   const file = useRef<HTMLInputElement>(null);
   const sheet = useRef<HTMLDivElement>(null);
   const opener = useRef<HTMLElement | null>(null);
@@ -43,7 +45,7 @@ export function AddBoardSheet() {
   useEffect(() => {
     if (!open) return;
     opener.current = document.activeElement as HTMLElement | null;
-    setQ(''); setErr(null); setPick({});
+    setQ(''); setErr(null); setPick({}); setMine(myBoards());
     const k = (e: KeyboardEvent) => {
       if (e.key === 'Escape') close();
       // keep Tab inside the sheet while it is open
@@ -104,6 +106,12 @@ export function AddBoardSheet() {
           <input autoFocus className="sheet-search" type="text" placeholder="Search boards, hubs, chargers…" value={q} onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') { if (picked) addPicked(); else if (only) add([only.make()]); } }} aria-label="Search boards" />
           {only && !picked && <p className="hint" style={{ margin: '6px 0 0' }}>Enter adds {only.name.split(' (')[0]}.</p>}
+          {mine.filter((s) => match(s.name)).length > 0 && <><h4>My boards</h4><div className="tiles">{mine.filter((s) => match(s.name)).map((s) => (
+            <div key={s.id} className="tilewrap">
+              <button className="tile" onClick={() => add([copyOf(s)])} title={`Add it now (saved ${s.at.slice(0, 10)})`}><span>{s.name}</span><small>{s.board.role === 'probe' ? 'debug probe' : s.board.role === 'adapter' ? 'USB-serial adapter' : s.board.kind === 'box' ? 'box' : 'board'} · {s.board.comps.filter((c) => c.conn).length} plugs</small></button>
+              <div className="tileqty"><button className="qbtn" onClick={() => { forgetBoard(s.id); setMine(myBoards()); }} aria-label={`Forget ${s.name}`} title="Remove it from My boards">×</button></div>
+            </div>
+          ))}</div></>}
           {boards.length > 0 && <><h4>Boards</h4><div className="tiles">{boards.map(tile)}</div></>}
           {extras.length > 0 && <><h4>Hubs, chargers and add-ons</h4><div className="tiles">{extras.map(tile)}</div></>}
           {!boards.length && !extras.length && <p className="hint">Nothing called “{q}” yet. Drop its files above, or measure it below.</p>}

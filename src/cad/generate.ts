@@ -5,7 +5,7 @@ import { holeKeepout, isMountHole } from '../model/holes';
 import { boxProblems } from '../model/boxes';
 import { DEBUG_TYPES, isDebugPort, isUartPort } from '../model/links';
 import { headerPins, UART_WIRES, uartPins } from '../model/probes';
-import { baseRef } from '../model/links';
+import { baseRef, isAccessory } from '../model/links';
 import { DEFAULT_FEATURES, MATERIALS } from '../model/library';
 import { bbox, centroid, compRect, extentAlong, inside, rad, rayExit, round, segDist } from '../geom/poly';
 import type { CS, MF } from './kernel';
@@ -183,7 +183,7 @@ function splitAxis(C: Ctx): V2 | null {
  * A debug probe (J-Link): a thin box that slides down into a slot from its open end, plugs first out, and stays there
  * (see slotBody). Several for one board stack as slots on corner towers.
  */
-const isProbeBox = (b: Board) => b.kind === 'box' && b.comps.some((c) => isDebugPort(c) || isUartPort(c));
+const isProbeBox = (b: Board) => isAccessory(b) && b.comps.some((c) => isDebugPort(c) || isUartPort(c));
 
 /** The pins of a header that have a wire pushed on (a jumper link's, or a serial cable's loose ends), with its colour. */
 function wiredPins(C: Ctx, c: Comp): { pin: Pin; colour: string }[] {
@@ -200,7 +200,7 @@ function wiredPins(C: Ctx, c: Comp): { pin: Pin; colour: string }[] {
 
 /** Boxes (hubs, chargers, probes) sit in low guards: no snap fingers, notches or label. Hubs and chargers are strapped down. */
 const holderFor = (H: HolderSettings, b: Board): HolderSettings =>
-  b.kind === 'box' ? { ...H, tabs: 'off', notches: false, label: '', wallAbove: Math.min(H.wallAbove, -(b.thickness - 8)), standoff: H.standoff ?? 1.2, minStandoff: 1.2 } : H;
+  isAccessory(b) ? { ...H, tabs: 'off', notches: false, label: '', wallAbove: Math.min(H.wallAbove, -(b.thickness - 8)), standoff: H.standoff ?? 1.2, minStandoff: 1.2 } : H;
 
 /** A holder's heights as it is really built: box settings applied, and raised over the dock's spine when docked. */
 export function builtLevels(b: Board, H0: HolderSettings, dockEdge?: EdgeName | null) {

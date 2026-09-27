@@ -27,6 +27,7 @@ import { delta, partsFor, type Delta } from '../model/built';
 import { baseOf as stackBase, ridersOf } from '../model/holes';
 import { DockFeaSection } from './DockFea';
 import { powerBudget, powerText } from '../model/power';
+import { saveBoard } from '../model/myboards';
 import { needOf, poweredHub, supplyOf, watts } from '../model/powerdata';
 import { picture } from './snapshot';
 import { boardPicture, holderPicture, type PicPart } from '../worker/client';
@@ -371,7 +372,14 @@ export function BoardPanel() {
           {b.kind === 'box' ? <div className="field"><span>Height</span><div className="static mono">{round(b.thickness, 1)} mm</div></div> : <Num label="Thickness" value={b.thickness} min={0.3} max={4} onChange={(v) => editMod((q) => { q.board.thickness = v; })} />}
           <div className="field"><span>Size</span><div className="static mono">{round(bb.x1 - bb.x0, 1)} × {round(bb.y1 - bb.y0, 1)}</div></div>
         </div>
-        {b.kind !== 'box' && <PowerDraw />}
+        {b.kind !== 'box' && (
+          <div className="row" style={{ marginTop: 8, alignItems: 'end' }}>
+            <Pick label="What it is" value={b.role ?? 'board'} options={[['board', 'a board'], ['probe', 'a debug probe (J-Link…)'], ['adapter', 'a USB-serial adapter']]} onChange={(v) => editMod((q) => { q.board.role = v === 'board' ? undefined : (v as 'probe' | 'adapter'); })} />
+            <button className="btn small" onClick={() => { const ok = saveBoard(b); toast(ok ? `Saved ${b.name} to My boards: Add a board lists it for any rack.` : 'This browser would not store it (private window, or storage full).'); }} title="Keep this board to add again to any rack">Save to My boards</button>
+          </div>
+        )}
+        {b.role && <p className="hint" style={{ margin: '4px 0 0' }}>{b.role === 'probe' ? 'Give it its debug connector (the one its ribbon plugs into) and its USB; it slides into a slot behind the board it serves, like a J-Link.' : 'Give it its pins (named, for the jumper wires) and its USB; it slides into a slot behind the board it serves.'}</p>}
+        {b.kind !== 'box' && !b.role && <PowerDraw />}
         {b.kind !== 'box' && <Revision />}
         <p className="hint">{b.source}. {b.holes.length} holes, {b.comps.filter((c) => !c.hidden).length} parts, {b.comps.filter((c) => c.conn).length} connectors.</p>
         {b.notes.length > 0 && <div className="warns">{b.notes.map((n, i) => <div key={i}>{n}</div>)}</div>}

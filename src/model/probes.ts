@@ -5,21 +5,21 @@
 import type { Board, Comp, Link, Module, Pin, Project, Wire } from './types';
 import { connById, connSetup, newModule } from './library';
 import { BOX_PRESETS, makeBox } from './boxes';
-import { baseRef, DEBUG_TYPES, isDebugPort, isUartPort, numberLinks, plugsOf } from './links';
+import { baseRef, DEBUG_TYPES, isAccessory, isDebugPort, isUartPort, numberLinks, plugsOf } from './links';
 
 export { DEBUG_TYPES, isDebugPort, isUartPort } from './links';
 
 /** A board's companion that lives in a slot behind it: a probe (a box with a debug port) or a USB-serial adapter (a box
  * with serial pins). */
-export const isProbe = (m: Module) => m.board.kind === 'box' && m.board.comps.some((c) => isDebugPort(c) || isUartPort(c));
+export const isProbe = (m: Module) => isAccessory(m.board) && m.board.comps.some((c) => isDebugPort(c) || isUartPort(c));
 /** A USB-serial adapter: a box with serial pins. */
-export const isAdapter = (m: Module) => m.board.kind === 'box' && m.board.comps.some(isUartPort) && !m.board.comps.some(isDebugPort);
+export const isAdapter = (m: Module) => isAccessory(m.board) && m.board.comps.some(isUartPort) && !m.board.comps.some(isDebugPort);
 
 /** A board's debug headers (a probe's own port does not count). */
-export const debugHeaders = (b: Board): Comp[] => (b.kind === 'box' ? [] : b.comps.filter(isDebugPort));
+export const debugHeaders = (b: Board): Comp[] => (isAccessory(b) ? [] : b.comps.filter(isDebugPort));
 
 /** A board's UART headers. */
-export const uartHeaders = (b: Board): Comp[] => (b.kind === 'box' ? [] : b.comps.filter(isUartPort));
+export const uartHeaders = (b: Board): Comp[] => (isAccessory(b) ? [] : b.comps.filter(isUartPort));
 
 /**
  * A USB-serial cable (a USB to TTL lead: USB-A on one end, loose jumper ends for GND, RX and TX on the other) from each
@@ -130,7 +130,7 @@ export function targetOf(p: Project, probe: Module): Module | null {
     const other = l.a.module === probe.id ? l.b : l.b.module === probe.id ? l.a : null;
     const m = other && p.modules.find((x) => x.id === other.module);
     const c = m?.board.comps.find((x) => x.ref === baseRef(other!.ref));
-    if (m && c && m.board.kind !== 'box' && (isDebugPort(c) || isUartPort(c))) return m;
+    if (m && c && !isAccessory(m.board) && (isDebugPort(c) || isUartPort(c))) return m;
   }
   return null;
 }
@@ -143,7 +143,7 @@ export function targetOf(p: Project, probe: Module): Module | null {
 export function stackProbes(p: Project): boolean {
   let changed = false;
   for (const m of p.modules) {
-    if (m.board.kind === 'box') continue;
+    if (isAccessory(m.board)) continue;
     const ps = probesOf(p, m);
     if (ps.length < 2) continue;
     // new ones go on top of the stack already there
@@ -249,7 +249,7 @@ export function jumperWiring(p: Project, l: Link): string {
   const end = (r: { module: string; ref: string }) => { const m = p.modules.find((x) => x.id === r.module); const c = m?.board.comps.find((x) => x.ref === baseRef(r.ref)); return { m, pins: c ? headerPins(c) : [] }; };
   const A = end(l.a), B = end(l.b);
   const pin = (e: typeof A, n: string) => { const q = e.pins.find((x) => x.n === n); return `pin ${n}${q?.net ? ` (${q.net.replace(/^\//, '')})` : ''}`; };
-  return (l.wires ?? []).map((w) => `${COLOUR_NAME[w.colour ?? ''] ?? 'a'} wire from ${A.m?.board.kind === 'box' ? '' : `${l.a.ref} `}${pin(A, w.a)} to ${B.m?.board.kind === 'box' ? '' : `${l.b.ref} `}${pin(B, w.b)}`).join(', ');
+  return (l.wires ?? []).map((w) => `${COLOUR_NAME[w.colour ?? ''] ?? 'a'} wire from ${A.m && isAccessory(A.m.board) ? '' : `${l.a.ref} `}${pin(A, w.a)} to ${B.m && isAccessory(B.m.board) ? '' : `${l.b.ref} `}${pin(B, w.b)}`).join(', ');
 }
 
 /** Jumper wires to buy: the shortest standard length that reaches. */

@@ -135,6 +135,16 @@ Plastic in a holder with no cradles or clip:
 
 Cradles, caps and the dock tongue come on top of these and are the same for both styles.
 
+## Drawing a board
+
+The Board view is a 2D editor for any board: one read from a file, one measured by hand, or one you draw from nothing.
+
+- **Parts** opens a toolbox: plugs that snap to the nearest edge facing out (USB, HDMI, Ethernet, barrel, audio, SMA, right-angle pins…), pin headers (1 × 2 to 2 × 20), JST-PH and XH, debug connectors (10-pin SWD, 20-pin JTAG, Tag-Connect), an FTDI UART header, M2 to M4 holes, and parts that stand tall (capacitors, relays, buttons, heatsinks, modules). Click one, then where it goes; Shift keeps placing.
+- **Measure** puts a dimension between two features: an edge of the board, a hole's centre, or a part's centre or one of its sides. Type what your calipers read on the real board and the part (or hole) moves to it; between two edges it sets the board's width or height. Dimensions stay on the board, and update as things move.
+- Hover anything for what it is: its size, height, side, position, which way its plug goes in, what a hole is for. Pins show, pin 1 square, and a KiCad board's copper shows faintly underneath, so you can see where parts sit.
+- **What it is** (Board step): a board, or a debug probe or USB-serial adapter you drew yourself; those slide into the slot behind the board they serve, like the built-in J-Link and FT232RL.
+- **Save to My boards** keeps the board in this browser; **Add a board** lists My boards for any rack.
+
 ## Hole wizard
 
 Not every hole is for mounting. The wizard sorts them when a board comes in, and you can change any hole or group:

@@ -8,6 +8,7 @@ import { DOCK_MIN_ZB, gripSpan, HD, headSpan, SOCKET_Z, SPINE_TOP } from './dock
 import { computeLevels } from './levels';
 import { baseOf, ridersOf } from '../model/holes';
 import { probesOf } from '../model/probes';
+import { isAccessory } from '../model/links';
 
 /** A module plus the plugs of every board stacked on it: what orientation scoring should look at. */
 export function withRiders(p: Project, m: Module): Module {
@@ -247,7 +248,7 @@ export function autoAssign(p: Project): RailMount[] {
   // boxes (hubs, chargers) lie flat right after the boards they feed, so their cables stay short; boards connected to
   // each other sit together
   const out: RailMount[] = [];
-  for (const seg of byBoxes(q, all.filter((m) => m.board.kind !== 'box'), all.filter((m) => m.board.kind === 'box' && !docked.has(m.id)))) {
+  for (const seg of byBoxes(q, all.filter((m) => !isAccessory(m.board)), all.filter((m) => isAccessory(m.board) && !docked.has(m.id)))) {
     docksFor(q, orderByLinks(q, seg.boards), railDir, out, backs);
     for (const m of seg.boxes) {
       const bb = bbox(m.board.outline);
@@ -291,7 +292,7 @@ export function byBoxes<T extends Module>(p: Project, boards: T[], boxes: T[]): 
 export function probeSlots<T extends Module>(p: Project, bases: T[]): Map<string, T> {
   const out = new Map<string, T>(), used = new Set<string>();
   for (const m of bases) {
-    if (m.board.kind === 'box') continue;
+    if (isAccessory(m.board)) continue;
     // probes of the board and of any board stacked on it
     const mine = [m, ...ridersOf(p, m)].flatMap((x) => probesOf(p, p.modules.find((y) => y.id === x.id) ?? x));
     const pr = mine.map((x) => bases.find((b) => b.id === x.id)).find((x) => x && !used.has(x.id));
