@@ -13,16 +13,17 @@ import { bbox } from '../src/geom/poly';
 const T = (id: string) => TEMPLATES.find((t) => t.id === id)!.make();
 
 describe('lying flat on a dock', () => {
-  it('the flat frame puts the ear tip over the divider, the top face up and the holder over the pedestal', () => {
+  it('the flat frame puts the ear tip over the divider, the top face up, and hangs the holder level with the tongue tip', () => {
     const p = newProject(T('rpi4')), m = p.modules[0];
     const s = earSite(m.board, m.holder, 'left');
     const F = flatFrame('left', s.tc, s.L0);
     // up stays up
     expect(dir(F, [0, 0, 1])).toEqual([0, 0, 1].map((v) => expect.closeTo(v, 9)));
-    // the holder's outer face on the ear edge is EAR.len in from the divider, the holder bottom a pedestal above the socket
+    // the holder's outer face on the ear edge is EAR.len in from the divider; its underside hangs level with the tongue's
+    // tip (socket-local z = -14), so the holder prints flat
     const face = ptM(F, [-s.L0, s.tc, 0]);
     expect(face[1]).toBeCloseTo(EAR.len, 6);
-    expect(face[2]).toBeCloseTo(EAR.ped, 6);
+    expect(face[2]).toBeCloseTo(-EAR.drop, 6);
     // and the board's middle is further in (the holder reaches away from the socket)
     const bb = bbox(m.board.outline), mid = ptM(F, [(bb.x0 + bb.x1) / 2, (bb.y0 + bb.y1) / 2, 0]);
     expect(mid[1]).toBeGreaterThan(EAR.len + 10);
@@ -66,7 +67,13 @@ describe('lying flat on a dock', () => {
     expect(r.parts.filter((x) => x.id.endsWith('holder')).length).toBe(4);
     expect(r.parts.filter((x) => x.id.endsWith('rod')).length).toBe(4);
     expect(pr.collisions).toEqual([]);
-    expect(r.report.warnings.filter((w) => /loose piece|Dock ear/.test(w))).toEqual([]);
+    expect(r.report.warnings.filter((w) => /loose piece|Dock ear|release lever/.test(w))).toEqual([]);
+    // every holder prints flat: nothing below its underside (the tongue stands on the bed beside it)
+    for (const h of r.parts.filter((x) => x.id.endsWith('holder'))) {
+      let zmin = Infinity;
+      for (let k = 2; k < h.mesh.pos.length; k += 3) zmin = Math.min(zmin, h.mesh.pos[k]);
+      expect(zmin).toBeGreaterThan(-0.01);
+    }
     // lying flat, the rack stands lower out of the wall than it would with the boards standing
     const q = newProject(T('rpi4'));
     q.modules.push(newModule(T('uno')), newModule(T('pico')), newModule(T('nano')));

@@ -239,8 +239,9 @@ export function holderDock(far: number, pedestal: number, side = 0, fit = 0) {
 
 /**
  * Holder-side dock features for a holder lying flat (socket-local, holder A): the pedestal and tongue under the tip of
- * the ear, the ear itself reaching back `reach` mm to fuse with the holder's wall, and the tunnel the release rod runs
- * up through to its button on top of the ear. `top`: the ear's top face (the rod's head rests a stroke above it).
+ * the ear, the ear itself reaching back `reach` mm into the holder's wall, on a post in the wall that stands on the bed
+ * (the holder hangs EAR.drop below the socket top, level with the tongue's tip, so all of it prints flat without
+ * supports), and the tunnel the release rod runs up through to its button on top of the ear. `top`: the ear's top face.
  */
 export function flatHolderDock(reach: number, fit = 0) {
   const top = EAR.ped + EAR.t, y1 = Math.max(EAR.len + 0.8, reach);
@@ -250,8 +251,8 @@ export function flatHolderDock(reach: number, fit = 0) {
     tongue(Math.min(1.0, EAR.ped), fit),
     extXZ(rect2(-HD.base.hx, 0, HD.base.hx, EAR.ped + 0.02), HD.backY, HD.base.y1), // pedestal on the socket top
     plate,
-    // gussets from the ear up the wall, either side of the button, so a press on the far edge doesn't bend it there
-    ...[-1, 1].map((sg) => extYZ(P([[y1 - 6, top - 0.01], [y1 + 0.01, top - 0.01], [y1 + 0.01, top + 5]]), 1.0).translate([sg * (EAR.hx - 1.4), 0, 0])),
+    // the post: the wall under the ear, from the bed up (fused into the holder's wall)
+    box(-EAR.hx + 0.5, EAR.len - 0.8, -EAR.drop, EAR.hx - 0.5, y1, EAR.ped + 0.02),
   ]);
   const cut = box(-HD.tunnelHx, HD.tunnelY[0], -0.2, HD.tunnelHx, HD.tunnelY[1], top + 0.2); // release-rod tunnel
   return { add, cut, top };

@@ -1489,7 +1489,7 @@ function earFeatures(C: Ctx, s: EarSite) {
   C.neg.push(f.cut.transform(D as any));
   const r = rod(f.top, 0);
   C.parts.push(part('rod', 'Release rod + button', r.m.transform(D as any), ID, '#ff5d6c', 1, { kind: 'rod', module: C.mid }, { seq: 3.5, dir: [0, 0, 1] }));
-  feat(C, 'dock', earPoly(s, s.tc - EAR.hx, s.tc + EAR.hx, -EAR.len, 0), -EAR.ped - 14, f.top + HD.stroke + HD.head.t - EAR.ped);
+  feat(C, 'dock', earPoly(s, s.tc - EAR.hx, s.tc + EAR.hx, -EAR.len, 0), 0, EAR.drop + f.top + HD.stroke + HD.head.t);
   if (s.conflicts.length) C.warnings.push(`Dock ear on the ${s.edge} edge: ${s.conflicts.join(', ')} ${s.conflicts.length > 1 ? 'are' : 'is'} in the way. Pick another dock edge in the Rails step.`);
   C.checks.push({ group: 'Dock', name: 'Lying flat', value: `ear on the ${s.edge} edge`, status: 'info', detail: `the holder lies top face up on its dock by a tab on its ${s.edge} edge, with the same tongue and socket as a standing one: so it takes the same shoe and socket, and a J-Link or adapter can stand behind it in the socket's other half.` });
   const eRatio = mat.E / MATERIALS.PETG.E;

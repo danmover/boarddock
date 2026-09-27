@@ -16,7 +16,8 @@ import { powerBudget, powerText } from '../model/power';
 import { buildModule, builtLevels, transformMesh, type ArrangeHooks, type ModuleOut } from './generate';
 import { baseOf, ridersOf, stackLayers, type StackLayer } from '../model/holes';
 import { freeAll, toMesh, type MF } from './kernel';
-import { END_POSE, LEN_X, rail as railSolid, shoe, shoeBody, shoeLever, socket, SOCKET_Z } from './dock';
+import { END_POSE, LEN_X, rail as railSolid, shoe, shoeBody, shoeLever, SHOE_LEVER, socket, SOCKET_Z } from './dock';
+import { EAR } from './dockdims';
 import { autoAssign, bestDock, classify, clipToRail, dockSite, EDGES, edgeNormal, plugDirs, railMatrix, slotMatrix, withRiders } from './dockplan';
 import { capStress, pieceMesh, planStands, railI, standBoxes, STAND, type StandLane } from './railstand';
 import { assemble, bestRoute, escapes, hits, ribbonRoute, slope, type Box, type CableEnd, type Choice, type Obstacle, type RibbonEnd, type Route } from './cableroute';
@@ -276,7 +277,15 @@ export function generatePanel(p: Project): GenResult {
     // release lever on the side where the boards overhang the shoe least (easiest to reach)
     const mb = boxes.filter((bx) => bx.id);
     const over = (sgn: number) => Math.max(0, ...mb.map((bx) => (sgn > 0 ? bx.b[4] : -bx.b[1]) - 20));
-    const lever: 1 | -1 = mt.lever === 'pos' ? 1 : mt.lever === 'neg' ? -1 : over(-1) < over(1) - 0.5 ? -1 : 1;
+    // a holder lying flat hangs beside the socket from its ear, down past the top of the lever: the lever goes on the
+    // other side (the shoe's lever: 11-29 mm out from the rail's middle, up to 41 mm)
+    // (it hangs on its own side of the socket, EAR.len out: across the rail over one side's lever, or along the rail
+    // past the shoe's end, clear of both)
+    const hangs = (st: Seat) => { const a = ((mt.turn + (st.slot ? 180 : 0)) * Math.PI) / 180; return Math.abs(Math.cos(a)) > 0.5 ? Math.sign(Math.cos(a)) : 0; };
+    const covers = (sgn: number) => mt.kind === 'dock' && seats.some((st) => st.lie && hangs(st) === sgn && SOCKET_Z - EAR.drop < SHOE_LEVER.top);
+    const auto: 1 | -1 = covers(1) !== covers(-1) ? (covers(1) ? -1 : 1) : over(-1) < over(1) - 0.5 ? -1 : 1;
+    const lever: 1 | -1 = mt.lever === 'pos' ? 1 : mt.lever === 'neg' ? -1 : auto;
+    if (covers(lever)) warnings.push(`${seats.filter((st) => st.lie).map((st) => st.mod.board.name).join(' and ')}: lying flat, ${covers(-lever) ? 'on both sides of the dock, they cover' : 'it covers'} the dock's rail release lever. ${covers(-lever) ? 'Turn the dock 90° so they reach along the rail' : 'Put the lever on the other side'} (Rails step).`);
     placed.push({ mt, seats, lo: all[0], hi: all[3], ylo: all[1], yhi: all[4], zhi: all[5], boxes, lever, soft });
   }
   if (failed.length) warnings.push(...failed);

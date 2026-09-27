@@ -38,6 +38,8 @@ export function headSpan(side: number): [number, number] {
  * by. Under the ear's tip are the same pedestal and tongue as a standing holder's, in the same socket; on top of it is
  * the release button, on a short rod straight down to the latch, clear of the board. `len`: how far the ear reaches out
  * from the holder's wall (the button head ends 1 mm short of the wall); `hx`: half its width; `t`: its thickness;
- * `ped`: the pedestal it stands on over the socket top.
+ * `ped`: the pedestal it stands on over the socket top; `drop`: how far the holder hangs below the socket top, so its
+ * underside is level with the tongue's tip and the whole holder prints flat on the bed with nothing underneath: the
+ * tongue stands on the bed beside it, and the ear sits on a post in the wall.
  */
-export const EAR = { len: 15, hx: 12, t: 4.5, ped: 3 };
+export const EAR = { len: 15, hx: 12, t: 4.5, ped: 3, drop: 14 };
