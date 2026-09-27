@@ -249,12 +249,14 @@ export function autoAssign(p: Project): RailMount[] {
   // each other sit together
   const out: RailMount[] = [];
   for (const seg of byBoxes(q, all.filter((m) => !isAccessory(m.board)), all.filter((m) => isAccessory(m.board) && !docked.has(m.id)))) {
-    docksFor(q, orderByLinks(q, seg.boards), railDir, out, backs);
-    for (const m of seg.boxes) {
-      const bb = bbox(m.board.outline);
-      out.push({ id: `auto${out.length}`, rail: '', at: null, kind: 'flat', turn: bb.x1 - bb.x0 >= bb.y1 - bb.y0 ? 0 : 90, slots: [{ module: m.id, edge: 'auto' }] });
-    }
+    const docks: RailMount[] = [];
+    docksFor(q, orderByLinks(q, seg.boards), railDir, docks, backs);
+    const flats: RailMount[] = seg.boxes.map((m) => { const bb = bbox(m.board.outline); return { id: '', rail: '', at: null, kind: 'flat', turn: bb.x1 - bb.x0 >= bb.y1 - bb.y0 ? 0 : 90, slots: [{ module: m.id, edge: 'auto' }] }; });
+    // the box in the middle of the boards it feeds, so the farthest cable is half as long
+    const mid = flats.length && docks.length >= 2 ? Math.floor(docks.length / 2) : docks.length;
+    out.push(...docks.slice(0, mid), ...flats, ...docks.slice(mid));
   }
+  out.forEach((m, i) => { m.id = `auto${i}`; });
   return out;
 }
 

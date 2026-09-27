@@ -64,7 +64,7 @@ describe('power budget', () => {
 });
 
 describe('layout', () => {
-  it('puts each box right after the boards it feeds', () => {
+  it('puts each box among the boards it feeds, in the middle of them', () => {
     const p = rack(['rpi4', 'rpi4', 'usb_charger', 'pico', 'pico', 'usb_hub']);
     p.links = autoLinks(p);
     const segs = byBoxes(p, p.modules.filter((m) => m.board.kind !== 'box'), p.modules.filter((m) => m.board.kind === 'box'));
@@ -75,6 +75,8 @@ describe('layout', () => {
     const order = autoAssign(p).map((m) => m.kind);
     expect(order.filter((k) => k === 'flat').length).toBe(2);
     expect(order.indexOf('flat')).toBeLessThan(order.lastIndexOf('dock'));
+    // not at the end of its boards: a dock on either side of each box
+    for (let i = 0; i < order.length; i++) if (order[i] === 'flat' && order.filter((k) => k === 'dock').length >= 2) expect(order.slice(0, i).includes('dock')).toBe(true);
   });
 });
 
