@@ -7,7 +7,7 @@ import { basis, dir, I4, inv, mul, rotZ, tr, type M4 } from '../geom/mat';
 import { DOCK_MIN_ZB, gripSpan, HD, headSpan, SOCKET_Z, SPINE_TOP } from './dockdims';
 import { computeLevels } from './levels';
 import { baseOf, ridersOf } from '../model/holes';
-import { probesOf } from '../model/probes';
+import { probesOf, targetOf } from '../model/probes';
 import { isAccessory } from '../model/links';
 
 /** A module plus the plugs of every board stacked on it: what orientation scoring should look at. */
@@ -386,6 +386,24 @@ export function appendDock(p: Project, moduleId: string) {
   if (!rail) { rail = { id: 'r1', x: 0, y: 0, dir: P.rowDir, length: null }; P.rails.push(rail); }
   const o = bestDock(m, rail.dir, 0);
   P.mounts.push({ id: uid('d'), rail: rail.id, at: null, place: 'free', kind: 'dock', turn: o.turn, slots: [{ module: moduleId, edge: o.edge }, { module: null, edge: 'auto' }] });
+}
+
+/**
+ * Put a probe or adapter behind the board it serves (laid-out or built racks): into the free slot of that board's
+ * dock, so all that is new to print is its own slot holder; else the free slot of the nearest dock on that rail; else a
+ * new dock at the end of the rail.
+ */
+export function seatCompanion(p: Project, moduleId: string) {
+  const P = p.panel, m = p.modules.find((x) => x.id === moduleId);
+  const t = m && targetOf(p, m), tb = t && baseOf(p, t);
+  const home = tb && P.mounts.find((mt) => mt.kind === 'dock' && mt.slots.some((s) => s.module === tb.id));
+  const put = (mt: RailMount) => { const k = mt.slots.findIndex((s) => !s.module); if (k < 0) return false; for (const x of P.mounts) for (const sl of x.slots) if (sl.module === moduleId) sl.module = null; mt.slots[k] = { module: moduleId, edge: 'auto' }; return true; };
+  if (home && put(home)) return;
+  if (home) {
+    const near = P.mounts.filter((mt) => mt !== home && mt.kind === 'dock' && mt.rail === home.rail && mt.slots.some((s) => !s.module)).sort((a, b) => Math.abs((a.at ?? 0) - (home.at ?? 0)) - Math.abs((b.at ?? 0) - (home.at ?? 0)));
+    if (near[0] && put(near[0])) return;
+  }
+  appendDock(p, moduleId);
 }
 
 export { I4 };

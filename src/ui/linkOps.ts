@@ -1,7 +1,7 @@
 // Cable edits (undoable).
 import { autoLinks, numberLinks, portBudget, sameRef } from '../model/links';
 import { addAdapters, addProbes, addUartLinks, fillWires, stackProbes } from '../model/probes';
-import { appendDock } from '../cad/dockplan';
+import { seatCompanion } from '../cad/dockplan';
 import type { PlugRef } from '../model/types';
 import { edit, select, store, toast } from '../state';
 
@@ -43,7 +43,7 @@ export function addJLinks(moduleId: string) {
     name = m?.board.name ?? '';
     const added = addProbes(q, moduleId);
     n = added.length;
-    if (q.layout === 'panel' && !q.panel.auto) for (const pm of added) if (!pm.on) appendDock(q, pm.id);
+    if (q.layout === 'panel' && !q.panel.auto) for (const pm of added) if (!pm.on) seatCompanion(q, pm.id);
   });
   if (!n) { toast('Every debug header on this board already has a probe.'); return; }
   toast(`Added ${n} J-Link${n > 1 ? 's' : ''} for the ${name}${n > 1 ? ', stacked,' : ''} behind it in its dock. Press Auto-connect to plug ${n > 1 ? 'their' : 'its'} USB into a hub. ⌘Z undoes it.`);
@@ -60,7 +60,7 @@ export function addSerialAdapters(moduleId: string) {
     name = m?.board.name ?? '';
     const added = addAdapters(q, moduleId);
     n = added.length;
-    if (q.layout === 'panel' && !q.panel.auto) for (const am of added) if (!am.on) appendDock(q, am.id);
+    if (q.layout === 'panel' && !q.panel.auto) for (const am of added) if (!am.on) seatCompanion(q, am.id);
   });
   if (!n) { toast('Every UART header on this board already has something on it.'); return; }
   toast(`Added ${n > 1 ? `${n} USB-serial adapters` : 'a USB-serial adapter'} for the ${name}, behind it in its dock, with jumper wires on GND, TX and RX (crossed over). Press Auto-connect to plug ${n > 1 ? 'their' : 'its'} USB into a hub. ⌘Z undoes it.`);

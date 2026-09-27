@@ -366,6 +366,8 @@ The Board step lists them under **Debug & UART headers**:
 - **Add a USB-serial adapter** puts a USB to TTL adapter board (the red FT232RL one: mini-USB at one end, six right-angle pins at the other; set yours under Box) in the slot behind the board, on top of its J-Links. Female–female jumper wires go from its pins to the UART header, crossed over: GND to GND, its TXD to the board's RX, its RXD to the board's TX. They are drawn one by one, a housing on each pin, bundled round the dock, and bought by the wire (10, 15, 20 or 30 cm). Its USB goes to a hub with Auto-connect.
 - **or a serial cable** runs a USB to TTL serial cable (3.3 V, the kind with loose jumper ends) from the nearest free hub port, or a computer's, to each free UART header. Its black end goes on GND, green (its TX) on the board's RX, white (its RX) on the board's TX, and red (power) stays off. The pins come from the nets in a KiCad file (GND, RX, TX); otherwise they are a guess from the header's size, which you can change under the header. It is routed, numbered and bought like any cable, and never counted as powering the board.
 
+On a rack that is already built, a new J-Link or adapter goes into the free slot of its board's dock (else the nearest free slot on that rail, else a new dock at the end): Export lists just its own slot holder and what comes with it, nothing you have printed changes, and it slides along the dock only as far as the board's holder reaches, so the rail stays as it is.
+
 The examples to try it on are under **Start › Example: dual-MCU board…** and **Example: sensor board…**, and as KiCad files in `examples/`. None of this has been printed yet.
 
 ## Coming back to add a board

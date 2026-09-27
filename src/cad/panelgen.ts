@@ -26,7 +26,7 @@ const SHOE_BOX = { x: [-LEN_X / 2, LEN_X / 2], y: [-29, 29], z: [0, 42.8] };
 
 interface Layer { mod: Module; mi: number; out: ModuleOut; T: M4 } // a board stacked on the seat's board: T = its holder -> base holder frame
 interface Seat { mod: Module; mi: number; slot: number; edge: EdgeName; out: ModuleOut; M: M4; above: Layer[]; riders: Module[] }
-interface Placed { mt: RailMount; seats: Seat[]; lo: number; hi: number; ylo: number; yhi: number; zhi: number; boxes: { id: string; b: number[] }[]; lever: 1 | -1 }
+interface Placed { mt: RailMount; seats: Seat[]; lo: number; hi: number; ylo: number; yhi: number; zhi: number; boxes: { id: string; b: number[] }[]; lever: 1 | -1; soft: [number, number] } // soft: room kept at each end for ribbons going round (between docks, not on the rail)
 
 /**
  * Lane order in a cable street (lowest v first) with the fewest crossings: each cable drops into its lane at both
@@ -195,7 +195,12 @@ export function generatePanel(p: Project): GenResult {
           const own = out.plugs.find((pe) => { const c = m.board.comps.find((x) => x.ref === pe.ref); return c && isDebugPort(c); });
           const M0 = slotMatrix(mt.turn, slot, out.dockM!), n = edgeNormal(edge), ex = dir(M0, [n[1], -n[0], 0])[0];
           if (heads.length && own && Math.abs(ex) > 0.5) {
-            const want = heads.reduce((q, x) => q + x, 0) / heads.length - ptM(M0, own.p)[0];
+            let want = heads.reduce((q, x) => q + x, 0) / heads.length - ptM(M0, own.p)[0];
+            // but no further than keeps it within the length of the dock the board already takes (a built rack's docks
+            // stay where they are)
+            const span = (o: ModuleOut, M: M4) => { const bx = emptyBox(); for (const pt of o.parts) boxOf(pt.mesh.pos, mul(M, pt.toAssembly), bx); return [bx[0], bx[3]]; };
+            const [b0, b1] = span(other.out, other.M), [q0, q1] = span(out, M0);
+            want = Math.max(Math.min(b0, q0) - q0, Math.min(Math.max(b1, q1) - q1, want));
             if (Math.abs(want) > 2) out = build(edge, m.holder, -want / ex);
           }
         }
@@ -253,6 +258,7 @@ export function generatePanel(p: Project): GenResult {
     if (!isFinite(all[0])) { all.splice(0, 6, -LEN_X / 2, -20, 0, LEN_X / 2, 20, 30); }
     // room at one end of a dock for its probes' ribbons and adapters' jumper wires to go round it, at the end nearer
     // both of each one's plugs
+    const soft: [number, number] = [0, 0];
     if (mt.kind === 'dock') {
       const at = new Map<string, number[]>();
       for (const s of seats) for (const [out, T] of [[s.out, I4] as const, ...s.above.map((L) => [L.out, L.T] as const)]) for (const pe of out.plugs) at.set(`${pe.module}/${pe.ref}`, ptM(mul(s.M, T), pe.p));
@@ -262,14 +268,14 @@ export function generatePanel(p: Project): GenResult {
         if ((l.kind !== 'debug' && l.kind !== 'jumper') || !A || !B) continue;
         need[Math.abs(A[0] - all[0]) + Math.abs(B[0] - all[0]) <= Math.abs(all[3] - A[0]) + Math.abs(all[3] - B[0]) ? 0 : 1] += (l.kind === 'jumper' ? (l.wires?.length ?? 3) * 1.6 + 4 : Math.min(ribbonWidth(l.a), ribbonWidth(l.b))) + 2;
       }
-      if (need[0]) all[0] -= need[0] + 4;
-      if (need[1]) all[3] += need[1] + 4;
+      if (need[0]) { soft[0] = need[0] + 4; all[0] -= soft[0]; }
+      if (need[1]) { soft[1] = need[1] + 4; all[3] += soft[1]; }
     }
     // release lever on the side where the boards overhang the shoe least (easiest to reach)
     const mb = boxes.filter((bx) => bx.id);
     const over = (sgn: number) => Math.max(0, ...mb.map((bx) => (sgn > 0 ? bx.b[4] : -bx.b[1]) - 20));
     const lever: 1 | -1 = mt.lever === 'pos' ? 1 : mt.lever === 'neg' ? -1 : over(-1) < over(1) - 0.5 ? -1 : 1;
-    placed.push({ mt, seats, lo: all[0], hi: all[3], ylo: all[1], yhi: all[4], zhi: all[5], boxes, lever });
+    placed.push({ mt, seats, lo: all[0], hi: all[3], ylo: all[1], yhi: all[4], zhi: all[5], boxes, lever, soft });
   }
   if (failed.length) warnings.push(...failed);
 
@@ -291,7 +297,7 @@ export function generatePanel(p: Project): GenResult {
     let prev: { x: number; y: number; ylo: number; yhi: number } | null = null;
     rows.forEach((rw, k) => {
       const ylo = Math.min(...rw.map((q) => q.ylo)), yhi = Math.max(...rw.map((q) => q.yhi));
-      const len = Math.max(...rw.map((q) => q.mt.at! + q.hi)) + margin;
+      const len = Math.max(...rw.map((q) => q.mt.at! + q.hi - q.soft[1])) + margin;
       let x = 0, y = 0;
       if (prev) {
         if (P.rowDir === 'h') y = prev.y + prev.ylo - P.rowGap - yhi;
@@ -434,12 +440,13 @@ export function generatePanel(p: Project): GenResult {
   // ---- rail lengths ----
   for (const r of rails) {
     const on = placed.filter((q) => q.mt.rail === r.id);
-    const need = on.length ? Math.max(...on.map((q) => q.mt.at! + q.hi)) + margin : 50;
-    const start = on.length ? Math.min(...on.map((q) => q.mt.at! + q.lo)) : 0;
+    // (a ribbon going round the end of the last dock may hang past the rail: only the mounts must sit on it)
+    const need = on.length ? Math.max(...on.map((q) => q.mt.at! + q.hi - q.soft[1])) + margin : 50;
+    const start = on.length ? Math.min(...on.map((q) => q.mt.at! + q.lo + q.soft[0])) : 0;
     if (r.length == null) r.length = Math.ceil(Math.max(need, 50) - 1e-6);
     else if (start < -0.5) warnings.push(`Rail ${r.id.replace(/^r/, '')}: a mount hangs ${round(-start, 0)} mm off the start of the rail. Drag it along, or press Auto-arrange.`);
     else if (need - margin > r.length + 0.5) warnings.push(`Rail ${r.id.replace(/^r/, '')}: the mounts run past the end of the ${r.length} mm rail (need ${Math.ceil(need)} mm).`);
-    else if (P.stands !== false && on.length && (start < STAND.len - STAND.back + 1 || need - margin > r.length - (STAND.len - STAND.back + 1))) warnings.push(`Rail ${r.id.replace(/^r/, '')}: a mount sits within ${STAND.len - STAND.back + 1} mm of a rail end, where the table stand's end block goes. Move it in or lengthen the rail.`);
+    else if (P.stands !== false && on.length && (start < STAND.len - STAND.back + 1 - 0.05 || need - margin > r.length - (STAND.len - STAND.back + 1) + 0.05)) warnings.push(`Rail ${r.id.replace(/^r/, '')}: a mount sits within ${STAND.len - STAND.back + 1} mm of a rail end, where the table stand's end block goes. Move it in or lengthen the rail.`);
   }
 
   // ---- parts ----
