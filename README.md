@@ -340,6 +340,8 @@ It uses studio lighting with ambient occlusion. Boards get:
 
 Plugs show their shells, tongues and pins. The view draws a frame only when something changes.
 
+
+**Steps** plays the assembly the way you would do it, each part moving the way it goes in: a rail shoe is hooked under the rail and swung down; a socket is pressed into its shoe; a board is tipped in under the snap fingers on its far side and pressed down on this one; a probe or adapter slides down its slot; a holder is pushed into its dock; snap-fits go a little past their seat and spring back (the click); plugs go in quickly, then their last few millimetres slowly; cables are drawn along their route as they are plugged in, and their numbers appear with them.
 ## A new version of a board
 
 When a new revision of one of your boards comes out, select it (in 3D, or its chip in the Board step) and press **New version…**, or drop its files on that button. The new version takes the old one's place:

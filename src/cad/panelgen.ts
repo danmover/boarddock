@@ -61,7 +61,8 @@ export function laneOrder<T extends { a1: number[]; b1: number[] }>(rs: T[], c: 
 }
 
 /** Move a part's animation into another frame. */
-export const moveAnim = (a: Anim | undefined, T: M4): Anim | undefined => (a ? { ...a, dir: dir(T, a.dir), pre: a.pre?.map((m) => ({ ...m, dir: dir(T, m.dir) })) } : undefined);
+const moveRot = (r: Motion['rot'], T: M4): Motion['rot'] => (r ? { ...r, axis: dir(T, r.axis) as [number, number, number], at: ptM(T, r.at) as [number, number, number] } : undefined);
+export const moveAnim = (a: Anim | undefined, T: M4): Anim | undefined => (a ? { ...a, dir: dir(T, a.dir), rot: moveRot(a.rot, T), pre: a.pre?.map((m) => ({ ...m, dir: dir(T, m.dir), rot: moveRot(m.rot, T) })) } : undefined);
 
 /** Stack towers: corner points round every printed layer (each in its own frame) and the layer heights. The two
  * towers on a docked base's dock side are pulled back inside the dock face. */
@@ -454,7 +455,7 @@ export function generatePanel(p: Project): GenResult {
   const access: PanelReport['modules'] = [];
   const mountOut: PanelReport['mounts'] = [];
   const docks = placed.filter((q) => q.mt.kind === 'dock');
-  const shoeInst: M4[] = [], sockInst: M4[] = [], dockIds: string[] = [];
+  const shoeInst: M4[] = [], sockInst: M4[] = [], dockIds: string[] = [], shoeAn: Anim[] = [];
   const features: Feature[] = [];
   const frames: Record<string, number[]> = {};
   const ends = new Map<string, { p: number[]; d: number[]; cable: number; w?: number[]; span?: number; wires?: { p: number[]; colour: string; pin?: string }[] }>();
@@ -483,6 +484,8 @@ export function generatePanel(p: Project): GenResult {
       const R = mul(railMatrix(r), tr(q.mt.at!, 0, 0));
       if (q.mt.kind === 'dock') {
         shoeInst.push(mul(R, rotZ(q.lever > 0 ? 0 : 180), sh!.back));
+        // hooked under the rail on the side away from the lever, then swung down until it clicks
+        shoeAn.push({ seq: 200, dir: [0, 0, 1], dist: 14, style: 'snap', rot: { axis: dir(R, [q.lever, 0, 0]) as [number, number, number], at: ptM(R, [0, -q.lever * 17.5, 7.5]) as [number, number, number], deg: 28 } });
         sockInst.push(mul(R, tr(0, 0, SOCKET_Z), rotZ(q.mt.turn), so!.back));
         dockIds.push(q.mt.id);
       }
@@ -494,21 +497,31 @@ export function generatePanel(p: Project): GenResult {
         const b0 = 300 + 10 * seatNo++;
         const hasRod = layers[0].out.parts.some((pt) => pt.tag?.kind === 'rod');
         const stacked = layers.length > 1 || s.riders.length > 0;
-        const IN: Motion = { seq: b0 + 4, dir: [0, 0, 1], dist: 70 };
+        // the holder goes into its dock and the latch clicks (onto its clip: it snaps)
+        const IN: Motion = { seq: b0 + 4, dir: [0, 0, 1], dist: 70, style: 'snap' };
         const nm = s.mod.board.name, box = s.mod.board.kind === 'box';
         if (hasRod) steps.push({ seq: b0 + 1, text: `Slide the release rod into the spine of the ${nm} holder.` });
         steps.push({ seq: b0 + 2, text: isProbe(s.mod) ? `Slide the ${nm} down into its slot, plugs out.` : box ? `Set the ${nm} into its holder and strap it down with a hook-and-loop strap through the loops.` : `Snap the ${nm} into its holder: it clicks under the fingers or onto the pins.` });
         if (stacked) steps.push({ seq: b0 + 3, text: [...s.riders].map((x) => (layers.some((L) => L.mod === x) ? (isProbe(x) ? `Press the next slot onto the corner towers and slide the ${x.board.name} down into it.` : `Press the ${x.board.name} holder onto the corner towers.`) : `Bolt the ${x.board.name} onto the ${nm} on its standoffs.`)).join(' ') });
         steps.push({ seq: b0 + 4, text: q.mt.kind === 'dock' ? `Push the ${nm} holder straight into its dock until the latch clicks.` : layers[0].out.parts.some((pt) => pt.id.endsWith('_clip2')) ? `Press both halves of the ${nm} holder onto their rail clips, end to end.` : `Press the ${nm} holder onto its rail clip.` });
+        const dn = edgeNormal(s.edge);
         layers.forEach((L, li) => {
           const nrm = dir(L.T, [0, 0, 1]) as [number, number, number];
-          const layerPre: Motion[] = li > 0 ? [{ seq: b0 + 3, dir: nrm, dist: 30 }] : [];
+          const layerPre: Motion[] = li > 0 ? [{ seq: b0 + 3, dir: nrm, dist: 30, style: 'snap' }] : [];
+          // how the layer's own board goes in: a probe or adapter slides down its slot from the open end (away from
+          // the dock); a board is tipped in under the fingers on the far side and pressed down on this one, clicking
+          const bbL = bbox(L.mod.board.outline), cx = (bbL.x0 + bbL.x1) / 2, cy = (bbL.y0 + bbL.y1) / 2;
+          const half = Math.abs(dn[0]) * (bbL.x1 - bbL.x0) / 2 + Math.abs(dn[1]) * (bbL.y1 - bbL.y0) / 2;
+          const zTop = L.out.levels.boardTop;
+          const boardIn: Motion = isProbe(L.mod)
+            ? { seq: li > 0 ? b0 + 3 : b0 + 2, dir: dir(L.T, [-dn[0], -dn[1], 0]) as [number, number, number], dist: 2 * half + 8, style: 'slide' }
+            : { seq: li > 0 ? b0 + 3 : b0 + 2, dir: nrm, dist: 30, style: 'snap', rot: moveRot({ axis: [dn[1], -dn[0], 0], at: [cx - dn[0] * half, cy - dn[1] * half, zTop], deg: 9 }, L.T) };
           for (const pe of L.out.plugs) ends.set(`${pe.module}/${pe.ref}`, { p: ptM(L.T, pe.p), d: dir(L.T, pe.d), cable: pe.cable, w: pe.w && dir(L.T, pe.w), span: pe.span, wires: pe.wires?.map((q) => ({ p: ptM(L.T, q.p), colour: q.colour, pin: q.pin })) });
           for (const pt of L.out.parts) {
             const own = moveAnim(pt.anim, L.T);
             const k = pt.tag?.kind;
-            const a: Anim = pt.id.endsWith('_clip') || k === 'clip' ? { seq: 210, dir: [0, 0, 1], dist: 40 }
-              : k === 'cap' ? { seq: CAP_SEQ, dir: own?.dir ?? [0, 0, 1], dist: 25 }
+            const a: Anim = pt.id.endsWith('_clip') || k === 'clip' ? { seq: 210, dir: [0, 0, 1], dist: 40, style: 'snap' }
+              : k === 'cap' ? { seq: CAP_SEQ, dir: own?.dir ?? [0, 0, 1], dist: 25, style: 'snap' }
               : k === 'rod' ? { ...IN, pre: [{ seq: b0 + 1, dir: own?.dir ?? [0, 0, 1], dist: 30 }, ...layerPre], show: b0 + 1 }
               : { ...IN, pre: layerPre, show: li > 0 ? b0 + 3 : hasRod ? b0 + 1 : b0 + 2 };
             parts.push({ ...pt, toAssembly: mul(L.T, pt.toAssembly), anim: a });
@@ -526,11 +539,11 @@ export function generatePanel(p: Project): GenResult {
             }
             const own = moveAnim(g.anim, L.T);
             let a: Anim | undefined = own;
-            if (g.tag?.kind === 'plug') a = { seq: plugSeq.get(key) ?? plugSeq.get(`${key}:2`) ?? PLUG_SEQ, dir: own?.dir ?? [0, 0, 1], dist: 30 };
+            if (g.tag?.kind === 'plug') a = { seq: plugSeq.get(key) ?? plugSeq.get(`${key}:2`) ?? PLUG_SEQ, dir: own?.dir ?? [0, 0, 1], dist: 30, style: 'plug' };
             else if (g.tag?.kind === 'board' || g.tag?.kind === 'parts') {
               // the layer's own board drops into its holder; a board bolted onto it comes one step later
               const mine = g.tag.module === L.mod.id;
-              a = { ...IN, pre: [{ seq: mine ? b0 + 2 : b0 + 3, dir: nrm, dist: mine ? 30 : 25 }, ...(mine ? layerPre : [])], show: mine ? (li > 0 ? b0 + 3 : b0 + 2) : b0 + 3 };
+              a = { ...IN, pre: [mine ? boardIn : { seq: b0 + 3, dir: nrm, dist: 25, style: 'press' }, ...(mine ? layerPre : [])], show: mine ? (li > 0 ? b0 + 3 : b0 + 2) : b0 + 3 };
             }
             ghosts.push({ ...g, mesh: transformMesh(g.mesh, L.T), anim: a });
           }
@@ -559,11 +572,11 @@ export function generatePanel(p: Project): GenResult {
       const out: [number, number, number] = [0, 0, 1];
       const tags = (kind: 'shoe' | 'socket') => dockIds.map((id) => ({ kind, mount: id }));
       parts.push({ ...base, id: 'dock_shoe', name: 'Rail shoe (press-down release lever)', qty: docks.length, mesh: sh.mesh, displayMesh: sh.body, toAssembly: shoeInst[0], instances: shoeInst.slice(1), volume: sh.volume, size: sh.size, color: '#5b6570',
-        tag: tags('shoe')[0], tags: tags('shoe').slice(1), anim: { seq: 200, dir: out, dist: 45 }, anims: dockIds.slice(1).map(() => ({ seq: 200, dir: out, dist: 45 })) });
+        tag: tags('shoe')[0], tags: tags('shoe').slice(1), anim: shoeAn[0], anims: shoeAn.slice(1) });
       display.push({ ...base, id: 'dock_lever', name: 'Rail release lever (prints with the shoe)', qty: docks.length, mesh: sh.lever, toAssembly: shoeInst[0], instances: shoeInst.slice(1), volume: 0, size: sh.size, color: '#ff4d5e',
-        tag: tags('shoe')[0], tags: tags('shoe').slice(1), anim: { seq: 200, dir: out, dist: 45 }, anims: dockIds.slice(1).map(() => ({ seq: 200, dir: out, dist: 45 })) });
+        tag: tags('shoe')[0], tags: tags('shoe').slice(1), anim: shoeAn[0], anims: shoeAn.slice(1) });
       parts.push({ ...base, id: 'dock_socket', name: 'Dock socket (turns 4 ways, 2 slots)', qty: docks.length, mesh: so.mesh, toAssembly: sockInst[0], instances: sockInst.slice(1), volume: so.volume, size: so.size, color: '#4c8dff',
-        tag: tags('socket')[0], tags: tags('socket').slice(1), anim: { seq: 210, dir: out, dist: 45 }, anims: dockIds.slice(1).map(() => ({ seq: 210, dir: out, dist: 45 })) });
+        tag: tags('socket')[0], tags: tags('socket').slice(1), anim: { seq: 210, dir: out, dist: 45, style: 'press' }, anims: dockIds.slice(1).map(() => ({ seq: 210, dir: out, dist: 45, style: 'press' as const })) });
     }
     for (const r of rails) {
       const m = railMesh(r.length!);

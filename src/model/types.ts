@@ -287,7 +287,13 @@ export interface PickTag {
 /** Assembly animation: the part flies in from `dir` (assembly frame, unit) at step `seq`. */
 /** One straight move of the assembly animation: the part slides in from `dir` (unit, assembly frame), `dist` mm
  * away (scaled to the scene when unset), during step `seq`. */
-export interface Motion { seq: number; dir: [number, number, number]; dist?: number }
+/**
+ * One move of the assembly animation, ending where the part sits. `style`: how it moves, 'slide' (eases in), 'snap' (a
+ * snap-fit: pushed a little past its seat, then springs back: the click), 'plug' (quick, then the last few mm slowly),
+ * 'press' (straight on, firmly). `rot`: it also turns that many degrees about the axis through `at`, back to square as
+ * it arrives (a board tipped in under its fingers, a rail shoe hooked on and swung down).
+ */
+export interface Motion { seq: number; dir: [number, number, number]; dist?: number; style?: 'slide' | 'snap' | 'plug' | 'press'; rot?: { axis: [number, number, number]; at: [number, number, number]; deg: number } }
 /**
  * Assembly animation: the part's last move, earlier moves it makes first (`pre`: a board drops into its holder,
  * then the holder with it goes into the dock), the step it appears at (`show`, default its first move), and `grow`

@@ -11,7 +11,8 @@ import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
 import { OutlinePass } from 'three/examples/jsm/postprocessing/OutlinePass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import type { Anim, Feature, GenResult, Ghost, MeshData, PickTag, V2 } from '../model/types';
+import { remaining } from '../cad/motion';
+import type { Anim, Feature, Motion, GenResult, Ghost, MeshData, PickTag, V2 } from '../model/types';
 import { packPlates, placedMesh, printability, type Plate } from '../cad/export';
 import type { Layer, SelItem } from '../state';
 import { featureItem } from './pickOps';
@@ -37,7 +38,7 @@ const LAYER: Record<PickTag['kind'], Layer> = {
   shoe: 'docks', socket: 'docks', cap: 'caps', rail: 'rails', board: 'boards', parts: 'boards', plug: 'plugs', cable: 'cables', railstand: 'rails', cabletag: 'cables',
 };
 
-interface Obj { mesh: THREE.Mesh; tag?: PickTag; anim?: Anim; rank: number; base: THREE.Matrix4; ghost: boolean; moves: { rank: number; dir: number[]; dist?: number }[]; show: number }
+interface Obj { mesh: THREE.Mesh; tag?: PickTag; anim?: Anim; rank: number; base: THREE.Matrix4; ghost: boolean; moves: { rank: number; dir: number[]; dist?: number; style?: Motion['style']; rot?: Motion['rot'] }[]; show: number }
 
 function rigidInverse(m: number[]): number[] {
   const r = [m[0], m[4], m[8], 0, m[1], m[5], m[9], 0, m[2], m[6], m[10], 0, 0, 0, 0, 1];
@@ -110,6 +111,7 @@ function backdrop(theme: 'dark' | 'light') {
 }
 
 const ease = (x: number) => 1 - Math.pow(1 - x, 3);
+
 
 /** Physically based look per surface kind (boards, pads, connector shells, plastics). */
 export function surface(mat: Ghost['mat'] | undefined, color: string, opacity: number, ghost: boolean, board: boolean, smooth = false): THREE.MeshStandardMaterial {
@@ -207,7 +209,7 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
     world.add(c.highlights);
     ctx.current = c;
     // dev-only handle for scripted checks and screenshots: point the camera, then it renders
-    if (import.meta.env.DEV) (window as any).__bdView = { ctx: c, look: (pos: number[], target: number[]) => { c.tween = null; camera.position.set(pos[0], pos[1], pos[2]); controls.target.set(target[0], target[1], target[2]); controls.update(); c.dirty = true; composer.render(); } };
+    if (import.meta.env.DEV) (window as any).__bdView = { ctx: c, look: (pos: number[], target: number[]) => { c.tween = null; camera.position.set(pos[0], pos[1], pos[2]); controls.target.set(target[0], target[1], target[2]); controls.update(); c.dirty = true; composer.render(); }, pose: (t: number) => { c.anim = { t, explode: 0 }; applyPose(c); composer.render(); } };
     const invalidate = () => { c.dirty = true; };
     c.invalidate = invalidate;
     controls.addEventListener('change', invalidate);
@@ -399,12 +401,12 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
       }
       for (const gh of result.ghosts) add(gh.mesh, gh.color, gh.opacity, null, gh.tag, gh.anim, true, false, gh.mat, !!gh.smooth);
       // animation ranks: every distinct step (moves and appearances) in order
-      const movesOf = (a?: Anim) => [...(a?.pre ?? []), { seq: a?.seq ?? 0, dir: a?.dir ?? [0, 0, 1], dist: a?.dist }];
+      const movesOf = (a?: Anim): Motion[] => [...(a?.pre ?? []), { seq: a?.seq ?? 0, dir: a?.dir ?? [0, 0, 1], dist: a?.dist, style: a?.style, rot: a?.rot }];
       const seqs = [...new Set((c.objs as Obj[]).flatMap((o) => [...movesOf(o.anim).map((m) => m.seq), ...(o.anim?.show != null ? [o.anim.show] : [])]))].sort((a, b) => a - b);
       const rk = (s: number) => seqs.indexOf(s);
       for (const o of c.objs as Obj[]) {
         const mv = movesOf(o.anim);
-        o.moves = mv.map((m) => ({ rank: rk(m.seq), dir: m.dir, dist: m.dist }));
+        o.moves = mv.map((m) => ({ rank: rk(m.seq), dir: m.dir, dist: m.dist, style: m.style, rot: m.rot }));
         o.rank = rk(o.anim?.seq ?? 0);
         o.show = o.anim?.show != null ? rk(o.anim.show) : Math.min(...o.moves.map((m) => m.rank));
       }
@@ -520,14 +522,16 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
       (el.lastChild as HTMLElement).textContent = (x.label ?? '').replace(/^([^:]+): /, '$1 · ');
       el.onclick = (e) => { e.stopPropagation(); cb.current.onPick({ kind: 'link', id: x.id }, e.shiftKey || e.metaKey); };
       host.appendChild(el);
-      return { el, p: new THREE.Vector3(x.mid![0], x.mid![1], x.mid![2]) };
+      // its cable's meshes: the label shows only once the cable is there (in the assembly steps)
+      const meshes = (c.objs as Obj[]).filter((o) => o.tag?.kind === 'cable' && o.tag.refs?.[0] === x.id).map((o) => o.mesh);
+      return { el, p: new THREE.Vector3(x.mid![0], x.mid![1], x.mid![2]), meshes };
     });
     const v = new THREE.Vector3();
     c.placeLabels = () => {
       const w = host.clientWidth, h = host.clientHeight;
       const at = items.map((it) => {
         v.copy(it.p).applyMatrix4(c.world.matrixWorld).project(c.camera);
-        const vis = v.z < 1 && v.z > -1 && Math.abs(v.x) < 1.05 && Math.abs(v.y) < 1.05;
+        const vis = v.z < 1 && v.z > -1 && Math.abs(v.x) < 1.05 && Math.abs(v.y) < 1.05 && (!it.meshes.length || it.meshes.some((m) => m.visible));
         return { it, vis, x: ((v.x + 1) / 2) * w, y: ((1 - v.y) / 2) * h, bw: it.el.offsetWidth || 120, bh: it.el.offsetHeight || 22 };
       });
       // nearest labels first keep their spot; the others step down (or up) until they are clear
@@ -671,17 +675,24 @@ function applyPose(c: any) {
   const { t, explode } = c.anim ?? { t: Infinity, explode: 0 };
   const n = Math.max(1, c.ranks);
   const D = Math.max(35, c.radius * 0.75);
-  const off = new THREE.Vector3(), M = new THREE.Matrix4();
+  const off = new THREE.Vector3(), M = new THREE.Matrix4(), R = new THREE.Matrix4();
   for (const o of c.objs as Obj[]) {
     const grow = !!o.anim?.grow;
     let shown = true, g = 1;
     off.set(0, 0, 0);
+    R.identity();
     if (Number.isFinite(t)) {
       if (t - o.show <= 0) shown = false;
       if (grow) g = Math.max(0, Math.min(1, t - o.rank));
       else for (const m of o.moves) {
-        const k = 1 - ease(Math.max(0, Math.min(1, t - m.rank)));
-        if (k > 0) off.addScaledVector(new THREE.Vector3(m.dir[0], m.dir[1], m.dir[2]), (m.dist ?? D) * k);
+        const dist = m.dist ?? D, k = remaining(m.style, t - m.rank, dist);
+        if (k !== 0) off.addScaledVector(new THREE.Vector3(m.dir[0], m.dir[1], m.dir[2]), dist * k);
+        // a part that turns as it goes in (a board tipped in, a shoe swung down): about its axis, square once seated
+        if (m.rot && k > 0) {
+          const at = new THREE.Vector3(...m.rot.at), ax = new THREE.Vector3(...m.rot.axis).normalize();
+          const Rm = new THREE.Matrix4().makeTranslation(at.x, at.y, at.z).multiply(new THREE.Matrix4().makeRotationAxis(ax, (m.rot.deg * Math.PI / 180) * Math.min(1, k))).multiply(new THREE.Matrix4().makeTranslation(-at.x, -at.y, -at.z));
+          R.premultiply(Rm);
+        }
       }
     } else if (explode > 0) {
       if (grow) shown = false;
@@ -696,7 +707,7 @@ function applyPose(c: any) {
       if (g <= 0) shown = false;
     }
     o.mesh.userData.animHidden = !shown;
-    o.mesh.matrix.copy(M.makeTranslation(off.x, off.y, off.z).multiply(o.base));
+    o.mesh.matrix.copy(M.makeTranslation(off.x, off.y, off.z).multiply(R).multiply(o.base));
     o.mesh.userData.offset = off.clone();
     o.mesh.visible = shown && !o.mesh.userData.layerHidden;
   }
