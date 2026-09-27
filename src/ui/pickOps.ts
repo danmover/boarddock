@@ -2,7 +2,8 @@
 // multi-selection picked in the 3D view (a cradle here, a cap there, a whole dock) goes in one ⌘Z.
 import type { Feature, Project } from '../model/types';
 import { ROLE_INFO } from '../model/holes';
-import { KIND_COLOR, KIND_NAME } from '../model/links';
+import { cableNumbers, KIND_COLOR, KIND_NAME, refText } from '../model/links';
+import { mountLabels } from '../model/built';
 import { dropModule, edit, select, store, toast, type SelItem } from '../state';
 import { materialise } from './panelOps';
 
@@ -31,7 +32,7 @@ export function describe(p: Project, it: SelItem): { title: string; sub: string;
     case 'mount': {
       const mt = rep?.mounts.find((x) => x.id === it.id);
       const on = mt?.slots.map((s) => mod(s.module ?? undefined)?.board.name).filter(Boolean).join(' + ');
-      return { title: `Dock ${it.id.replace(/^d/, '')}`, sub: mt ? `rail ${mt.rail.replace(/^r/, '')} · ${on || 'empty'}` : 'rail shoe + socket', color: 'var(--accent)', removable: 'Remove dock' };
+      return { title: `Dock ${mountLabels(rep).get(it.id) ?? it.id.replace(/^d/, '')}`, sub: mt ? `rail ${mt.rail.replace(/^r/, '')} · ${on || 'empty'}` : 'rail shoe + socket', color: 'var(--accent)', removable: 'Remove dock' };
     }
     case 'rail': {
       const r = rep?.rails.find((x) => x.id === it.id);
@@ -40,7 +41,7 @@ export function describe(p: Project, it: SelItem): { title: string; sub: string;
     case 'link': {
       const l = (p.links ?? []).find((x) => x.id === it.id);
       const c = store.get().result?.report.cables?.find((x) => x.id === it.id);
-      const nm = (r?: { module: string; ref: string }) => (r ? `${mod(r.module)?.board.name ?? '?'} ${r.ref}` : '?');
+      const nm = (r?: { module: string; ref: string }) => (r ? `${mod(r.module)?.board.name ?? '?'} ${refText(mod(r.module), r.ref)}` : '?');
       return { title: `${l ? KIND_NAME[l.kind ?? 'usb'] : ''} cable`, sub: `${nm(l?.a)} to ${nm(l?.b)}${c ? ` · ${Math.round(c.length / 10)} cm, buy ${c.buy} m` : ''}`, color: l ? KIND_COLOR[l.kind ?? 'usb'] : 'var(--muted)', removable: 'Remove cable' };
     }
     case 'railstand': {
@@ -121,5 +122,16 @@ export function removeItems(items: SelItem[]) {
   }
   if (n) edit((q) => { Object.assign(q, p); });
   select([]);
-  if (n) toast(`Removed ${n} item${n > 1 ? 's' : ''}. ⌘Z brings ${n > 1 ? 'them' : 'it'} back.`);
+  if (!n) return;
+  // name what went: the boards, and the cables that went with them (by number, as on their tags)
+  const gone = cur.modules.filter((m) => !p.modules.some((x) => x.id === m.id)).map((m) => m.board.name);
+  const nos = cableNumbers(cur.links);
+  const cables = (cur.links ?? []).filter((l) => !(p.links ?? []).some((x) => x.id === l.id)).map((l) => nos.get(l.id)).sort((a, b) => a! - b!);
+  const other = n - gone.length - (items.filter((it) => it.kind === 'link').length);
+  const what = [
+    gone.length ? (gone.length > 3 ? `${gone.length} boards` : gone.join(', ')) : '',
+    cables.length ? `cable${cables.length > 1 ? 's' : ''} ${cables.join(', ')}` : '',
+    other > 0 ? `${other} other item${other > 1 ? 's' : ''}` : '',
+  ].filter(Boolean);
+  toast(`Removed ${what.length > 1 ? `${what.slice(0, -1).join(', ')} and ${what[what.length - 1]}` : what[0] ?? `${n} item${n > 1 ? 's' : ''}`}. ⌘Z brings ${n > 1 || what.length > 1 ? 'them' : 'it'} back.`);
 }

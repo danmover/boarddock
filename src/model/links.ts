@@ -2,6 +2,7 @@
 // (a Pi's USB-A ports are hosts, its USB-C is its power input, a hub's ports feed devices, a charger's ports give
 // power), and Auto-connect pairs them up. The panel then routes each cable and sizes it.
 import type { Comp, Link, Module, PlugRef, Project } from './types';
+import { needOf, portCap, poweredHub, supplyOf } from './powerdata';
 
 export type PlugRole = 'host' | 'device' | 'power-in' | 'power-in-dc' | 'power-out' | 'hub-up' | 'hub-down' | 'net' | 'video' | 'audio' | 'wire' | 'other';
 
@@ -73,6 +74,13 @@ export function plugsOf(p: Project): PlugInfo[] {
 /** The part a plug ref belongs to (the upper socket of a stacked pair is "REF:2"). */
 export const baseRef = (ref: string) => ref.replace(/:2$/, '');
 
+/** A plug ref the way a person reads it: the sockets of a stacked USB-A pair are "USB2 lower" and "USB2 upper". */
+export function refText(m: Module | undefined, ref: string): string {
+  const c = m?.board.comps.find((x) => x.ref === baseRef(ref));
+  if (c?.conn?.type !== 'usb_a_dual') return ref;
+  return `${baseRef(ref)} ${ref.endsWith(':2') ? 'upper' : 'lower'}`;
+}
+
 export const sameRef = (a: PlugRef, b: PlugRef) => a.module === b.module && a.ref === b.ref;
 export const linkOf = (p: Project, r: PlugRef) => (p.links ?? []).find((l) => sameRef(l.a, r) || sameRef(l.b, r));
 
@@ -93,7 +101,33 @@ export function autoLinks(p: Project): Link[] {
   const nearest = (a: PlugInfo, pool: PlugInfo[]) => pool.filter((x) => x.module !== a.module).sort((x, y) => Math.abs(idx(x.module) - idx(a.module)) - Math.abs(idx(y.module) - idx(a.module)))[0];
   // hubs hang off a host first, so their ports can feed devices
   for (const up of free('hub-up')) { const h = nearest(up, free('host')); if (h) take(up, h); }
-  for (const pin of free('power-in')) { const src = nearest(pin, free('power-out')) ?? nearest(pin, free('hub-down')); if (src) take(pin, src); }
+  // power: the hungriest boards pick first, each from a port that gives enough, on a charger with the most left over
+  // (so six Pi 4s end up split over two chargers, on their USB-C ports where there are some), nearest after that
+  const left = new Map<string, number>();
+  const room = (x: PlugInfo) => {
+    if (!left.has(x.module.id)) {
+      const total = supplyOf(x.module.board, plugs.filter((q) => q.module === x.module && q.role === 'power-out').map((q) => ({ c: q.comp, role: q.role }))).total;
+      // minus what the cables already on it carry
+      const used = (p.links ?? []).reduce((a, l) => {
+        const other = l.a.module === x.module.id ? l.b.module : l.b.module === x.module.id ? l.a.module : null;
+        const om = other ? p.modules.find((m) => m.id === other) : null;
+        return a + (om ? needOf(om.board, true).load : 0);
+      }, 0);
+      left.set(x.module.id, total - used);
+    }
+    return left.get(x.module.id)!;
+  };
+  const pins = free('power-in').map((x) => ({ x, n: needOf(x.module.board, true) })).sort((a, b) => b.n.peak - a.n.peak || idx(a.x.module) - idx(b.x.module));
+  for (const { x: pin, n } of pins) {
+    const outs = free('power-out').filter((o) => o.module !== pin.module);
+    const score = (o: PlugInfo) => (portCap(o.module.board, o.comp, o.role) >= n.peak ? 0 : 2) + (room(o) >= n.load ? 0 : 4);
+    // no charger port left: a powered hub's port will do; a hub without a supply of its own never powers a board
+    // (and a Pi never powers itself through the hub it feeds)
+    const src = outs.sort((a, b) => score(a) - score(b) || room(b) - room(a) || Math.abs(idx(a.module) - idx(pin.module)) - Math.abs(idx(b.module) - idx(pin.module)))[0] ?? nearest(pin, free('hub-down').filter((h) => poweredHub(h.module.board)));
+    if (!src) continue;
+    take(pin, src);
+    if (src.role === 'power-out') left.set(src.module.id, room(src) - n.load);
+  }
   for (const dev of free('device')) { const h = nearest(dev, free('hub-down')) ?? nearest(dev, free('host')); if (h) take(dev, h); }
   return out;
 }
@@ -116,7 +150,17 @@ export function portBudget(p: Project) {
   const free = (roles: PlugRole[]) => plugs.filter((x) => roles.includes(x.role) && !taken.has(`${x.ref.module}/${x.ref.ref}`));
   const devices = free(['device', 'hub-up']), usbPorts = free(['hub-down', 'host']);
   const powerIns = free(['power-in']), powerOuts = free(['power-out']);
-  return { devices, usbPorts, powerIns, powerOuts, short: Math.max(0, devices.length + Math.max(0, powerIns.length - powerOuts.length) - usbPorts.length) };
+  // boards with wire terminals or jumper headers and not one of them connected (a relay board, a power distribution
+  // board): Auto-connect does not guess wiring, so say which are left
+  const unwired = p.modules.flatMap((m) => {
+    const mine = plugs.filter((x) => x.module === m);
+    const w = mine.filter((x) => x.role === 'wire' || x.role === 'power-in-dc');
+    if (!w.length || mine.some((x) => taken.has(`${x.ref.module}/${x.ref.ref}`) && (x.role === 'wire' || x.role === 'power-in-dc'))) return [];
+    if (w.length < mine.length && mine.some((x) => taken.has(`${x.ref.module}/${x.ref.ref}`))) return []; // a Pi with its GPIO free is fine
+    const refs = w.map((x) => x.comp.ref);
+    return [{ name: m.board.name, refs: refs.length > 4 ? [...refs.slice(0, 3), `${refs.length - 3} more`] : refs }];
+  });
+  return { devices, usbPorts, powerIns, powerOuts, unwired, short: Math.max(0, devices.length + Math.max(0, powerIns.length - powerOuts.length) - usbPorts.length) };
 }
 
 

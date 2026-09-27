@@ -67,7 +67,7 @@ export interface Comp {
 export type BoxFace = 'front' | 'back' | 'left' | 'right' | 'top';
 /** A row of identical ports on one face of a box. */
 export interface BoxPortGroup { id: string; type: string; count: number; face: BoxFace; role: string; refs?: string[] } // refs: the group's port names, kept as ports are added or removed
-export interface BoxSpec { l: number; w: number; h: number; groups: BoxPortGroup[] }
+export interface BoxSpec { l: number; w: number; h: number; groups: BoxPortGroup[]; supply?: number /* A at 5 V the whole box can give (charger, powered hub); unset: a typical figure */ }
 
 export interface Board {
   name: string;
@@ -81,6 +81,7 @@ export interface Board {
   kind?: 'pcb' | 'box'; // box: a closed device (USB hub, charger) held by low guards and strap loops; thickness = its height
   box?: BoxSpec; // box: its size and ports, from which outline, thickness and port parts are generated
   color?: string; // box colour in the 3D view
+  draw?: number; // A at 5 V it may take from its supply (unset: estimated from what it is)
   traces?: { a: V2; b: V2; w: number; side: Side }[]; // copper tracks (read from KiCad), for the 3D view
   vias?: { x: number; y: number; d: number }[];
 }
@@ -228,10 +229,14 @@ export interface Built {
   cables: string[]; // cable signatures
   rails: { id: string; length: number }[];
   boards: string[]; // module ids on the rack then
+  names?: Record<string, string>; // module id -> board name then (to say what was taken off)
+  seats?: Record<string, string>; // module id -> where it sat ("dock 1.3 back")
+  cableInfo?: { sig: string; no?: number; a: string; b: string; buy: number }[]; // the cables as bought
 }
 
 export interface Project {
   version: 3;
+  name?: string; // what the user calls this rack (file names, the header); unset: made from the boards
   built?: Built;
   links?: Link[]; // cables between boards
   modules: Module[];

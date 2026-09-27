@@ -74,6 +74,30 @@ export async function importMany(files: InFile[]): Promise<{ boards: Board[]; er
 }
 
 export async function importFiles(files: InFile[]): Promise<Board> {
+  return tidy(await readBoard(files), files);
+}
+
+/** A file name made readable: "psu_plate" -> "Psu plate", "lora-Edge_Cuts" -> "Lora". */
+export function niceName(stem: string): string {
+  const s = stem.replace(/[-_. ](edge[_. ]?cuts|f[_. ]?cu|b[_. ]?cu|gko|gm1|outline|board|pcb|gerbers?|fab|outputs?|cpl|pos|top|bottom|drill)$/i, '').replace(/[_]+|(?<=[a-z0-9])-(?=[a-z])/gi, ' ').replace(/\s+/g, ' ').trim() || stem;
+  return s === s.toLowerCase() ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+}
+
+/** Board names from file names read like names, and hole sizes lose float noise (3.1999999 -> 3.2). */
+function tidy(b: Board, files: InFile[]): Board {
+  const stems = expand(files).map((f) => f.name.replace(/\.[^.]+$/, ''));
+  if (stems.includes(b.name) || /[-_](edge|f_cu|b_cu)/i.test(b.name)) {
+    // a Gerber set: the part of the names every file shares ("lora-Edge_Cuts", "lora-F_Cu", "lora" -> "lora")
+    let pre = stems[0] ?? b.name;
+    for (const x of stems) while (pre && !x.startsWith(pre)) pre = pre.slice(0, -1);
+    pre = pre.replace(/[-_. ]+$/, '');
+    b = { ...b, name: niceName(pre.length >= 2 && stems.length > 1 ? pre : b.name) };
+  }
+  const r = (v: number) => Math.round(v * 1000) / 1000;
+  return { ...b, holes: b.holes.map((h) => ({ ...h, x: r(h.x), y: r(h.y), d: r(h.d) })) };
+}
+
+async function readBoard(files: InFile[]): Promise<Board> {
   const all = expand(files);
   const by = (re: RegExp) => all.find((f) => re.test(f.name));
   const text = (f: InFile) => strFromU8(f.bytes);

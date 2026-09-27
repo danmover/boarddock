@@ -3,6 +3,7 @@ import { useSyncExternalStore } from 'react';
 import type { Board, Feature, GenResult, Module, PartOut, Project } from './model/types';
 import { activeModule, migrate, newModule, newProject } from './model/library';
 import { appendDock } from './cad/dockplan';
+import { describeChange } from './model/diff';
 
 export { activeModule };
 
@@ -97,6 +98,8 @@ export const store = {
   },
 };
 
+/** Read the store in a component. `sel` must return values already in the state (or primitives): a new object or
+ * array on every call makes React re-render forever. */
 export function useApp<T>(sel: (s: State) => T): T {
   return useSyncExternalStore(store.sub, () => sel(state), () => sel(state));
 }
@@ -151,19 +154,40 @@ export function editMod(fn: (m: Module, p: Project) => void) {
   edit((p) => fn(activeModule(p), p));
 }
 
+/** `base`, or "base 2", "base 3"… whichever is not taken yet. */
+export function uniqueName(taken: Iterable<string>, base: string): string {
+  const t = new Set(taken);
+  let name = base;
+  for (let k = 2; t.has(name); k++) name = `${base} ${k}`;
+  return name;
+}
+
+/** What the last replace kept and dropped, for the message that follows it. */
+export let lastReplace = '';
+
 /** Replace the active board (keeps holder settings), or start a project. */
 export function setBoard(b: Board) {
   const cur = state.project;
   let p: Project;
+  lastReplace = '';
   if (cur) {
     p = structuredClone(cur);
     const m = activeModule(p);
+    // the same kind of board keeps its number ("Raspberry Pi 4B 2" stays that); anything else gets a free name
+    const old = m.board.name;
+    const others = p.modules.filter((x) => x !== m).map((x) => x.board.name);
+    const name = old === b.name || old.startsWith(`${b.name} `) && /^\d+$/.test(old.slice(b.name.length + 1)) ? old : uniqueName(others, b.name);
+    if (name !== b.name) b = { ...b, name };
     // the new board takes the old one's place and id: its dock, the boards stacked on it and its cables stay;
     // only cables to plugs the new board doesn't have are dropped
     const nm = { ...newModule(b, m.holder), id: m.id, on: m.on };
     for (const mt of p.panel?.mounts ?? []) for (const sl of mt.slots) if (sl.module === m.id) sl.edge = 'auto';
     const has = (ref: string) => b.comps.some((c) => c.ref === ref.replace(/:2$/, ''));
+    const mine = (p.links ?? []).filter((l) => l.a.module === m.id || l.b.module === m.id).length;
     p.links = (p.links ?? []).filter((l) => (l.a.module !== m.id || has(l.a.ref)) && (l.b.module !== m.id || has(l.b.ref)));
+    const kept = (p.links ?? []).filter((l) => l.a.module === m.id || l.b.module === m.id).length;
+    const docked = p.layout === 'panel' && p.panel.mounts.some((mt) => mt.slots.some((sl) => sl.module === m.id));
+    lastReplace = `${docked ? ' It keeps the dock' : ' It keeps its place'}${kept ? ` and ${kept} cable${kept > 1 ? 's' : ''}` : ''}${mine - kept ? `; ${mine - kept} cable${mine - kept > 1 ? 's' : ''} to plugs it doesn't have ${mine - kept > 1 ? 'were' : 'was'} dropped` : ''}.`;
     p.modules[p.active] = nm;
     p.mount = { ...p.mount, at: null };
   } else p = newProject(b);
@@ -194,9 +218,7 @@ export function putBoards(bs: Board[], replace: boolean, opts: { stay?: boolean 
   const first = p.modules.length;
   for (const b0 of bs) {
     // a second Pi 4B becomes "Raspberry Pi 4B 2", so every list, label and cable says which one
-    const taken = new Set(p.modules.map((m) => m.board.name));
-    let name = b0.name;
-    for (let k = 2; taken.has(name); k++) name = `${b0.name} ${k}`;
+    const name = uniqueName(p.modules.map((m) => m.board.name), b0.name);
     const b = name === b0.name ? b0 : { ...b0, name };
     p.modules.push(newModule(b, activeModule(p).holder));
     if (p.layout === 'panel' && !p.panel.auto) appendDock(p, p.modules[p.modules.length - 1].id);
@@ -239,16 +261,18 @@ export function dropModule(p: Project, id: string): boolean {
 
 export function undo() {
   if (!state.past.length || !state.project) return;
-  const prev = state.past[state.past.length - 1];
-  store.set({ project: prev, past: state.past.slice(0, -1), future: [state.project, ...state.future] });
+  const prev = state.past[state.past.length - 1], cur = state.project;
+  store.set({ project: prev, past: state.past.slice(0, -1), future: [cur, ...state.future] });
   persist(prev);
+  toast(`Undid: ${describeChange(prev, cur)}.${state.past.length ? '' : ' That was the first change.'}`);
 }
 
 export function redo() {
   if (!state.future.length || !state.project) return;
-  const next = state.future[0];
-  store.set({ project: next, past: [...state.past, state.project], future: state.future.slice(1) });
+  const next = state.future[0], cur = state.project;
+  store.set({ project: next, past: [...state.past, cur], future: state.future.slice(1) });
   persist(next);
+  toast(`Redid: ${describeChange(cur, next)}.`);
 }
 
 export function closeProject() {

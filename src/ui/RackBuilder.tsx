@@ -9,6 +9,7 @@ import { Check, Chip, Num, Pick, Section, Seg } from './controls';
 import { accessCounts, MODULE_DRAG, PALETTE } from './PanelEditor';
 import { addDock, addRail, appendToRail, autoArrange, duplicateModule, newRailWith, placeMount, quickLayout, removeMounts, removeRails, seat, setKind, setLever, setRail, setSlot, setStackMode, stackOn, swapSlots, turnMounts, unseat } from './panelOps';
 import { turnLabel } from '../cad/dockplan';
+import { mountLabels } from '../model/built';
 import { Icon, I } from './icons';
 
 const DIR_TEXT: Record<string, string> = { front: 'points up', up: 'points back', down: 'points toward you', left: 'points left', right: 'points right', wall: 'into the table' };
@@ -250,12 +251,14 @@ function DockRow({ mt, railDir, rep, col, mod, accOf, stackRows }: {
   accOf: (id: string) => Access[] | undefined; stackRows: (m: Module) => ReactNode;
 }) {
   const sel = useApp((s) => s.sel);
+  const built = useApp((s) => s.project?.built);
   const slots = mt.kind === 'dock' ? [0, 1] : [0];
-  void rep;
+  // since the rack was built: a board that is new here (maybe in a dock that was already there)
+  const fresh = !!built && mt.slots.some((sl) => sl.module && !built.boards.includes(sl.module));
   return (
     <div className={`dockrow ${isSel(sel, mt.id) ? 'sel' : ''}`}>
       <div className="dh" onClick={(e) => select([{ kind: 'mount', id: mt.id }], e.shiftKey || e.metaKey ? 'toggle' : 'set')}>
-        <b>{mt.kind === 'dock' ? 'Dock' : 'Flat clip'} {mt.id.replace(/^d/, '')}</b>
+        <b>{mt.kind === 'dock' ? 'Dock' : 'Flat clip'} {mountLabels(rep).get(mt.id) ?? mt.id.replace(/^d/, '')}</b>{fresh && <span className="chip acc" title="Holds a board added since the rack was built">new board</span>}
         <span className="grow">{turnLabel(mt.turn, railDir, mt.kind)}</span>
         <button className="btn small ghost icon" title="Turn 90° (R)" onClick={(e) => { e.stopPropagation(); turnMounts([mt.id], 90); }}><Icon d={I.turn} /></button>
         {mt.kind === 'dock' && <button className="btn small ghost icon" title="Swap front and back (F)" onClick={(e) => { e.stopPropagation(); swapSlots([mt.id]); }}><Icon d={I.swap} /></button>}
@@ -328,7 +331,7 @@ function DockInspector({ one, rep }: { one: PanelReport['mounts'][number]; rep: 
   const v = railDir === 'v';
   const side = (sgn: number) => (v ? (sgn > 0 ? 'left' : 'right') : sgn > 0 ? 'upper' : 'lower');
   return (
-    <Section title={`${one.kind === 'dock' ? 'Dock' : 'Flat clip'} ${one.id.replace(/^d/, '')}`} right={<button className="btn small danger" onClick={() => removeMounts([one.id])}>Remove</button>}>
+    <Section title={`${one.kind === 'dock' ? 'Dock' : 'Flat clip'} ${mountLabels(rep).get(one.id) ?? one.id.replace(/^d/, '')}`} right={<button className="btn small danger" onClick={() => removeMounts([one.id])}>Remove</button>}>
       <Seg value={one.kind} options={[['dock', 'Dock: stands out'], ['flat', 'Flat on the panel']]} onChange={(k) => setKind([one.id], k)} />
       <div className="turns">
         {([0, 90, 180, 270] as Turn[]).map((t) => (

@@ -9,10 +9,11 @@ import { gcodeLayers, kiriProfiles, slicePlate, type Sliced } from '../slice/kir
 import { activeModule, edit, toast, useApp } from '../state';
 import { Pick, Section, download } from './controls';
 import { Icon, I } from './icons';
+import { zipSync } from 'fflate';
 
 type Desk = { slicers: () => Promise<string[]>; openInSlicer: (app: string | null, name: string, bytes: Uint8Array) => Promise<string> };
 
-export function GcodeSection({ plates, plateMeshes, plate3mf, base, brim, plateKey }: { plates: number; plateMeshes: (i: number) => MeshData[]; plate3mf: (i: number) => Uint8Array; base: string; brim: boolean; plateKey: unknown }) {
+export function GcodeSection({ plates, plateMeshes, plate3mf, base, brim, plateKey, fits }: { plates: number; plateMeshes: (i: number) => MeshData[]; plate3mf: (i: number) => Uint8Array; base: string; brim: boolean; plateKey: unknown; fits?: boolean[] }) {
   const p = useApp((s) => s.project)!;
   const mat = activeModule(p).holder.material;
   const pr = printerByName(p.printer.name);
@@ -21,12 +22,15 @@ export function GcodeSection({ plates, plateMeshes, plate3mf, base, brim, plateK
   const [done, setDone] = useState<Record<number, Sliced>>({});
   const [fail, setFail] = useState<Record<number, string>>({});
   const [look, setLook] = useState<number | null>(null);
+  const [queue, setQueue] = useState<{ k: number; n: number; t0: number } | null>(null);
   // a slice belongs to these plates on this printer with this filament and start code
   const stale = [plateKey, p.printer.name, p.printer.bed[0], p.printer.bed[1], p.printer.maxZ, p.printer.gcodeStart, p.printer.gcodeEnd, mat, brim];
   useEffect(() => { setDone({}); setFail({}); setLook(null); }, stale);
 
   const run = async (list: number[]) => {
-    for (const i of list) {
+    const t0 = Date.now();
+    for (const [k, i] of list.entries()) {
+      if (list.length > 1) setQueue({ k, n: list.length, t0 });
       try {
         setFail((x) => ({ ...x, [i]: '' }));
         const r = await slicePlate({ meshes: plateMeshes(i), printer: p.printer, material: mat, brim, density: MATERIALS[mat].density, base: `${base}_plate${i + 1}` }, (f, what) => setProg({ i, f, what }));
@@ -37,9 +41,19 @@ export function GcodeSection({ plates, plateMeshes, plate3mf, base, brim, plateK
       }
     }
     setProg(null);
+    setQueue(null);
   };
   const busy = !!prog;
-  const left = [...Array(plates).keys()].filter((i) => !done[i]);
+  const ok = (i: number) => fits?.[i] !== false;
+  const left = [...Array(plates).keys()].filter((i) => !done[i] && ok(i));
+  const finished = Object.keys(done).map(Number).sort((a, b) => a - b);
+  // time left in a "slice all": the plates done so far set the pace
+  const eta = queue && queue.k > 0 ? ((Date.now() - queue.t0) / queue.k) * (queue.n - queue.k) : null;
+  const zipAll = () => {
+    const files: Record<string, Uint8Array> = {};
+    for (const i of finished) files[done[i].file] = done[i].bytes;
+    download(`${base}_gcode.zip`, zipSync(files, { level: 6 }), 'application/zip');
+  };
 
   return (
     <Section title="G-code" right={<span className="chip">Kiri:Moto</span>}>
@@ -58,7 +72,7 @@ export function GcodeSection({ plates, plateMeshes, plate3mf, base, brim, plateK
               return (
                 <div key={i} className={`slicerow${look === i && r ? ' on' : ''}`}>
                   <span className="nm">Plate {i + 1}{r && <small title="Kiri:Moto's estimate for its speeds">{fmtTime(r.seconds)} · {r.grams.toFixed(0)} g · {r.layers} layers</small>}</span>
-                  {on ? (
+                  {!ok(i) ? <span className="res"><small className="bad">bigger than the bed</small></span> : on ? (
                     <span className="prog"><span className="bar"><i style={{ width: `${Math.round(prog!.f * 100)}%` }} /></span><small>{prog!.what}…</small></span>
                   ) : r ? (
                     <span className="res">
@@ -75,7 +89,11 @@ export function GcodeSection({ plates, plateMeshes, plate3mf, base, brim, plateK
               );
             })}
           </div>
-          {plates > 1 && left.length > 1 && <button className="btn soft" style={{ marginTop: 8 }} disabled={busy} onClick={() => run(left)}>Slice all {left.length} plates</button>}
+          {queue && <p className="hint" style={{ margin: '8px 0 0' }}>Plate {queue.k + 1} of {queue.n}{eta != null ? `, about ${Math.max(1, Math.round(eta / 60000))} min left` : ''}. You can keep working: slicing runs in the background.</p>}
+          <div className="btns" style={{ marginTop: 8 }}>
+            {plates > 1 && left.length > 1 && <button className="btn soft" disabled={busy} onClick={() => run(left)}>Slice all {left.length} plates</button>}
+            {finished.length > 1 && <button className="btn soft" onClick={zipAll}><Icon d={I.download} /> All G-code ({finished.length} plates, .zip)</button>}
+          </div>
           {look != null && done[look] && <LayerView key={look} r={done[look]} bed={p.printer.bed} />}
           <StartCode />
           <p className="hint">Kiri:Moto has no first-layer (elephant-foot) compensation: if snap parts are tight right at the bed, trim the brim edge or squeeze the first layer less. Nothing BoardDock makes has been print-tested yet, so print the test-fit kit first.</p>

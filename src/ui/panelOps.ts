@@ -4,8 +4,8 @@ import type { EdgeName, Project, RailMount, Turn } from '../model/types';
 import { round, uid } from '../geom/poly';
 import { appendDock, bestDock, withRiders } from '../cad/dockplan';
 import { baseOf, refreshStandoffs } from '../model/holes';
-import { edit, select, store, toast } from '../state';
-import { snapshot } from '../model/built';
+import { edit, select, store, toast, uniqueName } from '../state';
+import { mountLabels, snapshot } from '../model/built';
 
 const rep = () => store.get().result?.report.panel ?? null;
 
@@ -141,6 +141,16 @@ export function addDock(rail?: string, at?: number) {
 
 /** Seat a board: in a given slot, in a new dock at a rail position, or at the end of the last rail. */
 export function seat(moduleId: string, target?: { mount: string; slot: number } | { rail: string; at: number }) {
+  const r0 = rep(), p0 = store.get().project;
+  const name = p0?.modules.find((x) => x.id === moduleId)?.board.name ?? 'The board';
+  const where = !target ? 'a new dock at the end of the rails' : 'mount' in target
+    ? `dock ${mountLabels(r0).get(target.mount) ?? ''}${(r0?.mounts.find((x) => x.id === target.mount)?.slots.length ?? 1) > 1 ? (target.slot ? ' (back)' : ' (front)') : ''}`
+    : `a new dock on rail ${Math.max(1, (r0?.rails.findIndex((x) => x.id === target.rail) ?? 0) + 1)}`;
+  seatNow(moduleId, target);
+  toast(`${r0?.modules.some((x) => x.id === moduleId) ? 'Moved' : 'Placed'} ${name} ${r0?.modules.some((x) => x.id === moduleId) ? 'to' : 'in'} ${where.replace(/ +/g, ' ')}. ⌘Z undoes it.`);
+}
+
+function seatNow(moduleId: string, target?: { mount: string; slot: number } | { rail: string; at: number }) {
   panelEdit((p) => {
     for (const mt of p.panel.mounts) for (const sl of mt.slots) if (sl.module === moduleId) sl.module = null;
     const m = p.modules.find((x) => x.id === moduleId);
@@ -188,8 +198,9 @@ export function duplicateModule(i: number) {
   edit((q) => {
     const src = q.modules[i];
     const copy = { ...structuredClone(src), id: Math.random().toString(36).slice(2, 9) };
-    const n = q.modules.filter((x) => x.board.name.replace(/ \(\d+\)$/, '') === src.board.name.replace(/ \(\d+\)$/, '')).length + 1;
-    copy.board.name = `${src.board.name.replace(/ \(\d+\)$/, '')} (${n})`;
+    // the same numbering as adding one: "Raspberry Pi 4B" -> "Raspberry Pi 4B 2"
+    const all = q.modules.map((x) => x.board.name), m = /^(.*) (?:(\d+)|\((\d+)\))$/.exec(src.board.name);
+    copy.board.name = uniqueName(all, m && all.includes(m[1]) ? m[1] : src.board.name);
     q.modules.splice(i + 1, 0, copy);
     q.active = i + 1;
     if (q.layout === 'panel' && !q.panel.auto) appendDock(q, copy.id);
@@ -286,6 +297,21 @@ export function markBuilt() {
 
 export function unmarkBuilt() {
   edit((p) => { delete p.built; });
+}
+
+/**
+ * A warning when a new board's holder will not fit the printer's bed (roughly: the board plus its walls), said
+ * when the board is added rather than four steps later in Check.
+ */
+export function bedNote(p: Project, boards: { name: string; outline: [number, number][] }[]): string {
+  const [bx, by] = p.printer.bed;
+  const big = boards.filter((b) => {
+    const xs = b.outline.map((q) => q[0]), ys = b.outline.map((q) => q[1]);
+    const w = Math.max(...xs) - Math.min(...xs) + 8, h = Math.max(...ys) - Math.min(...ys) + 8;
+    return !((w <= bx && h <= by) || (w <= by && h <= bx));
+  });
+  if (!big.length) return '';
+  return ` ${big.length === 1 ? `${big[0].name}'s holder` : `The holders of ${big.map((b) => b.name).join(', ')}`} will not fit the ${p.printer.name} bed (${bx} × ${by} mm): a printer with a bigger bed can be picked in Export.`;
 }
 
 /** One line on where a newly added board goes. */

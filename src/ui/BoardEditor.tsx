@@ -256,8 +256,15 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
             fill="var(--accent)" fillOpacity={0.08} stroke="var(--accent)" strokeWidth={fs(1)} strokeDasharray={`${fs(4)} ${fs(3)}`} />
         )}
         <g style={{ pointerEvents: 'none' }}>
-          <DimLine a={[bb.x0, bb.y1]} b={[bb.x1, bb.y1]} off={fs(30)} px={px} label={`${(bb.x1 - bb.x0).toFixed(1)}`} />
-          <DimLine a={[bb.x0, bb.y0]} b={[bb.x0, bb.y1]} off={-fs(30)} px={px} label={`${(bb.y1 - bb.y0).toFixed(1)}`} vertical />
+          {/* the dimensions go on the sides with fewer edge connectors, so they don't cover one */}
+          {(() => {
+            const n = (ang: number) => b.comps.filter((c) => c.conn && c.conn.entry === 'edge' && Math.round(c.conn.angle) === ang).length;
+            const top = n(90) <= n(-90), left = n(180) <= n(0);
+            return <>
+              <DimLine a={[bb.x0, top ? bb.y1 : bb.y0]} b={[bb.x1, top ? bb.y1 : bb.y0]} off={top ? fs(30) : -fs(30)} px={px} label={`${(bb.x1 - bb.x0).toFixed(1)}`} />
+              <DimLine a={[left ? bb.x0 : bb.x1, bb.y0]} b={[left ? bb.x0 : bb.x1, bb.y1]} off={left ? -fs(30) : fs(30)} px={px} label={`${(bb.y1 - bb.y0).toFixed(1)}`} vertical />
+            </>;
+          })()}
         </g>
       </svg>
 
@@ -305,7 +312,7 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
         </div>
       )}
       <div className="hud floating mono">
-        <span>{tool === 'hole' ? 'click to place holes · Shift keeps the tool' : tool === 'connector' ? 'click near an edge to add the connector there' : tool === 'part' ? 'click to drop a keep-out box' : 'box-drag selects · Shift-click adds · right-drag pans · wheel zooms · ⌘A  R  ⌘D  Del'}</span>
+        <span>{tool === 'hole' ? 'click to place holes · Shift keeps the tool' : tool === 'connector' ? `click near an edge to add a ${CONNECTORS.find((c) => c.id === connType)?.name ?? 'connector'} there` : tool === 'part' ? 'click to drop a keep-out box' : 'box-drag selects · Shift-click adds · right-drag pans · wheel zooms · ⌘A  R  ⌘D  Del'}</span>
         {cursor && <span className="xy">{cursor[0].toFixed(1)}, {cursor[1].toFixed(1)}</span>}
       </div>
     </div>

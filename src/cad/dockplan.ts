@@ -2,7 +2,7 @@
 // reachable, and the automatic assignment of boards to docks (pairing back to back where it costs nothing).
 // Panel frame: X right, Y up, Z out of the wall. Hub frame (per rail): X along the rail, Y across, Z out.
 import type { Access, AccessDir, Board, EdgeName, HolderSettings, Loop, Module, Project, RailMount, Turn, V2 } from '../model/types';
-import { bbox, compRect, extentAlong, rad } from '../geom/poly';
+import { bbox, compRect, extentAlong, rad, uid } from '../geom/poly';
 import { basis, dir, I4, inv, mul, rotZ, tr, type M4 } from '../geom/mat';
 import { DOCK_MIN_ZB, gripSpan, HD, headSpan, SOCKET_Z, SPINE_TOP } from './dockdims';
 import { computeLevels } from './levels';
@@ -238,12 +238,50 @@ export function autoAssign(p: Project): RailMount[] {
   const railDir = p.panel.rowDir;
   // stacked boards ride on the board below them; score each stack with all of its plugs
   const all = p.modules.filter((m) => baseOf(p, m) === m).map((m) => withRiders(p, m));
-  // boxes (hubs, chargers) lie flat on their own rail after the boards; boards connected to each other sit together
-  const boxes = all.filter((m) => m.board.kind === 'box');
-  const mods = orderByLinks(p, all.filter((m) => m.board.kind !== 'box'));
+  // boxes (hubs, chargers) lie flat right after the boards they feed, so their cables stay short; boards connected to
+  // each other sit together
+  const out: RailMount[] = [];
+  for (const seg of byBoxes(p, all.filter((m) => m.board.kind !== 'box'), all.filter((m) => m.board.kind === 'box'))) {
+    docksFor(p, orderByLinks(p, seg.boards), railDir, out);
+    for (const m of seg.boxes) {
+      const bb = bbox(m.board.outline);
+      out.push({ id: `auto${out.length}`, rail: '', at: null, kind: 'flat', turn: bb.x1 - bb.x0 >= bb.y1 - bb.y0 ? 0 : 90, slots: [{ module: m.id, edge: 'auto' }] });
+    }
+  }
+  return out;
+}
+
+/**
+ * Boards grouped with the box (charger, hub) they are cabled to: boards with no box first, then each box after its
+ * boards, the busiest box first and after that the boxes cabled to boards already placed (a hub on a Pi).
+ */
+export function byBoxes<T extends Module>(p: Project, boards: T[], boxes: T[]): { boards: T[]; boxes: T[] }[] {
+  const links = p.links ?? [];
+  if (!links.length || !boxes.length) return [{ boards, boxes }];
+  const nb = (id: string) => new Set(links.flatMap((l) => (l.a.module === id ? [l.b.module] : l.b.module === id ? [l.a.module] : [])));
+  const deg = (m: T) => nb(m.id).size;
+  const left = new Set(boards.map((m) => m.id)), done = new Set<string>();
+  const todo = [...boxes].sort((a, b) => deg(b) - deg(a));
+  const segs: { boards: T[]; boxes: T[] }[] = [];
+  while (todo.length) {
+    let i = todo.findIndex((bx) => [...nb(bx.id)].some((id) => done.has(id)));
+    if (i < 0) i = 0;
+    const bx = todo.splice(i, 1)[0], n = nb(bx.id);
+    const mine = boards.filter((m) => left.has(m.id) && n.has(m.id));
+    for (const m of mine) { left.delete(m.id); done.add(m.id); }
+    done.add(bx.id);
+    // a box with no boards of its own (a second hub on the same Pi) joins the box before it
+    if (!mine.length && segs.length) segs[segs.length - 1].boxes.push(bx);
+    else segs.push({ boards: mine, boxes: [bx] });
+  }
+  const rest = boards.filter((m) => left.has(m.id));
+  return rest.length ? [{ boards: rest, boxes: [] }, ...segs] : segs;
+}
+
+/** Docks for a run of boards: in pairs back to back where that costs little plug access, else one per dock. */
+function docksFor<T extends Module>(p: Project, mods: T[], railDir: 'h' | 'v', out: RailMount[]) {
   const best = mods.map((m) => bestDock(m, railDir, 0));
   const used = new Set<number>();
-  const out: RailMount[] = [];
   mods.forEach((m, i) => {
     if (used.has(i)) return;
     used.add(i);
@@ -268,11 +306,6 @@ export function autoAssign(p: Project): RailMount[] {
       out.push({ id: `auto${out.length}`, rail: '', at: null, kind: 'dock', turn: best[i].turn, slots: [{ module: m.id, edge: best[i].edge }, { module: null, edge: 'auto' }] });
     }
   });
-  for (const m of boxes) {
-    const bb = bbox(m.board.outline);
-    out.push({ id: `auto${out.length}`, rail: '', at: null, kind: 'flat', turn: bb.x1 - bb.x0 >= bb.y1 - bb.y0 ? 0 : 90, slots: [{ module: m.id, edge: 'auto' }] });
-  }
-  return out;
 }
 
 /** Boards in an order that keeps connected ones next to each other (walks the connection graph). */
@@ -314,7 +347,7 @@ export function appendDock(p: Project, moduleId: string) {
   let rail = P.rails[P.rails.length - 1];
   if (!rail) { rail = { id: 'r1', x: 0, y: 0, dir: P.rowDir, length: null }; P.rails.push(rail); }
   const o = bestDock(m, rail.dir, 0);
-  P.mounts.push({ id: `d${Date.now().toString(36).slice(-5)}`, rail: rail.id, at: null, place: 'free', kind: 'dock', turn: o.turn, slots: [{ module: moduleId, edge: o.edge }, { module: null, edge: 'auto' }] });
+  P.mounts.push({ id: uid('d'), rail: rail.id, at: null, place: 'free', kind: 'dock', turn: o.turn, slots: [{ module: moduleId, edge: o.edge }, { module: null, edge: 'auto' }] });
 }
 
 export { I4 };

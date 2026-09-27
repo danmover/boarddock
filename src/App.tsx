@@ -14,6 +14,7 @@ import { openFiles } from './ui/importFlow';
 import { describe, removeItems } from './ui/pickOps';
 import { Icon, I } from './ui/icons';
 import { WiringView } from './ui/WiringView';
+import { rackName } from './model/diff';
 
 const STEPS: { id: Step; label: string; title: string; text: string }[] = [
   { id: 'import', label: 'Start', title: 'Bring a board in', text: 'Drop a KiCad, Altium, Eagle or Gerber export, or start from a known board.' },
@@ -107,7 +108,7 @@ export function App() {
 
   const saveProject = () => {
     const p = store.get().project;
-    if (p) download(`${safeName(p.modules.map((m) => m.board.name).join('+'))}.boarddock.json`, JSON.stringify(p, null, 1), 'application/json');
+    if (p) download(`${safeName(rackName(p))}.boarddock.json`, JSON.stringify(p, null, 1), 'application/json');
   };
 
   const stats = useMemo(() => {
@@ -145,8 +146,8 @@ export function App() {
       <AddBoardSheet />
       <header className="topbar">
         <div className="brand"><Mark className="mark" /><span className="word">Board<b>Dock</b></span></div>
-        {project && <span className="projname" title={activeModule(project).board.source}>{project.modules.length > 1 ? `${project.modules.length} boards` : activeModule(project).board.name}</span>}
-        {project && <button className="btn small soft addboard" onClick={() => store.set({ addSheet: true })} title="Add a board (A)"><Icon d={I.plus} /> Board</button>}
+        {project && <span className="projname" title={project.name ? `${project.modules.length} boards` : 'Name this rack on the Start step'}>{project.name?.trim() || (project.modules.length > 1 ? `${project.modules.length} boards` : activeModule(project).board.name)}</span>}
+        {project && <button className="btn small soft addboard" onClick={() => store.set({ addSheet: true })} title="Add a board (A)" aria-label="Add a board"><Icon d={I.plus} /><span>Board</span></button>}
         <nav className="stepper" ref={navRef}>
           {STEPS.map((s, i) => (
             <button key={s.id} className={`${step === s.id ? 'on' : i < si ? 'done' : ''} ${s.id === 'check' && badCount > 0 ? 'flag bad' : s.id === 'check' && warnCount > 0 ? 'flag' : ''}`} disabled={!project && s.id !== 'import'} onClick={() => goStep(s.id)} title={s.title}>
@@ -240,6 +241,7 @@ export function App() {
                 <h1>Dock any PCB.<br /><span>No screws. No supports.</span></h1>
                 <p>Drop a KiCad, Altium, Eagle or Gerber export, or pick a board. BoardDock builds a light holder around every board, docks them on DIN rails on printed table stands with every plug reachable, routes and sizes the cables between them, and walks you through putting it all together.</p>
                 <div className="feats"><span>KiCad · STEP · IDF · Gerber</span><span>hole wizard</span><span>light frame holders</span><span>rails, docks, stacks</span><span>press-down rail lever</span><span>table stands</span><span>cables routed and sized</span><span>step-by-step assembly</span><span>FEA checked</span><span>STL + 3MF plates</span><span>G-code in the app</span></div>
+                <p className="hero-need"><b>You need</b> a 3D printer and a length of <b>DIN rail</b>: the 35 mm metal strip from electrical cabinets (TS35, a few dollars a metre, cut with a hacksaw). No rail? Pick <b>Loose holders</b> in the Rails step and every holder stands on its own.</p>
                 <p className="hero-keys">Press <kbd>?</kbd> any time for keyboard shortcuts.</p>
               </div>
             </div>

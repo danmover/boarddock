@@ -1,8 +1,8 @@
 // One import path for the drop zone, the file picker and drag-and-drop anywhere in the window. Several files make
 // several boards (a Gerber set or an IDF pair stays one board); they join the project unless "replace" is ticked.
 import { importMany } from '../import';
-import { loadProject, putBoards, store, toast } from '../state';
-import { placementNote } from './panelOps';
+import { lastReplace, loadProject, putBoards, store, toast } from '../state';
+import { bedNote, placementNote } from './panelOps';
 
 let inFlight = false;
 
@@ -53,8 +53,8 @@ async function openNow(files: File[], opts: { stay?: boolean }): Promise<void> {
   const n = store.get().project?.modules.length ?? 0;
   const names = boards.map((b) => b.name);
   const what = replace && had
-    ? `Replaced the board with ${names[0]}${names.length > 1 ? ` and added ${names.slice(1).join(', ')}` : ''}`
+    ? `Replaced ${s.project ? s.project.modules[s.project.active].board.name : 'the board'} with ${names[0]}${names.length > 1 ? ` and added ${names.slice(1).join(', ')}` : ''}`
     : `${had ? 'Added' : 'Imported'} ${boards.length > 1 ? `${boards.length} boards: ${names.join(', ')}` : names[0]}`;
   const added = had && (!replace || boards.length > 1);
-  toast(`${what}${n > 1 ? ` (${n} boards in the project)` : ''}.${added ? placementNote(store.get().project!) : ''}${had ? ' ⌘Z undoes it.' : ''}${errors.length ? ` Skipped: ${errors.join('; ')}` : ''}`, opts.stay && !replace ? { label: boards.length > 1 ? 'Check them' : 'Check its board', run: () => store.set({ step: 'board', view: 'assembly' }) } : undefined);
+  toast(`${what}${n > 1 ? ` (${n} boards in the project)` : ''}.${replace && had ? lastReplace : ''}${added ? placementNote(store.get().project!) : ''}${bedNote(store.get().project!, boards)}${had ? ' ⌘Z undoes it.' : ''}${errors.length ? ` Skipped: ${errors.join('; ')}` : ''}`, opts.stay && !replace ? { label: boards.length > 1 ? 'Check them' : 'Check its board', run: () => store.set({ step: 'board', view: 'assembly' }) } : undefined);
 }

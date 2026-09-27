@@ -2,27 +2,31 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { zipSync, strToU8 } from 'fflate';
 import type { Board, BoxFace, BoxSpec, Comp, Hole, HoleRole, PartOut, Project, V2 } from '../model/types';
 import { applyHoleRoles, boltedOn, detectHoleRoles, ROLE_INFO } from '../model/holes';
-import { baseRef, cableNumbers, cablePurpose, shortName, compatible, KIND_COLOR, linkKind, linkOf, plugName, plugRole, plugsOf, portBudget, sameRef } from '../model/links';
+import { baseRef, refText, cableNumbers, cablePurpose, shortName, compatible, KIND_COLOR, linkKind, linkOf, plugName, plugRole, plugsOf, portBudget, sameRef } from '../model/links';
 import { applyBox, BOX_PORT_TYPES, BOX_PRESETS, BOX_ROLES, boxProblems, FACE_NAME, inferBox, layoutPorts, makeBox, tightFaces } from '../model/boxes';
 import { addLinks, removeLinks, setLink } from './linkOps';
 import { Icon, I } from './icons';
 import { CONNECTORS, DEFAULT_FEATURES, HOLDER_PRESETS, MATERIALS, PRINTERS, connById, connSetup } from '../model/library';
 import { printerByName, printSettings } from '../model/printers';
-import { TEMPLATES } from '../model/templates';
+import { TEMPLATES, edgeConn } from '../model/templates';
 import { ACCEPT } from '../import';
 import { openFiles } from './importFlow';
 import { bbox, circleLoop, compRect, roundedRectLoop, round, uid } from '../geom/poly';
-import { activeModule, addBoard, closeProject, dropModule, edit, editMod, isSel, putBoards, select, setActive, store, toast, useApp, type SelItem } from '../state';
+import { activeModule, addBoard, closeProject, dropModule, edit, editMod, isSel, lastReplace, putBoards, select, setActive, store, toast, useApp, type SelItem } from '../state';
+import { addBoards } from './AddBoard';
+import { kindName, rackName, sameKind } from '../model/diff';
 import { Check, Chip, Num, Pick, Section, Seg, Text, download, safeName } from './controls';
 import { estimate, packPlates, placedMesh, write3mf, writeStl } from '../cad/export';
 import { buildTestKit, runClipFea } from '../worker/client';
 import type { ClipFeaResult } from '../fea/clipfea';
 import { clipDims } from '../cad/dinclip';
 import { RackBuilder } from './RackBuilder';
-import { duplicateModule, markBuilt, placementNote, unmarkBuilt } from './panelOps';
+import { bedNote, duplicateModule, markBuilt, unmarkBuilt } from './panelOps';
 import { delta, partsFor, type Delta } from '../model/built';
 import { baseOf as stackBase, ridersOf } from '../model/holes';
 import { DockFeaSection } from './DockFea';
+import { powerBudget, powerText } from '../model/power';
+import { needOf, poweredHub, supplyOf, watts } from '../model/powerdata';
 import { picture } from './snapshot';
 import { boardPicture, holderPicture, type PicPart } from '../worker/client';
 import { GcodeSection } from './GcodeSection';
@@ -37,7 +41,16 @@ export function ImportPanel() {
   const hasProject = useApp((s) => !!s.project);
   const replaceMode = useApp((s) => s.replaceMode);
   const nBoards = useApp((s) => s.project?.modules.length ?? 0);
-  const put = (b: Board) => { putBoards([b], replaceMode); if (hasProject && !replaceMode) toast(`Added ${b.name} (${nBoards + 1} boards).${placementNote(store.get().project!)} ⌘Z undoes it.`); };
+  // with a rack open, a tile adds to it and you stay here (the toast offers to go and check it); Replace swaps the
+  // board being edited for it
+  const put = (b: Board) => {
+    if (!hasProject) { putBoards([b], false); return; }
+    if (!replaceMode) { addBoards([b]); return; }
+    const old = activeModule(store.get().project!).board.name;
+    putBoards([b], true);
+    const p = store.get().project!;
+    toast(`Replaced ${old} with ${activeModule(p).board.name}.${lastReplace}${bedNote(p, [b])} ⌘Z undoes it.`);
+  };
 
   const handle = async (fl: FileList | File[]) => {
     const files = Array.from(fl);
@@ -70,6 +83,7 @@ export function ImportPanel() {
           <Check label="Replace the board being edited instead" value={replaceMode} onChange={(v) => store.set({ replaceMode: v })} />
         </div>
       )}
+      {!hasProject && <p className="hint phoneonly"><b>You need</b> a 3D printer and a length of DIN rail (the 35 mm metal strip from electrical cabinets, cut with a hacksaw), or pick <b>Loose holders</b> in the Rails step and skip the rail.</p>}
       {busy && <div className="progress" style={{ margin: '8px 0' }}><div /></div>}
       {err && <div className="err" style={{ margin: '10px 0' }}>{err}</div>}
       <div style={{ height: 10 }} />
@@ -80,9 +94,9 @@ export function ImportPanel() {
       </Section>
       <Section title="Hubs, chargers and add-ons">
         <div className="tiles">
-          {TEMPLATES.filter((t) => t.accessory).map((t) => { const [n, sz] = t.name.split(' ('); return <button key={t.id} className="tile" onClick={() => (hasProject ? addBoard(t.make()) : put(t.make()))}><BoardThumb id={t.id} /><span>{n}</span>{sz && <small>{sz.replace(')', '')}</small>}</button>; })}
+          {TEMPLATES.filter((t) => t.accessory).map((t) => { const [n, sz] = t.name.split(' ('); return <button key={t.id} className="tile" onClick={() => put(t.make())}><BoardThumb id={t.id} /><span>{n}</span>{sz && <small>{sz.replace(')', '')}</small>}</button>; })}
         </div>
-        <p className="hint">They go on their own rail next to the boards, strapped into a low holder, and Auto-connect wires the boards to them. {hasProject ? 'Clicking one adds it to this project.' : ''}</p>
+        <p className="hint">They lie flat on the rails next to the boards they feed, strapped into a low holder, and Auto-connect wires the boards to them. {hasProject ? 'Clicking one adds it to this project.' : ''}</p>
       </Section>
       <ManualBoard put={put} />
       <details className="section">
@@ -101,9 +115,26 @@ export function ImportPanel() {
   );
 }
 
+/** Does a packed plate fit the bed (a part bigger than the bed gets a "plate" of its own that doesn't)? */
+export function fitsBed(pl: { used: V2 }, bed: V2, spacing: number): boolean {
+  const u = [pl.used[0] - spacing, pl.used[1] - spacing];
+  return (u[0] <= bed[0] + 0.5 && u[1] <= bed[1] + 0.5) || (u[0] <= bed[1] + 0.5 && u[1] <= bed[0] + 0.5);
+}
+
+/** "3 × Raspberry Pi 4B, Pico and 2 × USB hub": boards of a kind counted, not listed one by one. */
+export function countKinds(p: Project): string {
+  const n = new Map<string, number>();
+  for (const m of p.modules) { const k = kindName(p, m.board.name); n.set(k, (n.get(k) ?? 0) + 1); }
+  const xs = [...n].map(([k, c]) => (c > 1 ? `${c} × ${k}` : k));
+  return xs.length > 1 ? `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}` : xs[0] ?? '';
+}
+
 /** Coming back to a rack: what is in it, whether it is built, and the two ways on. */
 function RackSummary() {
   const p = useApp((s) => s.project)!;
+  const [name, setName] = useState(p.name ?? '');
+  useEffect(() => setName(p.name ?? ''), [p.name]);
+  const saveName = () => { if (name.trim() !== (p.name ?? '')) edit((q) => { if (name.trim()) q.name = name.trim(); else delete q.name; }); };
   const res = useApp((s) => s.result);
   const d = res ? delta(p, res) : null;
   const rails = res?.report.panel?.rails.length ?? 0;
@@ -111,11 +142,12 @@ function RackSummary() {
   return (
     <div className="section rackcard">
       <div className="rackcard-head">
-        <b>Your rack</b>
+        <input className="rackname" value={name} placeholder={rackName({ ...p, name: undefined })} aria-label="Rack name" title="Name this rack: files are saved under it"
+          onChange={(e) => setName(e.target.value)} onBlur={saveName} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} />
         <span className={`chip ${p.built ? 'acc' : ''}`}>{p.built ? `built ${when}` : 'not built yet'}</span>
       </div>
       <p className="hint" style={{ margin: '4px 0 8px' }}>
-        {p.modules.length} board{p.modules.length > 1 ? 's' : ''}{p.layout === 'panel' && res ? ` on ${rails} rail${rails === 1 ? '' : 's'}` : ''}{(p.links ?? []).length ? `, ${(p.links ?? []).length} cable${(p.links ?? []).length > 1 ? 's' : ''}` : ''}: {p.modules.map((m) => m.board.name).join(', ')}.
+        {p.modules.length} board{p.modules.length > 1 ? 's' : ''}{p.layout === 'panel' && res ? ` on ${rails} rail${rails === 1 ? '' : 's'}` : ''}{(p.links ?? []).length ? `, ${(p.links ?? []).length} cable${(p.links ?? []).length > 1 ? 's' : ''}` : ''}: {countKinds(p)}.
         {p.built ? ' Drop a new board below: it goes into an empty dock slot or a free spot, and nothing else moves.' : ' Drop more boards below, or carry on where you left off.'}
       </p>
       <div className="btns">
@@ -167,33 +199,102 @@ function BoardSketch({ b }: { b: Board }) {
   );
 }
 
+const EDGE_TYPES = ['usb_c', 'usb_micro_b', 'usb_mini_b', 'usb_a', 'usb_a_dual', 'usb_b', 'barrel', 'rj45', 'hdmi_a', 'hdmi_mini', 'hdmi_micro', 'audio35', 'microsd', 'sma', 'terminal'];
+const EDGE_ANGLE: Record<'bottom' | 'top' | 'left' | 'right', number> = { bottom: -90, top: 90, left: 180, right: 0 };
+const REF_OF: Record<string, string> = { barrel: 'DC', usb_c: 'USB', usb_micro_b: 'USB', usb_mini_b: 'USB', usb_a: 'USB', usb_a_dual: 'USB', usb_b: 'USB', rj45: 'ETH', hdmi_a: 'HDMI', hdmi_mini: 'HDMI', hdmi_micro: 'HDMI', audio35: 'AUDIO', microsd: 'SD', sma: 'ANT', terminal: 'TB' };
+
 export function ManualBoard({ put }: { put: (b: Board) => void }) {
+  const [name, setName] = useState('');
   const [shape, setShape] = useState<'rect' | 'round' | 'circle'>('rect');
   const [w, setW] = useState(60), [h, setH] = useState(40), [r, setR] = useState(2), [t, setT] = useState(1.6);
-  const [holesOn, setHolesOn] = useState(true), [inset, setInset] = useState(3.5), [hd, setHd] = useState(3.2);
+  const [holeMode, setHoleMode] = useState<'corners' | 'spacing' | 'none'>('corners');
+  const [inset, setInset] = useState(3.5), [hd, setHd] = useState(3.2), [sx, setSx] = useState(53), [sy, setSy] = useState(33);
+  const [conns, setConns] = useState<{ type: string; edge: 'bottom' | 'top' | 'left' | 'right'; at: number }[]>([]);
   const make = () => {
     const outline: V2[] = shape === 'circle' ? circleLoop(w / 2, w / 2, w / 2, 96) : roundedRectLoop(w, h, shape === 'round' ? r : 0.01, 8).map(([x, y]) => [x + w / 2, y + h / 2] as V2);
     const holes: Hole[] = [];
-    if (holesOn) {
+    const H = shape === 'circle' ? w : h;
+    if (holeMode === 'corners') {
       if (shape === 'circle') for (let k = 0; k < 4; k++) { const a = Math.PI / 4 + (k * Math.PI) / 2, rr = w / 2 - inset; holes.push({ id: uid('h'), x: w / 2 + rr * Math.cos(a), y: w / 2 + rr * Math.sin(a), d: hd, plated: false, use: 'auto' }); }
       else for (const [x, y] of [[inset, inset], [w - inset, inset], [inset, h - inset], [w - inset, h - inset]]) holes.push({ id: uid('h'), x, y, d: hd, plated: false, use: 'auto' });
-    }
-    put({ name: 'My board', outline, cutouts: [], thickness: t, holes, comps: [], source: 'drawn', notes: [] });
+    } else if (holeMode === 'spacing') for (const [x, y] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) holes.push({ id: uid('h'), x: w / 2 + (x * sx) / 2, y: H / 2 + (y * sy) / 2, d: hd, plated: false, use: 'auto' });
+    const count = new Map<string, number>();
+    const comps = shape === 'circle' ? [] : conns.map((c) => {
+      const ty = connById(c.type), pre = REF_OF[c.type] ?? 'J', n = (count.get(pre) ?? 0) + 1;
+      count.set(pre, n);
+      const ref = `${pre}${n > 1 ? n : ''}`;
+      const along = Math.max(0, Math.min(c.edge === 'left' || c.edge === 'right' ? h : w, c.at));
+      const edge = c.edge === 'bottom' || c.edge === 'left' ? 0 : c.edge === 'top' ? h : w;
+      return edgeConn(ref, c.type, EDGE_ANGLE[c.edge], along, edge, (ty as { overhang?: number }).overhang ?? 1);
+    });
+    put({ name: name.trim() || 'My board', outline, cutouts: [], thickness: t, holes, comps, source: 'drawn', notes: [] });
   };
+  const setC = (i: number, patch: Partial<(typeof conns)[number]>) => setConns((xs) => xs.map((x, k) => (k === i ? { ...x, ...patch } : x)));
   return (
-    <Section title="Or draw one">
-      <Seg value={shape} options={[['rect', 'Rectangle'], ['round', 'Rounded'], ['circle', 'Round']]} onChange={setShape} />
+    <Section title="Or measure one">
+      <Text label="Name" value={name} placeholder="My board" onChange={setName} />
+      <div style={{ marginTop: 10 }}><Seg value={shape} options={[['rect', 'Rectangle'], ['round', 'Rounded'], ['circle', 'Round']]} onChange={setShape} /></div>
       <div className="row" style={{ marginTop: 10 }}>
         <Num label={shape === 'circle' ? 'Diameter' : 'Width'} value={w} onChange={setW} step={0.5} min={5} />
         {shape !== 'circle' ? <Num label="Height" value={h} onChange={setH} step={0.5} min={5} /> : <Num label="Thickness" value={t} onChange={setT} min={0.4} max={3.2} />}
         {shape === 'round' && <Num label="Corner radius" value={r} onChange={setR} min={0} />}
         {shape !== 'circle' && <Num label="Thickness" value={t} onChange={setT} min={0.4} max={3.2} />}
       </div>
-      <div style={{ marginTop: 8 }}><Check label="Four mounting holes" value={holesOn} onChange={setHolesOn} /></div>
-      {holesOn && <div className="row"><Num label="Inset from edge" value={inset} onChange={setInset} /><Num label="Hole Ø" value={hd} onChange={setHd} min={1} /></div>}
-      <p className="hint">Then add connectors and parts in the board editor.</p>
-      <div className="btns" style={{ marginTop: 8 }}><button className="btn primary" onClick={make}>Create board</button></div>
+      <div style={{ marginTop: 10 }}><Seg value={holeMode} options={[['corners', 'Holes at the corners'], ['spacing', 'Holes by spacing'], ['none', 'No holes']]} onChange={(v) => {
+        // spacing that would put holes off the board starts from the corners' spacing instead
+        if (v === 'spacing' && (sx >= w - 2 || sy >= (shape === 'circle' ? w : h) - 2)) { setSx(Math.max(1, w - 2 * inset)); setSy(Math.max(1, (shape === 'circle' ? w : h) - 2 * inset)); }
+        setHoleMode(v);
+      }} /></div>
+      {holeMode === 'corners' && <div className="row"><Num label="In from each edge" value={inset} onChange={setInset} /><Num label="Hole Ø" value={hd} min={1} onChange={setHd} /></div>}
+      {holeMode === 'spacing' && <div className="row3"><Num label="Across (X)" value={sx} min={1} onChange={setSx} /><Num label="Up (Y)" value={sy} min={1} onChange={setSy} /><Num label="Hole Ø" value={hd} min={1} onChange={setHd} /></div>}
+      {holeMode === 'spacing' && (sx + hd > w || sy + hd > (shape === 'circle' ? w : h)
+        ? <div className="err" style={{ marginTop: 6 }}>Holes {sx} × {sy} mm apart don't fit on a {w} × {shape === 'circle' ? w : h} mm board.</div>
+        : <p className="hint" style={{ margin: '4px 0 0' }}>Four holes this far apart, centred on the board (many boards give their hole spacing, e.g. 58 across × 49 up for a Pi). Move any of them afterwards in the next step.</p>)}
+      {holeMode === 'none' && <p className="hint" style={{ margin: '4px 0 0' }}>No holes: the holder grips the board by its edges with snap fingers.</p>}
+      {shape !== 'circle' && (
+        <div className="mconns">
+          {conns.map((c, i) => (
+            <div key={i} className="row" style={{ gridTemplateColumns: '1.4fr 1fr 0.9fr 26px', alignItems: 'end' }}>
+              <Pick label={i ? '' : 'Connector'} value={c.type} options={EDGE_TYPES.map((x) => [x, plugName(x)] as [string, string])} onChange={(v) => setC(i, { type: v })} />
+              <Pick label={i ? '' : 'Edge'} value={c.edge} options={[['bottom', 'Bottom'], ['top', 'Top'], ['left', 'Left'], ['right', 'Right']]} onChange={(v) => setC(i, { edge: v })} />
+              <Num label={i ? '' : 'From corner'} value={c.at} min={0} onChange={(v) => setC(i, { at: v })} />
+              <button className="btn small ghost icon" title="Remove" onClick={() => setConns((xs) => xs.filter((_, k) => k !== i))}><Icon d={I.x} /></button>
+            </div>
+          ))}
+          <button className="btn small ghost" style={{ marginTop: 6 }} onClick={() => setConns((xs) => [...xs, { type: xs.length ? 'usb_c' : 'barrel', edge: 'left', at: Math.round(h / 2) }])}><Icon d={I.plus} /> Connector on an edge</button>
+          {conns.length > 0 && <p className="hint" style={{ margin: '4px 0 0' }}>“From corner”: along the edge from the bottom-left corner, to the middle of the connector.</p>}
+        </div>
+      )}
+      <p className="hint">Parts on the board and anything else can be added in the board editor afterwards.</p>
+      <div className="btns" style={{ marginTop: 8 }}><button className="btn primary" disabled={holeMode === 'spacing' && (sx + hd > w || sy + hd > (shape === 'circle' ? w : h))} onClick={make}>Create board</button></div>
     </Section>
+  );
+}
+
+/**
+ * Copy this board's holder (style, sizes, features, material, colour, release button) to the boards of the same
+ * kind or to every board. The label text and the clearances under the board stay each board's own.
+ */
+function CopyHolder() {
+  const p = useApp((s) => s.project)!;
+  if (p.modules.length < 2) return null;
+  const me = activeModule(p), H = me.holder;
+  const kin = sameKind(p, me.board.name);
+  const copy = (ids: string[], what: string) => {
+    edit((q) => {
+      for (const m of q.modules) if (ids.includes(m.id) && m.id !== me.id) {
+        Object.assign(m.holder, structuredClone({ style: H.style, wall: H.wall, base: H.base, gap: H.gap, pattern: H.pattern, cell: H.cell, rib: H.rib, wallAbove: H.wallAbove, chamfer: H.chamfer, material: H.material, feat: H.feat, tabs: H.tabs, tabLip: H.tabLip, notches: H.notches, release: H.release }));
+        if (H.color) m.holder.color = H.color; else delete m.holder.color;
+      }
+    });
+    toast(`Copied the holder of ${me.board.name} to ${what}: style, sizes, features, material and colour. ⌘Z undoes it.`);
+  };
+  return (
+    <div className="copyholder">
+      <span>Copy these settings to</span>
+      {kin.length > 1 && kin.length < p.modules.length && <button className="btn small ghost" onClick={() => copy(kin.map((m) => m.id), `the other ${kin.length - 1} ${kindName(p, me.board.name)}${kin.length > 2 ? 's' : ''}`)}><Icon d={I.copy} /> every {shortName(kindName(p, me.board.name))} ({kin.length})</button>}
+      <button className="btn small ghost" onClick={() => copy(p.modules.map((m) => m.id), `all ${p.modules.length - 1} other boards`)}><Icon d={I.copy} /> every board ({p.modules.length})</button>
+    </div>
   );
 }
 
@@ -239,6 +340,7 @@ export function BoardPanel() {
           {b.kind === 'box' ? <div className="field"><span>Height</span><div className="static mono">{round(b.thickness, 1)} mm</div></div> : <Num label="Thickness" value={b.thickness} min={0.3} max={4} onChange={(v) => editMod((q) => { q.board.thickness = v; })} />}
           <div className="field"><span>Size</span><div className="static mono">{round(bb.x1 - bb.x0, 1)} × {round(bb.y1 - bb.y0, 1)}</div></div>
         </div>
+        {b.kind !== 'box' && <PowerDraw />}
         <p className="hint">{b.source}. {b.holes.length} holes, {b.comps.filter((c) => !c.hidden).length} parts, {b.comps.filter((c) => c.conn).length} connectors.</p>
         {b.notes.length > 0 && <div className="warns">{b.notes.map((n, i) => <div key={i}>{n}</div>)}</div>}
       </Section>
@@ -246,7 +348,7 @@ export function BoardPanel() {
       {sel.length > 0 && <Inspector />}
       {b.kind !== 'box' && <HoleWizard />}
       {b.kind !== 'box' && <CleanUp />}
-      <Section title="Parts" right={<span className="btns"><AllBox items={comps.map((c) => ({ kind: 'comp' as const, id: c.id }))} /><Seg value={filter} options={[['key', 'Key'], ['all', 'All']]} onChange={setFilter} /></span>}>
+      <Section title="Parts" right={<span className="btns"><AllBox label="Select" items={comps.map((c) => ({ kind: 'comp' as const, id: c.id }))} /><Seg value={filter} options={[['key', 'Key'], ['all', 'All']]} onChange={setFilter} /></span>}>
         <div className="list" style={{ maxHeight: 340, overflowY: 'auto' }}>
           {comps.map((c) => (
             <SelRow key={c.id} it={{ kind: 'comp', id: c.id }}>
@@ -305,6 +407,15 @@ function BoxEditor() {
         <Num label="Width" value={spec.w} min={10} max={200} step={1} onChange={(v) => set((s) => { s.w = v; })} />
         <Num label="Height" value={spec.h} min={5} max={120} step={1} onChange={(v) => set((s) => { s.h = v; })} />
       </div>
+      {(count('power-out') > 0 || (count('hub-down') > 0 && poweredHub(b))) && (() => {
+        const guess = supplyOf({ ...b, box: { ...spec, supply: undefined } }, b.comps.filter((c) => c.conn).map((c) => ({ c, role: plugRole(m, c) })).filter((x) => x.role === 'power-out' || x.role === 'hub-down')).total;
+        return (
+          <div className="row" style={{ marginTop: 8, alignItems: 'end' }}>
+            <Num label={`Total output${spec.supply ? '' : ' (typical)'}`} unit="A at 5 V" value={spec.supply ?? guess} min={0.5} max={40} step={0.5} onChange={(v) => set((s) => { s.supply = v; })} hint="What the whole box gives at 5 V: its label's watts divided by 5." />
+            <small className="hint" style={{ margin: 0 }}>{watts(spec.supply ?? guess)} W. {spec.supply ? '' : 'Check its label: the watts divided by 5.'}</small>
+          </div>
+        );
+      })()}
       <BoxPreview spec={spec} />
       <div className="boxgroups">
         {spec.groups.map((g, i) => (
@@ -390,7 +501,7 @@ export function Inspector() {
     <Section title={title} right={<span className="btns"><button className="btn small ghost" onClick={() => select([])}>Clear</button><button className="btn small danger" onClick={del}>Delete</button></span>}>
       {holes.length > 0 && (
         <>
-          {one && <div className="row3"><Num label="X" value={holes[0].x} onChange={(v) => setH((h) => { h.x = v; })} /><Num label="Y" value={holes[0].y} onChange={(v) => setH((h) => { h.y = v; })} /><Num label="Ø" value={holes[0].d} min={0.5} onChange={(v) => setH((h) => { h.d = v; })} /></div>}
+          {one && <div className="row3"><Num label="X" value={holes[0].x} onChange={(v) => setH((h) => { h.x = v; h.why = 'moved by hand'; })} /><Num label="Y" value={holes[0].y} onChange={(v) => setH((h) => { h.y = v; h.why = 'moved by hand'; })} /><Num label="Ø" value={holes[0].d} min={0.5} onChange={(v) => setH((h) => { h.d = v; h.why = 'size set by hand'; })} /></div>}
           {!one && <div className="row"><Num label={`Ø for ${holes.length} holes`} value={mixed(common(holes, (h) => h.d))} min={0.5} onChange={(v) => setH((h) => { h.d = v; })} /></div>}
           <div style={{ marginTop: 8 }}><Seg value={common(holes, (h) => h.use) ?? ('' as Hole['use'])} options={[['auto', 'Auto'], ['snap', 'Snap pin'], ['pin', 'Locating pin'], ['none', 'Ignore']]} onChange={(v) => setH((h) => { h.use = v; })} /></div>
         </>
@@ -450,12 +561,14 @@ export function PlugsPanel() {
 }
 
 /** Every cable in the project: what goes where, how long, what to buy. */
+const NO_CABLES: NonNullable<NonNullable<ReturnType<typeof store.get>['result']>['report']['cables']> = [];
 function CablesSection() {
   const p = useApp((s) => s.project)!;
-  const cables = useApp((s) => s.result?.report.cables ?? []);
+  // no `?? []` inside the selector: a new array on every read makes the store re-render forever before the first build
+  const cables = useApp((s) => s.result?.report.cables) ?? NO_CABLES;
   const sel = useApp((s) => s.sel);
   const links = p.links ?? [];
-  const nm = (r: { module: string; ref: string }) => `${p.modules.find((m) => m.id === r.module)?.board.name ?? '?'} ${r.ref}`;
+  const nm = (r: { module: string; ref: string }) => { const m = p.modules.find((x) => x.id === r.module); return `${m?.board.name ?? '?'} ${refText(m, r.ref)}`; };
   const nos = cableNumbers(links);
   const buy = new Map<string, number[]>();
   for (const l of links) {
@@ -471,6 +584,7 @@ function CablesSection() {
       <button className="btn small ghost" onClick={() => store.set({ view: 'wiring' })}>Wiring view</button>
     </span>}>
       {(links.length > 0 || budget.devices.length + budget.powerIns.length > 0) && <PortBudget budget={budget} />}
+      {links.length > 0 && <PowerBudget />}
       {!links.length ? <p className="hint" style={{ marginTop: 0 }}>Say what plugs into what (a Pi's USB to an Arduino, power from a charger) and BoardDock keeps connected boards together on the rails, routes each cable along the channels between the rails, and tells you how long a cable to buy. <b>Auto-connect</b> fills in the obvious ones.</p> : (
         <>
           <div className="list">
@@ -496,14 +610,56 @@ function CablesSection() {
   );
 }
 
+/** Board › Power: what this board takes at 5 V, the estimate until the user types their own. */
+function PowerDraw() {
+  const p = useApp((s) => s.project)!;
+  const m = activeModule(p), b = m.board;
+  const n = needOf(b, plugsOf(p).some((x) => x.module === m && x.role === 'power-in'));
+  return (
+    <>
+      <div className="row" style={{ marginTop: 8, alignItems: 'end' }}>
+        <Num label={`Power${b.draw == null ? ' (estimate)' : ''}`} unit="A at 5 V" value={b.draw ?? n.load} min={0} max={10} step={0.1} onChange={(v) => editMod((q) => { q.board.draw = v; })} hint={n.why} />
+        {b.draw != null && <button className="btn small ghost" onClick={() => editMod((q) => { delete q.board.draw; })}>Back to the estimate</button>}
+      </div>
+      {b.draw == null && <p className="hint" style={{ margin: '4px 0 0' }}>{n.why}. Used for the power budget under Plugs › Cables.</p>}
+    </>
+  );
+}
+
+/** What each charger, hub and Pi is asked to supply against what it gives: a bar per source, and what to change. */
+function PowerBudget() {
+  const p = useApp((s) => s.project)!;
+  const srcs = useMemo(() => powerBudget(p), [p.links, p.modules]);
+  const [open, setOpen] = useState<string | null>(null);
+  if (!srcs.length) return null;
+  const bad = srcs.filter((s) => s.status !== 'ok').length;
+  return (
+    <div className="powerlist">
+      <div className="field"><span>Power{bad ? ` · ${bad} short` : ' · every source has enough'} <small>(estimates at 5 V)</small></span></div>
+      {srcs.map((s) => {
+        const t = powerText(s), f = Math.min(1, s.load / Math.max(0.01, s.total));
+        return (
+          <div key={s.module.id} className={`pw ${s.status}`} onClick={() => setOpen(open === s.module.id ? null : s.module.id)} title="Click for the details">
+            <div className="pw-row"><b>{shortName(s.module.board.name)}</b><small>{s.kind}</small><span className="grow" /><span className="mono">{t.value}</span></div>
+            <div className="pw-bar"><i style={{ width: `${f * 100}%` }} /></div>
+            {open === s.module.id && <p className="hint" style={{ margin: '6px 0 0' }}>{t.detail}</p>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /** Devices still waiting for a port, and free ports, with a one-click fix when ports run short. */
 function PortBudget({ budget }: { budget: ReturnType<typeof portBudget> }) {
-  const { devices, usbPorts, powerIns, powerOuts } = budget;
-  if (!devices.length && !powerIns.length) return <p className="hint">{usbPorts.length ? `${usbPorts.length} USB port${usbPorts.length > 1 ? 's' : ''} still free` : 'No USB ports left over'}{powerOuts.length ? `, ${powerOuts.length} charger port${powerOuts.length > 1 ? 's' : ''} free` : ''}.</p>;
+  const { devices, usbPorts, powerIns, powerOuts, unwired } = budget;
+  const wires = unwired.length > 0 && <p className="hint">Not wired yet: {unwired.map((u) => `${u.name} (${u.refs.join(', ')})`).join('; ')}. Auto-connect leaves wires and jumper headers to you: connect them in the Wiring view or with “Cable to” on the connector.</p>;
+  if (!devices.length && !powerIns.length) return <><p className="hint">{usbPorts.length ? `${usbPorts.length} USB port${usbPorts.length > 1 ? 's' : ''} still free` : 'No USB ports left over'}{powerOuts.length ? `, ${powerOuts.length} charger port${powerOuts.length > 1 ? 's' : ''} free` : ''}.</p>{wires}</>;
   const addBox = (k: keyof typeof BOX_PRESETS) => { addBoard(makeBox(k)); toast(`Added a ${BOX_PRESETS[k].name}: set its ports under Box, then press Auto-connect.`); };
   return (
     <div className="warns" style={{ marginTop: 8 }}>
       {devices.length > 0 && <div>{devices.length} USB plug{devices.length > 1 ? 's' : ''} waiting for a port ({devices.map((d) => `${d.module.board.name} ${d.comp.ref}`).join(', ')}); {usbPorts.length} free. {devices.length > usbPorts.length && <button className="btn small" style={{ marginLeft: 4 }} onClick={() => addBox(devices.length - usbPorts.length > 3 ? 'hub7' : 'hub4')}>Add a USB hub</button>}</div>}
+      {wires}
       {powerIns.length > 0 && <div>{powerIns.length} board{powerIns.length > 1 ? 's need' : ' needs'} power ({powerIns.map((d) => d.module.board.name).join(', ')}); {powerOuts.length} charger port{powerOuts.length === 1 ? '' : 's'} free. {powerIns.length > powerOuts.length && <button className="btn small" style={{ marginLeft: 4 }} onClick={() => addBox(powerIns.length - powerOuts.length > 4 ? 'charger6' : 'charger4')}>Add a USB charger</button>}</div>}
     </div>
   );
@@ -605,7 +761,7 @@ export function HolderPanel() {
             return <button key={k} className={`preset ${on ? 'on' : ''}`} onClick={() => set((h) => { Object.assign(h, HOLDER_PRESETS[k]); })}><b>{n}</b><small>{d}</small></button>;
           })}
         </div>
-        {p.modules.length > 1 && <div className="btns" style={{ marginTop: 8 }}><button className="btn small ghost" onClick={() => edit((q) => { for (const m of q.modules) Object.assign(m.holder, { style: H.style, wall: H.wall, base: H.base, pattern: H.pattern, cell: H.cell, rib: H.rib, wallAbove: H.wallAbove, chamfer: H.chamfer, material: H.material, feat: H.feat }); })}><Icon d={I.copy} /> Use these settings for every board</button></div>}
+        <CopyHolder />
       </Section>
       <HolderFeatures />
       <Section title={(H.style ?? 'frame') === 'frame' ? 'Frame' : 'Tray'}>
@@ -899,7 +1055,7 @@ export function ExportPanel() {
   const tot = est.reduce((a, e) => ({ g: a.g + e.grams * e.part.qty * copies, m: a.m + e.minutes * e.part.qty * copies }), { g: 0, m: 0 });
   zipRef.current = null;
   if (!res) return <div><p className="lede">Building…</p></div>;
-  const base = safeName(p.modules.map((m) => m.board.name).join('+'));
+  const base = safeName(rackName(p));
   const plateMeshes = (i: number) => plates[i].items.map((it) => placedMesh(it, p.printer.bed, plates[i].used));
   const zipAll = () => {
     const files: Record<string, Uint8Array> = {};
@@ -958,15 +1114,19 @@ export function ExportPanel() {
       </Section>
       <Section title={`${plates.length} plate${plates.length > 1 ? 's' : ''}`}>
         <div className="plates">
-          {plates.map((pl, i) => (
-            <div key={i} className="plate">
+          {plates.map((pl, i) => {
+            const big = !fitsBed(pl, p.printer.bed, p.printer.spacing);
+            return (
+            <div key={i} className={`plate ${big ? 'toobig' : ''}`}>
               <PlateThumb pl={pl} bed={p.printer.bed} />
+              {big && <div className="err" style={{ marginTop: 6 }}>{pl.items[0].part.name} is {Math.round(pl.used[0] - p.printer.spacing)} × {Math.round(pl.used[1] - p.printer.spacing)} mm: bigger than the {p.printer.name} bed ({p.printer.bed[0]} × {p.printer.bed[1]} mm). Pick a printer with a bigger bed above, or turn the board so its holder is smaller (Board step).</div>}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 }}>
-                <span>Plate {i + 1} · {pl.items.length} parts</span>
+                <span>Plate {i + 1} · {pl.items.length} part{pl.items.length === 1 ? '' : 's'}{big ? ' · does not fit' : ''}</span>
                 <span className="btns"><button className="btn small" onClick={() => download(`${base}_plate${i + 1}.stl`, writeStl(plateMeshes(i)))}>STL</button><button className="btn small" onClick={() => download(`${base}_plate${i + 1}.3mf`, write3mf(pl.items.map((it, k) => ({ name: `${it.part.name} ${k + 1}`, mesh: placedMesh(it, p.printer.bed, pl.used) }))))}>3MF</button></span>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
         <div className="btns" style={{ marginTop: 10 }}>
           <button className="btn" onClick={() => download(`${base}.boarddock.json`, JSON.stringify(p, null, 1), 'application/json')}>Save project</button>
@@ -985,7 +1145,7 @@ export function ExportPanel() {
         <p className="hint">Rough: 3 walls, 5 top/bottom layers, 15% infill, 0.2 mm layers, {activeModule(p).holder.material}. Your slicer's numbers are the real ones.</p>
       </Section>
       <PrintSettings parts={parts} />
-      <GcodeSection plates={plates.length} plateKey={plates} plateMeshes={plateMeshes} brim={tallness(parts, p.printer.maxZ ?? 250).tall.length > 0} plate3mf={(i) => write3mf(plates[i].items.map((it, k) => ({ name: `${it.part.name} ${k + 1}`, mesh: placedMesh(it, p.printer.bed, plates[i].used) })))} base={base} />
+      <GcodeSection plates={plates.length} plateKey={plates} fits={plates.map((pl) => fitsBed(pl, p.printer.bed, p.printer.spacing))} plateMeshes={plateMeshes} brim={tallness(parts, p.printer.maxZ ?? 250).tall.length > 0} plate3mf={(i) => write3mf(plates[i].items.map((it, k) => ({ name: `${it.part.name} ${k + 1}`, mesh: placedMesh(it, p.printer.bed, plates[i].used) })))} base={base} />
     </div>
   );
 }
@@ -1058,11 +1218,14 @@ function BuildSection({ d }: { d: Delta | null }) {
     <Section title={`Built ${when}`} right={<button className="btn small ghost" title="Forget what was built: Export lists everything again" onClick={unmarkBuilt}>Forget</button>}>
       {d && d.any ? (
         <>
-          <p className="hint" style={{ marginTop: 0 }}>New since then{d.boards.length ? ` (${d.boards.join(', ')})` : ''}:</p>
-          <ul className="fmt">
-            {d.parts.length > 0 && <li>{d.parts.reduce((a, x) => a + x.qty, 0)} part{d.parts.reduce((a, x) => a + x.qty, 0) > 1 ? 's' : ''} to print: {d.parts.map((x) => `${x.name}${x.qty > 1 ? ` ×${x.qty}` : ''}`).join(', ')}</li>}
-            {d.cables.length > 0 && <li>{d.cables.length} cable{d.cables.length > 1 ? 's' : ''} to buy: {d.cables.map((c) => `${c.a} to ${c.b} (${c.buy} m)`).join(', ')}</li>}
-            {d.rails.map((r) => <li key={r.id}>Rail {r.id.replace(/^r/, '')}: {r.was == null ? `a new ${Math.round(r.length)} mm rail` : `now ${Math.round(r.length)} mm (yours is ${Math.round(r.was)} mm): cut a longer one`}</li>)}
+          <p className="hint" style={{ marginTop: 0 }}>Since then{d.boards.length ? ` you added ${d.boards.join(', ')}` : ''}{d.removed.length ? `${d.boards.length ? ' and' : ' you'} took off ${d.removed.join(', ')}` : ''}{d.boards.length + d.removed.length ? '' : ' the rack changed'}. On the rack:</p>
+          <ul className="fmt deltalist">
+            {d.removed.length > 0 && <li><b>Take off</b> {d.removed.join(', ')}{d.spare.length ? `; spare now: ${d.spare.map((x) => `${x.name}${x.qty > 1 ? ` ×${x.qty}` : ''}`).join(', ')}` : ''}{d.spareCables.length ? `; cable${d.spareCables.length > 1 ? 's' : ''} ${d.spareCables.map((c) => (c.no != null ? `#${c.no}` : `${c.a} to ${c.b}`)).join(', ')} no longer used` : ''}.</li>}
+            {d.moved.map((m) => <li key={m.name}><b>Move</b> {m.name} from {m.from} to {m.to}.</li>)}
+            {d.parts.length > 0 && <li><b>Print</b> {d.parts.reduce((a, x) => a + x.qty, 0)} part{d.parts.reduce((a, x) => a + x.qty, 0) > 1 ? 's' : ''}: {[...new Set(d.parts.map((x) => d.why.get(x) ?? ''))].map((w) => `${d.parts.filter((x) => d.why.get(x) === w).map((x) => `${x.name}${x.qty > 1 ? ` ×${x.qty}` : ''}`).join(', ')} (${w})`).join('; ')}.</li>}
+            {d.cables.length > 0 && <li><b>Buy</b> {d.cables.length} cable{d.cables.length > 1 ? 's' : ''}: {d.cables.map((c) => (c.was != null ? `#${c.no} is now ${c.buy} m (yours is ${c.was} m)` : `${c.no != null ? `#${c.no} ` : ''}${c.a} to ${c.b} (${c.buy} m)`)).join(', ')}.</li>}
+            {d.rails.map((r) => <li key={r.id}><b>Cut</b> rail {r.id.replace(/^r/, '')}: {r.was == null ? `a new ${Math.round(r.length)} mm rail` : `now ${Math.round(r.length)} mm (yours is ${Math.round(r.was)} mm): cut a longer one`}.</li>)}
+            {!d.removed.length && d.spare.length > 0 && <li><b>Spare</b> {d.spare.map((x) => `${x.name}${x.qty > 1 ? ` ×${x.qty}` : ''}`).join(', ')} (replaced by the new print).</li>}
           </ul>
           <div className="btns" style={{ marginTop: 8 }}><button className="btn small soft" onClick={markBuilt}>I've built these too</button></div>
         </>
@@ -1086,6 +1249,11 @@ function shopping(p: Project, res: Res, d: Delta | null, tot: { g: number; m: nu
     return out;
   }
   const count = (xs: string[]) => { const m = new Map<string, number>(); for (const x of xs) m.set(x, (m.get(x) ?? 0) + 1); return [...m.entries()].map(([k, n]) => `${n} × ${k}`); };
+  if (d && (d.removed.length || d.moved.length || d.spareCables.length)) out.push({ head: 'On the rack', items: [
+    ...d.removed.map((n) => `Take off ${n}`),
+    ...d.moved.map((m) => `Move ${m.name} from ${m.from} to ${m.to}`),
+    ...d.spareCables.map((c) => `Cable ${c.no != null ? `#${c.no} ` : ''}(${c.a} to ${c.b}) is no longer used`),
+  ] });
   const rails = d ? d.rails.map((r) => r.length) : (res.report.panel?.rails ?? []).map((r) => r.length);
   if (rails.length) out.push({ head: 'Rails', items: count(rails.map((l) => `TS35 × 7.5 top-hat rail, cut to ${Math.round(l)} mm`)) });
   const cables = d ? d.cables : res.report.cables ?? [];
@@ -1098,7 +1266,12 @@ function shopping(p: Project, res: Res, d: Delta | null, tot: { g: number; m: nu
   const newIds = new Set(p.built ? p.modules.filter((m) => !p.built!.boards.includes(m.id)).map((m) => m.id) : p.modules.map((m) => m.id));
   const mods = p.modules.filter((m) => !d || newIds.has(m.id));
   const other: string[] = [];
-  for (const m of mods) if (m.board.kind === 'box') { const b = m.board.box, per = b ? Math.ceil((2 * (b.w + b.h) + 80) / 50) * 5 : 30; other.push(`12 mm hook-and-loop strap, about ${per} cm (2 for the ${m.board.name})`); }
+  // straps: one line with the total, the lengths per box after it
+  const straps = mods.filter((m) => m.board.kind === 'box').map((m) => { const b = m.board.box; return { name: m.board.name, per: b ? Math.ceil((2 * (b.w + b.h) + 80) / 50) * 5 : 30 }; });
+  if (straps.length) {
+    const lo = Math.min(...straps.map((x) => x.per)), hi = Math.max(...straps.map((x) => x.per)), all = straps.reduce((a, x) => a + 2 * x.per, 0);
+    other.push(`${2 * straps.length} × 12 mm hook-and-loop strap, ${lo === hi ? `about ${lo} cm` : `${lo} to ${hi} cm`} each (${(all / 100).toFixed(1)} m in all, or a roll to cut): 2 for each of ${straps.length > 3 ? `the ${straps.length} boxes` : straps.map((x) => x.name).join(', ')}`);
+  }
   for (const m of mods) if (m.on && stackBase(p, m) !== m && (m.onMode ?? 'bolted') === 'bolted') other.push(`4 M2.5 standoffs, ${m.onGap ?? 11} mm, and 8 M2.5 screws (${m.board.name} on ${p.modules.find((x) => x.id === m.on)?.board.name ?? 'its board'})`);
   if (other.length) out.push({ head: 'Hardware', items: other });
   out.push({ head: 'Filament', items: [`about ${tot.g.toFixed(0)} g of ${activeModule(p).holder.material} (roughly ${fmtMin(tot.m)} of printing)`] });
@@ -1171,14 +1344,39 @@ function printNotes(p: Project, res: Res, nPlates: number, tot: { g: number; m: 
 /** Which board the step is about: one chip per board, and + to add another without leaving the step. */
 function ModulePicker() {
   const p = useApp((s) => s.project)!;
-  return (
+  const [open, setOpen] = useState<string | null>(null);
+  const pick = (i: number) => { setActive(i); select([]); };
+  const dot = (i: number) => <i style={{ background: p.modules[i].board.kind === 'box' ? '#3a3f47' : p.modules[i].board.color ?? 'var(--mask)' }} />;
+  const add = <button className="bchip add" title="Add a board (A)" onClick={() => store.set({ addSheet: true })}><Icon d={I.plus} /> Add</button>;
+  if (p.modules.length <= 10) return (
     <div className="boardchips" role="tablist" aria-label="Boards">
       {p.modules.map((m, i) => (
-        <button key={m.id} role="tab" aria-selected={p.active === i} className={`bchip ${p.active === i ? 'on' : ''}`} title={m.board.name} onClick={() => { setActive(i); select([]); }}>
-          <i style={{ background: m.board.kind === 'box' ? '#3a3f47' : m.board.color ?? 'var(--mask)' }} />{shortName(m.board.name)}
+        <button key={m.id} role="tab" aria-selected={p.active === i} className={`bchip ${p.active === i ? 'on' : ''}`} title={m.board.name} onClick={() => pick(i)}>
+          {dot(i)}{shortName(m.board.name)}
         </button>
       ))}
-      <button className="bchip add" title="Add a board (A)" onClick={() => store.set({ addSheet: true })}><Icon d={I.plus} /> Add</button>
+      {add}
+    </div>
+  );
+  // a big rack: one chip per kind of board ("Pi 4B ×6"), and that kind's boards by number under it
+  const groups = new Map<string, number[]>();
+  p.modules.forEach((m, i) => { const k = kindName(p, m.board.name); groups.set(k, [...(groups.get(k) ?? []), i]); });
+  const mine = kindName(p, p.modules[p.active].board.name), show = open && groups.has(open) ? open : mine;
+  const sub = groups.get(show) ?? [];
+  return (
+    <div className="boardchips" role="tablist" aria-label="Boards">
+      {[...groups].map(([k, is]) => (
+        <button key={k} role="tab" aria-selected={is.includes(p.active)} className={`bchip ${is.includes(p.active) ? 'on' : ''} ${show === k && is.length > 1 ? 'open' : ''}`} title={k}
+          onClick={() => { setOpen(k); if (!is.includes(p.active)) pick(is[0]); }}>
+          {dot(is[0])}<span className="bname">{shortName(k)}</span>{is.length > 1 && <b className="bcount">×{is.length}</b>}
+        </button>
+      ))}
+      {add}
+      {sub.length > 1 && (
+        <div className="bsub" aria-label={`${show} boards`}>
+          {sub.map((i) => { const nm = p.modules[i].board.name, n = nm === show ? '1' : nm.slice(show.length).trim(); return <button key={i} className={`bnum ${p.active === i ? 'on' : ''}`} title={nm} onClick={() => pick(i)}>{/^\d+$/.test(n) ? n : shortName(nm)}</button>; })}
+        </div>
+      )}
     </div>
   );
 }

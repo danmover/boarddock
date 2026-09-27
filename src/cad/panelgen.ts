@@ -10,8 +10,9 @@ import { MATERIALS } from '../model/library';
 import { bbox, round } from '../geom/poly';
 import { basis, dir, I4, inv, mul, pt as ptM, rotZ, tr, type M4 } from '../geom/mat';
 import { smooth, sphereMesh, tubeMesh } from './boardviz';
-import { baseRef, cableNumbers, cablePurpose, cableToBuy, KIND_COLOR, KIND_NAME } from '../model/links';
+import { baseRef, cableNumbers, cablePurpose, cableToBuy, KIND_COLOR, KIND_NAME, refText } from '../model/links';
 import { cableTag } from './cabletag';
+import { powerBudget, powerText } from '../model/power';
 import { buildModule, computeLevels, transformMesh, type ArrangeHooks, type ModuleOut } from './generate';
 import { baseOf, ridersOf, stackLayers, type StackLayer } from '../model/holes';
 import { freeAll, toMesh, type MF } from './kernel';
@@ -236,10 +237,10 @@ export function generatePanel(p: Project): GenResult {
     let row: Placed[] = [];
     const rows: Placed[][] = [];
     let cursor = margin;
-    const isBox = (pl: Placed) => pl.seats.some((st) => st.mod.board.kind === 'box');
+    // each box (hub, charger) comes right after the boards it feeds (dockplan orders them so), on the same rail when
+    // it fits: their cables stay short
     for (const pl of placed) {
-      const newKind = row.length && isBox(pl) && !isBox(row[row.length - 1]);
-      if (row.length && (newKind || cursor + (pl.hi - pl.lo) > P.maxRail - margin)) { rows.push(row); row = []; cursor = margin; }
+      if (row.length && cursor + (pl.hi - pl.lo) > P.maxRail - margin) { rows.push(row); row = []; cursor = margin; }
       pl.mt.at = cursor - pl.lo;
       cursor = pl.mt.at + pl.hi + gap;
       row.push(pl);
@@ -261,6 +262,13 @@ export function generatePanel(p: Project): GenResult {
     });
     // on table stands the rails make a rectangle: every rail as long as the longest, so the sleepers run straight across
     if (P.stands !== false && rails.length > 1) { const L = Math.max(...rails.map((r) => r.length!)); for (const r of rails) r.length = L; }
+    // one dock or box longer than "Longest rail" sets the length of its rail (and on stands of every rail): say so
+    const tooLong = placed.filter((q) => q.hi - q.lo + 2 * margin > P.maxRail + 0.5);
+    if (tooLong.length) {
+      const L = Math.ceil(Math.max(...tooLong.map((q) => q.hi - q.lo + 2 * margin)));
+      const who = [...new Set(tooLong.flatMap((q) => q.seats.map((st) => st.mod.board.name)))];
+      warnings.push(`Longest rail is ${P.maxRail} mm, but ${who.length > 2 ? `${who.length} boards need` : `${who.join(' and ')} ${who.length > 1 ? 'need' : 'needs'}`} ${L} mm of rail, so ${P.stands !== false && rails.length > 1 ? 'every rail' : 'its rail'} is ${L} mm${P.stands !== false && rails.length > 1 ? ' (on table stands the rails are all one length)' : ''}.`);
+    }
     mounts = placed.map((q) => q.mt);
   } else {
     const free = (q: Placed) => q.mt.place === 'free' && q.mt.at == null;
@@ -511,7 +519,7 @@ export function generatePanel(p: Project): GenResult {
         case 'clip': return `the ${nm} rail clip`;
         case 'board': case 'parts': return `the ${nm}`;
         case 'plug': return `the ${nm} ${t.refs?.[0] ?? ''} plug`;
-        case 'shoe': case 'socket': return `dock ${t.mount?.replace(/^d/, '') ?? ''}`;
+        case 'shoe': case 'socket': return `dock ${/^d\d+\.\d+$/.test(t.mount ?? '') ? t.mount!.slice(1) : ''}`.trim();
         case 'rail': return `rail ${t.rail?.replace(/^r/, '') ?? ''}`;
         default: return name;
       }
@@ -586,7 +594,7 @@ export function generatePanel(p: Project): GenResult {
       };
       const no = nos.get(l.id)!, purpose = cablePurpose(p, l);
       const m0 = along(len / 2);
-      cables.push({ id: l.id, a: `${nameOf2(l.a.module)} ${l.a.ref}`, b: `${nameOf2(l.b.module)} ${l.b.ref}`, ends: `${l.a.module}/${l.a.ref}|${l.b.module}/${l.b.ref}`, kind, length: round(len, 0), buy: cableToBuy(len), no, label: purpose.text, mid: [m0.p[0], m0.p[1], m0.p[2] + d / 2 + 2], ...(clash.length ? { clash: clash.join(', ') } : {}) });
+      cables.push({ id: l.id, a: `${nameOf2(l.a.module)} ${refText(mods.get(l.a.module)?.m, l.a.ref)}`, b: `${nameOf2(l.b.module)} ${refText(mods.get(l.b.module)?.m, l.b.ref)}`, ends: `${l.a.module}/${l.a.ref}|${l.b.module}/${l.b.ref}`, kind, length: round(len, 0), buy: cableToBuy(len), no, label: purpose.text, mid: [m0.p[0], m0.p[1], m0.p[2] + d / 2 + 2], ...(clash.length ? { clash: clash.join(', ') } : {}) });
       // numbered tags, a hand-width from each plug: ring round the cable, flag standing up
       if (P.cableTags !== false) {
         const key = `${no}:${d.toFixed(1)}`;
@@ -615,6 +623,7 @@ export function generatePanel(p: Project): GenResult {
     if (cables.length) checks.push({ group: 'Panel', name: 'Cable routes', value: clashing.length ? `${clashing.length} of ${cables.length} touch something` : `all ${cables.length} clear`, status: clashing.length ? 'warn' : 'ok', detail: clashing.length ? clashing.map((c) => `${c.a} to ${c.b}: ${c.clash}`).join('; ') : 'every cable was routed clear of the holders, boards, plugs, docks, rails and stands (checked against their bounding boxes, so a route marked clear really is)' });
     const long = cables.filter((c) => c.length > 1200);
     if (long.length) warnings.push(`${long.map((c) => `${c.a} to ${c.b}`).join(', ')}: over 1.2 m of ${long.length > 1 ? 'cable each' : 'cable'}. Put the two boards closer (Auto-arrange keeps connected boards together).`);
+    for (const pw of powerBudget(p)) { const t = powerText(pw); checks.push({ group: 'Power', name: t.name, value: t.value, status: pw.status, detail: t.detail, module: pw.module.id }); }
     if (cables.length) checks.push({ group: 'Panel', name: 'Cables', value: `${cables.length}, ${round(cables.reduce((a, c) => a + c.length, 0) / 1000, 1)} m`, status: 'info', detail: cables.map((c) => `${KIND_NAME[c.kind]} ${c.a} to ${c.b}: ${round(c.length / 10, 0)} cm (buy ${c.buy} m)`).join('; ') });
   }
 

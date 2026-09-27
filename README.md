@@ -223,7 +223,9 @@ A box is a size and rows of ports (Board step, **Box**). Pick a preset (USB hub,
 
 Ports are spaced evenly along their face, and a preview shows where they are. Every port knows its role, so Auto-connect never has to guess whether a USB-A socket on a box takes a device or gives power. Ports on the top get plugs standing in them, and the strap loops move to miss them. If ports don't fit their face, the editor says so. Fewer ports keep the first ports' names, so cables to them stay; cables to ports you remove go.
 
-The Plugs step counts what still needs a port: USB devices against free hub and computer ports, and boards that need power against free charger ports. When you are short, it offers to add a hub or a charger. A stacked pair of USB-A sockets, like on a Raspberry Pi, counts as two ports.
+The Plugs step counts what still needs a port: USB devices against free hub and computer ports, and boards that need power against free charger ports. When you are short, it offers to add a hub or a charger. A stacked pair of USB-A sockets, like on a Raspberry Pi, counts as two ports ("USB2 lower" and "USB2 upper"). Boards with screw terminals or jumper headers and nothing connected (a relay board, a power distribution board) are listed too: Auto-connect leaves wiring to you.
+
+**Power budget.** Every charger, powered hub, bus-powered hub and Raspberry Pi USB port gets a bar: what the boards on it take at full load against what it gives, at 5 V. It warns when a charger is asked for more than it gives, when a Pi's four USB ports (1.2 A between them) or a hub with no supply of its own carry too much, and when a board needs more than its port gives (a Pi 4 wants a 3 A supply; a USB-A charger port gives about 2.4 A). The figures are estimates: the makers' recommended supplies and typical draws under load. Set a board's own under **Board › Power** and a charger's total (the watts on its label, divided by 5) under **Box**. Check lists the same.
 
 ## Table stands
 
@@ -260,7 +262,7 @@ Each plug gets a role from its type, its name and its board:
 
 **Auto-connect** pairs the free plugs, nearest boards first:
 1. hubs to hosts;
-2. power inputs to chargers (or to hub or host ports);
+2. power inputs to chargers: the hungriest boards first, each to a port that gives enough (a Pi 4 to a USB-C port where there is one), on the charger with the most to spare. Six Pi 4s on two chargers get three each. With no charger port left, a powered hub's port will do; a hub without its own supply never powers a board;
 3. devices to hubs (or hosts).
 
 You can also connect plugs by hand. In the **Wiring** view, click a plug, then the plug it goes to; plugs that fit light up green. In the Plugs step, pick **Cable to** for any plug.
@@ -274,7 +276,9 @@ Every combination of these is checked against the bounding boxes of every holder
 
 On table stands the streets run under the rails' level. Wherever a street crosses a sleeper, the spacer there carries a **cable comb**: one round-bottomed slot per cable, sized for it, with snap lips at the mouth.
 
-Every cable's length is measured along its route and rounded up to a standard length to buy (10% slack). Auto-arrange keeps cabled boards next to each other, so the cables stay short.
+Every cable's length is measured along its route and rounded up to a standard length to buy (10% slack). Auto-arrange keeps cabled boards next to each other and puts each hub or charger right after the boards it feeds, on the same rail when it fits, so the cables stay short.
+
+On a big rack the Wiring view fits the width of the window (⌘ + wheel, or − and +, zooms). Type in **Find a board**, or click a board's name, to show just its cables and the boards at their other ends.
 
 ![Cable numbers and tags](docs/images/cables.png)
 
@@ -321,7 +325,14 @@ Later, open BoardDock. A saved rack opens on **Your rack**, with its boards, whe
 2. otherwise into the first gap on the rails that is clear in 3D, preferably on the rail of a board it is cabled to;
 3. otherwise on the end of a rail, and Export tells you that rail has to be longer.
 
-Nothing else moves. Connect its cables (Auto-connect only fills plugs that are still free). Export then lists only what's new since the build: the parts to print, the cables to buy and any rail to cut longer. Plates, the estimate and the download follow that list. Press **I've built these too** when you have.
+Nothing else moves. Connect its cables (Auto-connect only fills plugs that are still free). Export then lists what to do since the build:
+- **Take off** the boards you removed, with the parts and cables (by number) they leave spare;
+- **Move** boards that now sit somewhere else ("Arduino Uno R3 from dock 1.3 front to dock 1.2 front"; docks are numbered by rail and place);
+- **Print** only the new or changed parts, each with why ("new: Arduino Nano", "Pi 4B 2 became Raspberry Pi 5");
+- **Buy** new cables, and say when a cable you have is now too short ("#4 is now 1 m, yours is 0.5 m");
+- **Cut** any rail that has to be longer.
+
+Plates, the estimate and the download (with the same list in its README) follow it. Press **I've built these too** when you have.
 
 ## Supported files
 

@@ -1,6 +1,7 @@
 // Wiring view: every board as a card with its plugs, cables drawn between them. Click a plug, then another, to
 // connect them; click a cable to select it (Del removes). Cards are laid out by rail, boxes (hubs, chargers) last.
-import { useEffect, useMemo, useState } from 'react';
+// A big rack zooms out to fit; click a board's name (or find it) to show just its cables.
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Link, Module, PlugRef } from '../model/types';
 import { compatible, KIND_COLOR, KIND_NAME, linkKind, numberLinks, plugsOf, sameRef, type PlugInfo } from '../model/links';
 import { edit, isSel, select, store, toast, useApp } from '../state';
@@ -19,6 +20,10 @@ export function WiringView() {
   const sel = useApp((s) => s.sel);
   const [pending, setPending] = useState<PlugInfo | null>(null);
   const [hover, setHover] = useState<string | null>(null);
+  const [focus, setFocus] = useState<string | null>(null);
+  const [find, setFind] = useState('');
+  const [z, setZ] = useState<number | null>(null); // null: fit to the window on first show
+  const box = useRef<HTMLDivElement>(null);
   const plugs = useMemo(() => plugsOf(p), [p]);
   const links = p.links ?? [];
 
@@ -57,6 +62,39 @@ export function WiringView() {
     const width = Math.max(...rows.map((r) => r.length), 1) * (W + GAPX) + 20;
     return { pos, width, height: y };
   }, [p.modules, rep, plugs]);
+
+  const fitZ = () => {
+    const el = box.current;
+    if (!el) return 1;
+    // fit the width (scroll down for the rest): small enough to see every row, big enough to read
+    return Math.max(0.45, Math.min(1, (el.clientWidth - 30) / Math.max(layout.width, 600)));
+  };
+  useEffect(() => { if (z == null) setZ(fitZ()); }, [layout, z]);
+  const zoom = z ?? 1;
+  const zoomBy = (f: number) => setZ((v) => Math.max(0.3, Math.min(1.6, Math.round((v ?? 1) * f * 20) / 20)));
+  // ⌘/Ctrl + wheel (or a trackpad pinch) zooms
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const w = (e: WheelEvent) => { if (!e.ctrlKey && !e.metaKey) return; e.preventDefault(); zoomBy(e.deltaY < 0 ? 1.1 : 1 / 1.1); };
+    el.addEventListener('wheel', w, { passive: false });
+    return () => el.removeEventListener('wheel', w);
+  }, []);
+  // a board picked (its name clicked, or found): its cables and the boards at their other ends stay bright
+  const near = useMemo(() => {
+    if (!focus) return null;
+    const ids = new Set([focus]);
+    for (const l of links) if (l.a.module === focus || l.b.module === focus) { ids.add(l.a.module); ids.add(l.b.module); }
+    return ids;
+  }, [focus, links]);
+  const findIt = (q: string) => {
+    setFind(q);
+    const t = q.trim().toLowerCase();
+    const m = t ? p.modules.find((x) => x.board.name.toLowerCase().includes(t)) : null;
+    setFocus(m ? m.id : null);
+    const c = m && layout.pos.get(m.id);
+    if (c && box.current) box.current.scrollTo({ left: Math.max(0, c.x * zoom - 80), top: Math.max(0, c.y * zoom - 60), behavior: 'smooth' });
+  };
 
   const portAt = (q: PlugInfo, side: 1 | -1) => {
     const c = layout.pos.get(q.module.id)!;
@@ -99,19 +137,33 @@ export function WiringView() {
     return () => window.removeEventListener('keydown', k);
   }, []);
 
+  // number pills: pushed apart where cables cross close together, so every number stays readable
+  const paths = links.map((l) => ({ l, lp: linkPath(l) }));
+  const pills: { x: number; y: number }[] = [];
+  const pillAt = new Map<string, { x: number; y: number }>();
+  for (const { l, lp } of [...paths].sort((a, b) => (a.lp?.mid.y ?? 0) - (b.lp?.mid.y ?? 0))) {
+    if (!lp) continue;
+    const at = { ...lp.mid };
+    for (let k = 0; k < 12 && pills.some((q) => Math.abs(q.x - at.x) < 80 && Math.abs(q.y - at.y) < 24); k++) at.y += 24;
+    pills.push(at); pillAt.set(l.id, at);
+  }
+  const W0 = Math.max(layout.width, 600), H0 = Math.max(layout.height, 400);
+
   return (
-    <div className="editor wiring" style={{ position: 'absolute', inset: 0, overflow: 'auto' }} onClick={(e) => { if (e.target === e.currentTarget) { setPending(null); select([]); } }}>
-      <svg width={Math.max(layout.width, 600)} height={Math.max(layout.height, 400)} style={{ display: 'block', margin: '60px 0 0 10px' }} onClick={(e) => { if ((e.target as Element).tagName === 'svg') { setPending(null); select([]); } }}>
-        {links.map((l) => {
-          const lp = linkPath(l);
+    <div className="editor wiring" style={{ position: 'absolute', inset: 0 }}>
+      <div ref={box} style={{ position: 'absolute', inset: 0, overflow: 'auto' }} onClick={(e) => { if (e.target === e.currentTarget) { setPending(null); select([]); setFocus(null); } }}>
+      <svg width={W0 * zoom} height={H0 * zoom} viewBox={`0 0 ${W0} ${H0}`} style={{ display: 'block', margin: '60px 0 0 10px' }} onClick={(e) => { if ((e.target as Element).tagName === 'svg') { setPending(null); select([]); setFocus(null); } }}>
+        {paths.map(({ l, lp }) => {
           if (!lp) return null;
           const on = isSel(sel, l.id) || hover === l.id;
-          const c = cableOf(l.id);
+          const dim = near && !(l.a.module === focus || l.b.module === focus);
+          const c = cableOf(l.id), at = pillAt.get(l.id) ?? lp.mid;
           return (
-            <g key={l.id} style={{ cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); select([{ kind: 'link', id: l.id }], e.shiftKey ? 'toggle' : 'set'); }} onMouseEnter={() => setHover(l.id)} onMouseLeave={() => setHover(null)}>
+            <g key={l.id} style={{ cursor: 'pointer' }} opacity={dim ? 0.12 : 1} onClick={(e) => { e.stopPropagation(); select([{ kind: 'link', id: l.id }], e.shiftKey ? 'toggle' : 'set'); }} onMouseEnter={() => setHover(l.id)} onMouseLeave={() => setHover(null)}>
               <path d={lp.d} fill="none" stroke="transparent" strokeWidth={12} />
-              <path d={lp.d} fill="none" stroke={wire(l.kind ?? 'usb')} strokeWidth={on ? 4 : 2.6} strokeLinecap="round" opacity={on ? 1 : 0.85} />
-              {c && <g transform={`translate(${lp.mid.x},${lp.mid.y})`}><title>{`Cable ${c.no}: ${c.label ?? ''}`}</title><rect x={-38} y={-11} width={76} height={22} rx={11} fill="var(--surface)" stroke={wire(l.kind ?? 'usb')} /><circle cx={-26} cy={0} r={8.5} fill={wire(l.kind ?? 'usb')} /><text x={-26} y={3.8} textAnchor="middle" fontSize={10.5} fontWeight={700} className="mono" fill="#fff">{c.no}</text><text x={8} textAnchor="middle" y={4} fontSize={11} className="mono" fill="var(--fg)">{c.buy} m</text></g>}
+              <path d={lp.d} fill="none" stroke={wire(l.kind ?? 'usb')} strokeWidth={on || (near && !dim) ? 4 : 2.6} strokeLinecap="round" opacity={on ? 1 : 0.85} />
+              {c && (at.y !== lp.mid.y) && <line x1={lp.mid.x} y1={lp.mid.y} x2={at.x} y2={at.y} stroke={wire(l.kind ?? 'usb')} strokeWidth={1} strokeDasharray="2 3" />}
+              {c && <g transform={`translate(${at.x},${at.y})`}><title>{`Cable ${c.no}: ${c.label ?? ''}`}</title><rect x={-38} y={-11} width={76} height={22} rx={11} fill="var(--surface)" stroke={wire(l.kind ?? 'usb')} /><circle cx={-26} cy={0} r={8.5} fill={wire(l.kind ?? 'usb')} /><text x={-26} y={3.8} textAnchor="middle" fontSize={10.5} fontWeight={700} className="mono" fill="#fff">{c.no}</text><text x={8} textAnchor="middle" y={4} fontSize={11} className="mono" fill="var(--fg)">{c.buy} m</text></g>}
             </g>
           );
         })}
@@ -119,12 +171,15 @@ export function WiringView() {
           const c = layout.pos.get(m.id);
           if (!c) return null;
           const qs = plugs.filter((q) => q.module === m);
-          const box = m.board.kind === 'box';
+          const isBox = m.board.kind === 'box';
           return (
-            <g key={m.id} transform={`translate(${c.x},${c.y})`}>
-              <rect width={W} height={c.h} rx={12} fill="var(--surface-2)" stroke={box ? 'var(--line-2)' : 'var(--accent-line)'} />
-              <rect width={W} height={HEAD - 4} rx={12} fill={box ? 'var(--surface-3)' : 'var(--accent-soft)'} />
-              <text x={14} y={20} fontSize={13} fontWeight={650} fill="var(--fg)">{m.board.name.slice(0, 24)}</text>
+            <g key={m.id} transform={`translate(${c.x},${c.y})`} opacity={near && !near.has(m.id) ? 0.25 : 1}>
+              <rect width={W} height={c.h} rx={12} fill="var(--surface-2)" stroke={focus === m.id ? 'var(--accent)' : isBox ? 'var(--line-2)' : 'var(--accent-line)'} strokeWidth={focus === m.id ? 2 : 1} />
+              <g style={{ cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); setFocus(focus === m.id ? null : m.id); }}>
+                <title>{focus === m.id ? 'Show every cable again' : `Show only ${m.board.name}'s cables`}</title>
+                <rect width={W} height={HEAD - 4} rx={12} fill={isBox ? 'var(--surface-3)' : 'var(--accent-soft)'} />
+                <text x={14} y={20} fontSize={13} fontWeight={650} fill="var(--fg)">{m.board.name.slice(0, 24)}</text>
+              </g>
               {m.on && <text x={W - 12} y={20} fontSize={10.5} textAnchor="end" fill="var(--subtle)">stacked</text>}
               {qs.map((q, i) => {
                 const y = HEAD + i * ROW;
@@ -145,10 +200,17 @@ export function WiringView() {
           );
         })}
       </svg>
+      </div>
       <div className="toolbar floating">
         <button className="tbtn" onClick={() => addLinks()}><Icon d={I.wand} /> Auto-connect</button>
         <span className="tsep" />
         <button className="tbtn" disabled={!links.length} onClick={() => { edit((pp) => { pp.links = []; }); select([]); }}>Clear all</button>
+        <span className="tsep" />
+        {p.modules.length > 4 && <input className="wfind" type="search" placeholder="Find a board" value={find} onChange={(e) => findIt(e.target.value)} aria-label="Find a board" />}
+        <button className="tbtn" onClick={() => zoomBy(1 / 1.2)} title="Zoom out (⌘ + wheel)" aria-label="Zoom out">−</button>
+        <button className="tbtn mono" onClick={() => setZ(fitZ())} title="Fit everything in the window">{Math.round(zoom * 100)}%</button>
+        <button className="tbtn" onClick={() => zoomBy(1.2)} title="Zoom in" aria-label="Zoom in">+</button>
+        {focus && <button className="tbtn" onClick={() => { setFocus(null); setFind(''); }}>Show all</button>}
       </div>
       <div className="hud floating mono">
         <span>{pending ? `${pending.module.board.name} ${pending.label}: now click the plug it goes to (green ones fit) · Esc cancels` : 'click a plug, then the plug it goes to · click a cable to select it, Del removes · Auto-connect fills in the rest'}</span>

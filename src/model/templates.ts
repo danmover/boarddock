@@ -13,7 +13,7 @@ function comp(ref: string, pkg: string, x: number, y: number, w: number, l: numb
 }
 
 /** An edge connector whose mouth faces `angle` (deg). `edge` = coordinate of the board edge it sits on. */
-function edgeConn(ref: string, type: string, angle: number, along: number, edge: number, overhang: number, extra: Partial<Comp> = {}): Comp {
+export function edgeConn(ref: string, type: string, angle: number, along: number, edge: number, overhang: number, extra: Partial<Comp> = {}): Comp {
   const t = connById(type);
   const horizontal = angle === 0 || angle === 180;
   const depth = t.body.l, width = t.body.w;
@@ -57,6 +57,28 @@ export const TEMPLATES: Template[] = [
     },
   },
   {
+    id: 'rpi5', name: 'Raspberry Pi 5 (85 × 56)',
+    make: () => {
+      const b = rectBoard('Raspberry Pi 5', 85, 56, 3, 'template');
+      b.holes = holes(2.75, [[3.5, 3.5], [61.5, 3.5], [3.5, 52.5], [61.5, 52.5]]);
+      b.comps = [
+        edgeConn('J_PWR', 'usb_c', -90, 11.2, 0, 1.0),
+        edgeConn('HDMI0', 'hdmi_micro', -90, 25.8, 0, 0.8),
+        edgeConn('HDMI1', 'hdmi_micro', -90, 39.2, 0, 0.8),
+        // the Pi 5 moved Ethernet back to the corner by the power side; USB 3 in the middle, USB 2 by the header
+        edgeConn('ETH', 'rj45', 0, 10.2, 85, 2.8, { h: 13.5 }),
+        edgeConn('USB3', 'usb_a_dual', 0, 29.1, 85, 2.8, { h: 16 }),
+        edgeConn('USB2', 'usb_a_dual', 0, 47.0, 85, 2.8, { h: 16 }),
+        comp('GPIO', 'PinHeader_2x20_P2.54mm_Vertical', 32.5, 52.5, 50.8, 5.08, 8.5, { kind: 'header', tht: true, conn: connSetup(connById('header'), 90) }),
+        comp('SoC', 'BCM2712 (Active Cooler area)', 29, 30, 15, 15, 2.5, { kind: 'hot' }),
+        comp('PCIE', 'PCIe FPC (16 pin)', 3, 28, 4, 17, 1.5, { kind: 'connector' }),
+        { ...edgeConn('SD', 'microsd', 180, 28, 0, 2.5), side: 'bottom', tht: false },
+      ];
+      b.notes = ['Positions follow the Raspberry Pi 5 mechanical drawing as far as we know them, and this template has not been checked against a real board yet: measure yours. With the Active Cooler fitted, leave the holder wall low on the fan side.'];
+      return b;
+    },
+  },
+  {
     id: 'rpi_zero', name: 'Raspberry Pi Zero / Zero 2 W (65 × 30)',
     make: () => {
       const b = rectBoard('Raspberry Pi Zero 2 W', 65, 30, 3, 'template');
@@ -74,7 +96,7 @@ export const TEMPLATES: Template[] = [
     },
   },
   {
-    id: 'pico', name: 'Raspberry Pi Pico / Pico W (51 × 21)',
+    id: 'pico', name: 'Raspberry Pi Pico / Pico W / Pico 2 (51 × 21)',
     make: () => {
       const b = rectBoard('Raspberry Pi Pico', 51, 21, 0.5, 'template');
       b.holes = holes(2.1, [[2, 4.8], [2, 16.2], [49, 4.8], [49, 16.2]]);
@@ -99,6 +121,37 @@ export const TEMPLATES: Template[] = [
         comp('U1', 'DIP-28 ATmega328P', 45, 17, 36, 9, 6, { tht: true }),
       ];
       b.notes = ['Outline and holes from the Arduino Uno R3 reference design. The ATmega socket and header pins stick out about 2 mm underneath.'];
+      return b;
+    },
+  },
+  {
+    id: 'mega', name: 'Arduino Mega 2560 (101.6 × 53.3)',
+    make: () => {
+      const b = rectBoard('Arduino Mega 2560', 101.6, 53.34, 0, 'template');
+      b.holes = holes(3.2, [[13.97, 2.54], [15.24, 50.8], [66.04, 7.62], [66.04, 35.56], [90.17, 50.8], [96.52, 2.54]]);
+      b.comps = [
+        edgeConn('USB', 'usb_b', 180, 38.1, 0, 6.35),
+        edgeConn('DC', 'barrel', 180, 7.62, 0, 1.9),
+        comp('J_DIG', 'PinSocket_1x16 (digital)', 44, 50.8, 41, 2.54, 8.5, { kind: 'header', tht: true, conn: connSetup(connById('header'), 90) }),
+        comp('J_ANA', 'PinSocket_1x24 (power/analog)', 58, 2.54, 61, 2.54, 8.5, { kind: 'header', tht: true, conn: connSetup(connById('header'), -90) }),
+        comp('J_IO', 'PinSocket_2x18 (digital 22-53)', 96.5, 27, 5.08, 45.7, 8.5, { kind: 'header', tht: true, conn: connSetup(connById('header'), 0) }),
+        comp('U1', 'ATmega2560 (TQFP-100)', 60, 27, 16, 16, 1.5),
+      ];
+      b.notes = ['Outline and holes from the Arduino Mega 2560 R3 reference design; header positions are approximate. Header pins stick out about 2 mm underneath.'];
+      return b;
+    },
+  },
+  {
+    id: 'esp32', name: 'ESP32 DevKitC (55 × 28)',
+    make: () => {
+      const b = rectBoard('ESP32 DevKitC', 54.4, 27.9, 0.5, 'template');
+      b.comps = [
+        edgeConn('USB', 'usb_micro_b', 180, 13.95, 0, 1.2),
+        comp('EN', 'SW_Push (EN)', 5, 4, 4, 3, 2, { kind: 'switch' }),
+        comp('BOOT', 'SW_Push (BOOT)', 5, 23.9, 4, 3, 2, { kind: 'switch' }),
+        comp('U1', 'ESP32-WROOM-32 module', 36, 13.95, 25.5, 18, 3.1, { kind: 'antenna' }),
+      ];
+      b.notes = ['Held by its edges (it has no mounting holes). Its two rows of header pins point down: set their length as the lead length under Holder. Sizes vary a little between makers: measure yours.'];
       return b;
     },
   },
