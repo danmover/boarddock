@@ -309,6 +309,24 @@ function roundRect(w: number, h: number, r: number) {
   return poly([[-w / 2 + rr, -h / 2], [w / 2 - rr, -h / 2], [w / 2, -h / 2 + rr], [w / 2, h / 2 - rr], [w / 2 - rr, h / 2], [-w / 2 + rr, h / 2], [-w / 2, h / 2 - rr], [-w / 2, -h / 2 + rr]]).offset(0, 'Round');
 }
 
+/** A mains outlet in the top of a powerboard: its raised face and the slots of its kind, a rocker switch beside it. */
+function outlet(bin: Bin, c: Comp, zt: number) {
+  const t = c.conn!.type, r0 = rad(c.rot);
+  // a slot (or pin hole) w x h at (x, y) on the face, turned a degrees
+  const at = (x: number, y: number, a = 0) => {
+    const ca = Math.cos(r0), sa = Math.sin(r0), r = r0 + rad(a);
+    return [Math.cos(r), Math.sin(r), 0, 0, -Math.sin(r), Math.cos(r), 0, 0, 0, 0, 1, 0, c.x + x * ca - y * sa, c.y + x * sa + y * ca, zt, 1];
+  };
+  const slot = (x: number, y: number, w: number, h: number, a = 0) => bin.box('black', at(x, y, a), -w / 2, -h / 2, 0.55, w / 2, h / 2, 0.66);
+  const hw = Math.min(c.w, c.l) / 2 - 1;
+  bin.box('white', at(0, 0), -hw, -hw, -0.1, hw, hw, 0.6);
+  if (t === 'ac_au') { slot(-5.6, 2.2, 1.8, 6.5, -30); slot(5.6, 2.2, 1.8, 6.5, 30); slot(0, -7, 1.8, 6.5); }
+  else if (t === 'ac_uk') { slot(0, 8, 4, 8); slot(-11, -4.5, 6.2, 2.4); slot(11, -4.5, 6.2, 2.4); }
+  else if (t === 'ac_us') { slot(-6.3, 1.5, 1.8, 7); slot(6.3, 1.5, 1.8, 7); slot(0, -8, 4.2, 4.2); }
+  else { slot(-9.5, 0, 4.8, 4.8); slot(9.5, 0, 4.8, 4.8); slot(0, hw - 1.5, 6, 1.2); slot(0, -hw + 1.5, 6, 1.2); }
+  if (c.value === 'switched') { bin.box('box', at(0, hw + 7), -6, -4, 0, 6, 4, 1.2); bin.box('red', at(0, hw + 7), -4.8, -2.8, 1.2, 4.8, 2.8, 2.6); }
+}
+
 /**
  * Ghosts of a board: soldermask slab with plated pads and silkscreen, and every part. `T` places them
  * (for boards bolted on top of another).
@@ -332,9 +350,10 @@ export function boardDetail(b: Board, zb: number, zt: number, tag: PickTag, anim
       if (t === 'usb_a') { bin.box('white', T, -0.7, -pw / 2 + 1.6, -0.7, 0.1, pw / 2 - 1.6, 0.9); bin.box('metal', T, -0.2, -pw / 2 - 0.4, -ph / 2 - 0.4, 0.12, pw / 2 + 0.4, -ph / 2); bin.box('metal', T, -0.2, -pw / 2 - 0.4, ph / 2, 0.12, pw / 2 + 0.4, ph / 2 + 0.4); }
       if (t === 'barrel') bin.box('metal', T, -0.7, -0.8, -0.8, 0.1, 0.8, 0.8);
     }
-    // ports in the top face: the opening, the tongue and the shell rim
+    // ports in the top face: the opening, the tongue and the shell rim (a mains outlet: its face and slots)
     for (const c of b.comps) {
       if (c.hidden || !c.conn || c.conn.entry !== 'top') continue;
+      if (c.conn.type.startsWith('ac_')) { outlet(bin, c, zt); continue; }
       const t = c.conn.type, T = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, c.x, c.y, zt, 1];
       const pw = t === 'usb_a' ? 13 : Math.max(6, c.conn.plug.w * 0.65), ph = t === 'usb_a' ? 5.8 : Math.max(2.8, c.conn.plug.h * 0.45);
       bin.box('black', T, -pw / 2, -ph / 2, -0.8, pw / 2, ph / 2, 0.08);
@@ -591,6 +610,10 @@ function plugAt(T: number[], p: PlugSize, tag: PickTag, anim: Anim, type: string
       push('plug', loft(T, rect(-0.2, x0 + 8, W, H, 1.6)));
       push('black', loft(T, [{ x: x0 + 8, w: W * 0.85, h: H * 0.8, r: 1.2 }, { x: x1, w: W * 0.7, h: 1.4, r: 0.5 }]));
       return bin.ghosts('plug', tag, anim, {}, true);
+    case 'ac_au': case 'ac_uk': case 'ac_us': case 'ac_eu':
+      // a mains plug in its outlet: the moulded body, its lead out of the top through a boot
+      body(overmold(W, H, Math.min(W, H) * (type === 'ac_eu' ? 0.5 : 0.2), -0.6, x1, p.cable, 0.3));
+      break;
     case 'iec_c7':
       body([{ x: -2, w: W - 1.4, h: H - 1.4, r: (H - 1.4) / 2 }, { x: x0, w: W - 1.4, h: H - 1.4, r: (H - 1.4) / 2 }, ...overmold(W, H, H / 2, x0, x1, p.cable, 0.3)]);
       break;

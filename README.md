@@ -229,6 +229,12 @@ The Plugs step counts what still needs a port: USB devices against free hub and 
 
 **Power budget.** Every charger, powered hub, bus-powered hub and Raspberry Pi USB port gets a bar: what the boards on it take at full load against what it gives, at 5 V. It warns when a charger is asked for more than it gives, when a Pi's four USB ports (1.2 A between them) or a hub with no supply of its own carry too much, and when a board needs more than its port gives (a Pi 4 wants a 3 A supply; a USB-A charger port gives about 2.4 A). The figures are estimates: the makers' recommended supplies and typical draws under load. Set a board's own under **Board › Power** and a charger's total (the watts on its label, divided by 5) under **Box**. Check lists the same.
 
+### Powerboards
+
+Powerboards (power strips) are boxes too, under Start's accessories: 4 or 6 outlets, with a switch by each, with outlets turned 45° so plug packs fit side by side, or with two USB ports. Set the outlets (AU/NZ, UK, US or EU), how many, their angle and the size under **Box**; the outlets spread evenly along the top. Auto-connect plugs each charger's mains lead into a free outlet, and buys the lead only if it is longer than the one most chargers come with. A powerboard's own lead goes to the wall: BoardDock never plugs one powerboard into another, and warns if you do.
+
+A box longer than your printer's bed (a powerboard usually is) gets its holder in two halves that meet end to end, each clipped to the rail on its own.
+
 ## Table stands
 
 ![Table stands under two rails](docs/images/stands.png)

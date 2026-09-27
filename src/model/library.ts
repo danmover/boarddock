@@ -44,6 +44,11 @@ export const CONNECTORS: ConnType[] = [
   { id: 'tagconnect', name: 'Tag-Connect pads', entry: 'top', body: { w: 10, l: 5, h: 0.1 }, zc: 0, overhang: 0, plug: { w: 10, h: 5, len: 22, cable: 1 }, match: /$^/, cradle: false, note: 'Pads only: the Tag-Connect cable clips onto the board from above.' },
   { id: 'header', name: 'Pin header (Dupont)', entry: 'top', body: { w: 10.2, l: 2.54, h: 8.5 }, zc: 0, overhang: 0, plug: { w: 10.2, h: 2.54, len: 14, cable: 1.5 }, match: /pin[\s_-]?header|pin[\s_-]?socket|conn_\d+x\d+|header_\d|idc|box[\s_-]?header/i, cradle: false },
   { id: 'pins_ra', name: 'Pin header, right-angle (Dupont)', entry: 'edge', body: { w: 15.24, l: 2.5, h: 2.5 }, zc: 1.27, overhang: 6, plug: { w: 15.2, h: 2.5, len: 14, cable: 1.4 }, match: /$^/, cradle: false, note: 'Jumper wires push onto its pins one by one.' },
+  { id: 'ac_au', name: 'Mains outlet, AU/NZ', entry: 'top', body: { w: 36, l: 36, h: 0.5 }, zc: 0, overhang: 0, plug: { w: 34, h: 26, len: 24, cable: 7.5 }, match: /$^/, cradle: false },
+  { id: 'ac_uk', name: 'Mains outlet, UK', entry: 'top', body: { w: 42, l: 42, h: 0.5 }, zc: 0, overhang: 0, plug: { w: 44, h: 30, len: 26, cable: 7.5 }, match: /$^/, cradle: false },
+  { id: 'ac_us', name: 'Mains outlet, US', entry: 'top', body: { w: 36, l: 36, h: 0.5 }, zc: 0, overhang: 0, plug: { w: 32, h: 24, len: 22, cable: 7 }, match: /$^/, cradle: false },
+  { id: 'ac_eu', name: 'Mains outlet, EU (Schuko)', entry: 'top', body: { w: 44, l: 44, h: 0.5 }, zc: 0, overhang: 0, plug: { w: 38, h: 38, len: 26, cable: 8 }, match: /$^/, cradle: false },
+  { id: 'mains_lead', name: 'Mains lead (fixed)', entry: 'edge', body: { w: 10, l: 10, h: 10 }, zc: 0, overhang: 0, plug: { w: 12, h: 12, len: 22, cable: 7.5 }, match: /$^/, cradle: false },
   { id: 'iec_c7', name: 'Mains (figure-8, C7)', entry: 'edge', body: { w: 11.5, l: 12, h: 8 }, zc: 4, overhang: 0, plug: { w: 13, h: 9, len: 30, cable: 6 }, match: /iec[\s_-]?60320|figure[\s_-]?8/i, cradle: false },
   { id: 'custom', name: 'Custom connector', entry: 'edge', body: { w: 10, l: 8, h: 5 }, zc: 2.5, overhang: 0.5, plug: { w: 12, h: 8, len: 20, cable: 4 }, match: /$^/, cradle: true },
 ];

@@ -71,7 +71,7 @@ export interface Pin { n: string; x: number; y: number; net?: string }
 /** Where a box's ports sit: its long faces (front: y = 0, back: y = width), its ends (left: x = 0, right: x = length), or its top. */
 export type BoxFace = 'front' | 'back' | 'left' | 'right' | 'top';
 /** A row of identical ports on one face of a box. */
-export interface BoxPortGroup { id: string; type: string; count: number; face: BoxFace; role: string; refs?: string[]; near?: 'front' | 'back'; pins?: string[] } // refs: the group's port names, kept as ports are added or removed; near: a top row's place by that long edge (else across the middle); pins: a pin header's pin names, pin 1 first
+export interface BoxPortGroup { id: string; type: string; count: number; face: BoxFace; role: string; refs?: string[]; near?: 'front' | 'back'; pins?: string[]; rot?: number; switched?: boolean } // refs: the group's port names, kept as ports are added or removed; near: a top row's place by that long edge (else across the middle); pins: a pin header's pin names, pin 1 first; rot: a top row's ports turned (angled outlets); switched: a switch by each outlet
 export interface BoxSpec {
   l: number; w: number; h: number; groups: BoxPortGroup[];
   supply?: number; // A at 5 V the whole box can give (charger, powered hub); unset: a typical figure
@@ -229,7 +229,7 @@ export interface PanelSettings {
 
 /** A cable between two plugs (connectors on two boards, or a board and a box such as a hub). */
 export interface PlugRef { module: string; ref: string }
-export interface Link { id: string; a: PlugRef; b: PlugRef; kind?: 'usb' | 'power' | 'video' | 'net' | 'audio' | 'wire' | 'debug' | 'uart' | 'jumper'; no?: number; wires?: Wire[] } // no: the cable's number, kept for good; wires: jumper wires, pin to pin
+export interface Link { id: string; a: PlugRef; b: PlugRef; kind?: 'usb' | 'power' | 'video' | 'net' | 'audio' | 'wire' | 'debug' | 'uart' | 'jumper' | 'mains'; no?: number; wires?: Wire[] } // no: the cable's number, kept for good; wires: jumper wires, pin to pin
 /** One jumper wire between two pin headers: pin a on the link's a end to pin b on its b end. */
 export interface Wire { a: string; b: string; colour?: string }
 

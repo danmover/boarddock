@@ -5,7 +5,7 @@ import type { Board, BoxFace, BoxPortGroup, BoxSpec, Comp } from './types';
 import { connById, connSetup } from './library';
 import { roundedRectLoop, uid } from '../geom/poly';
 
-export const BOX_PORT_TYPES = ['usb_a', 'usb_c', 'usb_micro_b', 'usb_b', 'barrel', 'iec_c7', 'rj45', 'hdmi_a', 'audio35', 'terminal', 'jtag20', 'swd10', 'pins_ra'] as const;
+export const BOX_PORT_TYPES = ['usb_a', 'usb_c', 'usb_micro_b', 'usb_b', 'barrel', 'iec_c7', 'rj45', 'hdmi_a', 'audio35', 'terminal', 'jtag20', 'swd10', 'pins_ra', 'ac_au', 'ac_uk', 'ac_us', 'ac_eu', 'mains_lead'] as const;
 
 export const BOX_ROLES: [string, string][] = [
   ['hub-down', 'hub port: a device plugs in'],
@@ -17,20 +17,29 @@ export const BOX_ROLES: [string, string][] = [
   ['net', 'network'],
   ['debug', "debug: a ribbon to a board's debug header"],
   ['uart', "serial pins: jumper wires to a board's UART header"],
-  ['other', 'leaves the rack (mains, supply, screen)'],
+  ['mains-out', 'mains outlet: a charger\'s lead plugs in'],
+  ['mains-in', 'mains in: a lead to an outlet (or the wall)'],
+  ['other', 'leaves the rack (supply, screen)'],
 ];
 
 export const FACE_NAME: Record<BoxFace, string> = { front: 'Front', back: 'Back', left: 'Left end', right: 'Right end', top: 'Top' };
 const ANGLE: Record<Exclude<BoxFace, 'top'>, number> = { front: -90, back: 90, left: 180, right: 0 };
 
 const g = (type: string, count: number, face: BoxFace, role: string): BoxPortGroup => ({ id: uid('pg'), type, count, face, role });
+const POWERBOARD = "A powerboard: set its outlets (AU, UK, US or EU), how many, their angle and its size under Box. Auto-connect plugs the chargers' mains leads into it; its own lead goes to the wall. Never plug one powerboard into another.";
 
 export const BOX_PRESETS: Record<string, { name: string; color: string; spec: () => BoxSpec; note?: string }> = {
   hub4: { name: 'USB hub', color: '#2b2f36', spec: () => ({ l: 100, w: 30, h: 22, groups: [g('usb_a', 4, 'front', 'hub-down'), g('usb_micro_b', 1, 'left', 'hub-up')] }) },
   hub7: { name: 'Powered USB hub', color: '#2b2f36', spec: () => ({ l: 160, w: 48, h: 24, groups: [g('usb_a', 7, 'top', 'hub-down'), g('usb_c', 1, 'left', 'hub-up'), g('barrel', 1, 'right', 'other')] }) },
   hubc: { name: 'USB-C hub', color: '#3a3f47', spec: () => ({ l: 110, w: 32, h: 14, groups: [g('usb_a', 3, 'front', 'hub-down'), g('usb_c', 1, 'front', 'hub-down'), g('usb_c', 1, 'left', 'hub-up'), g('rj45', 1, 'right', 'net')] }) },
-  charger4: { name: 'USB charger', color: '#e9e7e2', spec: () => ({ l: 90, w: 60, h: 28, groups: [g('usb_a', 4, 'back', 'power-out'), g('iec_c7', 1, 'front', 'other')] }) },
-  charger6: { name: 'USB charger (A + C)', color: '#e9e7e2', spec: () => ({ l: 110, w: 70, h: 30, groups: [g('usb_a', 4, 'back', 'power-out'), g('usb_c', 2, 'back', 'power-out'), g('iec_c7', 1, 'front', 'other')] }) },
+  charger4: { name: 'USB charger', color: '#e9e7e2', spec: () => ({ l: 90, w: 60, h: 28, groups: [g('usb_a', 4, 'back', 'power-out'), g('iec_c7', 1, 'front', 'mains-in')] }) },
+  charger6: { name: 'USB charger (A + C)', color: '#e9e7e2', spec: () => ({ l: 110, w: 70, h: 30, groups: [g('usb_a', 4, 'back', 'power-out'), g('usb_c', 2, 'back', 'power-out'), g('iec_c7', 1, 'front', 'mains-in')] }) },
+  // powerboards (power strips): outlets along the top, spread evenly, their own lead out of one end
+  pb4: { name: 'Powerboard, 4 outlets', color: '#f1f0eb', spec: () => ({ l: 290, w: 58, h: 40, groups: [g('ac_au', 4, 'top', 'mains-out'), g('mains_lead', 1, 'left', 'mains-in')] }), note: POWERBOARD },
+  pb6: { name: 'Powerboard, 6 outlets', color: '#f1f0eb', spec: () => ({ l: 420, w: 58, h: 40, groups: [g('ac_au', 6, 'top', 'mains-out'), g('mains_lead', 1, 'left', 'mains-in')] }), note: POWERBOARD },
+  pb4sw: { name: 'Powerboard, 4 switched outlets', color: '#f1f0eb', spec: () => ({ l: 330, w: 62, h: 42, groups: [{ ...g('ac_au', 4, 'top', 'mains-out'), switched: true }, g('mains_lead', 1, 'left', 'mains-in')] }), note: POWERBOARD },
+  pb4ang: { name: 'Powerboard, 4 angled outlets', color: '#f1f0eb', spec: () => ({ l: 300, w: 66, h: 40, groups: [{ ...g('ac_au', 4, 'top', 'mains-out'), rot: 45 }, g('mains_lead', 1, 'left', 'mains-in')] }), note: POWERBOARD },
+  pb4usb: { name: 'Powerboard, 4 outlets + USB', color: '#f1f0eb', spec: () => ({ l: 330, w: 58, h: 40, supply: 3.4, groups: [g('ac_au', 4, 'top', 'mains-out'), g('usb_a', 2, 'front', 'power-out'), g('mains_lead', 1, 'left', 'mains-in')] }), note: POWERBOARD },
   // a debug probe: a slim board about 5 cm square and 3 mm thick, the 10-pin ribbon socket on its top face by one
   // edge and the micro-USB on the edge opposite
   // a USB to TTL serial adapter (the red FT232RL board): mini-USB at one end, six right-angle pins at the other
@@ -57,7 +66,10 @@ export function layoutPorts(s: BoxSpec): { group: BoxPortGroup; i: number; along
     const span = (gap: number, between: number) => gs.reduce((a, x) => a + x.count * portWidth(x.type, x) + (x.count - 1) * gap, 0) + (gs.length - 1) * between;
     let gap = 5, between = 9;
     if (span(gap, between) > L - 6) { gap = 1.5; between = 3; }
-    let at = (L - span(gap, between)) / 2;
+    // mains outlets spread evenly along the whole face, room for a plug pack on each
+    const spread = gs.every((x) => x.type.startsWith('ac_'));
+    if (spread) { const n = gs.reduce((a, x) => a + x.count, 0), w = gs.reduce((a, x) => a + x.count * portWidth(x.type, x), 0); gap = between = Math.max(1.5, (L - 20 - w) / Math.max(1, n)); }
+    let at = spread ? 10 + gap / 2 : (L - span(gap, between)) / 2;
     for (const x of gs) for (let i = 0; i < x.count; i++) {
       const w = portWidth(x.type, x);
       out.push({ group: x, i, along: at + w / 2, row: 0 });
@@ -89,7 +101,7 @@ export function boxProblems(s: BoxSpec): string[] {
   return out;
 }
 
-const PREFIX: Record<string, string> = { 'hub-down': 'P', 'hub-up': 'UP', 'power-out': 'OUT', 'power-in': 'PWR', host: 'USB', device: 'USB', net: 'LAN', debug: 'DBG', uart: 'SER' };
+const PREFIX: Record<string, string> = { 'hub-down': 'P', 'hub-up': 'UP', 'power-out': 'OUT', 'power-in': 'PWR', host: 'USB', device: 'USB', net: 'LAN', debug: 'DBG', uart: 'SER', 'mains-out': 'AC', 'mains-in': 'MAINS' };
 const prefixOf = (x: BoxPortGroup) => PREFIX[x.role] ?? (x.type === 'iec_c7' ? 'AC' : x.type === 'barrel' ? 'DC' : x.type === 'rj45' ? 'LAN' : 'J');
 
 /**
@@ -132,7 +144,7 @@ export function boxPorts(s: BoxSpec): Comp[] {
     if (group.face === 'top') {
       // across the middle, or by one long edge (a probe's ribbon socket); a probe's header stands on it, a box's port is flush
       const y = group.near === 'front' ? 3 + t.body.l / 2 : group.near === 'back' ? s.w - 3 - t.body.l / 2 : s.w / 2;
-      return { id: uid('c'), ref, pkg: t.name, side: 'top', x: along, y, rot: 0, w: t.body.w, l: t.body.l, h: group.role === 'debug' ? t.body.h : 0.2, kind: 'connector', tht: false, role: group.role,
+      return { id: uid('c'), ref, pkg: t.name, side: 'top', x: along, y, rot: group.rot ?? 0, w: t.body.w, l: t.body.l, h: group.role === 'debug' ? t.body.h : 0.2, kind: 'connector', tht: false, role: group.role, ...(group.switched ? { value: 'switched' } : {}),
         conn: { ...connSetup(t, 0), entry: 'top', zc: 0, cradle: false, cap: false, guard: false, tie: false } } as Comp;
     }
     const angle = ANGLE[group.face], horizontal = group.face === 'left' || group.face === 'right';

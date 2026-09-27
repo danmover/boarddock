@@ -214,6 +214,11 @@ export const TEMPLATES: Template[] = [
   { id: 'usb_charger', name: 'USB charger, 4 ports (box 90 × 60 × 28)', accessory: true, make: () => makeBox('charger4') },
   { id: 'usb_charger6', name: 'USB charger, 4 A + 2 C (110 × 70)', accessory: true, make: () => makeBox('charger6') },
   { id: 'jlink', name: 'J-Link debug probe (50 × 50 × 3, 10-pin ribbon)', accessory: true, make: () => makeBox('jlink') },
+  { id: 'pb4', name: 'Powerboard, 4 outlets (290 × 58 × 40)', accessory: true, make: () => makeBox('pb4') },
+  { id: 'pb6', name: 'Powerboard, 6 outlets (420 × 58 × 40)', accessory: true, make: () => makeBox('pb6') },
+  { id: 'pb4sw', name: 'Powerboard, 4 switched outlets (330 × 62 × 42)', accessory: true, make: () => makeBox('pb4sw') },
+  { id: 'pb4ang', name: 'Powerboard, 4 angled outlets, room for plug packs (300 × 66 × 40)', accessory: true, make: () => makeBox('pb4ang') },
+  { id: 'pb4usb', name: 'Powerboard, 4 outlets and 2 USB (330 × 58 × 40)', accessory: true, make: () => makeBox('pb4usb') },
   { id: 'ftdi', name: 'USB-serial adapter, FT232RL (36 × 18, mini-USB, 6 pins)', accessory: true, make: () => makeBox('ftdi') },
   {
     id: 'power_dist', name: 'DC power distribution board (60 × 40)', accessory: true,

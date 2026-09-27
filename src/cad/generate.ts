@@ -167,6 +167,18 @@ export function buildModule(job: Job): ModuleOut {
   }
 }
 
+/** A flat-mounted box holder longer than the printer bed goes in two halves: the direction along it (the rail's), else null. */
+function splitAxis(C: Ctx): V2 | null {
+  if (C.b.kind !== 'box' || C.job.dock) return null;
+  const M = C.job.mount ?? C.p.mount;
+  if (M.mode !== 'flat') return null;
+  const er = dirOf(M.rotation), gw = C.H.gap + C.H.wall;
+  const ext = (d: V2) => { const t = C.b.outline.map((q) => q[0] * d[0] + q[1] * d[1]); return Math.max(...t) - Math.min(...t) + 2 * gw; };
+  const bed = C.p.printer.bed;
+  const fits = (a: number, c: number) => (a <= bed[0] && c <= bed[1]) || (a <= bed[1] && c <= bed[0]);
+  return fits(ext(er), ext(left(er))) ? null : er;
+}
+
 /**
  * A debug probe (J-Link): a thin box that slides down into a slot from its open end, plugs first out, and stays there
  * (see slotBody). Several for one board stack as slots on corner towers.
@@ -289,7 +301,15 @@ function build(job: Job): ModuleOut {
   }
   const lv = job.level ?? 0;
   const inDir: [number, number, number] = site ? [-site.n[0], -site.n[1], 0] : [0, 0, 1];
-  C.parts.unshift(part('holder', `Holder: ${job.name}`, holder, ID, H.color ?? '#e4ebe6', 1, { kind: 'holder', module: C.mid }, { seq: 3 + 2 * lv, dir: inDir }));
+  const split = job.din && (job.mount ?? p.mount).mode === 'flat' ? splitAxis(C) : null;
+  if (split) {
+    // two halves, cut square across the middle, each on its own clip (they meet end to end on the rail)
+    const cen = centroid(b.outline), big = 2000, gap = 0.2;
+    const halfBox = (s: number) => orientedBox(cen, split, s > 0 ? gap / 2 : -big, s > 0 ? big : -gap / 2, -big, big, -50, 300);
+    C.parts.unshift(part('holder_b', `Holder: ${job.name} (second half)`, holder.intersect(halfBox(1)), ID, H.color ?? '#e4ebe6', 1, { kind: 'holder', module: C.mid }, { seq: 3 + 2 * lv, dir: inDir }));
+    C.parts.unshift(part('holder', `Holder: ${job.name} (first half)`, holder.intersect(halfBox(-1)), ID, H.color ?? '#e4ebe6', 1, { kind: 'holder', module: C.mid }, { seq: 3 + 2 * lv, dir: inDir }));
+    checks.push({ group: 'Holder', name: 'In two halves', value: 'longer than the bed', status: 'info', detail: `the box is longer than the ${p.printer.name} bed, so its holder is printed in two halves that meet end to end, each clipped to the rail on its own` });
+  } else C.parts.unshift(part('holder', `Holder: ${job.name}`, holder, ID, H.color ?? '#e4ebe6', 1, { kind: 'holder', module: C.mid }, { seq: 3 + 2 * lv, dir: inDir }));
   for (const pt of C.parts) pt.id = `m${job.mi}_${pt.id}`;
 
   // ---- ghosts ----
@@ -377,7 +397,7 @@ function connectors(C: Ctx) {
       const zTop = (c.side === 'top' ? zt + c.h : zb - c.h) + cn.plug.len + 0.6;
       // a port in the top of a box gets its plug drawn standing in it, a debug header its probe's IDC socket (along
       // the header's long side)
-      const ang = b.kind === 'box' && !isDebugPort(c) ? 0 : c.w >= c.l ? c.rot : c.rot + 90;
+      const ang = b.kind === 'box' && !isDebugPort(c) ? c.rot : c.w >= c.l ? c.rot : c.rot + 90;
       const tag = { kind: 'plug' as const, module: C.mid, refs: [c.ref] }, anim = { seq: 30, dir: [0, 0, 1] as [number, number, number] };
       const wp = c.side === 'top' && cn.type === 'header' ? wiredPins(C, c) : [];
       if (wp.length) {
@@ -1084,6 +1104,9 @@ function mountDin(C: Ctx) {
     };
     // 4-fold hook pattern first (clip can be turned in 90 degree steps); smaller boards fall back to 2-fold
     const configs = [{ HA: hookOffset4(W), four: true }, { HA: 8.6, four: false }, { HA: 5.5, four: false }];
+    // a box longer than the printer bed is held by two halves, each on its own clip, one in each half
+    const split = splitAxis(C);
+    const half = (c: V2) => (split ? Math.sign((c[0] - cen[0]) * split[0] + (c[1] - cen[1]) * split[1]) : 0);
     let at: V2 | null = null, cfg = configs[0];
     for (const cf of configs) {
       const sl = clipSlots(W, cf.HA);
@@ -1100,9 +1123,10 @@ function mountDin(C: Ctx) {
       let best = Infinity;
       for (let x = bb.x0; x <= bb.x1; x += 1.5) for (let y = bb.y0; y <= bb.y1; y += 1.5) {
         const c: V2 = [x, y];
-        if (!ok(c)) continue;
+        if (!ok(c) || (split && half(c) >= 0)) continue;
         const dr = (c[0] - cen[0]) * er[0] + (c[1] - cen[1]) * er[1];
-        const score = tabNeed(c) + 0.35 * Math.abs(dr) + 0.1 * Math.abs((c[0] - cen[0]) * ev[0] + (c[1] - cen[1]) * ev[1]);
+        // (split: the middle of its half, on the line along the rail)
+        const score = tabNeed(c) + (split ? 0.35 * Math.abs(Math.abs(dr) - (bb.x1 - bb.x0 + bb.y1 - bb.y0) / 8) : 0.35 * Math.abs(dr)) + (split ? 2 : 0.1) * Math.abs((c[0] - cen[0]) * ev[0] + (c[1] - cen[1]) * ev[1]);
         if (score < best) { best = score; at = c; }
       }
       if (at) { cfg = cf; break; }
@@ -1114,20 +1138,25 @@ function mountDin(C: Ctx) {
     } else if (!cfg.four) C.warnings.push('The board is too small for the 4-way clip pattern: the clip fits in two orientations (0/180 degrees) only.');
     (C as any).clipAt = at;
     const sl = clipSlots(W, cfg.HA);
-    for (const r of slotRects(at, er, ev, sl, cfg.four)) C.neg.push(ext(poly(r), -1, C.base + 0.02));
-    const pad = orientedRect(at, er, -(sl.outer + 2.5), sl.outer + 2.5, -(sl.outer + 2.5), sl.outer + 2.5);
-    C.keep.push(poly(pad));
-    if (C.frame) { C.pos.push(ext(roundCS(poly(pad), 2), 0, C.base)); C.ribNodes.push({ p: at, r: sl.outer + 2.5 }); }
-    const tabExt = tabNeed(at);
-    const d = clipDims({ W, tf: M.railT, tabExt, HA: cfg.HA });
-    const clip = buildClip({ W, tf: M.railT, tabExt, HA: cfg.HA });
-    // clip print frame: x = u, y = v, z = w. Assembly: u -> +z (u = uF at the base underside), v -> ev, w -> u x v
-    const Wd: V2 = [-ev[1], ev[0]]; // z x ev
-    const o = add(add(at, ev, -d.vc), Wd, -W / 2);
-    const T = matFromBasis([0, 0, 1], [ev[0], ev[1], 0], [Wd[0], Wd[1], 0], [o[0], o[1], -d.uF]);
-    C.parts.push(part('clip', 'DIN rail clip (pull tab)', clip, T, '#ff6b5b', 1, { kind: 'clip', module: C.mid }, { seq: 2, dir: [0, 0, -1] }));
-    railGhost(C, T, W);
-    clipChecks(C, d, tabExt);
+    // the second half's clip: the first one's mirror across the middle, along the rail
+    const ats: V2[] = [at];
+    if (split) { const k = 2 * ((cen[0] - at[0]) * split[0] + (cen[1] - at[1]) * split[1]); ats.push(add(at, split, k)); }
+    ats.forEach((a, i) => {
+      for (const r of slotRects(a, er, ev, sl, cfg.four)) C.neg.push(ext(poly(r), -1, C.base + 0.02));
+      const pad = orientedRect(a, er, -(sl.outer + 2.5), sl.outer + 2.5, -(sl.outer + 2.5), sl.outer + 2.5);
+      C.keep.push(poly(pad));
+      if (C.frame) { C.pos.push(ext(roundCS(poly(pad), 2), 0, C.base)); C.ribNodes.push({ p: a, r: sl.outer + 2.5 }); }
+      const tabExt = tabNeed(a);
+      const d = clipDims({ W, tf: M.railT, tabExt, HA: cfg.HA });
+      const clip = buildClip({ W, tf: M.railT, tabExt, HA: cfg.HA });
+      // clip print frame: x = u, y = v, z = w. Assembly: u -> +z (u = uF at the base underside), v -> ev, w -> u x v
+      const Wd: V2 = [-ev[1], ev[0]]; // z x ev
+      const o = add(add(a, ev, -d.vc), Wd, -W / 2);
+      const T = matFromBasis([0, 0, 1], [ev[0], ev[1], 0], [Wd[0], Wd[1], 0], [o[0], o[1], -d.uF]);
+      C.parts.push(part(i ? 'clip2' : 'clip', 'DIN rail clip (pull tab)', clip, T, '#ff6b5b', 1, { kind: 'clip', module: C.mid }, { seq: 2, dir: [0, 0, -1] }));
+      railGhost(C, T, W);
+      if (!i) clipChecks(C, d, tabExt);
+    });
   } else {
     // rack / inline: a plate standing off the chosen edge
     const bb = bbox(C.b.outline);

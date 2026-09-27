@@ -486,16 +486,16 @@ function BoxEditor() {
   );
   const probs = boxProblems(spec);
   const count = (r: string) => spec.groups.filter((x) => x.role === r).reduce((a, x) => a + x.count, 0);
-  const sum = [['hub-down', 'hub port'], ['hub-up', 'upstream'], ['power-out', 'power out'], ['power-in', 'power in'], ['host', 'host port'], ['device', 'USB device port'], ['debug', 'debug port']].map(([r, n]) => [count(r), n] as [number, string]).filter(([k]) => k).map(([k, n]) => `${k} ${n}${k > 1 ? 's' : ''}`).join(', ');
+  const sum = [['hub-down', 'hub port'], ['hub-up', 'upstream'], ['power-out', 'power out'], ['power-in', 'power in'], ['host', 'host port'], ['device', 'USB device port'], ['debug', 'debug port'], ['uart', 'serial header'], ['mains-out', 'outlet']].map(([r, n]) => [count(r), n] as [number, string]).filter(([k]) => k).map(([k, n]) => `${k} ${n}${k > 1 ? 's' : ''}`).join(', ');
   return (
     <Section title="Box" right={<span className="chip">{sum || 'no ports'}</span>}>
       <div className="btns" style={{ flexWrap: 'wrap' }}>
         {Object.entries(BOX_PRESETS).map(([k, P]) => <button key={k} className="btn small" onClick={() => set((s) => { Object.assign(s, P.spec()); })}>{P.name}</button>)}
       </div>
       <div className="row3" style={{ marginTop: 10 }}>
-        <Num label="Length" value={spec.l} min={20} max={400} step={1} onChange={(v) => set((s) => { s.l = v; })} />
-        <Num label="Width" value={spec.w} min={10} max={200} step={1} onChange={(v) => set((s) => { s.w = v; })} />
-        <Num label="Height" value={spec.h} min={5} max={120} step={1} onChange={(v) => set((s) => { s.h = v; })} />
+        <Num label="Length" value={spec.l} min={10} max={800} step={1} onChange={(v) => set((s) => { s.l = v; })} />
+        <Num label="Width" value={spec.w} min={8} max={300} step={1} onChange={(v) => set((s) => { s.w = v; })} />
+        <Num label="Height" value={spec.h} min={1} max={150} step={0.1} onChange={(v) => set((s) => { s.h = v; })} hint="Under 5 mm it is a bare board (a probe, an adapter): its ports stand on its top face." />
       </div>
       {(count('power-out') > 0 || (count('hub-down') > 0 && poweredHub(b))) && (() => {
         const guess = supplyOf({ ...b, box: { ...spec, supply: undefined } }, b.comps.filter((c) => c.conn).map((c) => ({ c, role: plugRole(m, c) })).filter((x) => x.role === 'power-out' || x.role === 'hub-down')).total;
@@ -518,6 +518,14 @@ function BoxEditor() {
               <button className="btn small ghost icon" title="Remove these ports" onClick={() => set((s) => { s.groups.splice(i, 1); })}><Icon d={I.x} /></button>
             </div>
             <Pick label="What they are for" value={g.role} options={BOX_ROLES as [string, string][]} onChange={(v) => set((s) => { s.groups[i].role = v; })} />
+            {g.face === 'top' && (
+              <div className="row" style={{ marginTop: 6, alignItems: 'end' }}>
+                <Pick label="Where on top" value={g.near ?? 'mid'} options={[['mid', 'across the middle'], ['front', 'by the front edge'], ['back', 'by the back edge']]} onChange={(v) => set((s) => { s.groups[i].near = v === 'mid' ? undefined : (v as 'front' | 'back'); })} />
+                {g.type.startsWith('ac_') && <Pick label="Turned" value={g.rot ?? 0} options={[[0, 'square'], [45, '45° (plug packs fit)'], [90, 'across']]} onChange={(v) => set((s) => { s.groups[i].rot = v || undefined; })} />}
+                {g.type.startsWith('ac_') && <div className="field"><span>&nbsp;</span><Check label="A switch each" value={!!g.switched} onChange={(v) => set((s) => { s.groups[i].switched = v || undefined; })} /></div>}
+              </div>
+            )}
+            {g.type === 'pins_ra' && <div className="row" style={{ marginTop: 6 }}><Text label="Pin names, pin 1 first" value={(g.pins ?? []).join(', ')} onChange={(v) => set((s) => { s.groups[i].pins = v.split(/[,\s]+/).filter(Boolean).slice(0, 40); })} placeholder="GND, CTS, VCC, TXD, RXD, DTR" /></div>}
           </div>
         ))}
       </div>
@@ -528,7 +536,7 @@ function BoxEditor() {
           {tightFaces(spec).slice(0, 1).map((t) => <button key={t.face} className="btn small soft" style={{ marginTop: 6 }} onClick={() => set((s) => { s[t.dim] = Math.max(s[t.dim], ...tightFaces(s).filter((x) => x.dim === t.dim).map((x) => x.need)); })}>Make the box {Math.max(...tightFaces(spec).filter((x) => x.dim === t.dim).map((x) => x.need))} mm {t.dim === 'l' ? 'long' : 'wide'}</button>)}
         </div>
       )}
-      <p className="hint">{isProbe(m) ? 'A debug probe slides down into a slot in the back of its board\'s dock, plugs up, and stays there; the next probe for that board gets the next slot, on corner towers. Height is its thickness.' : 'Front and back are the long sides; the box lies on its base in its holder, strapped down. Ports on top are fine: the strap loops move to miss them.'} Cables to ports you remove are removed too.</p>
+      <p className="hint">{isProbe(m) ? 'It slides down into a slot in the back of its board\'s dock and stays there; the next probe or adapter for that board gets the next slot, on corner towers. Height is its thickness.' : spec.groups.some((x) => x.type.startsWith('ac_')) ? 'A powerboard lies on its base in its holder, strapped down between the outlets. Outlets spread evenly along the top; turn them 45° if your chargers are plug packs. Its own lead goes to the wall: never into another powerboard.' : 'Front and back are the long sides; the box lies on its base in its holder, strapped down. Ports on top are fine: the strap loops move to miss them.'} Cables to ports you remove are removed too.</p>
     </Section>
   );
 }
@@ -1418,7 +1426,7 @@ function shopping(p: Project, res: Res, d: Delta | null, tot: { g: number; m: nu
     for (const c of cables) {
       // jumper wires are bought by the wire: one per pin they join
       if (c.kind === 'jumper') { const n = (p.links ?? []).find((x) => x.id === c.id)?.wires?.length ?? 3; const k = `female–female jumper wires (Dupont), ${Math.round(c.buy * 100)} cm`; g.set(k, [...(g.get(k) ?? []), ...Array(n).fill(c.no ?? 0)]); continue; }
-      const k = c.kind === 'uart' ? `USB to TTL serial cable, 3.3 V, with loose jumper ends (PL2303 or CP2102 type, like Adafruit 954), ${c.buy} m or longer` : `${c.buy} m ${typeOf(c.id, 'a')} to ${typeOf(c.id, 'b')} cable`; g.set(k, [...(g.get(k) ?? []), c.no ?? 0]); }
+      const k = c.kind === 'mains' ? `mains lead, figure-8 (C7) to ${/UK|US|EU/.exec(`${typeOf(c.id, 'a')} ${typeOf(c.id, 'b')}`)?.[0] ?? 'AU'} plug, ${c.buy} m or longer (most chargers come with one)` : c.kind === 'uart' ? `USB to TTL serial cable, 3.3 V, with loose jumper ends (PL2303 or CP2102 type, like Adafruit 954), ${c.buy} m or longer` : `${c.buy} m ${typeOf(c.id, 'a')} to ${typeOf(c.id, 'b')} cable`; g.set(k, [...(g.get(k) ?? []), c.no ?? 0]); }
     out.push({ head: 'Cables', items: [...g.entries()].map(([k, ns]) => { const u = [...new Set(ns)].sort((a, b) => a - b); return `${ns.length} × ${k} (number${u.length > 1 ? 's' : ''} ${u.join(', ')})`; }) });
   }
   const newIds = new Set(p.built ? p.modules.filter((m) => !p.built!.boards.includes(m.id)).map((m) => m.id) : p.modules.map((m) => m.id));

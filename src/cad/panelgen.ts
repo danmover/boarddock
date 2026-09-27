@@ -3,7 +3,7 @@
 // reports plug access, collisions, rail lengths and the parts list.
 import type { Anim, Check, EdgeName, Feature, GenResult, Ghost, Link, MeshData, Module, Motion, PanelReport, PartOut, PickTag, Project, Rail, RailMount, V2 } from '../model/types';
 
-const CABLE_ORDER: NonNullable<Link['kind']>[] = ['power', 'usb', 'net', 'video', 'audio', 'wire', 'debug', 'uart', 'jumper'];
+const CABLE_ORDER: NonNullable<Link['kind']>[] = ['mains', 'power', 'usb', 'net', 'video', 'audio', 'wire', 'debug', 'uart', 'jumper'];
 // assembly steps after every board's (boards use 300 + 10 per seat): cables, the other plugs, caps
 const CABLE_SEQ = 1e6, PLUG_SEQ = 1e6 + 90, CAP_SEQ = 1e6 + 100, TAG_SEQ = 1e6 + 110;
 import { MATERIALS } from '../model/library';
@@ -459,7 +459,7 @@ export function generatePanel(p: Project): GenResult {
   const offRack = (module: string, ref: string) => {
     const m = mods.get(module)?.m, c = m?.board.comps.find((x) => x.ref === ref);
     if (!m || !c?.conn) return false;
-    return m.board.kind === 'box' ? plugRole(m, c) === 'other' : !!c.conn.cradle;
+    return m.board.kind === 'box' ? ['other', 'mains-in'].includes(plugRole(m, c)) : !!c.conn.cradle;
   };
   const hang = new Set<string>();
   // assembly steps: stands 100-130, docks 200-210, each board 300 + 10k (+1 rod, +2 board, +3 stack, +4 into its dock),
@@ -492,7 +492,7 @@ export function generatePanel(p: Project): GenResult {
         if (hasRod) steps.push({ seq: b0 + 1, text: `Slide the release rod into the spine of the ${nm} holder.` });
         steps.push({ seq: b0 + 2, text: isProbe(s.mod) ? `Slide the ${nm} down into its slot, plugs out.` : box ? `Set the ${nm} into its holder and strap it down with a hook-and-loop strap through the loops.` : `Snap the ${nm} into its holder: it clicks under the fingers or onto the pins.` });
         if (stacked) steps.push({ seq: b0 + 3, text: [...s.riders].map((x) => (layers.some((L) => L.mod === x) ? (isProbe(x) ? `Press the next slot onto the corner towers and slide the ${x.board.name} down into it.` : `Press the ${x.board.name} holder onto the corner towers.`) : `Bolt the ${x.board.name} onto the ${nm} on its standoffs.`)).join(' ') });
-        steps.push({ seq: b0 + 4, text: q.mt.kind === 'dock' ? `Push the ${nm} holder straight into its dock until the latch clicks.` : `Press the ${nm} holder onto its rail clip.` });
+        steps.push({ seq: b0 + 4, text: q.mt.kind === 'dock' ? `Push the ${nm} holder straight into its dock until the latch clicks.` : layers[0].out.parts.some((pt) => pt.id.endsWith('_clip2')) ? `Press both halves of the ${nm} holder onto their rail clips, end to end.` : `Press the ${nm} holder onto its rail clip.` });
         layers.forEach((L, li) => {
           const nrm = dir(L.T, [0, 0, 1]) as [number, number, number];
           const layerPre: Motion[] = li > 0 ? [{ seq: b0 + 3, dir: nrm, dist: 30 }] : [];
@@ -797,6 +797,12 @@ export function generatePanel(p: Project): GenResult {
       const si = route.kinds.indexOf('street');
       const su = si >= 0 ? [route.pts[si][0], route.pts[si + 1][0]] : [route.pts[0][0], route.pts[route.pts.length - 1][0]];
       lanes.push({ street: ch.street, y: vl, d: Math.round(d * 10) / 10, u0: Math.min(...su), u1: Math.max(...su) });
+    }
+    // a powerboard plugged into another powerboard: the first one carries both loads through one outlet
+    for (const l of live) {
+      if (l.kind !== 'mains') continue;
+      const ms = [l.a, l.b].map((r) => mods.get(r.module)?.m);
+      if (ms.every((m) => m?.board.comps.some((c) => c.conn?.type.startsWith('ac_')))) warnings.push(`${ms[0]!.board.name} and ${ms[1]!.board.name} are plugged one into the other: never daisy-chain powerboards. Plug each into the wall.`);
     }
     const clashing = cables.filter((c) => c.clash);
     for (const c of clashing) warnings.push(`The ${c.a} to ${c.b} cable runs into ${c.clash}. Move or turn one of the boards, or connect it to another plug (routes are checked against bounding boxes, so this may be a close shave rather than a real clash).`);
