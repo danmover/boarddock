@@ -9,12 +9,11 @@ import { adapterFor, debugHeaders, isDebugPort, isProbe, isUartPort, markDebug, 
 import { Icon, I } from './icons';
 import { CONNECTORS, DEFAULT_FEATURES, HOLDER_PRESETS, MATERIALS, PRINTERS, connById, connSetup } from '../model/library';
 import { printerByName, printSettings } from '../model/printers';
-import { TEMPLATES, edgeConn } from '../model/templates';
+import { TEMPLATES } from '../model/templates';
 import { ACCEPT } from '../import';
-import { openFiles, openRevision } from './importFlow';
-import { bbox, circleLoop, compRect, roundedRectLoop, round, uid } from '../geom/poly';
-import { activeModule, addBoard, closeProject, dropModule, edit, editMod, isSel, lastReplace, putBoards, select, setActive, store, toast, useApp, type SelItem } from '../state';
-import { addBoards } from './AddBoard';
+import { openRevision } from './importFlow';
+import { bbox, compRect, roundedRectLoop, round, uid } from '../geom/poly';
+import { activeModule, addBoard, closeProject, dropModule, edit, editMod, isSel, select, setActive, store, toast, useApp, type SelItem, type Step } from '../state';
 import { kindName, rackName, sameKind } from '../model/diff';
 import { Check, Chip, Num, Pick, Section, Seg, Text, download, safeName } from './controls';
 import { estimate, packPlates, placedMesh, write3mf, writeStl } from '../cad/export';
@@ -22,12 +21,15 @@ import { buildTestKit, runClipFea } from '../worker/client';
 import type { ClipFeaResult } from '../fea/clipfea';
 import { clipDims } from '../cad/dinclip';
 import { RackBuilder } from './RackBuilder';
-import { bedNote, duplicateModule, markBuilt, unmarkBuilt } from './panelOps';
+import { duplicateModule, markBuilt, unmarkBuilt } from './panelOps';
 import { delta, partsFor, type Delta } from '../model/built';
 import { baseOf as stackBase, ridersOf } from '../model/holes';
 import { DockFeaSection } from './DockFea';
 import { powerBudget, powerText } from '../model/power';
-import { copyOf, myBoards, saveBoard } from '../model/myboards';
+import { saveBoard } from '../model/myboards';
+import { boardSig, useKeptPicture } from './pics';
+import { paletteFor } from '../model/palette';
+import { PartPic } from './Toolbox';
 import { needOf, poweredHub, supplyOf, watts } from '../model/powerdata';
 import { picture } from './snapshot';
 import { boardPicture, holderPicture, type PicPart } from '../worker/client';
@@ -36,90 +38,30 @@ import { PrintCheckSection } from './PrintCheck';
 
 // ============================================================================================ IMPORT
 export function ImportPanel() {
-  const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [over, setOver] = useState(false);
-  const input = useRef<HTMLInputElement>(null);
   const hasProject = useApp((s) => !!s.project);
   const replaceMode = useApp((s) => s.replaceMode);
-  const nBoards = useApp((s) => s.project?.modules.length ?? 0);
-  // with a rack open, a tile adds to it and you stay here (the toast offers to go and check it); Replace swaps the
-  // board being edited for it
-  const put = (b: Board) => {
-    if (!hasProject) { putBoards([b], false); return; }
-    if (!replaceMode) { addBoards([b]); return; }
-    const old = activeModule(store.get().project!).board.name;
-    putBoards([b], true);
-    const p = store.get().project!;
-    toast(`Replaced ${old} with ${activeModule(p).board.name}.${lastReplace}${bedNote(p, [b])} ⌘Z undoes it.`);
-  };
-
-  const handle = async (fl: FileList | File[]) => {
-    const files = Array.from(fl);
-    if (!files.length) return;
-    setErr(null);
-    setBusy(true);
-    try {
-      await openFiles(files);
-    } catch (e: any) {
-      setErr(e.message ?? String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
+  const view = useApp((s) => s.view);
+  if (!hasProject) return (
+    <div className="howto">
+      <ol className="steps4">
+        <li><b>Bring your boards in</b><span>Drop their design files, pick them from the library, or draw one: in the middle of the window.</span></li>
+        <li><b>Check each board</b><span>Its plugs, holes and tall parts, in the board editor with a toolbox of parts.</span></li>
+        <li><b>Cables and rails</b><span>Auto-connect wires them up; every board docks on a DIN rail with its plugs reachable.</span></li>
+        <li><b>Print and build</b><span>Plates to print, cables to buy, and the assembly step by step.</span></li>
+      </ol>
+      <p className="hint"><b>You need</b> a 3D printer and a length of DIN rail (the 35 mm metal strip from electrical cabinets, a few dollars a metre, cut with a hacksaw), or pick <b>Loose holders</b> in the Rails step and skip the rail.</p>
+      <p className="hint">Press <kbd>?</kbd> any time for the keyboard shortcuts. Files never leave your computer.</p>
+    </div>
+  );
   return (
     <div>
-      {hasProject && <RackSummary />}
-      <div className={`drop ${over ? 'over' : ''}`} onClick={() => input.current?.click()}
-        onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)}
-        onDrop={(e) => { e.preventDefault(); e.stopPropagation(); setOver(false); handle(e.dataTransfer.files); }}>
-        <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="8" y="14" width="32" height="22" rx="3" /><path d="M14 20h.01M34 20h.01M14 30h.01M34 30h.01M20 22h8v6h-8zM24 4v12M19 11l5 5 5-5" /></svg>
-        <b>{busy ? 'Reading…' : 'Drop board files here'}</b>
-        <p>KiCad · STEP · IDF · Eagle/Fusion · Gerber + drill + pick & place (zip is fine) · DXF · BoardDock project</p>
-        <input ref={input} type="file" multiple accept={ACCEPT} hidden onChange={(e) => e.target.files && handle(e.target.files)} />
+      <RackSummary />
+      {view !== 'library' && <button className="btn soft" style={{ width: '100%', marginBottom: 10 }} onClick={() => store.set({ view: 'library' })}><Icon d={I.plus} /> Add boards from the library</button>}
+      <div className="section" style={{ padding: '10px 12px' }}>
+        <Check label="What I add replaces the board being edited" value={replaceMode} onChange={(v) => store.set({ replaceMode: v })} />
+        <p className="hint" style={{ margin: '6px 0 0' }}>Off: new boards join the rack ({replaceMode ? 'on now: the next one swaps in for ' + activeModule(store.get().project!).board.name : 'into a free dock slot or spot when it is laid out'}).</p>
       </div>
-      {hasProject && (
-        <div className="section" style={{ marginTop: 10, padding: '8px 12px' }}>
-          <p className="hint" style={{ marginTop: 0 }}>Boards you drop or pick join this project ({nBoards} so far) and go on the rails. Drop several files at once for several boards.</p>
-          <Check label="Replace the board being edited instead" value={replaceMode} onChange={(v) => store.set({ replaceMode: v })} />
-        </div>
-      )}
-      {!hasProject && <p className="hint phoneonly"><b>You need</b> a 3D printer and a length of DIN rail (the 35 mm metal strip from electrical cabinets, cut with a hacksaw), or pick <b>Loose holders</b> in the Rails step and skip the rail.</p>}
-      {busy && <div className="progress" style={{ margin: '8px 0' }}><div /></div>}
-      {err && <div className="err" style={{ margin: '10px 0' }}>{err}</div>}
-      <div style={{ height: 10 }} />
-      {myBoards().length > 0 && (
-        <Section title="My boards">
-          <div className="tiles">
-            {myBoards().map((sv) => <button key={sv.id} className="tile" onClick={() => put(copyOf(sv))} title={`Saved ${sv.at.slice(0, 10)}`}><span>{sv.name}</span><small>{sv.board.role === 'probe' ? 'debug probe' : sv.board.role === 'adapter' ? 'USB-serial adapter' : sv.board.kind === 'box' ? 'box' : 'board'}</small></button>)}
-          </div>
-        </Section>
-      )}
-      <Section title="Start from a known board">
-        <div className="tiles">
-          {TEMPLATES.filter((t) => !t.accessory).map((t) => { const [n, sz] = t.name.split(' ('); return <button key={t.id} className="tile" onClick={() => put(t.make())}><BoardThumb id={t.id} /><span>{n}</span>{sz && <small>{sz.replace(')', '')}</small>}</button>; })}
-        </div>
-      </Section>
-      <Section title="Hubs, chargers and add-ons">
-        <div className="tiles">
-          {TEMPLATES.filter((t) => t.accessory).map((t) => { const [n, sz] = t.name.split(' ('); return <button key={t.id} className="tile" onClick={() => put(t.make())}><BoardThumb id={t.id} /><span>{n}</span>{sz && <small>{sz.replace(')', '')}</small>}</button>; })}
-        </div>
-        <p className="hint">They lie flat on the rails next to the boards they feed, strapped into a low holder, and Auto-connect wires the boards to them. {hasProject ? 'Clicking one adds it to this project.' : ''}</p>
-      </Section>
-      <ManualBoard put={put} />
-      <details className="section">
-        <summary style={{ cursor: 'pointer', fontWeight: 650, fontSize: 12.5 }}>Exporting from your EDA tool</summary>
-        <ul className="fmt" style={{ marginTop: 10 }}>
-          <li><b>KiCad</b>: drop the <code>.kicad_pcb</code>. Outline, holes, courtyards and 3D model names are read.</li>
-          <li><b>Altium Designer</b>: File › Export › <b>STEP 3D</b> (best, real part heights). Or zip the fab outputs: Gerbers with the board outline layer, NC Drill, Pick and Place.</li>
-          <li><b>Eagle / Fusion Electronics</b>: drop the <code>.brd</code>, or export STEP.</li>
-          <li><b>EasyEDA / JLCPCB</b>: Export › Gerber zip plus Export › Pick and Place (CPL), drop both. Or Export › 3D › STEP.</li>
-          <li><b>OrCAD, Allegro, PADS, DipTrace, Proteus</b>: export IDF (<code>.emn</code> + <code>.emp</code>) or STEP, or Gerber + drill + centroid.</li>
-        </ul>
-        <p className="hint">Files never leave your computer: everything runs locally.</p>
-      </details>
-      {hasProject && <div className="btns" style={{ marginTop: 12 }}><button className="btn danger small" onClick={() => { if (confirm('Close this project? Unsaved changes are kept only in this browser until you start a new one.')) closeProject(); }}>Close project</button></div>}
+      <div className="btns" style={{ marginTop: 12 }}><button className="btn danger small" onClick={() => { if (confirm('Close this project? Save it first (⌘S): unsaved changes are kept only in this browser until you start a new one.')) closeProject(); }}>Close project</button></div>
     </div>
   );
 }
@@ -147,7 +89,18 @@ function RackSummary() {
   const res = useApp((s) => s.result);
   const d = res ? delta(p, res) : null;
   const rails = res?.report.panel?.rails.length ?? 0;
+  const nl = (p.links ?? []).length, warn = res?.report.warnings.length ?? 0;
+  const plugs = p.modules.reduce((a, m) => a + m.board.comps.filter((c) => c.conn).length, 0);
   const when = p.built ? new Date(p.built.at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : null;
+  const s = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  // where the rack is up to: each row goes to its step
+  const rows: { step: Step; label: string; state: string; done: boolean; tone?: 'warn' }[] = [
+    { step: 'board', label: 'Boards', state: `${s(p.modules.length, 'board')}, ${s(plugs, 'plug')}`, done: p.modules.length > 0 },
+    { step: 'plugs', label: 'Cables', state: nl ? s(nl, 'cable') : 'none wired yet', done: nl > 0 },
+    { step: 'mount', label: 'Rails', state: p.layout === 'panel' ? (rails ? `on ${s(rails, 'rail')}` : 'laying out…') : 'loose holders', done: p.layout !== 'panel' || rails > 0 },
+    { step: 'check', label: 'Check', state: warn ? s(warn, 'note') : 'nothing to look at', done: !warn, tone: warn ? 'warn' : undefined },
+    { step: 'export', label: 'Print', state: p.built ? (d?.any ? `${d.parts.reduce((a, x) => a + x.qty, 0)} new parts to print` : `built ${when}`) : 'not printed yet', done: !!p.built && !d?.any },
+  ];
   return (
     <div className="section rackcard">
       <div className="rackcard-head">
@@ -155,15 +108,18 @@ function RackSummary() {
           onChange={(e) => setName(e.target.value)} onBlur={saveName} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} />
         <span className={`chip ${p.built ? 'acc' : ''}`}>{p.built ? `built ${when}` : 'not built yet'}</span>
       </div>
-      <p className="hint" style={{ margin: '4px 0 8px' }}>
-        {p.modules.length} board{p.modules.length > 1 ? 's' : ''}{p.layout === 'panel' && res ? ` on ${rails} rail${rails === 1 ? '' : 's'}` : ''}{(p.links ?? []).length ? `, ${(p.links ?? []).length} cable${(p.links ?? []).length > 1 ? 's' : ''}` : ''}: {countKinds(p)}.
-        {p.built ? ' Drop a new board below: it goes into an empty dock slot or a free spot, and nothing else moves.' : ' Drop more boards below, or carry on where you left off.'}
-      </p>
-      <div className="btns">
-        <button className="btn small" onClick={() => store.set({ step: 'mount' })}>Rails</button>
-        <button className="btn small" onClick={() => store.set({ step: 'plugs' })}>Cables</button>
-        <button className={`btn small ${d?.any ? 'soft' : ''}`} onClick={() => store.set({ step: 'export' })}>{d?.any ? `Print what's new (${d.parts.reduce((a, x) => a + x.qty, 0)} parts)` : 'Export'}</button>
-      </div>
+      <ol className="rackprog">
+        {rows.map((r) => (
+          <li key={r.step}>
+            <button onClick={() => store.set({ step: r.step, ...(r.step === 'board' ? { view: 'editor' as const } : { view: 'assembly' as const }) })} title={`Go to ${r.label}`}>
+              <i className={r.done ? 'ok' : r.tone ?? ''} aria-hidden>{r.done ? '✓' : ''}</i>
+              <b>{r.label}</b>
+              <span>{r.state}</span>
+              <Icon d={I.right} />
+            </button>
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }
@@ -183,7 +139,7 @@ function usePicture(key: string, make: () => Promise<PicPart[]>, w?: number, h?:
 }
 
 /** Version of the pictures in public/tiles (scripts/render-tiles.mjs makes them): bump it after re-rendering. */
-const TILE_V = 1;
+const TILE_V = 2;
 const tileFailed = new Set<string>();
 
 export function BoardThumb({ id }: { id: string }) {
@@ -220,95 +176,6 @@ function BoardSketch({ b }: { b: Board }) {
 }
 
 const DEBUG_KINDS: [DebugKind, string][] = [['swd10', '10-pin, 1.27 mm (Cortex)'], ['jtag20', '20-pin, 2.54 mm (JTAG)'], ['tagconnect', 'Tag-Connect pads'], ['pins', 'Pins for jumper wires (SWD)']];
-
-const EDGE_TYPES = ['usb_c', 'usb_micro_b', 'usb_mini_b', 'usb_a', 'usb_a_dual', 'usb_b', 'barrel', 'rj45', 'hdmi_a', 'hdmi_mini', 'hdmi_micro', 'audio35', 'microsd', 'sma', 'terminal'];
-const EDGE_ANGLE: Record<'bottom' | 'top' | 'left' | 'right', number> = { bottom: -90, top: 90, left: 180, right: 0 };
-const REF_OF: Record<string, string> = { barrel: 'DC', usb_c: 'USB', usb_micro_b: 'USB', usb_mini_b: 'USB', usb_a: 'USB', usb_a_dual: 'USB', usb_b: 'USB', rj45: 'ETH', hdmi_a: 'HDMI', hdmi_mini: 'HDMI', hdmi_micro: 'HDMI', audio35: 'AUDIO', microsd: 'SD', sma: 'ANT', terminal: 'TB' };
-
-export function ManualBoard({ put }: { put: (b: Board) => void }) {
-  const [name, setName] = useState('');
-  const [shape, setShape] = useState<'rect' | 'round' | 'circle'>('rect');
-  const [w, setW] = useState(60), [h, setH] = useState(40), [r, setR] = useState(2), [t, setT] = useState(1.6);
-  const [holeMode, setHoleMode] = useState<'corners' | 'spacing' | 'none'>('corners');
-  const [inset, setInset] = useState(3.5), [hd, setHd] = useState(3.2), [sx, setSx] = useState(53), [sy, setSy] = useState(33);
-  const [conns, setConns] = useState<{ type: string; edge: 'bottom' | 'top' | 'left' | 'right'; at: number }[]>([]);
-  const [dbgN, setDbgN] = useState(0), [dbgT, setDbgT] = useState<DebugKind>('swd10'), [uartN, setUartN] = useState(0);
-  const make = () => {
-    const outline: V2[] = shape === 'circle' ? circleLoop(w / 2, w / 2, w / 2, 96) : roundedRectLoop(w, h, shape === 'round' ? r : 0.01, 8).map(([x, y]) => [x + w / 2, y + h / 2] as V2);
-    const holes: Hole[] = [];
-    const H = shape === 'circle' ? w : h;
-    if (holeMode === 'corners') {
-      if (shape === 'circle') for (let k = 0; k < 4; k++) { const a = Math.PI / 4 + (k * Math.PI) / 2, rr = w / 2 - inset; holes.push({ id: uid('h'), x: w / 2 + rr * Math.cos(a), y: w / 2 + rr * Math.sin(a), d: hd, plated: false, use: 'auto' }); }
-      else for (const [x, y] of [[inset, inset], [w - inset, inset], [inset, h - inset], [w - inset, h - inset]]) holes.push({ id: uid('h'), x, y, d: hd, plated: false, use: 'auto' });
-    } else if (holeMode === 'spacing') for (const [x, y] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) holes.push({ id: uid('h'), x: w / 2 + (x * sx) / 2, y: H / 2 + (y * sy) / 2, d: hd, plated: false, use: 'auto' });
-    const count = new Map<string, number>();
-    const comps = shape === 'circle' ? [] : conns.map((c) => {
-      const ty = connById(c.type), pre = REF_OF[c.type] ?? 'J', n = (count.get(pre) ?? 0) + 1;
-      count.set(pre, n);
-      const ref = `${pre}${n > 1 ? n : ''}`;
-      const along = Math.max(0, Math.min(c.edge === 'left' || c.edge === 'right' ? h : w, c.at));
-      const edge = c.edge === 'bottom' || c.edge === 'left' ? 0 : c.edge === 'top' ? h : w;
-      return edgeConn(ref, c.type, EDGE_ANGLE[c.edge], along, edge, (ty as { overhang?: number }).overhang ?? 1);
-    });
-    // debug headers across the middle, each for a J-Link (moved to where they really are in the next step)
-    for (let i = 0; i < dbgN; i++) {
-      const ty = connById(dbgT === 'pins' ? 'header' : dbgT);
-      comps.push({ id: uid('c'), ref: `J_DBG${dbgN > 1 ? i + 1 : ''}`, pkg: ty.name, side: 'top', x: (w * (i + 1)) / (dbgN + 1), y: H * 0.62, rot: 0, w: ty.body.w, l: ty.body.l, h: ty.body.h,
-        kind: dbgT === 'pins' ? 'header' : 'connector', tht: dbgT !== 'tagconnect', conn: connSetup(ty, 0), role: 'debug' });
-    }
-    // UART headers (1 x 6, the FTDI layout) along the top
-    const hdr = connById('header');
-    for (let i = 0; i < uartN; i++) comps.push({ id: uid('c'), ref: `J_UART${uartN > 1 ? i + 1 : ''}`, pkg: 'PinHeader_1x06_P2.54mm', value: 'UART', side: 'top', x: (w * (i + 1)) / (uartN + 1), y: H * 0.85, rot: 0, w: 15.24, l: 2.54, h: hdr.body.h,
-      kind: 'header', tht: true, conn: connSetup(hdr, 0), role: 'uart' });
-    put({ name: name.trim() || 'My board', outline, cutouts: [], thickness: t, holes, comps, source: 'drawn', notes: [] });
-  };
-  const setC = (i: number, patch: Partial<(typeof conns)[number]>) => setConns((xs) => xs.map((x, k) => (k === i ? { ...x, ...patch } : x)));
-  return (
-    <Section title="Or measure one">
-      <Text label="Name" value={name} placeholder="My board" onChange={setName} />
-      <div style={{ marginTop: 10 }}><Seg value={shape} options={[['rect', 'Rectangle'], ['round', 'Rounded'], ['circle', 'Round']]} onChange={setShape} /></div>
-      <div className="row" style={{ marginTop: 10 }}>
-        <Num label={shape === 'circle' ? 'Diameter' : 'Width'} value={w} onChange={setW} step={0.5} min={5} />
-        {shape !== 'circle' ? <Num label="Height" value={h} onChange={setH} step={0.5} min={5} /> : <Num label="Thickness" value={t} onChange={setT} min={0.4} max={3.2} />}
-        {shape === 'round' && <Num label="Corner radius" value={r} onChange={setR} min={0} />}
-        {shape !== 'circle' && <Num label="Thickness" value={t} onChange={setT} min={0.4} max={3.2} />}
-      </div>
-      <div style={{ marginTop: 10 }}><Seg value={holeMode} options={[['corners', 'Holes at the corners'], ['spacing', 'Holes by spacing'], ['none', 'No holes']]} onChange={(v) => {
-        // spacing that would put holes off the board starts from the corners' spacing instead
-        if (v === 'spacing' && (sx >= w - 2 || sy >= (shape === 'circle' ? w : h) - 2)) { setSx(Math.max(1, w - 2 * inset)); setSy(Math.max(1, (shape === 'circle' ? w : h) - 2 * inset)); }
-        setHoleMode(v);
-      }} /></div>
-      {holeMode === 'corners' && <div className="row"><Num label="In from each edge" value={inset} onChange={setInset} /><Num label="Hole Ø" value={hd} min={1} onChange={setHd} /></div>}
-      {holeMode === 'spacing' && <div className="row3"><Num label="Across (X)" value={sx} min={1} onChange={setSx} /><Num label="Up (Y)" value={sy} min={1} onChange={setSy} /><Num label="Hole Ø" value={hd} min={1} onChange={setHd} /></div>}
-      {holeMode === 'spacing' && (sx + hd > w || sy + hd > (shape === 'circle' ? w : h)
-        ? <div className="err" style={{ marginTop: 6 }}>Holes {sx} × {sy} mm apart don't fit on a {w} × {shape === 'circle' ? w : h} mm board.</div>
-        : <p className="hint" style={{ margin: '4px 0 0' }}>Four holes this far apart, centred on the board (many boards give their hole spacing, e.g. 58 across × 49 up for a Pi). Move any of them afterwards in the next step.</p>)}
-      {holeMode === 'none' && <p className="hint" style={{ margin: '4px 0 0' }}>No holes: the holder grips the board by its edges with snap fingers.</p>}
-      {shape !== 'circle' && (
-        <div className="mconns">
-          {conns.map((c, i) => (
-            <div key={i} className="row" style={{ gridTemplateColumns: '1.4fr 1fr 0.9fr 26px', alignItems: 'end' }}>
-              <Pick label={i ? '' : 'Connector'} value={c.type} options={EDGE_TYPES.map((x) => [x, plugName(x)] as [string, string])} onChange={(v) => setC(i, { type: v })} />
-              <Pick label={i ? '' : 'Edge'} value={c.edge} options={[['bottom', 'Bottom'], ['top', 'Top'], ['left', 'Left'], ['right', 'Right']]} onChange={(v) => setC(i, { edge: v })} />
-              <Num label={i ? '' : 'From corner'} value={c.at} min={0} onChange={(v) => setC(i, { at: v })} />
-              <button className="btn small ghost icon" title="Remove" onClick={() => setConns((xs) => xs.filter((_, k) => k !== i))}><Icon d={I.x} /></button>
-            </div>
-          ))}
-          <button className="btn small ghost" style={{ marginTop: 6 }} onClick={() => setConns((xs) => [...xs, { type: xs.length ? 'usb_c' : 'barrel', edge: 'left', at: Math.round(h / 2) }])}><Icon d={I.plus} /> Connector on an edge</button>
-          {conns.length > 0 && <p className="hint" style={{ margin: '4px 0 0' }}>“From corner”: along the edge from the bottom-left corner, to the middle of the connector.</p>}
-        </div>
-      )}
-      <div className="row" style={{ marginTop: 10 }}>
-        <Num label="Debug headers" value={dbgN} min={0} max={4} step={1} unit="" onChange={(v) => setDbgN(Math.max(0, Math.min(4, Math.round(v))))} />
-        <Pick label="Kind" value={dbgT} options={DEBUG_KINDS} onChange={setDbgT} />
-        <Num label="UART headers" value={uartN} min={0} max={4} step={1} unit="" onChange={(v) => setUartN(Math.max(0, Math.min(4, Math.round(v))))} />
-      </div>
-      {dbgN + uartN > 0 && <p className="hint" style={{ margin: '4px 0 0' }}>Put across the board: move {dbgN + uartN > 1 ? 'them' : 'it'} to the right place in the next step. {dbgN > 0 ? 'Each debug header takes a J-Link. ' : ''}{uartN > 0 ? 'Each UART header (1 × 6) takes a USB-serial cable.' : ''}</p>}
-      <p className="hint">Parts on the board and anything else can be added in the board editor afterwards.</p>
-      <div className="btns" style={{ marginTop: 8 }}><button className="btn primary" disabled={holeMode === 'spacing' && (sx + hd > w || sy + hd > (shape === 'circle' ? w : h))} onClick={make}>Create board</button></div>
-    </Section>
-  );
-}
 
 /**
  * Copy this board's holder (style, sizes, features, material, colour, release button) to the boards of the same
@@ -362,62 +229,191 @@ function AllBox({ items, label }: { items: SelItem[]; label?: string }) {
   );
 }
 
+type BTab = 'sel' | 'parts' | 'holes' | 'headers' | 'board' | 'box';
+
+/**
+ * The Board step: a card with the board (its picture, name, size, what it is) and tabs for what is on it: the parts
+ * and plugs, the holes, the debug and UART headers, the board itself; the selection's own tab while something is
+ * picked in the editor.
+ */
 export function BoardPanel() {
   const p = useApp((s) => s.project)!;
   const sel = useApp((s) => s.sel);
-  const b = activeModule(p).board;
-  const bb = bbox(b.outline);
-  const [filter, setFilter] = useState<'key' | 'all'>('key');
-  const comps = b.comps.filter((c) => !c.hidden && (filter === 'all' || c.conn || c.h >= 5 || c.side === 'bottom' || c.kind === 'hot' || c.kind === 'antenna'));
-  const hidden = b.comps.filter((c) => c.hidden).length;
+  const m = activeModule(p), b = m.board;
+  const box = b.kind === 'box';
+  const [tab, setTab] = useState<BTab>(box ? 'box' : 'parts');
+  const back = useRef<BTab>(tab);
+  const picked = sel.filter((x) => x.kind === 'comp' || x.kind === 'hole').length;
+  useEffect(() => {
+    if (picked && tab !== 'sel') { back.current = tab; setTab('sel'); }
+    else if (!picked && tab === 'sel') setTab(back.current);
+  }, [picked]);
+  useEffect(() => { setTab(box ? 'box' : 'parts'); back.current = box ? 'box' : 'parts'; }, [m.id]);
+  const nHeaders = debugHeaders(b).length + uartHeaders(b).length;
+  const shown = b.comps.filter((c) => !c.hidden);
+  const tabs: [BTab, string, number | null][] = [
+    ...(picked ? [['sel', 'Selected', picked] as [BTab, string, number]] : []),
+    ...(box ? [['box', 'Box', null] as [BTab, string, null]] : [['parts', 'Parts', shown.length] as [BTab, string, number], ['holes', 'Holes', b.holes.length] as [BTab, string, number]]),
+    ...(nHeaders ? [['headers', 'Headers', nHeaders] as [BTab, string, number]] : []),
+    ['board', box ? 'Details' : 'Board', null],
+  ];
   return (
-    <div>
+    <div className="bpanel">
       <ModulePicker />
-      <Section title="Summary">
-        <Text label="Name" value={b.name} onChange={(v) => editMod((q) => { q.board.name = v; })} />
-        <div className="row" style={{ marginTop: 8 }}>
-          {b.kind === 'box' ? <div className="field"><span>Height</span><div className="static mono">{round(b.thickness, 1)} mm</div></div> : <Num label="Thickness" value={b.thickness} min={0.3} max={4} onChange={(v) => editMod((q) => { q.board.thickness = v; })} />}
-          <div className="field"><span>Size</span><div className="static mono">{round(bb.x1 - bb.x0, 1)} × {round(bb.y1 - bb.y0, 1)}</div></div>
-        </div>
-        {b.kind !== 'box' && (
-          <div className="row" style={{ marginTop: 8, alignItems: 'end' }}>
-            <Pick label="What it is" value={b.role ?? 'board'} options={[['board', 'a board'], ['probe', 'a debug probe (J-Link…)'], ['adapter', 'a USB-serial adapter']]} onChange={(v) => editMod((q) => { q.board.role = v === 'board' ? undefined : (v as 'probe' | 'adapter'); })} />
-            <button className="btn small" onClick={() => { const ok = saveBoard(b); toast(ok ? `Saved ${b.name} to My boards: Add a board lists it for any rack.` : 'This browser would not store it (private window, or storage full).'); }} title="Keep this board to add again to any rack">Save to My boards</button>
-          </div>
-        )}
-        {b.role && <p className="hint" style={{ margin: '4px 0 0' }}>{b.role === 'probe' ? 'Give it its debug connector (the one its ribbon plugs into) and its USB; it slides into a slot behind the board it serves, like a J-Link.' : 'Give it its pins (named, for the jumper wires) and its USB; it slides into a slot behind the board it serves.'}</p>}
-        {b.kind !== 'box' && !b.role && <PowerDraw />}
-        {b.kind !== 'box' && <Revision />}
-        <p className="hint">{b.source}. {b.holes.length} holes, {b.comps.filter((c) => !c.hidden).length} parts, {b.comps.filter((c) => c.conn).length} connectors.</p>
-        {b.notes.length > 0 && <div className="warns">{b.notes.map((n, i) => <div key={i}>{n}</div>)}</div>}
-      </Section>
-      {b.kind === 'box' && <BoxEditor />}
-      {b.kind !== 'box' && <DebugProbes />}
-      {sel.length > 0 && <Inspector />}
-      {b.kind !== 'box' && <HoleWizard />}
-      {b.kind !== 'box' && <CleanUp />}
-      <Section title="Parts" right={<span className="btns"><AllBox label="Select" items={comps.map((c) => ({ kind: 'comp' as const, id: c.id }))} /><Seg value={filter} options={[['key', 'Key'], ['all', 'All']]} onChange={setFilter} /></span>}>
-        <div className="list" style={{ maxHeight: 340, overflowY: 'auto' }}>
-          {comps.map((c) => (
-            <SelRow key={c.id} it={{ kind: 'comp', id: c.id }}>
-              <span className="grow"><b>{c.ref}</b> <small>{c.pkg}</small></span>
-              {c.side === 'bottom' && <Chip status="info">under</Chip>}
-              {c.conn && <Chip status="warn">plug</Chip>}
-              <small className="mono">{round(c.h, 1)}</small>
-            </SelRow>
-          ))}
-          {!comps.length && <p className="hint">No parts listed. Add keep-out boxes for anything tall near the edges.</p>}
-        </div>
-        <div className="btns" style={{ marginTop: 8 }}>
-          <button className="btn small" onClick={() => store.set({ view: 'editor' })}>Open board editor</button>
-          {hidden > 0 && <button className="btn small ghost" onClick={() => editMod((q) => { q.board.comps.forEach((c) => { c.hidden = false; }); })}>Show {hidden} hidden</button>}
-        </div>
-      </Section>
-      <details className="section">
-        <summary style={{ cursor: 'pointer', fontWeight: 650, fontSize: 12.5 }}>Reshape the outline</summary>
-        <div style={{ marginTop: 10 }}><ReshapeOutline b={b} /></div>
-      </details>
+      <BoardCard />
+      <div className="ptabs" role="tablist">
+        {tabs.map(([k, n, c]) => <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? 'on' : ''} onClick={() => { setTab(k); if (k !== 'sel') back.current = k; }}>{n}{c != null && <small>{c}</small>}</button>)}
+      </div>
+      <div className="ptab-body">
+        {tab === 'sel' && <Inspector />}
+        {tab === 'parts' && <PartsTab />}
+        {tab === 'holes' && <><HoleWizard /><HolePatterns /></>}
+        {tab === 'headers' && <DebugProbes />}
+        {tab === 'box' && <BoxEditor />}
+        {tab === 'board' && <BoardTab />}
+      </div>
     </div>
+  );
+}
+
+/** The board: its picture (redrawn as you edit), name, size, what it is, and what to do with it. */
+function BoardCard() {
+  const p = useApp((s) => s.project)!;
+  const view = useApp((s) => s.view);
+  const m = activeModule(p), b = m.board;
+  const bb = bbox(b.outline);
+  const ref = useRef(b);
+  ref.current = b;
+  const pic = useKeptPicture(`card:${m.id}:${boardSig(b)}`, () => boardPicture(ref.current), 320, 190, [0.5, -1, 0.85]);
+  const plugs = b.comps.filter((c) => c.conn && !c.hidden).length, tall = b.comps.filter((c) => !c.hidden && !c.conn && c.h >= 5).length;
+  const box = b.kind === 'box';
+  return (
+    <div className="bcard">
+      <div className="bcard-pic">{pic ? <img src={pic} alt="" draggable={false} /> : <div className="bcard-ph" />}</div>
+      <input className="bcard-name" value={b.name} onChange={(e) => editMod((q) => { q.board.name = e.target.value; })} aria-label="Board name" />
+      <div className="bcard-facts mono">
+        <span>{round(bb.x1 - bb.x0, 1)} × {round(bb.y1 - bb.y0, 1)} mm</span>
+        <span>{round(b.thickness, 1)} {box ? 'tall' : 'thick'}</span>
+        {!box && <span>{b.holes.length} hole{b.holes.length === 1 ? '' : 's'}</span>}
+        <span>{plugs} plug{plugs === 1 ? '' : 's'}</span>
+        {!box && tall > 0 && <span>{tall} tall</span>}
+      </div>
+      <p className="bcard-src">{b.role === 'probe' ? 'A debug probe' : b.role === 'adapter' ? 'A USB-serial adapter' : box ? 'A box' : 'A board'} · {b.source}</p>
+      <div className="bcard-acts">
+        {view !== 'editor' ? <button className="btn small primary" onClick={() => store.set({ view: 'editor' })}><Icon d={I.board} /> Open the editor</button> : <button className="btn small" onClick={() => store.set({ view: 'assembly' })}><Icon d={I.cube} /> In 3D</button>}
+        <button className="btn small" onClick={() => { const ok = saveBoard(b); toast(ok ? `Saved ${b.name} to My boards: the library lists it for any rack.` : 'This browser would not store it (private window, or storage full).'); }} title="Keep this board to add again to any rack">Save to My boards</button>
+        {!box && <NewVersionButton moduleId={m.id} small />}
+      </div>
+      {b.notes.length > 0 && <div className="warns">{b.notes.map((n, i) => <div key={i}>{n}</div>)}</div>}
+    </div>
+  );
+}
+
+const PART_FILTERS: [string, string, (c: Comp) => boolean][] = [
+  ['key', 'That matter', (c) => !!c.conn || c.h >= 5 || c.side === 'bottom' || c.kind === 'hot' || c.kind === 'antenna'],
+  ['plugs', 'Plugs', (c) => !!c.conn],
+  ['tall', 'Tall', (c) => !c.conn && c.h >= 5],
+  ['under', 'Underneath', (c) => c.side === 'bottom'],
+  ['all', 'All', () => true],
+];
+
+/** What is on the board: its plugs and parts, each with a picture, grouped, found by name. */
+function PartsTab() {
+  const p = useApp((s) => s.project)!;
+  const b = activeModule(p).board;
+  const [f, setF] = useState('key');
+  const [q, setQ] = useState('');
+  const test = PART_FILTERS.find((x) => x[0] === f)![2];
+  const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const list = b.comps.filter((c) => !c.hidden && test(c) && words.every((w) => `${c.ref} ${c.pkg} ${c.value ?? ''} ${c.conn ? plugName(c.conn.type) : ''}`.toLowerCase().includes(w)));
+  const hidden = b.comps.filter((c) => c.hidden).length;
+  const groups: [string, Comp[]][] = [['Plugs on the edges', list.filter((c) => c.conn?.entry === 'edge')], ['Plugged from above', list.filter((c) => c.conn?.entry === 'top')], ['Tall parts', list.filter((c) => !c.conn && c.h >= 5)], ['Other parts', list.filter((c) => !c.conn && c.h < 5)]];
+  return (
+    <>
+      <div className="ptools">
+        <input type="search" placeholder="Find a part (J1, USB, relay…)" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Find a part" />
+        <div className="chips">{PART_FILTERS.map(([k, n, t]) => <button key={k} className={f === k ? 'on' : ''} onClick={() => setF(k)}>{n} <small>{b.comps.filter((c) => !c.hidden && t(c)).length}</small></button>)}</div>
+      </div>
+      {groups.filter(([, cs]) => cs.length).map(([g, cs]) => (
+        <div key={g} className="pgroup">
+          <h5>{g} <small>{cs.length}</small></h5>
+          <div className="plist">
+            {cs.slice(0, 200).map((c) => <PartRow key={c.id} c={c} />)}
+          </div>
+        </div>
+      ))}
+      {!list.length && <p className="hint">{b.comps.length ? 'Nothing here with that filter.' : 'No parts yet.'} Put plugs, headers and tall parts on it from the toolbox in the editor.</p>}
+      <div className="btns" style={{ marginTop: 10 }}>
+        <button className="btn small soft" onClick={() => store.set({ view: 'editor' })}><Icon d={I.toolbox} /> Add from the toolbox</button>
+        {hidden > 0 && <button className="btn small ghost" onClick={() => editMod((q2) => { q2.board.comps.forEach((c) => { c.hidden = false; }); })}>Show {hidden} hidden</button>}
+      </div>
+    </>
+  );
+}
+
+function PartRow({ c }: { c: Comp }) {
+  const sel = useApp((s) => s.sel);
+  const it = paletteFor(c);
+  const on = isSel(sel, c.id);
+  const dir = c.conn?.entry === 'edge' ? ['right', 'top', 'left', 'bottom'][Math.round(((((c.conn.angle % 360) + 360) % 360)) / 90) % 4] : null;
+  return (
+    <button className={`prow ${on ? 'on' : ''}`} onClick={(e) => { select([{ kind: 'comp', id: c.id }], e.shiftKey || e.metaKey ? 'toggle' : 'set'); if (store.get().view !== 'editor') store.set({ view: 'editor' }); }}>
+      <span className="prow-pic">{it ? <PartPic item={it} /> : <i style={{ background: c.kind === 'module' ? '#3d5872' : c.kind === 'led' ? '#ffd166' : c.kind === 'hot' ? '#b8553a' : '#3d4957' }} />}</span>
+      <span className="prow-txt">
+        <b>{c.ref}{c.value ? <em> {c.value}</em> : null}</b>
+        <small>{c.conn ? plugName(c.conn.type) : c.pkg}{dir ? `, ${dir} edge` : ''}</small>
+      </span>
+      <span className="prow-meta mono">{round(c.h, 1)} mm{c.side === 'bottom' ? ' ↓' : ''}{isDebugPort(c) ? ' · debug' : isUartPort(c) ? ' · UART' : ''}</span>
+    </button>
+  );
+}
+
+/** Four holes at once, the way boards give them: at the corners, or a spacing across and up. */
+function HolePatterns() {
+  const p = useApp((s) => s.project)!;
+  const b = activeModule(p).board;
+  const bb = bbox(b.outline), W = bb.x1 - bb.x0, H = bb.y1 - bb.y0;
+  const [mode, setMode] = useState<'corners' | 'spacing'>('corners');
+  const [inset, setInset] = useState(3.5), [d, setD] = useState(3.2), [sx, setSx] = useState(Math.max(1, round(W - 7, 1))), [sy, setSy] = useState(Math.max(1, round(H - 7, 1)));
+  const pts: V2[] = mode === 'corners' ? [[bb.x0 + inset, bb.y0 + inset], [bb.x1 - inset, bb.y0 + inset], [bb.x0 + inset, bb.y1 - inset], [bb.x1 - inset, bb.y1 - inset]]
+    : [[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([x, y]) => [(bb.x0 + bb.x1) / 2 + (x * sx) / 2, (bb.y0 + bb.y1) / 2 + (y * sy) / 2] as V2);
+  return (
+    <Section title="Add four holes">
+      <Seg value={mode} options={[['corners', 'At the corners'], ['spacing', 'By spacing']]} onChange={setMode} />
+      {mode === 'corners' ? <div className="row" style={{ marginTop: 6 }}><Num label="In from each edge" value={inset} onChange={setInset} step={0.5} /><Num label="Hole Ø" value={d} min={1} onChange={setD} step={0.1} /></div>
+        : <div className="row3" style={{ marginTop: 6 }}><Num label="Apart across" value={sx} onChange={setSx} step={0.5} /><Num label="Apart up" value={sy} onChange={setSy} step={0.5} /><Num label="Hole Ø" value={d} min={1} onChange={setD} step={0.1} /></div>}
+      <div className="btns" style={{ marginTop: 8 }}>
+        <button className="btn small" onClick={() => editMod((q) => { for (const [x, y] of pts) q.board.holes.push({ id: uid('h'), x: round(x, 2), y: round(y, 2), d, plated: true, use: 'auto', role: 'mount', why: 'added by hand' }); })}><Icon d={I.plus} /> Add them</button>
+        <span className="hint" style={{ margin: 0 }}>Single holes: from the toolbox (M2 to M4), anywhere.</span>
+      </div>
+    </Section>
+  );
+}
+
+/** The board itself: its shape and thickness, what it is, how much power it takes, tidying an import. */
+function BoardTab() {
+  const p = useApp((s) => s.project)!;
+  const b = activeModule(p).board;
+  const box = b.kind === 'box';
+  return (
+    <>
+      <Section title="What it is">
+        {box ? <p className="hint" style={{ margin: 0 }}>A box: its size and ports are under Box.</p> : (
+          <>
+            <Pick label="It is" value={b.role ?? 'board'} options={[['board', 'a board'], ['probe', 'a debug probe (J-Link…)'], ['adapter', 'a USB-serial adapter']]} onChange={(v) => editMod((q) => { q.board.role = v === 'board' ? undefined : (v as 'probe' | 'adapter'); })} />
+            <p className="hint" style={{ margin: '6px 0 0' }}>{b.role === 'probe' ? 'Give it its debug connector (the one its ribbon plugs into) and its USB; it slides into a slot behind the board it serves, like a J-Link.' : b.role === 'adapter' ? 'Give it its pins (named, for the jumper wires) and its USB; it slides into a slot behind the board it serves.' : 'A board you build a holder for. A debug probe or an adapter you drew yourself goes in a slot behind the board it serves instead.'}</p>
+          </>
+        )}
+      </Section>
+      {!box && (
+        <Section title="Shape and thickness">
+          <div className="row"><Num label="Thickness" value={b.thickness} min={0.3} max={4} step={0.1} onChange={(v) => editMod((q) => { q.board.thickness = v; })} /></div>
+          <div style={{ marginTop: 8 }}><ReshapeOutline b={b} /></div>
+        </Section>
+      )}
+      {!box && !b.role && <Section title="Power"><PowerDraw /><Revision /></Section>}
+      {!box && <CleanUp />}
+    </>
   );
 }
 

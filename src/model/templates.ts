@@ -38,6 +38,20 @@ function rectBoard(name: string, w: number, h: number, r: number, source: string
 
 export interface Template { id: string; name: string; make: () => Board; accessory?: boolean }
 
+/** What shelf of the library a template is on. */
+export const LIBRARY_SHELVES = ['Raspberry Pi', 'Arduino and ESP32', 'Blank and perfboard', 'Examples', 'Hubs and chargers', 'Powerboards', 'Probes and adapters', 'Add-on boards'] as const;
+export type Shelf = (typeof LIBRARY_SHELVES)[number];
+const SHELF: Record<string, Shelf> = {
+  rpi4: 'Raspberry Pi', rpi5: 'Raspberry Pi', rpi_zero: 'Raspberry Pi', pico: 'Raspberry Pi',
+  uno: 'Arduino and ESP32', mega: 'Arduino and ESP32', nano: 'Arduino and ESP32', esp32: 'Arduino and ESP32',
+  proto_5x7: 'Blank and perfboard', blank: 'Blank and perfboard',
+  example_dual_swd: 'Examples', example_jtag: 'Examples',
+  usb_hub: 'Hubs and chargers', usb_hub7: 'Hubs and chargers', usb_hubc: 'Hubs and chargers', usb_charger: 'Hubs and chargers', usb_charger6: 'Hubs and chargers',
+  pb4: 'Powerboards', pb6: 'Powerboards', pb4sw: 'Powerboards', pb4ang: 'Powerboards', pb4usb: 'Powerboards', power_dist: 'Powerboards',
+  jlink: 'Probes and adapters', ftdi: 'Probes and adapters', relay4: 'Add-on boards',
+};
+export const shelfOf = (t: { id: string; accessory?: boolean }): Shelf => SHELF[t.id] ?? (t.accessory ? 'Add-on boards' : 'Blank and perfboard');
+
 export const TEMPLATES: Template[] = [
   {
     id: 'rpi4', name: 'Raspberry Pi 4 / 3B+ (85 × 56)',

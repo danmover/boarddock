@@ -26,6 +26,13 @@ export const I = {
   download: 'M12 3v12m0 0l-4-4m4 4l4-4M4 17v4h16v-4',
   frame: 'M4 6h16v12H4zM8 6v12M16 6v12M4 12h16',
   tray: 'M3 8l2 11h14l2-11M3 8h18',
+  search: 'M11 4a7 7 0 100 14a7 7 0 100-14M20 20l-4-4',
+  pencil: 'M4 20h4L19 9l-4-4L4 16zM13 7l4 4',
+  folder: 'M3 7h6l2 2h10v10H3z',
+  camera: 'M4 7h3l2-2h6l2 2h3v12H4zM12 10a3.5 3.5 0 100 7a3.5 3.5 0 100-7',
+  board: 'M4 6h16v12H4zM7 9h.01M17 9h.01M7 15h.01M17 15h.01M10 10h4v4h-4z',
+  toolbox: 'M4 7h16v12H4zM9 7V5h6v2M4 12h16',
+  ruler: 'M3 17h18M3 14v6M21 14v6M6 4h12v6H6zM9 4v3M12 4v4M15 4v3',
 };
 
 export function Icon({ d, size }: { d: string; size?: number }) {

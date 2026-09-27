@@ -93,6 +93,7 @@ export interface Board {
   draw?: number; // A at 5 V it may take from its supply (unset: estimated from what it is)
   role?: 'probe' | 'adapter'; // a board drawn or imported that serves another one: a debug probe, a USB-serial adapter (slides into a slot behind it)
   dims?: Dim[]; // dimensions put on it in the board editor (measured on the real board with calipers)
+  photo?: { url: string; x: number; y: number; w: number; h: number; opacity?: number }; // a photo of the real board under it in the editor, to trace over (board mm)
   traces?: { a: V2; b: V2; w: number; side: Side }[]; // copper tracks (read from KiCad), for the 3D view
   vias?: { x: number; y: number; d: number }[];
 }
@@ -100,7 +101,7 @@ export interface Board {
 /** A point or line on a board a dimension runs from: a hole's centre, a part's centre or one side of it, or an edge of the board. */
 export interface Feat { k: 'hole' | 'comp' | 'edge'; id?: string; at: 'c' | 'x0' | 'x1' | 'y0' | 'y1' }
 /** A dimension between two features along x or y: typing its value moves the second (or the first, if the second is the board's edge). */
-export interface Dim { id: string; a: Feat; b: Feat; axis: 'x' | 'y' }
+export interface Dim { id: string; a: Feat; b: Feat; axis: 'x' | 'y'; off?: number; t?: number } // off: where its line is, mm past what it measures (dragged; else laid out by itself); t: its label along the line, 0…1
 
 export type Material = 'PLA' | 'PETG' | 'ABS' | 'ASA' | 'PA' | 'PC';
 export type EdgeName = 'bottom' | 'top' | 'left' | 'right';

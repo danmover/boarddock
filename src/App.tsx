@@ -4,10 +4,11 @@ import { generateProject } from './worker/client';
 import { AddBoardSheet } from './ui/AddBoard';
 import { Viewer3D } from './ui/Viewer3D';
 import { BoardEditor, type Tool } from './ui/BoardEditor';
+import { StartStage } from './ui/Start';
 import { PanelEditor } from './ui/PanelEditor';
 import { BoardPanel, CheckPanel, ExportPanel, HolderPanel, ImportPanel, MountPanel, NewVersionButton, PlugsPanel } from './ui/panels';
 import { download, safeName } from './ui/controls';
-import { HeroArt, Mark } from './ui/art';
+import { Mark } from './ui/art';
 import { MATERIALS } from './model/library';
 import { estimate, packPlates } from './cad/export';
 import { openFiles } from './ui/importFlow';
@@ -126,8 +127,9 @@ export function App() {
   const badCount = result?.report.checks.filter((c) => c.status === 'bad').length ?? 0;
   const si = STEPS.findIndex((s) => s.id === step);
   const S = STEPS[si];
-  const goStep = (id: Step) => store.set({ step: id, ...(id === 'mount' && project?.layout === 'panel' && view === 'editor' ? { view: 'assembly' as const } : {}) });
-  const views: [typeof view, string][] = project ? [['assembly', '3D'], ...(project.layout === 'panel' ? [['panel', 'Rails'] as [typeof view, string]] : []), ['wiring', 'Wiring'], ['print', 'Plates'], ['editor', 'Board']] : [];
+  // Start shows the library, Board the board editor; the other steps the rack (in 3D, unless you picked another view)
+  const goStep = (id: Step) => store.set({ step: id, ...(id === 'import' ? { view: 'library' as const } : id === 'board' ? { view: 'editor' as const } : view === 'library' || view === 'editor' ? { view: 'assembly' as const } : {}) });
+  const views: [typeof view, string][] = project ? [...(step === 'import' ? [['library', 'Add boards'] as [typeof view, string]] : []), ['assembly', '3D'], ...(project.layout === 'panel' ? [['panel', 'Rails'] as [typeof view, string]] : []), ['wiring', 'Wiring'], ['print', 'Plates'], ['editor', 'Board']] : [];
 
   return (
     <div className={`app${project ? '' : ' empty'}`} onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDragging(true); } }} onDragLeave={(e) => { if (!e.relatedTarget) setDragging(false); }} onDrop={onDrop}>
@@ -197,7 +199,7 @@ export function App() {
           {project ? (
             <>
               <div className="tabs"><div className="seg">{views.map(([k, l]) => <button key={k} className={view === k ? 'on' : ''} onClick={() => store.set({ view: k })}>{l}</button>)}</div></div>
-              {view === 'editor' ? <BoardEditor tool={tool} setTool={setTool} /> : view === 'wiring' ? <WiringView /> : view === 'panel' && project.layout === 'panel' ? <PanelEditor /> : (
+              {view === 'library' ? <StartStage /> : view === 'editor' ? <BoardEditor tool={tool} setTool={setTool} /> : view === 'wiring' ? <WiringView /> : view === 'panel' && project.layout === 'panel' ? <PanelEditor /> : (
                 <>
                   <Viewer3D result={view === 'print' && printParts && result ? { ...result, parts: printParts } : result} mode={view === 'print' ? 'print' : 'assembly'} bed={project.printer.bed} spacing={project.printer.spacing} theme={theme} camera={cam} overhangs={view === 'print' && overhangs}
                     layers={layers} sel={sel} onPick={(it, add) => (it ? select([it], add ? 'toggle' : 'set') : !add && select([]))} label={(it) => describe(store.get().project!, it)} />
@@ -235,16 +237,7 @@ export function App() {
               )}
             </>
           ) : (
-            <div className="empty">
-              <div className="hero">
-                <HeroArt />
-                <h1>Dock any PCB.<br /><span>No screws. No supports.</span></h1>
-                <p>Drop a KiCad, Altium, Eagle or Gerber export, or pick a board. BoardDock builds a light holder around every board, docks them on DIN rails on printed table stands with every plug reachable, routes and sizes the cables between them, and walks you through putting it all together.</p>
-                <div className="feats"><span>KiCad · STEP · IDF · Gerber</span><span>hole wizard</span><span>light frame holders</span><span>rails, docks, stacks</span><span>press-down rail lever</span><span>table stands</span><span>cables routed and sized</span><span>step-by-step assembly</span><span>FEA checked</span><span>STL + 3MF plates</span><span>G-code in the app</span></div>
-                <p className="hero-need"><b>You need</b> a 3D printer and a length of <b>DIN rail</b>: the 35 mm metal strip from electrical cabinets (TS35, a few dollars a metre, cut with a hacksaw). No rail? Pick <b>Loose holders</b> in the Rails step and every holder stands on its own.</p>
-                <p className="hero-keys">Press <kbd>?</kbd> any time for keyboard shortcuts.</p>
-              </div>
-            </div>
+            <StartStage />
           )}
         </section>
       </div>

@@ -22,7 +22,7 @@ export type SelItem = {
 };
 export type Layer = 'holders' | 'docks' | 'caps' | 'rails' | 'boards' | 'plugs' | 'cables' | 'labels';
 export type Sel = SelItem[];
-export type View = 'assembly' | 'print' | 'editor' | 'panel' | 'wiring';
+export type View = 'assembly' | 'print' | 'editor' | 'panel' | 'wiring' | 'library';
 
 export interface State {
   project: Project | null;
@@ -194,7 +194,7 @@ export function setBoard(b: Board) {
     p.modules[p.active] = nm;
     p.mount = { ...p.mount, at: null };
   } else p = newProject(b);
-  store.set({ project: p, past: cur ? [...state.past, cur] : [], future: [], sel: [], step: 'board', view: 'assembly', result: null });
+  store.set({ project: p, past: cur ? [...state.past, cur] : [], future: [], sel: [], step: 'board', view: 'editor', result: null });
   persist(p);
 }
 
@@ -253,7 +253,7 @@ export function putBoards(bs: Board[], replace: boolean, opts: { stay?: boolean 
     if (p.layout === 'panel' && !p.panel.auto) appendDock(p, p.modules[p.modules.length - 1].id);
   }
   p.active = first;
-  store.set({ project: p, past: [...state.past, cur], future: [], sel: [], replaceMode: false, ...(opts.stay ? {} : { step: 'board' as const, view: 'assembly' as const }) });
+  store.set({ project: p, past: [...state.past, cur], future: [], sel: [], replaceMode: false, ...(opts.stay ? {} : { step: 'board' as const, view: 'editor' as const }) });
   persist(p);
 }
 

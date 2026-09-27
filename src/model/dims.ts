@@ -75,3 +75,72 @@ export function setDim(b: Board, d: Dim, value: number): boolean {
   b.cutouts = b.cutouts.map((l) => l.map((q) => (i ? [q[0], shift(q[1])] : [shift(q[0]), q[1]]) as V2));
   return true;
 }
+
+export type DimBox = { x0: number; y0: number; x1: number; y1: number };
+/** Where a dimension is drawn. A, B: what it measures; LA, LB: the ends of its line; lab: its label's centre; anchor:
+ * the other coordinate its `off` counts from; line: that coordinate of its line; t: its label along the line. */
+export interface DimDraw { id: string; axis: 'x' | 'y'; value: number; A: V2; B: V2; LA: V2; LB: V2; lab: V2; box: DimBox; anchor: number; line: number; t: number; auto: boolean }
+
+const hit = (p: DimBox, q: DimBox) => p.x0 < q.x1 && q.x0 < p.x1 && p.y0 < q.y1 && q.y0 < p.y1;
+
+/**
+ * Where every dimension goes so none lies on another. Ones you placed stay where you put them unless that is on top
+ * of another; the rest take the nearest free lane past what they measure (shorter ones nearer, as on a drawing).
+ * `last` (the one being dragged) goes down last, so it is the one that steps aside. px: mm per screen pixel (labels
+ * keep their size on screen); avoid: other labels to keep clear of (the board's size).
+ */
+export function layoutDims(b: Board, px: number, opt: { avoid?: DimBox[]; last?: string } = {}): DimDraw[] {
+  const bb = bbox(b.outline), lane = 22 * px, gap = 26 * px;
+  const base = (b.dims ?? []).map((d) => {
+    const pa = featAt(b, d.a), pb = featAt(b, d.b), va = pa?.[d.axis], vb = pb?.[d.axis];
+    if (!pa || !pb || va == null || vb == null) return null;
+    const o = d.axis === 'x' ? 'y' : 'x', edge = o === 'y' ? bb.y1 : bb.x1;
+    const oa = pa[o] ?? pb[o] ?? edge, ob = pb[o] ?? pa[o] ?? edge;
+    const value = Math.abs(vb - va), txt = value.toFixed(2).length;
+    const lw = (txt * 7.2 + 16) * px, lh = 18 * px;
+    return { d, va, vb, oa, ob, value, lw, lh, anchor: Math.max(oa, ob), low: Math.min(oa, ob) };
+  });
+  type B = NonNullable<(typeof base)[number]>;
+  const placed: { axis: 'x' | 'y'; lab: DimBox; line: DimBox }[] = [];
+  const shape = (q: B, line: number, t: number) => {
+    const ax = q.d.axis, along = q.va + (q.vb - q.va) * t;
+    const lab: DimBox = ax === 'x' ? { x0: along - q.lw / 2, x1: along + q.lw / 2, y0: line - q.lh / 2, y1: line + q.lh / 2 } : { x0: line - q.lh / 2, x1: line + q.lh / 2, y0: along - q.lw / 2, y1: along + q.lw / 2 };
+    const lo = Math.min(q.va, q.vb, along), hi = Math.max(q.va, q.vb, along), w = 3 * px;
+    const ln: DimBox = ax === 'x' ? { x0: lo, x1: hi, y0: line - w, y1: line + w } : { x0: line - w, x1: line + w, y0: lo, y1: hi };
+    return { lab, line: ln };
+  };
+  const free = (q: B, line: number, t: number) => {
+    const s = shape(q, line, t), pad = 3 * px;
+    const L: DimBox = { x0: s.lab.x0 - pad, y0: s.lab.y0 - pad, x1: s.lab.x1 + pad, y1: s.lab.y1 + pad };
+    return (opt.avoid ?? []).every((a) => !hit(L, a)) && placed.every((p) => !hit(L, p.lab) && !hit(s.line, p.lab) && !hit(L, p.line) && (p.axis !== q.d.axis || !hit(s.line, p.line)));
+  };
+  const out = new Map<string, DimDraw>();
+  const put = (q: B, line: number, t: number, auto: boolean) => {
+    const s = shape(q, line, t);
+    placed.push({ axis: q.d.axis, ...s });
+    const ax = q.d.axis, P = (u: number, v: number): V2 => (ax === 'x' ? [u, v] : [v, u]);
+    const along = q.va + (q.vb - q.va) * t;
+    out.set(q.d.id, { id: q.d.id, axis: ax, value: q.value, A: P(q.va, q.oa), B: P(q.vb, q.ob), LA: P(q.va, line), LB: P(q.vb, line), lab: P(along, line), box: s.lab, anchor: q.anchor, line, t, auto });
+  };
+  const qs = base.filter(Boolean) as B[];
+  const mine = qs.filter((q) => q.d.off != null && q.d.id !== opt.last);
+  const autos = qs.filter((q) => q.d.off == null && q.d.id !== opt.last).sort((x, y) => x.value - y.value);
+  const last = qs.filter((q) => q.d.id === opt.last);
+  // placed by hand: where it was put, else the nearest free lane either side of it
+  const hand = (q: B) => {
+    const line0 = q.anchor + q.d.off!, t = q.d.t ?? 0.5, s = Math.sign(q.d.off!) || 1;
+    for (let k = 0; k < 16; k++) { const line = line0 + (k % 2 ? -1 : 1) * Math.ceil(k / 2) * lane * s; if (free(q, line, t)) return put(q, line, t, false); }
+    put(q, line0, t, false);
+  };
+  mine.forEach(hand);
+  for (const q of autos) {
+    // a short one's label goes beside it, past an end, as on a drawing; a long one's in the middle
+    const span = Math.abs(q.vb - q.va), out = (q.lw / 2 + 10 * px) / Math.max(span, 1e-6);
+    const ts = span > 1e-6 && span < q.lw + 16 * px ? [1 + out, -out] : [0.5];
+    let done = false;
+    for (let k = 0; k < 12 && !done; k++) for (const line of [q.anchor + gap + k * lane, q.low - gap - k * lane]) for (const t of ts) if (!done && free(q, line, t)) { put(q, line, t, true); done = true; }
+    if (!done) put(q, q.anchor + gap, ts[0], true);
+  }
+  last.forEach((q) => (q.d.off != null ? hand(q) : put(q, q.anchor + gap, 0.5, true)));
+  return (b.dims ?? []).map((d) => out.get(d.id)).filter(Boolean) as DimDraw[];
+}

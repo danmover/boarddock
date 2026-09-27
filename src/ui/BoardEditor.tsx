@@ -1,49 +1,73 @@
-// 2D board editor. Select with click, Shift/Cmd-click to add, or drag a box. Drag to move everything selected.
-// Pan: right/middle drag, Space+drag or the hand tool. Wheel zooms. Keys: Cmd/Ctrl+A all, Esc none, Del delete,
-// arrows nudge (Shift = 1 mm), R rotate 90 degrees, Cmd/Ctrl+D duplicate. Parts opens the toolbox (click one, then
-// where it goes); Measure puts a dimension between two features, and typing the value you measured on the real board
-// moves the part there. Hover anything for what it is.
+// The board editor: a drawing of the board, the toolbox docked beside it, and a photo of the real board under it if
+// you have one. Click a part in the toolbox (or drag it over) and it follows the pointer until you place it; plugs
+// snap to the nearest edge. Drag parts about: they snap to the board's edges and middle and to the other parts, and
+// show how far they are from the nearest edges. Measure puts a dimension between two things and typing what your
+// calipers say moves the part there. Hover anything for what it is.
+// Keys: V select, H pan (or Space / right-drag), M measure, T toolbox, ⌘A all, Esc none, Del delete, R rotate,
+// ⌘D duplicate, arrows nudge (Shift 1 mm), Alt while dragging: no snapping. Wheel zooms.
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Board, Comp, Dim, Feat, Project, V2 } from '../model/types';
-import { bbox, compRect, deg, extentAlong, nearestEdge, rad, uid } from '../geom/poly';
-import { CONNECTORS, connById, connSetup } from '../model/library';
+import type { Comp, Dim, Feat, Project, V2 } from '../model/types';
+import { bbox, compRect, extentAlong, rad, uid } from '../geom/poly';
+import { connById } from '../model/library';
 import { activeModule, commitFrom, editMod, isSel, select, store, toast, useApp, type SelItem } from '../state';
 import { ROLE_INFO } from '../model/holes';
-import { PALETTE, PALETTE_GROUPS } from '../model/palette';
-import { axisOf, featAt, measure, pickFeat, setDim } from '../model/dims';
+import { PALETTE } from '../model/palette';
+import { axisOf, featAt, layoutDims, measure, pickFeat, setDim, type DimBox } from '../model/dims';
+import { boardCopper } from '../model/copper';
 import { headerPins } from '../model/probes';
 import { plugName } from '../model/links';
+import { alignPhoto, edgeGaps, fitPhoto, itemsBox, scalePhoto, snapBox, snapLines, type Box2 } from '../model/editorgeo';
+import { PART_DRAG, Toolbox } from './Toolbox';
 
-export type Tool = 'select' | 'pan' | 'hole' | 'connector' | 'part' | 'place' | 'measure';
+export type Tool = 'select' | 'pan' | 'place' | 'measure' | 'photoScale' | 'photoAlign';
 const PIN_TYPES = new Set(['header', 'pins_ra', 'jst_ph', 'jst_xh', 'swd10', 'jtag20']);
+const snap = (v: number) => Math.round(v * 10) / 10;
+const TBX_KEY = 'boarddock.toolbox';
+const CU_KEY = 'boarddock.copper';
 
-const KIND: Record<string, { fill: string; stroke: string }> = {
-  connector: { fill: '#c9d3dd', stroke: '#e8eef4' },
-  header: { fill: '#2b3440', stroke: '#8795a6' },
-  switch: { fill: '#55606d', stroke: '#9aa6b3' },
-  led: { fill: '#ffd166', stroke: '#fff1c2' },
-  module: { fill: '#5b6b7c', stroke: '#a7b6c6' },
-  hot: { fill: '#ff6b5b', stroke: '#ffb3aa' },
-  antenna: { fill: '#5aa9ff', stroke: '#b7d8ff' },
-  generic: { fill: '#3d4957', stroke: '#8b99a8' },
-};
-
-export function makeConnector(b: Board, typeId: string, at: V2): Comp {
-  const t = connById(typeId);
-  const e = nearestEdge(at, b.outline);
-  const angle = Math.round(deg(Math.atan2(e.n[1], e.n[0])) * 10) / 10;
-  const c: Comp = {
-    id: uid('c'), ref: `J${b.comps.filter((x) => x.conn).length + 1}`, pkg: t.name, side: 'top', x: 0, y: 0, rot: angle - 90,
-    w: t.body.w, l: t.body.l, h: t.body.h, kind: t.entry === 'top' && t.id === 'header' ? 'header' : 'connector', tht: false, conn: connSetup(t, angle),
-  };
-  const ext = extentAlong(c, angle);
-  c.x = e.q[0] + e.n[0] * (t.overhang - ext);
-  c.y = e.q[1] + e.n[1] * (t.overhang - ext);
-  if (t.entry === 'top') { c.x = at[0]; c.y = at[1]; c.rot = 0; }
-  return c;
+/** How a part looks from above, by what it is. */
+function look(c: Comp): { fill: string; stroke: string; round?: boolean; ic?: boolean; metal?: boolean; hatch?: boolean; ends?: boolean; label: 'dark' | 'light' } {
+  const n = `${c.pkg} ${c.value ?? ''}`;
+  const round = Math.abs(c.w - c.l) < 0.25 * Math.min(c.w, c.l);
+  if (c.conn?.entry === 'edge') return { fill: '#c5cad1', stroke: '#eef2f6', metal: true, label: 'dark' };
+  if (c.conn || c.kind === 'header') return { fill: '#1d2024', stroke: '#6b7480', label: 'light' };
+  if (/elec|\bCP_|cap/i.test(n) && round && c.h > 3) return { fill: '#2f5fa8', stroke: '#b9c6d6', round: true, label: 'light' };
+  if (/keep-?out/i.test(n)) return { fill: 'transparent', stroke: '#ff8a5c', hatch: true, label: 'light' };
+  switch (c.kind) {
+    case 'led': return { fill: '#ffd166', stroke: '#fff1c2', round, label: 'dark' };
+    case 'switch': return { fill: '#3a4048', stroke: '#9aa6b3', label: 'light' };
+    case 'module': return { fill: '#3d5872', stroke: '#a7b6c6', label: 'light' };
+    case 'hot': return { fill: '#b8553a', stroke: '#ffb3aa', label: 'light' };
+    case 'antenna': return { fill: '#2a6db5', stroke: '#b7d8ff', hatch: true, label: 'light' };
+  }
+  if (/relay/i.test(n)) return { fill: '#2f62b8', stroke: '#b7d0ff', label: 'light' };
+  // a resistor (black) or a capacitor (tan) the size of a grain of rice, its two tinned ends
+  if (Math.max(c.w, c.l) <= 4.5 && Math.min(c.w, c.l) < 3 && c.h <= 2 && !c.conn) return { fill: /^C/i.test(c.ref) ? '#b08d5e' : '#1f2226', stroke: '#6b7480', ends: true, label: 'light' };
+  if (/qfp|qfn|soic|sop|dfn|bga|tssop|ic\b|mcu|lqfp/i.test(n) || (Math.min(c.w, c.l) >= 3 && c.h <= 3)) return { fill: '#26292e', stroke: '#707985', ic: true, label: 'light' };
+  return { fill: '#3d4957', stroke: '#8b99a8', label: 'light' };
 }
 
-const snap = (v: number) => Math.round(v * 10) / 10;
+/** The legs or pads round a chip, from its footprint name: four sides (QFP), two long sides (SOIC, SOP, TSSOP), pads just
+ * inside the edges (QFN, DFN). In the part's own frame (x along w, y along l). */
+function icPads(c: Comp): { x: number; y: number; w: number; h: number }[] {
+  const n = `${c.pkg} ${c.value ?? ''}`, m = /(?:QFP|QFN|SOIC|SOP|SSOP|TSSOP|DFN|MSOP)[^\d]{0,3}(\d{1,3})/i.exec(n);
+  const pins = m ? +m[1] : 0, pm = /P(\d+(?:\.\d+)?)mm/i.exec(n), pitch = pm ? +pm[1] : 0.5;
+  if (!pins || c.w < 2 || c.l < 2) return [];
+  const out: { x: number; y: number; w: number; h: number }[] = [];
+  const four = /QFP|QFN/i.test(m![0]), under = /QFN|DFN/i.test(m![0]);
+  const per = four ? Math.round(pins / 4) : Math.round(pins / 2), len = under ? 0.5 : 0.7, wid = Math.min(pitch * 0.55, 0.4);
+  const side = (horiz: boolean, s: number) => {
+    const span = horiz ? c.w : c.l, k = Math.min(per, Math.floor((span - 1) / pitch) + 1);
+    for (let i = 0; i < k; i++) {
+      const u = (i - (k - 1) / 2) * pitch;
+      const edge = (horiz ? c.l : c.w) / 2 + (under ? -len / 2 : len / 2 - 0.1);
+      out.push(horiz ? { x: u, y: s * edge, w: wid, h: len } : { x: s * edge, y: u, w: len, h: wid });
+    }
+  };
+  if (four) { side(true, 1); side(true, -1); side(false, 1); side(false, -1); }
+  else if (c.w >= c.l) { side(true, 1); side(true, -1); } else { side(false, 1); side(false, -1); }
+  return out;
+}
 
 export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) => void }) {
   const project = useApp((s) => s.project)!;
@@ -53,23 +77,30 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
   const b = mod.board, H = mod.holder;
   const bb = useMemo(() => bbox(b.outline), [b.outline]);
   const svg = useRef<SVGSVGElement>(null);
+  const wrap = useRef<HTMLDivElement>(null);
   const [vb, setVb] = useState(() => fitBox(bb));
   const [px, setPx] = useState(0.1); // mm per screen pixel
   const [cursor, setCursor] = useState<V2 | null>(null);
   const [marquee, setMarquee] = useState<{ a: V2; b: V2 } | null>(null);
   const [space, setSpace] = useState(false);
-  const [connType, setConnType] = useState('usb_c');
-  const [item, setItem] = useState<string | null>(null); // toolbox item being placed
-  const [palette, setPalette] = useState(false);
-  const [q, setQ] = useState('');
-  const [dimA, setDimA] = useState<Feat | null>(null); // first end of a dimension being drawn
+  const [item, setItem] = useState<string | null>(null); // the toolbox part being placed
+  const [tbx, setTbx] = useState(() => { try { return localStorage.getItem(TBX_KEY) !== '0'; } catch { return true; } });
+  const [showCu, setShowCu] = useState(() => { try { return localStorage.getItem(CU_KEY) !== '0'; } catch { return true; } });
+  const [dimA, setDimA] = useState<Feat | null>(null);
   const [editDim, setEditDim] = useState<{ id: string; v: string } | null>(null);
   const [hov, setHov] = useState<{ kind: string; id: string; x: number; y: number } | null>(null);
   const [snapF, setSnapF] = useState<Feat | null>(null);
-  const wrap = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ kind: 'pan' | 'move' | 'box'; start: V2; client: V2; vb0: typeof vb; orig?: Map<string, V2>; moved?: boolean; pre?: Project; additive?: boolean } | null>(null);
+  const [guides, setGuides] = useState<{ gx: number | null; gy: number | null; box: Box2 } | null>(null);
+  const [photoA, setPhotoA] = useState<V2 | null>(null);
+  const [photoAsk, setPhotoAsk] = useState<{ a: V2; c: V2; v: string } | null>(null);
+  const [photoMenu, setPhotoMenu] = useState(false);
+  const photoFile = useRef<HTMLInputElement>(null);
+  const drag = useRef<{ kind: 'pan' | 'move' | 'box' | 'dim'; start: V2; client: V2; vb0: typeof vb; orig?: Map<string, V2>; moved?: boolean; pre?: Project; additive?: boolean; dim?: { id: string; axis: 'x' | 'y'; va: number; vb: number; line0: number; t0: number; anchor: number } } | null>(null);
+  const [dimLast, setDimLast] = useState<string | null>(null); // the dimension dragged last: it steps aside, not the others
 
-  useEffect(() => setVb(fitBox(bb)), [bb.x0, bb.y0, bb.x1, bb.y1]);
+  useEffect(() => setVb(fitBox(bb)), [bb.x0, bb.y0, bb.x1, bb.y1, mod.id]);
+  useEffect(() => { try { localStorage.setItem(TBX_KEY, tbx ? '1' : '0'); } catch { /* private mode */ } }, [tbx]);
+  useEffect(() => { try { localStorage.setItem(CU_KEY, showCu ? '1' : '0'); } catch { /* private mode */ } }, [showCu]);
   useEffect(() => {
     const el = svg.current;
     if (!el) return;
@@ -78,7 +109,7 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
     ro.observe(el);
     upd();
     return () => ro.disconnect();
-  }, [vb.w, vb.h]);
+  }, [vb.w, vb.h, tbx]);
 
   const toWorld = (e: { clientX: number; clientY: number }): V2 => {
     const r = svg.current!.getBoundingClientRect();
@@ -86,38 +117,28 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
     const ox = vb.x + (vb.w - r.width * s) / 2, oy = vb.y + (vb.h - r.height * s) / 2;
     return [ox + (e.clientX - r.left) * s, -(oy + (e.clientY - r.top) * s)];
   };
-
   const items = (): { it: SelItem; at: V2 }[] => [
     ...b.holes.map((h) => ({ it: { kind: 'hole' as const, id: h.id }, at: [h.x, h.y] as V2 })),
     ...b.comps.filter((c) => !c.hidden).map((c) => ({ it: { kind: 'comp' as const, id: c.id }, at: [c.x, c.y] as V2 })),
   ];
+  const zoom = (k: number, at?: V2) => setVb((v) => { const w = at ?? [v.x + v.w / 2, -(v.y + v.h / 2)]; return { x: w[0] - (w[0] - v.x) * k, y: -w[1] - (-w[1] - v.y) * k, w: v.w * k, h: v.h * k }; });
 
-  const onWheel = (e: React.WheelEvent) => {
-    const w = toWorld(e);
-    const k = Math.exp(Math.max(-60, Math.min(60, e.deltaY)) * 0.0022);
-    setVb((v) => ({ x: w[0] - (w[0] - v.x) * k, y: -w[1] - (-w[1] - v.y) * k, w: v.w * k, h: v.h * k }));
+  const putPart = (id: string, w: V2) => {
+    const it = PALETTE.find((x) => x.id === id);
+    if (!it) return;
+    const made = it.make(b, w);
+    editMod((m) => { if (made.comp) m.board.comps.push(made.comp); if (made.hole) m.board.holes.push(made.hole); });
+    if (made.comp) select([{ kind: 'comp', id: made.comp.id }]); else if (made.hole) select([{ kind: 'hole', id: made.hole.id }]);
   };
+  const arm = (id: string | null) => { setItem(id); setTool(id ? 'place' : 'select'); };
 
   const onDown = (e: React.PointerEvent) => {
     const w = toWorld(e);
+    setPhotoMenu(false);
     (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
     const panning = e.button === 1 || e.button === 2 || space || tool === 'pan';
     if (panning) { drag.current = { kind: 'pan', start: w, client: [e.clientX, e.clientY], vb0: vb }; return; }
-    if (tool === 'hole') {
-      editMod((m) => { m.board.holes.push({ id: uid('h'), x: snap(w[0]), y: snap(w[1]), d: 3.2, plated: false, use: 'auto', role: 'mount', why: 'added by hand' }); });
-      const h = activeModule(store.get().project!).board.holes.at(-1)!;
-      select([{ kind: 'hole', id: h.id }], e.shiftKey ? 'add' : 'set');
-      return;
-    }
-    if (tool === 'place' && item) {
-      const it = PALETTE.find((x) => x.id === item);
-      if (!it) return;
-      const made = it.make(b, w);
-      editMod((m) => { if (made.comp) m.board.comps.push(made.comp); if (made.hole) m.board.holes.push(made.hole); });
-      if (made.comp) select([{ kind: 'comp', id: made.comp.id }]); else if (made.hole) select([{ kind: 'hole', id: made.hole.id }]);
-      if (!e.shiftKey) { setTool('select'); setItem(null); }
-      return;
-    }
+    if (tool === 'place' && item) { putPart(item, w); if (!e.shiftKey) arm(null); return; }
     if (tool === 'measure') {
       const f = pickFeat(b, w, 12 * px);
       if (!f) return;
@@ -130,11 +151,11 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
       setEditDim({ id: d.id, v: (measure(b, d) ?? 0).toFixed(2) });
       return;
     }
-    if (tool === 'connector' || tool === 'part') {
-      const c: Comp = tool === 'connector' ? makeConnector(b, connType, w) : { id: uid('c'), ref: `K${b.comps.length + 1}`, pkg: 'keep-out box', side: 'top', x: snap(w[0]), y: snap(w[1]), rot: 0, w: 5, l: 5, h: 5, kind: 'generic', tht: false };
-      editMod((m) => { m.board.comps.push(c); });
-      select([{ kind: 'comp', id: c.id }]);
-      if (!e.shiftKey) setTool('select');
+    if (tool === 'photoScale' || tool === 'photoAlign') {
+      if (!photoA) { setPhotoA(w); return; }
+      if (tool === 'photoScale') setPhotoAsk({ a: photoA, c: w, v: '' });
+      else { editMod((m) => { if (m.board.photo) m.board.photo = alignPhoto(m.board.photo, photoA, w); }); setTool('select'); }
+      setPhotoA(null);
       return;
     }
     const target = (e.target as SVGElement).closest('[data-id]') as SVGElement | null;
@@ -162,23 +183,44 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
     setCursor(w);
     const d = drag.current;
     if (tool === 'measure') setSnapF(pickFeat(b, w, 12 * px));
-    // what the pointer is over, for the hover card
     if (!d) {
       const t = (e.target as SVGElement).closest('[data-id]') as SVGElement | null;
       const r = wrap.current?.getBoundingClientRect();
-      setHov(t && r ? { kind: t.dataset.kind!, id: t.dataset.id!, x: e.clientX - r.left, y: e.clientY - r.top } : null);
+      setHov(t && r && tool === 'select' ? { kind: t.dataset.kind!, id: t.dataset.id!, x: e.clientX - r.left, y: e.clientY - r.top } : null);
+      return;
     }
-    if (!d) return;
     if (d.kind === 'pan') {
       const r = svg.current!.getBoundingClientRect();
       const s = Math.max(d.vb0.w / r.width, d.vb0.h / r.height);
       setVb({ ...d.vb0, x: d.vb0.x - (e.clientX - d.client[0]) * s, y: d.vb0.y - (e.clientY - d.client[1]) * s });
+    } else if (d.kind === 'dim' && d.dim) {
+      // a dimension's label: across its line moves the line, along it slides the label (past the ends is fine)
+      if (!d.moved && Math.hypot(e.clientX - d.client[0], e.clientY - d.client[1]) < 3) return;
+      d.moved = true;
+      const q = d.dim, du = q.axis === 'x' ? w[0] - d.start[0] : w[1] - d.start[1], dv = q.axis === 'x' ? w[1] - d.start[1] : w[0] - d.start[0];
+      const span = q.vb - q.va, t = Math.abs(span) > 1e-6 ? Math.max(-0.8, Math.min(1.8, q.t0 + du / span)) : q.t0;
+      const p = structuredClone(store.get().project!);
+      const dd = (activeModule(p).board.dims ?? []).find((x) => x.id === q.id);
+      if (dd) { dd.off = Math.round((q.line0 + dv - q.anchor) * 100) / 100; dd.t = Math.round(t * 1000) / 1000; }
+      store.set({ project: p });
     } else if (d.kind === 'box') {
       setMarquee({ a: d.start, b: w });
     } else if (d.orig) {
       if (!d.moved && Math.hypot(e.clientX - d.client[0], e.clientY - d.client[1]) < 3) return;
       d.moved = true;
-      const dx = w[0] - d.start[0], dy = w[1] - d.start[1];
+      let dx = w[0] - d.start[0], dy = w[1] - d.start[1];
+      // snap to the board's edges and middle and to the other parts (Alt: freely), from where they started
+      const ids = new Set(d.orig.keys());
+      const pre = activeModule(d.pre!).board;
+      const b0 = itemsBox(pre, ids);
+      let box: Box2 | null = b0 && { x0: b0.x0 + dx, y0: b0.y0 + dy, x1: b0.x1 + dx, y1: b0.y1 + dy };
+      let gx: number | null = null, gy: number | null = null;
+      if (box && !e.altKey) {
+        const s = snapBox(box, snapLines(pre, ids), 6 * px);
+        dx += s.dx; dy += s.dy; gx = s.gx; gy = s.gy;
+        box = { x0: box.x0 + s.dx, y0: box.y0 + s.dy, x1: box.x1 + s.dx, y1: box.y1 + s.dy };
+      }
+      setGuides(box ? { gx, gy, box } : null);
       const p = structuredClone(store.get().project!);
       const mb = activeModule(p).board;
       for (const [id, o] of d.orig) {
@@ -192,7 +234,19 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
   const onUp = () => {
     const d = drag.current;
     drag.current = null;
+    setGuides(null);
     if (d?.kind === 'move' && d.moved && d.pre) commitFrom(d.pre);
+    if (d?.kind === 'dim' && d.dim) {
+      const id = d.dim.id;
+      if (!d.moved) { const q = dimsDraw.find((x) => x.id === id); if (q) setEditDim({ id, v: q.value.toFixed(2) }); }
+      else if (d.pre) {
+        // keep it where it is drawn: if it was let go on top of another it has stepped aside, and stays there
+        const p = structuredClone(store.get().project!), mb = activeModule(p).board;
+        const q = layoutDims(mb, px, { avoid: sizeBoxes, last: id }).find((x) => x.id === id), dd = (mb.dims ?? []).find((x) => x.id === id);
+        if (q && dd) { dd.off = Math.round((q.line - q.anchor) * 100) / 100; dd.t = q.t; store.set({ project: p }); }
+        commitFrom(d.pre);
+      }
+    }
     if (d?.kind === 'box' && marquee) {
       const x0 = Math.min(marquee.a[0], marquee.b[0]), x1 = Math.max(marquee.a[0], marquee.b[0]);
       const y0 = Math.min(marquee.a[1], marquee.b[1]), y1 = Math.max(marquee.a[1], marquee.b[1]);
@@ -213,7 +267,14 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
       const s = store.get().sel;
       const mb = activeModule(store.get().project!).board;
       if (cmd && e.key.toLowerCase() === 'a') { e.preventDefault(); select([...mb.holes.map((h) => ({ kind: 'hole' as const, id: h.id })), ...mb.comps.filter((c) => !c.hidden).map((c) => ({ kind: 'comp' as const, id: c.id }))]); return; }
-      if (e.key === 'Escape') { select([]); setTool('select'); setItem(null); setDimA(null); setEditDim(null); return; }
+      if (e.key === 'Escape') { select([]); setTool('select'); setItem(null); setDimA(null); setEditDim(null); setPhotoA(null); setPhotoAsk(null); return; }
+      if (!cmd && !s.length) {
+        const k = e.key.toLowerCase();
+        if (k === 'v') { setTool('select'); setItem(null); return; }
+        if (k === 'h') { setTool('pan'); return; }
+        if (k === 'm') { setTool('measure'); setDimA(null); return; }
+        if (k === 't') { setTbx((x) => !x); return; }
+      }
       if (!s.length) return;
       if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); removeSel(s); return; }
       if (cmd && e.key.toLowerCase() === 'd') { e.preventDefault(); duplicateSel(s); return; }
@@ -228,75 +289,180 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
     return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); };
   }, []);
 
+  // a photo of the real board: made small enough to keep with the project, fitted inside the outline
+  const loadPhoto = (f: File) => {
+    const img = new Image(), url = URL.createObjectURL(f);
+    img.onload = () => {
+      const k = Math.min(1, 1400 / Math.max(img.width, img.height));
+      const cv = document.createElement('canvas');
+      cv.width = Math.round(img.width * k); cv.height = Math.round(img.height * k);
+      cv.getContext('2d')!.drawImage(img, 0, 0, cv.width, cv.height);
+      const data = cv.toDataURL('image/jpeg', 0.82);
+      URL.revokeObjectURL(url);
+      editMod((m) => { m.board.photo = fitPhoto(m.board, data, cv.width, cv.height); });
+      toast('Photo under the board. Scale it: two points on it you know the distance between (two holes), then that distance. Then line it up: a point on the photo, then the same point on the drawing.');
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); toast('That file is not a picture this browser can read.'); };
+    img.src = url;
+  };
+
   const path = (l: V2[]) => 'M' + l.map(([x, y]) => `${x.toFixed(3)},${(-y).toFixed(3)}`).join('L') + 'Z';
-  // copper tracks as a few paths (one per side and width), not thousands of elements
-  const traces = useMemo(() => {
-    if (!b.traces?.length) return null;
-    const g = new Map<string, { d: string[]; w: number; bottom: boolean }>();
-    for (const t of b.traces.slice(0, 6000)) {
-      const w = Math.max(0.1, Math.round(t.w * 10) / 10), k = `${t.side}:${w}`;
-      const e = g.get(k) ?? g.set(k, { d: [], w, bottom: t.side === 'bottom' }).get(k)!;
-      e.d.push(`M${t.a[0].toFixed(2)},${(-t.a[1]).toFixed(2)}L${t.b[0].toFixed(2)},${(-t.b[1]).toFixed(2)}`);
-    }
-    return [...g.values()].sort((x, y) => Number(y.bottom) - Number(x.bottom)).map((e) => ({ d: e.d.join(''), w: e.w, bottom: e.bottom }));
-  }, [b.traces]);
   const fs = (n: number) => n * px; // screen-constant sizes
   const clipAt = result?.report.clipAt;
   const levels = result?.report.levels;
   const nSel = sel.length;
+  // the board's size, on the sides with fewer edge plugs so it doesn't cover one; its labels are kept clear of
+  const sizeAt = useMemo(() => {
+    const n = (ang: number) => b.comps.filter((c) => c.conn && c.conn.entry === 'edge' && Math.round(c.conn.angle) === ang).length;
+    return { top: n(90) <= n(-90), left: n(180) <= n(0) };
+  }, [b.comps]);
+  const sizeBoxes = useMemo((): DimBox[] => {
+    const lw = (v: number) => (v.toFixed(1).length * 7.2 + 14) * px, hh = 9 * px, o = 30 * px;
+    const w = bb.x1 - bb.x0, h = bb.y1 - bb.y0, mx = (bb.x0 + bb.x1) / 2, my = (bb.y0 + bb.y1) / 2;
+    const y = sizeAt.top ? bb.y1 + o : bb.y0 - o, x = sizeAt.left ? bb.x0 - o : bb.x1 + o;
+    return [{ x0: mx - lw(w) / 2, x1: mx + lw(w) / 2, y0: y - hh, y1: y + hh }, { x0: x - hh, x1: x + hh, y0: my - lw(h) / 2, y1: my + lw(h) / 2 }];
+  }, [bb, px, sizeAt]);
+  // every dimension's line and label, none on top of another (model/dims)
+  const dimsDraw = useMemo(() => layoutDims(b, px, { avoid: sizeBoxes, last: dimLast ?? undefined }), [b.dims, b.holes, b.comps, b.outline, px, sizeBoxes, dimLast]);
+  // copper as a few paths (one per side and width), not thousands of elements: the board's own tracks, else plausible
+  // ones from each plug to the main chip and between neighbours (model/copper), redrawn as parts move
+  const copper = useMemo(() => {
+    const cu = boardCopper(b);
+    const g = new Map<string, { d: string[]; w: number; bottom: boolean }>();
+    for (const t of cu.tracks.slice(0, 6000)) {
+      const w = Math.max(0.1, Math.round(t.w * 10) / 10), k = `${t.side}:${w}`;
+      const e = g.get(k) ?? g.set(k, { d: [], w, bottom: t.side === 'bottom' }).get(k)!;
+      e.d.push(`M${t.a[0].toFixed(2)},${(-t.a[1]).toFixed(2)}L${t.b[0].toFixed(2)},${(-t.b[1]).toFixed(2)}`);
+    }
+    const paths = [...g.values()].sort((x, y) => Number(y.bottom) - Number(x.bottom)).map((e) => ({ d: e.d.join(''), w: e.w, bottom: e.bottom }));
+    return { paths, vias: cu.vias.slice(0, 1500), real: !!b.traces?.length };
+  }, [b.traces, b.vias, b.comps, b.holes, b.outline, b.cutouts, b.name]);
+  // the part about to be placed, where it would land
+  const ghost = useMemo(() => {
+    if (tool !== 'place' || !item || !cursor) return null;
+    const it = PALETTE.find((x) => x.id === item);
+    return it ? it.make(b, cursor) : null;
+  }, [tool, item, cursor?.[0], cursor?.[1], b]);
+  const armedItem = PALETTE.find((x) => x.id === item);
+
+  const partSvg = (c: Comp, ghostly = false) => {
+    const r = compRect(c), on = !ghostly && isSel(sel, c.id), L = look(c), bottom = c.side === 'bottom';
+    const lbl = !ghostly && Math.min(c.w, c.l) / Math.max(px, 1e-6) > 22;
+    const d = c.conn?.entry === 'edge' ? [Math.cos(rad(c.conn.angle)), Math.sin(rad(c.conn.angle))] : null;
+    const ext = d ? extentAlong(c, c.conn!.angle) : 0;
+    const rr = Math.min(c.w, c.l) / 2;
+    // a shadow as long as the part is tall (light from the top left), the silkscreen outline round it, its legs
+    const shadow = bottom || ghostly || L.hatch ? undefined : c.h >= 8 ? 'url(#sh3)' : c.h >= 3 ? 'url(#sh2)' : 'url(#sh1)';
+    const T = `translate(${c.x},${-c.y}) rotate(${-c.rot})`;
+    const pads = L.ic ? icPads(c) : [];
+    const pins = c.conn && PIN_TYPES.has(c.conn.type) ? headerPins(c) : [];
+    const pitchPx = (c.conn?.type === 'swd10' ? 1.27 : 2.54) / Math.max(px, 1e-6);
+    return (
+      <g key={c.id} data-id={ghostly ? undefined : c.id} data-kind={ghostly ? undefined : 'comp'} style={{ cursor: ghostly ? 'none' : 'move', pointerEvents: ghostly ? 'none' : undefined }} opacity={ghostly ? 0.65 : 1}>
+        {!bottom && !ghostly && !L.metal && <rect transform={T} x={-c.w / 2 - 0.45} y={-c.l / 2 - 0.45} width={c.w + 0.9} height={c.l + 0.9} rx={L.round ? rr + 0.45 : 0.2} fill="none" stroke="var(--silk)" strokeOpacity={0.55} strokeWidth={0.15} style={{ pointerEvents: 'none' }} />}
+        {pads.length > 0 && pitchPx * 0.5 > 1.2 && <g transform={T} style={{ pointerEvents: 'none' }}>{pads.map((q, i) => <rect key={i} x={q.x - q.w / 2} y={q.y - q.h / 2} width={q.w} height={q.h} fill="#c9cdd2" />)}</g>}
+        <g filter={shadow}>
+        {L.round ? <circle cx={c.x} cy={-c.y} r={rr} fill={L.fill} fillOpacity={bottom ? 0.2 : 1} stroke={on || ghostly ? 'var(--accent)' : L.stroke} strokeWidth={fs(on ? 2.5 : 1)} filter={on ? 'url(#glow)' : undefined} />
+          : <polygon points={r.map(([x, y]) => `${x},${-y}`).join(' ')} fill={L.hatch ? 'url(#hatch2)' : L.metal ? 'url(#metal)' : L.fill} fillOpacity={bottom ? 0.2 : 1} stroke={on || ghostly ? 'var(--accent)' : L.stroke} strokeOpacity={on || ghostly ? 1 : 0.75} strokeWidth={fs(on ? 2.5 : 1)} strokeDasharray={bottom || L.hatch || ghostly ? `${fs(5)} ${fs(3)}` : undefined} strokeLinejoin="round" filter={on ? 'url(#glow)' : undefined} />}
+        </g>
+        {L.round && /elec|\bCP_|cap/i.test(c.pkg) && <path d={`M${c.x - rr * 0.64},${-c.y - rr * 0.72}A${rr * 0.98},${rr * 0.98} 0 0 1 ${c.x + rr * 0.64},${-c.y - rr * 0.72}`} fill="none" stroke="#e8edf4" strokeWidth={rr * 0.24} style={{ pointerEvents: 'none' }} />}
+        {L.ends && <g transform={T} style={{ pointerEvents: 'none' }}>{c.w >= c.l
+          ? <><rect x={-c.w / 2} y={-c.l / 2} width={c.w * 0.24} height={c.l} fill="#c9cdd2" /><rect x={c.w / 2 - c.w * 0.24} y={-c.l / 2} width={c.w * 0.24} height={c.l} fill="#c9cdd2" /></>
+          : <><rect x={-c.w / 2} y={-c.l / 2} width={c.w} height={c.l * 0.24} fill="#c9cdd2" /><rect x={-c.w / 2} y={c.l / 2 - c.l * 0.24} width={c.w} height={c.l * 0.24} fill="#c9cdd2" /></>}</g>}
+        {L.ic && <circle cx={r[0][0] + (r[2][0] - r[0][0]) * 0.14} cy={-(r[0][1] + (r[2][1] - r[0][1]) * 0.14)} r={Math.min(c.w, c.l) * 0.07} fill="#8a939e" style={{ pointerEvents: 'none' }} />}
+        {/* the mouth of a plug on an edge: a dark band where the plug goes in */}
+        {d && (() => { const m = [c.x + d[0] * ext, c.y + d[1] * ext], t = [-d[1], d[0]], hw = (Math.abs(t[0]) * c.w + Math.abs(t[1]) * c.l) / 2 * 0.8; return <line x1={m[0] - d[0] * 0.5 + t[0] * hw} y1={-(m[1] - d[1] * 0.5 + t[1] * hw)} x2={m[0] - d[0] * 0.5 - t[0] * hw} y2={-(m[1] - d[1] * 0.5 - t[1] * hw)} stroke="#2a2e33" strokeWidth={Math.min(1.1, Math.max(c.w, c.l) * 0.15)} style={{ pointerEvents: 'none' }} />; })()}
+        {/* pins, pin 1 square, where there is room to see them */}
+        {pins.length > 0 && pitchPx > 7 && pins.map((q, i) => i === 0
+          ? <rect key={i} x={q.x - 0.55} y={-q.y - 0.55} width={1.1} height={1.1} fill="#d8b14a" style={{ pointerEvents: 'none' }} />
+          : <circle key={i} cx={q.x} cy={-q.y} r={0.5} fill="#d8b14a" style={{ pointerEvents: 'none' }} />)}
+        {/* what each pin is (its net), beside it, when there is room to read it */}
+        {!ghostly && pins.length > 0 && pitchPx > 16 && pins.some((q) => q.net) && (() => {
+          // on the board side of the header (a right-angle one's away from its pins), reading left to right or upward
+          const a = ((c.w >= c.l ? c.rot : c.rot + 90) * Math.PI) / 180;
+          let n: V2 = c.conn!.type === 'pins_ra' ? [-Math.cos(rad(c.conn!.angle)), -Math.sin(rad(c.conn!.angle))] : [-Math.sin(a), Math.cos(a)];
+          if (c.conn!.type !== 'pins_ra' && n[0] * ((bb.x0 + bb.x1) / 2 - c.x) + n[1] * ((bb.y0 + bb.y1) / 2 - c.y) < 0) n = [-n[0], -n[1]];
+          const off = Math.abs(n[0]) * c.w / 2 + Math.abs(n[1]) * c.l / 2 + 0.9, deg = (Math.atan2(n[1], n[0]) * 180) / Math.PI;
+          const flip = Math.cos(rad(deg)) < -1e-6 || (Math.abs(Math.cos(rad(deg))) < 1e-6 && n[1] < 0);
+          return pins.map((q, i) => { const x = q.x + n[0] * off, y = q.y + n[1] * off; return q.net && <text key={'n' + i} x={x} y={-y} fontSize={Math.min(1.25, fs(10))} textAnchor={flip ? 'end' : 'start'} dominantBaseline="central" transform={`rotate(${-(flip ? deg + 180 : deg)} ${x} ${-y})`} className="netlbl" style={{ pointerEvents: 'none' }}>{q.net.replace(/^\//, '').slice(0, 10)}</text>; });
+        })()}
+        {/* too small to write on: its reference printed beside it, as on the board */}
+        {!lbl && !ghostly && !bottom && c.ref && 1 / Math.max(px, 1e-6) > 9 && (() => { const top = Math.max(...r.map((q) => q[1])); return <text x={c.x} y={-(top + 0.75)} fontSize={0.95} textAnchor="middle" className="netlbl" opacity={0.8} style={{ pointerEvents: 'none' }}>{c.ref.slice(0, 6)}</text>; })()}
+        {lbl && <text x={c.x} y={-c.y} fontSize={fs(11)} textAnchor="middle" dominantBaseline="central" className={`silk ${L.label === 'dark' ? 'dark' : ''}`} style={{ pointerEvents: 'none' }}>{c.ref}</text>}
+        {lbl && Math.min(c.w, c.l) / Math.max(px, 1e-6) > 44 && Math.max(c.w, c.l) / Math.max(px, 1e-6) > 7 * (c.conn ? plugName(c.conn.type) : c.value || 'xxxxxxxxxxxx').length && <text x={c.x} y={-c.y + fs(12)} fontSize={fs(9)} textAnchor="middle" dominantBaseline="central" className={`silk ${L.label === 'dark' ? 'dark' : ''}`} opacity={0.75} style={{ pointerEvents: 'none' }}>{c.conn ? plugName(c.conn.type) : c.value || `${c.h.toFixed(1)} mm tall`}</text>}
+      </g>
+    );
+  };
+  const plugArrow = (c: Comp, ghostly = false) => {
+    const dd = c.conn!;
+    const m: V2 = [c.x + Math.cos(rad(dd.angle)) * extentAlong(c, dd.angle), c.y + Math.sin(rad(dd.angle)) * extentAlong(c, dd.angle)];
+    const pp = plugPoly(m, dd.angle, dd.plug.w, dd.plug.len);
+    const tip: V2 = [m[0] + Math.cos(rad(dd.angle)) * 0.5, m[1] + Math.sin(rad(dd.angle)) * 0.5];
+    const L = Math.min(dd.plug.len * 0.7, 16);
+    const tail: V2 = [m[0] + Math.cos(rad(dd.angle)) * L, m[1] + Math.sin(rad(dd.angle)) * L];
+    return (
+      <g key={'p' + c.id} style={{ pointerEvents: 'none' }} opacity={ghostly ? 0.7 : 1}>
+        <polygon points={pp.map(([x, y]) => `${x},${-y}`).join(' ')} fill="url(#hatch)" stroke="var(--copper)" strokeOpacity={0.7} strokeWidth={fs(1)} strokeDasharray={`${fs(4)} ${fs(3)}`} />
+        <line x1={tail[0]} y1={-tail[1]} x2={tip[0]} y2={-tip[1]} stroke="var(--copper)" strokeWidth={fs(2)} markerEnd="url(#arr)" />
+      </g>
+    );
+  };
+
+  const toolBtn = (t: Tool, label: string, key: string, d: string) => (
+    <button className={`tbtn ${tool === t ? 'on' : ''}`} onClick={() => { setTool(t); setItem(null); setDimA(null); setPhotoA(null); }} title={`${label} (${key})`}>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={d} /></svg><span>{label}</span>
+    </button>
+  );
+  const dropPart = (e: React.DragEvent) => { const id = e.dataTransfer.getData(PART_DRAG); if (!id) return; e.preventDefault(); putPart(id, toWorld(e)); arm(null); };
+  const bw = bb.x1 - bb.x0, bh = bb.y1 - bb.y0;
 
   return (
-    <div ref={wrap} className="editor" style={{ position: 'absolute', inset: 0 }} onContextMenu={(e) => e.preventDefault()} onPointerLeave={() => setHov(null)}>
-      <svg ref={svg} viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`} onWheel={onWheel} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onLostPointerCapture={onUp}
-        style={{ cursor: space || tool === 'pan' ? 'grab' : tool === 'select' ? 'default' : tool === 'measure' && snapF ? 'pointer' : 'crosshair' }}>
+    <div ref={wrap} className={`editor board-editor ${tbx ? 'with-tbx' : ''}`} style={{ position: 'absolute', inset: 0 }} onContextMenu={(e) => e.preventDefault()} onPointerLeave={() => setHov(null)}>
+      {tbx && <Toolbox armed={tool === 'place' ? item : null} onArm={arm} onClose={() => setTbx(false)} />}
+      <svg ref={svg} className="bcanvas" viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`} onWheel={(e) => zoom(Math.exp(Math.max(-60, Math.min(60, e.deltaY)) * 0.0022), toWorld(e))} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onLostPointerCapture={onUp}
+        onDragOver={(e) => { if (e.dataTransfer.types.includes(PART_DRAG)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } }} onDrop={dropPart}
+        style={{ cursor: space || tool === 'pan' ? 'grab' : tool === 'select' ? 'default' : tool === 'place' ? 'copy' : 'crosshair' }}>
         <defs>
           <pattern id="g1" width="1" height="1" patternUnits="userSpaceOnUse"><path d="M1 0H0V1" fill="none" stroke="var(--grid-fine)" strokeWidth={fs(0.6)} /></pattern>
           <pattern id="g10" width="10" height="10" patternUnits="userSpaceOnUse"><rect width="10" height="10" fill={px < 0.06 ? 'url(#g1)' : 'none'} /><path d="M10 0H0V10" fill="none" stroke="var(--grid)" strokeWidth={fs(1)} /></pattern>
           <pattern id="hatch" width="1.4" height="1.4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="1.4" stroke="var(--copper)" strokeOpacity="0.45" strokeWidth={0.3} /></pattern>
+          <pattern id="hatch2" width="1.6" height="1.6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="1.6" stroke="#ff8a5c" strokeOpacity="0.55" strokeWidth={0.35} /></pattern>
+          <linearGradient id="metal" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#e3e7ec" /><stop offset="0.55" stopColor="#b8bec6" /><stop offset="1" stopColor="#9aa1aa" /></linearGradient>
+          <filter id="sh1" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx={0.25} dy={0.35} stdDeviation={0.3} floodColor="#000" floodOpacity={0.45} /></filter>
+          <filter id="sh2" x="-40%" y="-40%" width="180%" height="180%"><feDropShadow dx={0.7} dy={0.9} stdDeviation={0.7} floodColor="#000" floodOpacity={0.45} /></filter>
+          <filter id="sh3" x="-50%" y="-50%" width="200%" height="200%"><feDropShadow dx={1.5} dy={1.9} stdDeviation={1.3} floodColor="#000" floodOpacity={0.45} /></filter>
+          <filter id="bshadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx={1.2} dy={2} stdDeviation={2.4} floodColor="#000" floodOpacity={0.5} /></filter>
+          <linearGradient id="sheen" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#fff" stopOpacity={0.09} /><stop offset="0.5" stopColor="#fff" stopOpacity={0} /><stop offset="1" stopColor="#000" stopOpacity={0.14} /></linearGradient>
           <filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation={fs(2.5)} result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
           <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0L10,5L0,10z" fill="var(--copper)" /></marker>
           <marker id="darr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,1L10,5L0,9z" fill="var(--coral)" /></marker>
+          <marker id="garr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,1L10,5L0,9z" fill="var(--accent)" /></marker>
         </defs>
         <rect x={vb.x - vb.w * 2} y={vb.y - vb.h * 2} width={vb.w * 5} height={vb.h * 5} fill="url(#g10)" />
-        {levels && <path d={path(b.outline)} fill="none" stroke="var(--accent)" strokeOpacity={0.22} strokeWidth={(H.gap + H.wall) * 2} strokeLinejoin="round" />}
-        <path d={path(b.outline) + b.cutouts.map(path).join('')} fill="var(--mask)" fillRule="evenodd" stroke="var(--mask-edge)" strokeWidth={fs(1.5)} />
-        {/* the board's copper, faintly: where the tracks run shows where parts are */}
-        {traces && <g style={{ pointerEvents: 'none' }} opacity={0.32}>
-          {traces.map((t, i) => <path key={i} d={t.d} fill="none" stroke="var(--copper)" strokeWidth={t.w} strokeLinecap="round" opacity={t.bottom ? 0.45 : 1} />)}
-          {(b.vias ?? []).slice(0, 1500).map((v, i) => <circle key={'v' + i} cx={v.x} cy={-v.y} r={v.d / 2} fill="var(--copper)" />)}
+        {levels && <path d={path(b.outline)} fill="none" stroke="var(--accent)" strokeOpacity={0.18} strokeWidth={(H.gap + H.wall) * 2} strokeLinejoin="round" />}
+        <path d={path(b.outline) + b.cutouts.map(path).join('')} fill={b.color ?? 'var(--mask)'} fillRule="evenodd" stroke={b.color ? `color-mix(in srgb, ${b.color} 55%, #fff)` : 'var(--mask-edge)'} strokeWidth={fs(1.5)} filter="url(#bshadow)" />
+        <path d={path(b.outline) + b.cutouts.map(path).join('')} fill="url(#sheen)" fillRule="evenodd" style={{ pointerEvents: 'none' }} />
+        {/* the board's name in its silkscreen, in a corner */}
+        {b.name && bw / Math.max(px, 1e-6) > 180 && (() => {
+          // past a hole in that corner, and above the row of vias along the edge
+          const fz = Math.min(2.2, bw / 30), name = b.name.replace(/\s*\(.*$/, '').slice(0, 28), len = name.length * fz * 0.62;
+          const boxes = b.comps.filter((c) => !c.hidden).map((c) => bbox(compRect(c, 0.6)));
+          for (const top of [false, true]) {
+            const y = top ? bb.y1 - 3.4 - fz : bb.y0 + 3.4, near = b.holes.filter((h) => h.x - bb.x0 < 12 && (top ? bb.y1 - h.y : h.y - bb.y0) < 12);
+            const x = Math.max(bb.x0 + 2, ...near.map((h) => h.x + h.d / 2 + 2));
+            if (x + len > bb.x1 - 2 || boxes.some((r) => r.x0 < x + len && r.x1 > x && r.y0 < y + fz && r.y1 > y - 0.3)) continue;
+            return <text x={x} y={-y} fontSize={fz} className="netlbl" opacity={0.6} style={{ pointerEvents: 'none' }}>{name}</text>;
+          }
+          return null;
+        })()}
+        {b.photo && <image href={b.photo.url} x={b.photo.x} y={-(b.photo.y + b.photo.h)} width={b.photo.w} height={b.photo.h} preserveAspectRatio="none" opacity={b.photo.opacity ?? 0.7} style={{ pointerEvents: 'none' }} />}
+        {/* the copper under the solder mask: tracks a shade lighter than the board, the bottom side's fainter, vias */}
+        {showCu && <g style={{ pointerEvents: 'none', ...(b.color ? { '--trace': `color-mix(in srgb, ${b.color} 72%, #fff)`, '--trace-b': `color-mix(in srgb, ${b.color} 85%, #fff)`, '--mask': b.color } as React.CSSProperties : {}) }} className="cu">
+          {copper.paths.map((t, i) => <path key={i} d={t.d} fill="none" className={t.bottom ? 'cu-b' : 'cu-t'} strokeWidth={t.w} strokeLinecap="round" strokeLinejoin="round" />)}
+          {copper.vias.map((v, i) => <circle key={'v' + i} cx={v.x} cy={-v.y} r={v.d / 2 + 0.18} className="cu-via" strokeWidth={0.2} />)}
         </g>}
-        {b.comps.filter((c) => !c.hidden && c.conn?.entry === 'edge').map((c) => {
-          const d = c.conn!;
-          const m: V2 = [c.x + Math.cos(rad(d.angle)) * extentAlong(c, d.angle), c.y + Math.sin(rad(d.angle)) * extentAlong(c, d.angle)];
-          const pp = plugPoly(m, d.angle, d.plug.w, d.plug.len);
-          const tip: V2 = [m[0] + Math.cos(rad(d.angle)) * 0.5, m[1] + Math.sin(rad(d.angle)) * 0.5];
-          const L = Math.min(d.plug.len * 0.7, 16);
-          const tail: V2 = [m[0] + Math.cos(rad(d.angle)) * L, m[1] + Math.sin(rad(d.angle)) * L];
-          return (
-            <g key={'p' + c.id} style={{ pointerEvents: 'none' }}>
-              <polygon points={pp.map(([x, y]) => `${x},${-y}`).join(' ')} fill="url(#hatch)" stroke="var(--copper)" strokeOpacity={0.7} strokeWidth={fs(1)} strokeDasharray={`${fs(4)} ${fs(3)}`} />
-              <line x1={tail[0]} y1={-tail[1]} x2={tip[0]} y2={-tip[1]} stroke="var(--copper)" strokeWidth={fs(2)} markerEnd="url(#arr)" />
-            </g>
-          );
-        })}
-        {b.comps.filter((c) => !c.hidden).map((c) => {
-          const r = compRect(c);
-          const on = isSel(sel, c.id);
-          const k = KIND[c.kind] ?? KIND.generic;
-          const bottom = c.side === 'bottom';
-          const lbl = Math.min(c.w, c.l) / Math.max(px, 1e-6) > 24;
-          return (
-            <g key={c.id} data-id={c.id} data-kind="comp" style={{ cursor: 'move' }}>
-              <polygon points={r.map(([x, y]) => `${x},${-y}`).join(' ')} fill={k.fill} fillOpacity={bottom ? 0.18 : 0.88} stroke={on ? 'var(--accent)' : k.stroke} strokeOpacity={on ? 1 : 0.7} strokeWidth={fs(on ? 2.5 : 1)} strokeDasharray={bottom ? `${fs(5)} ${fs(3)}` : undefined} strokeLinejoin="round" filter={on ? 'url(#glow)' : undefined} />
-              {/* pins, pin 1 square, where there is room to see them */}
-              {c.conn && PIN_TYPES.has(c.conn.type) && (c.conn.type === 'swd10' ? 1.27 : 2.54) / Math.max(px, 1e-6) > 7 && headerPins(c).map((q, i) => i === 0
-                ? <rect key={i} x={q.x - 0.55} y={-q.y - 0.55} width={1.1} height={1.1} fill="#d8b14a" style={{ pointerEvents: 'none' }} />
-                : <circle key={i} cx={q.x} cy={-q.y} r={0.5} fill="#d8b14a" style={{ pointerEvents: 'none' }} />)}
-              {lbl && <text x={c.x} y={-c.y} fontSize={fs(11)} textAnchor="middle" dominantBaseline="central" className={`silk ${c.kind === 'connector' || c.kind === 'led' ? 'dark' : ''}`} style={{ pointerEvents: 'none' }}>{c.ref}</text>}
-              {lbl && Math.min(c.w, c.l) / Math.max(px, 1e-6) > 44 && <text x={c.x} y={-c.y + fs(12)} fontSize={fs(9)} textAnchor="middle" dominantBaseline="central" className={`silk ${c.kind === 'connector' || c.kind === 'led' ? 'dark' : ''}`} opacity={0.75} style={{ pointerEvents: 'none' }}>{c.conn ? plugName(c.conn.type) : c.value || `${c.h.toFixed(1)} mm`}</text>}
-            </g>
-          );
-        })}
+        {b.comps.filter((c) => !c.hidden && c.conn?.entry === 'edge').map((c) => plugArrow(c))}
+        {b.comps.filter((c) => !c.hidden).map((c) => partSvg(c))}
         {b.holes.map((h) => {
           const on = isSel(sel, h.id);
           const role = h.role ?? 'mount';
@@ -309,31 +475,52 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
             </g>
           );
         })}
-        {clipAt && project.mount.kind === 'din' && project.mount.mode === 'flat' && project.active === 0 && (
-          <g style={{ pointerEvents: 'none' }} opacity={0.9}>
-            <circle cx={clipAt[0]} cy={-clipAt[1]} r={fs(9)} fill="none" stroke="var(--coral)" strokeWidth={fs(1.5)} strokeDasharray={`${fs(3)} ${fs(2)}`} />
-            <path d={`M${clipAt[0] - fs(14)},${-clipAt[1]}H${clipAt[0] + fs(14)}M${clipAt[0]},${-clipAt[1] - fs(14)}V${-clipAt[1] + fs(14)}`} stroke="var(--coral)" strokeWidth={fs(1)} />
-            <text x={clipAt[0] + fs(16)} y={-clipAt[1] - fs(10)} fontSize={fs(10.5)} fill="var(--coral)" className="mono">DIN CLIP</text>
-          </g>
-        )}
-        {/* dimensions: from a feature to a feature, the value you measured */}
-        {(b.dims ?? []).map((d, i) => {
-          const pa = featAt(b, d.a), pb = featAt(b, d.b);
-          const va = pa?.[d.axis], vb2 = pb?.[d.axis];
-          if (va == null || vb2 == null) return null;
-          const o = d.axis === 'x' ? 'y' : 'x';
-          const oa = pa![o] ?? pb![o] ?? (o === 'y' ? bb.y1 : bb.x1), ob = pb![o] ?? pa![o] ?? (o === 'y' ? bb.y1 : bb.x1);
-          const line = Math.max(oa, ob) + fs(26) + i * fs(4);
-          const A: V2 = d.axis === 'x' ? [va, oa] : [oa, va], B: V2 = d.axis === 'x' ? [vb2, ob] : [ob, vb2];
-          const LA: V2 = d.axis === 'x' ? [va, line] : [line, va], LB: V2 = d.axis === 'x' ? [vb2, line] : [line, vb2];
-          const on = editDim?.id === d.id, val = Math.abs(vb2 - va).toFixed(2), mx = (LA[0] + LB[0]) / 2, my = (LA[1] + LB[1]) / 2;
+        {/* the part about to be placed, following the pointer */}
+        {ghost?.comp && <>{ghost.comp.conn?.entry === 'edge' && plugArrow(ghost.comp, true)}{partSvg(ghost.comp, true)}</>}
+        {ghost?.hole && <circle cx={ghost.hole.x} cy={-ghost.hole.y} r={ghost.hole.d / 2 + 1.1} fill="none" stroke="var(--accent)" strokeWidth={fs(2)} strokeDasharray={`${fs(4)} ${fs(3)}`} style={{ pointerEvents: 'none' }} />}
+        {/* while dragging: the lines it snapped to, and how far it is from the nearest edges */}
+        {guides && (() => {
+          const g = edgeGaps(b, guides.box);
           return (
-            <g key={d.id}>
-              <line x1={A[0]} y1={-A[1]} x2={LA[0]} y2={-LA[1]} stroke="var(--coral)" strokeOpacity={0.6} strokeWidth={fs(1)} strokeDasharray={`${fs(3)} ${fs(2)}`} />
-              <line x1={B[0]} y1={-B[1]} x2={LB[0]} y2={-LB[1]} stroke="var(--coral)" strokeOpacity={0.6} strokeWidth={fs(1)} strokeDasharray={`${fs(3)} ${fs(2)}`} />
-              <line x1={LA[0]} y1={-LA[1]} x2={LB[0]} y2={-LB[1]} stroke="var(--coral)" strokeWidth={fs(1.4)} markerStart="url(#darr)" markerEnd="url(#darr)" />
-              <g transform={`translate(${mx},${-my})${d.axis === 'y' ? ' rotate(-90)' : ''}`} style={{ cursor: 'pointer' }} onPointerDown={(e) => { e.stopPropagation(); setEditDim({ id: d.id, v: val }); }}>
-                <title>Click to type what you measured on the real board</title>
+            <g style={{ pointerEvents: 'none' }}>
+              {guides.gx != null && <line x1={guides.gx} y1={-(bb.y1 + 8)} x2={guides.gx} y2={-(bb.y0 - 8)} stroke="var(--accent)" strokeWidth={fs(1)} strokeDasharray={`${fs(5)} ${fs(4)}`} />}
+              {guides.gy != null && <line x1={bb.x0 - 8} y1={-guides.gy} x2={bb.x1 + 8} y2={-guides.gy} stroke="var(--accent)" strokeWidth={fs(1)} strokeDasharray={`${fs(5)} ${fs(4)}`} />}
+              {[{ a: [g.x.from, g.x.at], c: [g.x.to, g.x.at], v: g.x.v }, { a: [g.y.at, g.y.from], c: [g.y.at, g.y.to], v: g.y.v }].map((q, i) => q.v > 0.05 && (
+                <g key={i}>
+                  <line x1={q.a[0]} y1={-q.a[1]} x2={q.c[0]} y2={-q.c[1]} stroke="var(--accent)" strokeWidth={fs(1.3)} markerStart="url(#garr)" markerEnd="url(#garr)" />
+                  <g transform={`translate(${(q.a[0] + q.c[0]) / 2},${-(q.a[1] + q.c[1]) / 2})`}>
+                    <rect x={-fs(24)} y={-fs(9)} width={fs(48)} height={fs(18)} rx={fs(9)} fill="var(--accent)" />
+                    <text fontSize={fs(10.5)} textAnchor="middle" dominantBaseline="central" className="mono" fill="#fff">{q.v.toFixed(1)}</text>
+                  </g>
+                </g>
+              ))}
+            </g>
+          );
+        })()}
+        {/* dimensions: from a feature to a feature, the value you measured; drag a label to put it somewhere else */}
+        {dimsDraw.map((q) => {
+          const on = editDim?.id === q.id || drag.current?.dim?.id === q.id, val = q.value.toFixed(2);
+          const P = (u: number, v: number): V2 => (q.axis === 'x' ? [u, v] : [v, u]);
+          const i = q.axis === 'x' ? 0 : 1, along = q.lab[i], lo = Math.min(q.LA[i], q.LB[i]), hi = Math.max(q.LA[i], q.LB[i]);
+          const half = (q.axis === 'x' ? q.box.x1 - q.box.x0 : q.box.y1 - q.box.y0) / 2;
+          // a label slid past the ends: the line carries on out to it
+          const lead = along < lo ? [lo, along + half] : along > hi ? [hi, along - half] : null;
+          return (
+            <g key={q.id}>
+              <line x1={q.A[0]} y1={-q.A[1]} x2={q.LA[0]} y2={-q.LA[1]} stroke="var(--coral)" strokeOpacity={0.6} strokeWidth={fs(1)} strokeDasharray={`${fs(3)} ${fs(2)}`} style={{ pointerEvents: 'none' }} />
+              <line x1={q.B[0]} y1={-q.B[1]} x2={q.LB[0]} y2={-q.LB[1]} stroke="var(--coral)" strokeOpacity={0.6} strokeWidth={fs(1)} strokeDasharray={`${fs(3)} ${fs(2)}`} style={{ pointerEvents: 'none' }} />
+              <line x1={q.LA[0]} y1={-q.LA[1]} x2={q.LB[0]} y2={-q.LB[1]} stroke="var(--coral)" strokeWidth={fs(1.4)} markerStart="url(#darr)" markerEnd="url(#darr)" style={{ pointerEvents: 'none' }} />
+              {lead && (() => { const a = P(lead[0], q.line), c = P(lead[1], q.line); return <line x1={a[0]} y1={-a[1]} x2={c[0]} y2={-c[1]} stroke="var(--coral)" strokeWidth={fs(1.2)} style={{ pointerEvents: 'none' }} />; })()}
+              <g className="dimlab" transform={`translate(${q.lab[0]},${-q.lab[1]})${q.axis === 'y' ? ' rotate(-90)' : ''}`} style={{ cursor: drag.current?.kind === 'dim' ? 'grabbing' : 'grab' }}
+                onPointerDown={(e) => {
+                  if (e.button !== 0 || tool !== 'select' && tool !== 'measure') return;
+                  e.stopPropagation();
+                  svg.current?.setPointerCapture?.(e.pointerId);
+                  setDimLast(q.id);
+                  const i2 = q.axis === 'x' ? 0 : 1;
+                  drag.current = { kind: 'dim', start: toWorld(e), client: [e.clientX, e.clientY], vb0: vb, pre: store.get().project!, dim: { id: q.id, axis: q.axis, va: q.A[i2], vb: q.B[i2], line0: q.line, t0: q.t, anchor: q.anchor } };
+                }}>
+                <title>Drag to move it; click to type what you measured on the real board</title>
                 <rect x={-val.length * 3.6 * px - 8 * px} y={-9 * px} width={val.length * 7.2 * px + 16 * px} height={18 * px} rx={9 * px} fill={on ? 'var(--coral)' : 'var(--surface)'} stroke="var(--coral)" strokeWidth={px} />
                 <text x={0} y={0} fontSize={11 * px} textAnchor="middle" dominantBaseline="central" className="mono" fill={on ? '#fff' : 'var(--fg)'}>{val}</text>
               </g>
@@ -350,73 +537,75 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
           };
           return <g style={{ pointerEvents: 'none' }}>{mark(dimA, 'var(--coral)')}{mark(snapF, 'var(--accent)')}</g>;
         })()}
+        {(tool === 'photoScale' || tool === 'photoAlign') && photoA && cursor && (
+          <g style={{ pointerEvents: 'none' }}>
+            <circle cx={photoA[0]} cy={-photoA[1]} r={fs(5)} fill="none" stroke="var(--coral)" strokeWidth={fs(2)} />
+            <line x1={photoA[0]} y1={-photoA[1]} x2={cursor[0]} y2={-cursor[1]} stroke="var(--coral)" strokeWidth={fs(1.5)} strokeDasharray={`${fs(5)} ${fs(3)}`} />
+          </g>
+        )}
+        {clipAt && project.mount.kind === 'din' && project.mount.mode === 'flat' && project.active === 0 && (
+          <g style={{ pointerEvents: 'none' }} opacity={0.9}>
+            <circle cx={clipAt[0]} cy={-clipAt[1]} r={fs(9)} fill="none" stroke="var(--coral)" strokeWidth={fs(1.5)} strokeDasharray={`${fs(3)} ${fs(2)}`} />
+            <path d={`M${clipAt[0] - fs(14)},${-clipAt[1]}H${clipAt[0] + fs(14)}M${clipAt[0]},${-clipAt[1] - fs(14)}V${-clipAt[1] + fs(14)}`} stroke="var(--coral)" strokeWidth={fs(1)} />
+            <text x={clipAt[0] + fs(16)} y={-clipAt[1] - fs(10)} fontSize={fs(10.5)} fill="var(--coral)" className="mono">DIN CLIP</text>
+          </g>
+        )}
         {marquee && (
           <rect x={Math.min(marquee.a[0], marquee.b[0])} y={-Math.max(marquee.a[1], marquee.b[1])} width={Math.abs(marquee.b[0] - marquee.a[0])} height={Math.abs(marquee.b[1] - marquee.a[1])}
             fill="var(--accent)" fillOpacity={0.08} stroke="var(--accent)" strokeWidth={fs(1)} strokeDasharray={`${fs(4)} ${fs(3)}`} />
         )}
         <g style={{ pointerEvents: 'none' }}>
-          {/* the dimensions go on the sides with fewer edge connectors, so they don't cover one */}
+          {/* the board's size, on the sides with fewer edge plugs so it doesn't cover one */}
           {(() => {
-            const n = (ang: number) => b.comps.filter((c) => c.conn && c.conn.entry === 'edge' && Math.round(c.conn.angle) === ang).length;
-            const top = n(90) <= n(-90), left = n(180) <= n(0);
+            const { top, left } = sizeAt;
             return <>
-              <DimLine a={[bb.x0, top ? bb.y1 : bb.y0]} b={[bb.x1, top ? bb.y1 : bb.y0]} off={top ? fs(30) : -fs(30)} px={px} label={`${(bb.x1 - bb.x0).toFixed(1)}`} />
-              <DimLine a={[left ? bb.x0 : bb.x1, bb.y0]} b={[left ? bb.x0 : bb.x1, bb.y1]} off={left ? -fs(30) : fs(30)} px={px} label={`${(bb.y1 - bb.y0).toFixed(1)}`} vertical />
+              <DimLine a={[bb.x0, top ? bb.y1 : bb.y0]} b={[bb.x1, top ? bb.y1 : bb.y0]} off={top ? fs(30) : -fs(30)} px={px} label={`${bw.toFixed(1)}`} />
+              <DimLine a={[left ? bb.x0 : bb.x1, bb.y0]} b={[left ? bb.x0 : bb.x1, bb.y1]} off={left ? -fs(30) : fs(30)} px={px} label={`${bh.toFixed(1)}`} vertical />
             </>;
           })()}
         </g>
       </svg>
 
       <div className="toolbar floating">
-        {([['select', 'Select', 'M5 3l14 8-6 2-2 6z'], ['pan', 'Pan', 'M12 3v18M3 12h18M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3'], ['hole', 'Hole', 'M12 5a7 7 0 100 14a7 7 0 100-14M12 9a3 3 0 100 6a3 3 0 100-6'], ['connector', 'Connector', 'M4 9h10v6H4zM14 10h4M14 14h4M18 8v8'], ['part', 'Keep-out', 'M4 4h16v16H4zM4 4l16 16M20 4L4 20']] as [Tool, string, string][]).map(([t, label, d]) => (
-          <button key={t} className={`tbtn ${tool === t ? 'on' : ''}`} onClick={() => setTool(t)} title={label}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={d} /></svg>
-            <span>{label}</span>
+        {!tbx && <><button className="tbtn" onClick={() => setTbx(true)} title="Show the toolbox (T)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7h16v12H4zM9 7V5h6v2M4 12h16" /></svg><span>Toolbox</span></button><span className="tsep" /></>}
+        {toolBtn('select', 'Select', 'V', 'M5 3l14 8-6 2-2 6z')}
+        {toolBtn('pan', 'Pan', 'H', 'M12 3v18M3 12h18M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3')}
+        {toolBtn('measure', 'Measure', 'M', 'M3 17h18M3 14v6M21 14v6M6 4h12v6H6zM9 4v3M12 4v4M15 4v3')}
+        <span className="tsep" />
+        <div className="tpop">
+          <button className={`tbtn ${photoMenu || tool.startsWith('photo') ? 'on' : ''}`} onClick={() => setPhotoMenu((x) => !x)} title="A photo of the real board under the drawing, to trace over">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7h3l2-2h6l2 2h3v12H4zM12 10a3.5 3.5 0 100 7a3.5 3.5 0 100-7" /></svg><span>Photo</span>
           </button>
-        ))}
-        {tool === 'connector' && (
-          <select value={connType} onChange={(e) => setConnType(e.target.value)} className="tsel">
-            {CONNECTORS.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
-        )}
+          {photoMenu && (
+            <div className="tmenu floating">
+              <button onClick={() => { setPhotoMenu(false); photoFile.current?.click(); }}>{b.photo ? 'Replace the photo…' : 'Put a photo under it…'}</button>
+              {b.photo && <>
+                <button onClick={() => { setPhotoMenu(false); setTool('photoScale'); setPhotoA(null); }}>Scale it: two points, then the distance</button>
+                <button onClick={() => { setPhotoMenu(false); setTool('photoAlign'); setPhotoA(null); }}>Line it up: a point on it, then where it goes</button>
+                <label className="trange">See-through<input type="range" min={0.15} max={1} step={0.05} value={b.photo.opacity ?? 0.7} onChange={(e) => editMod((m) => { if (m.board.photo) m.board.photo.opacity = +e.target.value; })} /></label>
+                <button className="danger" onClick={() => { setPhotoMenu(false); editMod((m) => { delete m.board.photo; }); }}>Remove the photo</button>
+              </>}
+            </div>
+          )}
+          <input ref={photoFile} type="file" accept="image/*" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) loadPhoto(f); e.target.value = ''; }} />
+        </div>
+        <button className={`tbtn ${showCu ? 'on' : ''}`} onClick={() => setShowCu((x) => !x)} aria-pressed={showCu}
+          title={copper.real ? 'The copper tracks read from its files' : 'Copper tracks drawn in for the look (its files had none): they show roughly how a board like it is wired, nothing is made from them'}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7h6l4 4h8M3 17h4l4-4M17 17h4M5 7a2 2 0 100 .01M19 17a2 2 0 100 .01" /></svg><span>Tracks</span>
+        </button>
         <span className="tsep" />
-        <button className={`tbtn ${palette || tool === 'place' ? 'on' : ''}`} onClick={() => setPalette((v) => !v)} title="The toolbox: plugs, headers, holes and tall parts to click onto the board">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7h16v12H4zM9 7V5h6v2M4 12h16" /></svg><span>Parts</span>
-        </button>
-        <button className={`tbtn ${tool === 'measure' ? 'on' : ''}`} onClick={() => { setTool(tool === 'measure' ? 'select' : 'measure'); setDimA(null); }} title="Measure: click two features (an edge, a hole, a part's side), then type what your calipers say">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 17h18M3 14v6M21 14v6M7 17l-2-2M7 17l-2 2M17 17l2-2M17 17l2 2M6 4h12v6H6zM9 4v3M12 4v4M15 4v3" /></svg><span>Measure</span>
-        </button>
-        <span className="tsep" />
-        <button className="tbtn" onClick={() => setVb(fitBox(bb))} title="Fit to view">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></svg><span>Fit</span>
-        </button>
+        <button className="tbtn" onClick={() => zoom(1.25)} title="Zoom out">−</button>
+        <button className="tbtn mono" onClick={() => setVb(fitBox(bb))} title="Fit the board">Fit</button>
+        <button className="tbtn" onClick={() => zoom(0.8)} title="Zoom in">+</button>
       </div>
 
-      {palette && (
-        <div className="palette floating">
-          <div className="palhead"><input type="search" placeholder="Find a part" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Find a part" autoFocus /><button className="btn small ghost icon" onClick={() => setPalette(false)} title="Close">✕</button></div>
-          <div className="palbody">
-            {PALETTE_GROUPS.map((g) => {
-              const its = PALETTE.filter((x) => x.group === g && (!q.trim() || x.label.toLowerCase().includes(q.trim().toLowerCase())));
-              if (!its.length) return null;
-              return (
-                <div key={g}>
-                  <h5>{g}</h5>
-                  {its.map((x) => <button key={x.id} className={`palitem ${item === x.id && tool === 'place' ? 'on' : ''}`} title={x.hint} onClick={() => { setItem(x.id); setTool('place'); }}>{x.label}</button>)}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
       {editDim && (() => {
-        const d = (b.dims ?? []).find((x) => x.id === editDim.id);
-        if (!d) return null;
+        const dm = (b.dims ?? []).find((x) => x.id === editDim.id);
+        if (!dm) return null;
         const apply = () => {
           const v = parseFloat(editDim.v.replace(',', '.'));
           let ok = false;
-          editMod((m) => { const dd = (m.board.dims ?? []).find((x) => x.id === d.id); if (dd) ok = setDim(m.board, dd, v); });
+          editMod((m) => { const dd = (m.board.dims ?? []).find((x) => x.id === dm.id); if (dd) ok = setDim(m.board, dd, v); });
           if (!ok) toast('Nothing to move there: put a dimension from an edge to a hole or a part.');
           setEditDim(null);
         };
@@ -424,10 +613,29 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
           <div className="selbar floating dimbar">
             <b>Measured</b>
             <input autoFocus className="mono" value={editDim.v} onChange={(e) => setEditDim({ ...editDim, v: e.target.value })} onKeyDown={(e) => { if (e.key === 'Enter') apply(); if (e.key === 'Escape') setEditDim(null); }} aria-label="Measured distance in mm" />
-            <span>mm {d.b.k === 'edge' && d.a.k === 'edge' ? '(the board’s size)' : `(moves the ${d.b.k !== 'edge' ? 'second' : 'first'} one)`}</span>
+            <span>mm {dm.b.k === 'edge' && dm.a.k === 'edge' ? '(the board’s size)' : `(moves the ${dm.b.k !== 'edge' ? 'second' : 'first'} one)`}</span>
             <button className="btn small primary" onClick={apply}>Set</button>
-            <button className="btn small danger" onClick={() => { editMod((m) => { m.board.dims = (m.board.dims ?? []).filter((x) => x.id !== d.id); }); setEditDim(null); }}>Delete</button>
+            {dm.off != null && <button className="btn small ghost" onClick={() => editMod((m) => { const dd = (m.board.dims ?? []).find((x) => x.id === dm.id); if (dd) { delete dd.off; delete dd.t; } })} title="Let it find its own place again">Put back</button>}
+            {(b.dims ?? []).some((x) => x.off != null) && <button className="btn small ghost" onClick={() => editMod((m) => { for (const dd of m.board.dims ?? []) { delete dd.off; delete dd.t; } })} title="Every dimension back to its own place, none on another">Tidy all</button>}
+            <button className="btn small danger" onClick={() => { editMod((m) => { m.board.dims = (m.board.dims ?? []).filter((x) => x.id !== dm.id); }); setEditDim(null); }}>Delete</button>
             <button className="btn small ghost icon" onClick={() => setEditDim(null)} title="Esc">✕</button>
+          </div>
+        );
+      })()}
+
+      {photoAsk && (() => {
+        const apply = () => {
+          const v = parseFloat(photoAsk.v.replace(',', '.'));
+          if (v > 0) editMod((m) => { if (m.board.photo) m.board.photo = scalePhoto(m.board.photo, photoAsk.a, photoAsk.c, v); });
+          setPhotoAsk(null); setTool('select');
+        };
+        return (
+          <div className="selbar floating dimbar">
+            <b>Really</b>
+            <input autoFocus className="mono" value={photoAsk.v} placeholder={Math.hypot(photoAsk.c[0] - photoAsk.a[0], photoAsk.c[1] - photoAsk.a[1]).toFixed(1)} onChange={(e) => setPhotoAsk({ ...photoAsk, v: e.target.value })} onKeyDown={(e) => { if (e.key === 'Enter') apply(); if (e.key === 'Escape') { setPhotoAsk(null); setTool('select'); } }} aria-label="Real distance in mm" />
+            <span>mm apart (those two points on the photo)</span>
+            <button className="btn small primary" onClick={apply}>Scale the photo</button>
+            <button className="btn small ghost icon" onClick={() => { setPhotoAsk(null); setTool('select'); }} title="Esc">✕</button>
           </div>
         );
       })()}
@@ -435,29 +643,31 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
       {hov && !drag.current && (() => {
         const c = hov.kind === 'comp' ? b.comps.find((x) => x.id === hov.id) : null, h = hov.kind === 'hole' ? b.holes.find((x) => x.id === hov.id) : null;
         if (!c && !h) return null;
-        const dir = c?.conn?.entry === 'edge' ? ['right', 'up', 'left', 'down'][Math.round(((((c.conn.angle % 360) + 360) % 360)) / 90) % 4] : null;
+        const dir = c?.conn?.entry === 'edge' ? ['right', 'top', 'left', 'bottom'][Math.round(((((c.conn.angle % 360) + 360) % 360)) / 90) % 4] : null;
+        const r = wrap.current?.getBoundingClientRect();
+        const cb = c ? itemsBox(b, new Set([c.id])) : null;
         return (
-          <div className="hovcard floating" style={{ left: Math.min(hov.x + 16, (wrap.current?.clientWidth ?? 400) - 250), top: hov.y + 16 }}>
+          <div className="hovcard floating" style={{ left: Math.min(hov.x + 16, (r?.width ?? 400) - 260), top: Math.min(hov.y + 16, (r?.height ?? 400) - 150) }}>
             {c && <>
               <b>{c.ref}{c.value ? ` · ${c.value}` : ''}</b>
               <span>{c.conn ? connById(c.conn.type).name : c.pkg}</span>
-              <span className="mono">{c.w.toFixed(1)} × {c.l.toFixed(1)} × {c.h.toFixed(1)} mm · {c.side}{c.tht ? ' · leads through' : ''}</span>
-              <span className="mono">at {c.x.toFixed(1)}, {c.y.toFixed(1)}{c.rot ? ` · turned ${Math.round(c.rot)}°` : ''}</span>
-              {dir && <span>its plug goes in from the {dir === 'right' ? 'right' : dir === 'left' ? 'left' : dir === 'up' ? 'top' : 'bottom'} edge</span>}
-              {c.conn?.entry === 'top' && <span>plugged from above{c.role === 'debug' ? ' (debug)' : c.role === 'uart' ? ' (serial)' : ''}</span>}
+              <span className="mono">{c.w.toFixed(1)} × {c.l.toFixed(1)} mm, {c.h.toFixed(1)} tall · {c.side === 'top' ? 'on top' : 'underneath'}{c.tht ? ', leads through' : ''}</span>
+              {cb && <span className="mono">{(cb.x0 - bb.x0).toFixed(1)} from the left, {(cb.y0 - bb.y0).toFixed(1)} from the bottom</span>}
+              {dir && <span>its plug goes in from the {dir} edge</span>}
+              {c.conn?.entry === 'top' && <span>plugged from above{c.role === 'debug' ? ': a debug header' : c.role === 'uart' ? ': a UART header' : ''}</span>}
               {c.h >= 5 && !c.conn && <span>tall: the holder keeps clear of it</span>}
             </>}
             {h && <>
               <b>Hole · Ø{h.d.toFixed(2)}</b>
-              <span>{ROLE_INFO[h.role ?? 'mount'].name}{h.use === 'snap' ? ' · snap pin' : h.use === 'none' ? ' · left free' : ''}</span>
-              <span className="mono">at {h.x.toFixed(2)}, {h.y.toFixed(2)}</span>
+              <span>{ROLE_INFO[h.role ?? 'mount'].name}{h.use === 'snap' ? ' · a snap pin' : h.use === 'none' ? ' · left free' : ''}</span>
+              <span className="mono">{(h.x - bb.x0).toFixed(2)} from the left, {(h.y - bb.y0).toFixed(2)} from the bottom</span>
               {h.why && <span>{h.why}</span>}
             </>}
           </div>
         );
       })()}
 
-      {nSel > 0 && (
+      {nSel > 0 && !editDim && !photoAsk && (
         <div className="selbar floating">
           <b className="mono">{nSel} selected</b>
           <button className="btn small ghost" onClick={() => rotateSel(sel, 90)} title="R">Rotate 90°</button>
@@ -483,8 +693,12 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
         </div>
       )}
       <div className="hud floating mono">
-        <span>{tool === 'place' ? `click to place ${PALETTE.find((x) => x.id === item)?.label ?? 'it'} · Shift keeps placing · Esc stops` : tool === 'measure' ? (dimA ? 'now click the second: a hole, a part (its centre or a side) or an edge of the board' : 'click the first: an edge of the board, a hole, or a part (its centre or a side)') : tool === 'hole' ? 'click to place holes · Shift keeps the tool' : tool === 'connector' ? `click near an edge to add a ${CONNECTORS.find((c) => c.id === connType)?.name ?? 'connector'} there` : tool === 'part' ? 'click to drop a keep-out box' : 'box-drag selects · Shift-click adds · right-drag pans · wheel zooms · ⌘A  R  ⌘D  Del'}</span>
-        {cursor && <span className="xy">{cursor[0].toFixed(1)}, {cursor[1].toFixed(1)}</span>}
+        <span>{tool === 'place' ? `place ${armedItem?.label ?? 'it'}: click ${armedItem?.edge ? 'near the edge it goes on' : 'where it goes'} · Shift keeps placing · Esc stops`
+          : tool === 'measure' ? (dimA ? 'now the second: a hole, a part (its centre or a side) or an edge' : 'measure: click the first thing, an edge of the board, a hole, or a part (its centre or a side)')
+          : tool === 'photoScale' ? (photoA ? 'now the second point on the photo' : 'scale the photo: click a point on it you know the distance from (a hole)')
+          : tool === 'photoAlign' ? (photoA ? 'now where that point goes on the drawing' : 'line up the photo: click a point on it (a hole)')
+          : 'drag to move (snaps; Alt: freely) · box-drag selects · Shift-click adds · right-drag pans · wheel zooms · V H M T'}</span>
+        {cursor && <span className="xy">{(cursor[0] - bb.x0).toFixed(1)}, {(cursor[1] - bb.y0).toFixed(1)}</span>}
       </div>
     </div>
   );
@@ -516,7 +730,7 @@ function plugPoly(m: V2, a: number, w: number, len: number): V2[] {
 }
 
 function fitBox(bb: { x0: number; y0: number; x1: number; y1: number }) {
-  const m = Math.max(bb.x1 - bb.x0, bb.y1 - bb.y0) * 0.35 + 14;
+  const m = Math.max(bb.x1 - bb.x0, bb.y1 - bb.y0) * 0.3 + 16;
   return { x: bb.x0 - m, y: -bb.y1 - m, w: bb.x1 - bb.x0 + 2 * m, h: bb.y1 - bb.y0 + 2 * m };
 }
 

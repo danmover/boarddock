@@ -28,7 +28,11 @@ const ANGLE: Record<Exclude<BoxFace, 'top'>, number> = { front: -90, back: 90, l
 const g = (type: string, count: number, face: BoxFace, role: string): BoxPortGroup => ({ id: uid('pg'), type, count, face, role });
 const POWERBOARD = "A powerboard: set its outlets (AU, UK, US or EU), how many, their angle and its size under Box. Auto-connect plugs the chargers' mains leads into it; its own lead goes to the wall. Never plug one powerboard into another.";
 
-export const BOX_PRESETS: Record<string, { name: string; color: string; spec: () => BoxSpec; note?: string }> = {
+/** A small part standing on a bare board (a probe's chip, an LED): for the look of it, in 2D and 3D. */
+const dp = (ref: string, pkg: string, x: number, y: number, w: number, l: number, h: number, kind: Comp['kind'] = 'generic', value?: string): Comp =>
+  ({ id: uid('c'), ref, pkg, ...(value ? { value } : {}), side: 'top', x, y, rot: 0, w, l, h, kind, tht: false });
+
+export const BOX_PRESETS: Record<string, { name: string; color: string; spec: () => BoxSpec; note?: string; parts?: () => Comp[] }> = {
   hub4: { name: 'USB hub', color: '#2b2f36', spec: () => ({ l: 100, w: 30, h: 22, groups: [g('usb_a', 4, 'front', 'hub-down'), g('usb_micro_b', 1, 'left', 'hub-up')] }) },
   hub7: { name: 'Powered USB hub', color: '#2b2f36', spec: () => ({ l: 160, w: 48, h: 24, groups: [g('usb_a', 7, 'top', 'hub-down'), g('usb_c', 1, 'left', 'hub-up'), g('barrel', 1, 'right', 'other')] }) },
   hubc: { name: 'USB-C hub', color: '#3a3f47', spec: () => ({ l: 110, w: 32, h: 14, groups: [g('usb_a', 3, 'front', 'hub-down'), g('usb_c', 1, 'front', 'hub-down'), g('usb_c', 1, 'left', 'hub-up'), g('rj45', 1, 'right', 'net')] }) },
@@ -44,8 +48,15 @@ export const BOX_PRESETS: Record<string, { name: string; color: string; spec: ()
   // edge and the micro-USB on the edge opposite
   // a USB to TTL serial adapter (the red FT232RL board): mini-USB at one end, six right-angle pins at the other
   ftdi: { name: 'USB-serial adapter', color: '#c8201e', spec: () => ({ l: 36, w: 18, h: 1.6, groups: [{ ...g('pins_ra', 1, 'left', 'uart'), pins: ['DTR', 'RXD', 'TXD', 'VCC', 'CTS', 'GND'] }, g('usb_mini_b', 1, 'right', 'device')] }),
+    // the FT232RL itself, its TX and RX LEDs, the 3.3 / 5 V solder jumper, the passives round them
+    parts: () => [dp('U1', 'SSOP-28_5.3x10.2mm_P0.65mm', 17, 9, 10.2, 7.8, 1.6, 'generic', 'FT232RL'), dp('D1', 'LED_0805', 29, 3.2, 2, 1.25, 0.8, 'led', 'TX'), dp('D2', 'LED_0805', 29, 14.8, 2, 1.25, 0.8, 'led', 'RX'),
+      dp('JP1', 'SolderJumper-3_3V3_5V', 7.2, 9, 1.6, 4.2, 0.1, 'generic', '3V3/5V'), dp('R1', 'R_0603', 8, 3.4, 1.6, 0.8, 0.5), dp('R2', 'R_0603', 8, 14.6, 1.6, 0.8, 0.5), dp('C1', 'C_0603', 23.5, 3.4, 1.6, 0.8, 0.8), dp('C2', 'C_0603', 23.5, 14.6, 1.6, 0.8, 0.8), dp('C3', 'C_0805', 12, 14.6, 2, 1.25, 1)],
     note: "A USB to TTL serial adapter (FT232RL): it slides into a slot behind its board, like a J-Link; jumper wires go from its pins to the board's UART header (GND to GND, its TXD to the board's RX, its RXD to the board's TX), its USB to a hub. Set its size, pins and their names under Box to match yours." },
   jlink: { name: 'J-Link', color: '#9c2b25', spec: () => ({ l: 50, w: 50, h: 3, ribbon: 200, groups: [{ ...g('swd10', 1, 'top', 'debug'), near: 'front' }, g('usb_micro_b', 1, 'back', 'device')] }),
+    // its microcontroller and crystal, the regulator, the power and activity LEDs, the passives
+    parts: () => [dp('U1', 'LQFP-64_10x10mm_P0.5mm', 25, 27, 12, 12, 1.6, 'generic', 'MCU'), dp('Y1', 'Crystal_SMD_3225', 36, 27, 3.2, 2.5, 0.8), dp('U2', 'SOT-223', 12, 38, 6.5, 7, 1.8, 'generic', 'LDO'),
+      dp('D1', 'LED_0805', 19, 44, 2, 1.25, 0.8, 'led', 'PWR'), dp('D2', 'LED_0805', 31, 44, 2, 1.25, 0.8, 'led', 'ACT'), dp('R1', 'R_0603', 15, 18, 1.6, 0.8, 0.5), dp('R2', 'R_0603', 35, 18, 1.6, 0.8, 0.5),
+      dp('C1', 'C_0603', 15, 34, 1.6, 0.8, 0.8), dp('C2', 'C_0603', 36, 33, 1.6, 0.8, 0.8), dp('C3', 'C_0805', 40, 40, 2, 1.25, 1), dp('R3', 'R_0603', 25, 40, 1.6, 0.8, 0.5)],
     note: "A debug probe: it slides down into a slot in the back of its board's dock, USB end up; its ribbon goes up over the dock to the board's debug header, its USB to a hub. Set its size, thickness (Height), ports and ribbon length under Box to match yours." },
 };
 
@@ -180,6 +191,7 @@ export function makeBox(preset: keyof typeof BOX_PRESETS, name?: string): Board 
   const P = BOX_PRESETS[preset];
   const b: Board = { name: name ?? P.name, outline: [], cutouts: [], thickness: 1, holes: [], comps: [], source: 'box', notes: [P.note ?? 'A box: set its size and ports under Box to match yours. Every port knows what it is for, so Auto-connect wires it right.'], kind: 'box', color: P.color };
   applyBox(b, P.spec());
+  b.comps.push(...(P.parts?.() ?? []));
   return b;
 }
 

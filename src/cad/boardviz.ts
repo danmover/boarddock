@@ -4,6 +4,8 @@
 import type { Anim, Board, Comp, Ghost, MeshData, PickTag, V2 } from '../model/types';
 import { bbox, compRect, inside, rad } from '../geom/poly';
 import { textStrokes, textWidth } from './font';
+import { headerPins } from '../model/probes';
+import { boardCopper } from '../model/copper';
 import { box, circle2, cyl, ext, poly, toMesh, type MF } from './kernel';
 import { K } from './kernel';
 
@@ -95,6 +97,23 @@ function partDetail(bin: Bin, c: Comp, zt: number, zb: number) {
   const hx = w / 2, hy = l / 2;
   const B = (mat: Mat, x0: number, y0: number, a0: number, x1: number, y1: number, a1: number) => bin.box(mat, T, x0, y0, a0, x1, y1, a1);
 
+  if (type === 'swd10' || type === 'jtag20') {
+    // a shrouded box header: walls round two rows of pins, a key slot in one long wall
+    const pitch = type === 'swd10' ? 1.27 : 2.54, n = type === 'swd10' ? 5 : 10, wall = type === 'swd10' ? 0.55 : 0.9;
+    const long = w >= l, ax = long ? hx : hy, ac = long ? hy : hx;
+    let shroud = box(-hx, -hy, 0, hx, hy, h).subtract(box(-hx + wall, -hy + wall, 0.8, hx - wall, hy - wall, h + 1));
+    const key = Math.min(ax * 0.5, pitch * 2.2);
+    shroud = shroud.subtract(long ? box(-key / 2, -hy - 1, 1.6, key / 2, -hy + wall + 0.1, h + 1) : box(-hx - 1, -key / 2, 1.6, -hx + wall + 0.1, key / 2, h + 1));
+    bin.add('black', tf(shroud, T));
+    const r = pitch * 0.16;
+    for (let i = 0; i < n; i++) for (const j of [-0.5, 0.5]) {
+      const u = (i - (n - 1) / 2) * pitch, v = j * pitch;
+      const [px, py] = long ? [u, v] : [v, u];
+      B('gold', px - r, py - r, 0.8, px + r, py + r, h - 0.6);
+    }
+    void ac;
+    return;
+  }
   if (c.kind === 'header' || type === 'header' || /pin.?header|pin.?socket|conn_\d+x\d+|idc/i.test(name)) {
     const socket = /socket|female/i.test(name);
     const baseH = socket ? h : Math.min(2.5, h);
@@ -201,6 +220,25 @@ function partDetail(bin: Bin, c: Comp, zt: number, zb: number) {
     return;
   }
   if (c.kind === 'antenna') { B('white', -hx, -hy, 0, hx, hy, h); return; }
+  // tall parts that have a look of their own: electrolytic caps, buzzers, relays, trimmers, coin cell holders
+  const pkgName = `${c.pkg} ${c.value ?? ''}`;
+  const round = Math.abs(w - l) < 0.6 * Math.min(w, l) && h > 3;
+  if (round && /elec|cap|\bCP_|electrolytic/i.test(pkgName)) {
+    const r = Math.min(w, l) / 2;
+    bin.add('metal', tf(cyl(0, 0, 0, h - 0.4, r - 0.05, r - 0.05, 32), T));
+    bin.add('blue', tf(cyl(0, 0, 0.3, h - 0.9, r, r, 32), T));
+    bin.add('metal', tf(cyl(0, 0, h - 0.4, h, r - 0.35, r - 0.35, 32), T));
+    B('white', -r * 0.85, r * 0.35, 0.35, -r * 0.25, r * 0.75, h - 1); // the minus stripe
+    return;
+  }
+  if (round && /buzzer|beeper|speaker/i.test(pkgName)) {
+    const r = Math.min(w, l) / 2;
+    bin.add('black', tf(cyl(0, 0, 0, h, r, r, 32).subtract(cyl(0, 0, h - 0.6, h + 1, 1, 1, 16)), T));
+    return;
+  }
+  if (/relay/i.test(pkgName)) { B('blue', -hx, -hy, 0, hx, hy, h); B('white', -hx * 0.7, -hy * 0.5, h, hx * 0.1, hy * 0.5, h + 0.02); return; }
+  if (/trimmer|pot\b|potentiometer/i.test(pkgName)) { B('blue', -hx, -hy, 0, hx, hy, h * 0.6); bin.add('white', tf(cyl(0, 0, h * 0.6, h, Math.min(w, l) * 0.32, Math.min(w, l) * 0.32, 24), T)); return; }
+  if (/coin|cr2032|battery/i.test(pkgName)) { B('black', -hx, -hy, 0, hx, hy, h * 0.55); bin.add('metal', tf(cyl(0, -hy * 0.1, h * 0.55, h, Math.min(w, l) * 0.42, Math.min(w, l) * 0.42, 32), T)); return; }
   // generic: ICs with legs, or small passives with metal ends
   if (Math.min(w, l) >= 3 && h <= 4) {
     const leg = 0.55, legH = Math.min(0.45, h * 0.5);
@@ -246,63 +284,6 @@ function findFree(b: Board, comps: Comp[], w: number, h: number): [number, numbe
     if (![...rects, ...holes].some((r) => r.x0 < box.x1 && box.x0 < r.x1 && r.y0 < box.y1 && box.y0 < r.y1) && [[x, y], [x + w, y + h], [x, y + h], [x + w, y]].every((q) => inside(q as [number, number], b.outline))) return [x, y];
   }
   return null;
-}
-
-/** Deterministic pseudo-random numbers from a seed. */
-function rng(seed: string) {
-  let h = 2166136261;
-  for (const ch of seed) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
-  return () => { h += 0x6d2b79f5; let t = h; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
-}
-
-/**
- * Plausible copper for boards that came without it (templates, drawings, fab files): each part's pins get short
- * escape stubs, then 45-degree routes to a pin of a nearby part, some dropping through a via to the bottom side.
- */
-function fakeTraces(b: Board): NonNullable<Board['traces']> {
-  const R = rng(b.name + b.comps.length);
-  const out: NonNullable<Board['traces']> = [];
-  const pins: { p: [number, number]; n: [number, number]; comp: number }[] = [];
-  b.comps.forEach((c, ci) => {
-    if (c.hidden || c.side !== 'top') return;
-    const a = rad(c.rot), ca = Math.cos(a), sa = Math.sin(a);
-    const at = (u: number, v: number): [number, number] => [c.x + u * ca - v * sa, c.y + u * sa + v * ca];
-    const nrm = (u: number, v: number): [number, number] => [u * ca - v * sa, u * sa + v * ca];
-    const long = c.w >= c.l;
-    const n = Math.min(6, Math.max(1, Math.floor((long ? c.w : c.l) / 2.5)));
-    for (let k = 0; k < n; k++) {
-      const s2 = (k - (n - 1) / 2) * ((long ? c.w : c.l) / n);
-      if (long) { pins.push({ p: at(s2, -c.l / 2), n: nrm(0, -1), comp: ci }); if (c.w * c.l > 12) pins.push({ p: at(s2, c.l / 2), n: nrm(0, 1), comp: ci }); }
-      else { pins.push({ p: at(-c.w / 2, s2), n: nrm(-1, 0), comp: ci }); if (c.w * c.l > 12) pins.push({ p: at(c.w / 2, s2), n: nrm(1, 0), comp: ci }); }
-    }
-  });
-  const ok = (q: [number, number]) => inside(q, b.outline);
-  const seg = (a: [number, number], c: [number, number], w: number, side: 'top' | 'bottom') => { if (ok(a) && ok(c)) out.push({ a, b: c, w, side }); };
-  const used = new Set<number>();
-  pins.forEach((pi, i) => {
-    if (used.has(i) || out.length > 700) return;
-    // nearest pin on another part
-    let best = -1, bd = Infinity;
-    pins.forEach((pj, j) => { if (j === i || used.has(j) || pj.comp === pi.comp) return; const d = Math.hypot(pj.p[0] - pi.p[0], pj.p[1] - pi.p[1]); if (d < bd) { bd = d; best = j; } });
-    if (best < 0 || bd > 40 || R() < 0.25) return;
-    used.add(i); used.add(best);
-    const w = R() < 0.2 ? 0.5 : 0.25;
-    const a0 = pi.p, s0: [number, number] = [a0[0] + pi.n[0] * 1.2, a0[1] + pi.n[1] * 1.2];
-    const pj = pins[best], b0 = pj.p, s1: [number, number] = [b0[0] + pj.n[0] * 1.2, b0[1] + pj.n[1] * 1.2];
-    const dx = s1[0] - s0[0], dy = s1[1] - s0[1];
-    const diag = Math.min(Math.abs(dx), Math.abs(dy));
-    const mid: [number, number] = Math.abs(dx) > Math.abs(dy) ? [s1[0] - Math.sign(dx) * diag, s0[1]] : [s0[0], s1[1] - Math.sign(dy) * diag];
-    const side = R() < 0.2 ? 'bottom' : 'top';
-    seg(a0, s0, w, 'top'); seg(s0, mid, w, side); seg(mid, s1, w, side); seg(s1, b0, w, 'top');
-  });
-  return out;
-}
-
-/** Vias where fake routes change side. */
-function fakeVias(tr: NonNullable<Board['traces']>): NonNullable<Board['vias']> {
-  const out: NonNullable<Board['vias']> = [];
-  for (let i = 0; i + 1 < tr.length; i++) if (tr[i].side !== tr[i + 1].side && Math.hypot(tr[i].b[0] - tr[i + 1].a[0], tr[i].b[1] - tr[i + 1].a[1]) < 1e-6) out.push({ x: tr[i].b[0], y: tr[i].b[1], d: 0.7 });
-  return out;
 }
 
 function mulT(a: number[], b: number[]) {
@@ -404,7 +385,7 @@ export function boardDetail(b: Board, zb: number, zt: number, tag: PickTag, anim
     partDetail(bin, c, zt, zb);
   }
   // copper: the board's own tracks (KiCad), else plausible ones between the parts' pins
-  const tr = b.traces?.length ? b.traces : fakeTraces(b);
+  const cu = boardCopper(b), tr = cu.tracks;
   for (const t of tr.slice(0, 6000)) {
     const dx = t.b[0] - t.a[0], dy = t.b[1] - t.a[1], L = Math.hypot(dx, dy);
     if (L < 0.01) continue;
@@ -413,13 +394,33 @@ export function boardDetail(b: Board, zb: number, zt: number, tag: PickTag, anim
     const T = [ca, sa, 0, 0, -sa, ca, 0, 0, 0, 0, 1, 0, t.a[0], t.a[1], z, 1];
     bin.box('trace', T, -t.w / 2, -t.w / 2, 0, L + t.w / 2, t.w / 2, 0.04);
   }
-  const vias = b.vias?.length ? b.vias : fakeVias(tr);
+  const vias = cu.vias;
   for (const v of vias.slice(0, 3000)) {
     for (const z of [zt, zb - 0.05]) {
       const T = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, v.x, v.y, z, 1];
       const r = v.d / 2, q = r * 0.42;
       bin.box('tin', T, -r, -q, 0.0, r, q, 0.05); bin.box('tin', T, -q, -r, 0.0, q, r, 0.05);
       bin.box('black', T, -q * 0.6, -q * 0.6, 0.0, q * 0.6, q * 0.6, 0.06);
+    }
+  }
+  // silkscreen: what each pin of a named header is (GND, TX, RX…), beside it, as boards have them printed
+  for (const c of list) {
+    if (c.side !== 'top' || !c.conn || !['header', 'pins_ra', 'jst_ph', 'jst_xh'].includes(c.conn.type)) continue;
+    const pins = headerPins(c);
+    if (!pins.some((q) => q.net)) continue;
+    const hgt = 0.95;
+    const short = (n: string) => { const t = n.replace(/^\//, '').split(/[^a-z0-9+]+/i).filter(Boolean); return (t[t.length - 1] ?? '').replace(/^\+/, '').toUpperCase().slice(0, 4); };
+    let dx = 0, dy = 0;
+    if (c.conn.type === 'pins_ra') { const a = rad(c.conn.angle); dx = -Math.cos(a); dy = -Math.sin(a); } // inward, away from the pins
+    else { const a = rad(c.w >= c.l ? c.rot : c.rot + 90); dx = -Math.sin(a); dy = Math.cos(a); if (Math.abs(dy) > 0.7) { dx = 0; dy = -1; } }
+    const off = c.conn.type === 'pins_ra' ? 3.4 : Math.min(c.w, c.l) / 2 + 0.7;
+    for (const q of pins) {
+      if (!q.net) continue;
+      const t = short(q.net), tw = textWidth(t, hgt);
+      const cx = q.x + dx * off, cy = q.y + dy * off;
+      // across a row that runs along x the names sit under the pins, centred; beside a row along y, to its side
+      const o: [number, number] = Math.abs(dy) > 0.7 ? [cx - tw / 2, dy < 0 ? cy - hgt : cy] : [dx < 0 ? cx - tw : cx, cy - hgt / 2];
+      silkText(bin, t, o, hgt, zt);
     }
   }
   // silkscreen: reference designators beside the bigger parts, and the board name in a free corner
