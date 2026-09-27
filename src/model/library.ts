@@ -2,7 +2,7 @@
 // Dimensions are typical catalogue values; every one is editable in the app because real parts vary.
 import { PRINTERS_DB, printerByName } from './printers';
 import { applyHoleRoles } from './holes';
-import { numberLinks } from './links';
+import { DEBUG_HINT, numberLinks } from './links';
 import type { ArrangeSettings, Board, Comp, CompKind, ConnSetup, HolderSettings, Material, Module, MountSettings, PanelSettings, PlugSpec, PrinterSettings, Project, StandSettings } from './types';
 
 export interface ConnType {
@@ -38,6 +38,10 @@ export const CONNECTORS: ConnType[] = [
   { id: 'terminal', name: 'Screw terminal block', entry: 'edge', body: { w: 10.2, l: 7.5, h: 10 }, zc: 3, overhang: 0, plug: { w: 10, h: 4, len: 15, cable: 2 }, match: /terminal[\s_-]?block|screw[\s_-]?terminal|kf301|kf128|mstb|mkds|tb\d|wago|phoenix/i, cradle: false, note: 'Wires only: add a tie anchor.' },
   { id: 'jst_xh', name: 'JST-XH (top entry)', entry: 'top', body: { w: 9.9, l: 5.75, h: 7 }, zc: 0, overhang: 0, plug: { w: 9.9, h: 5.75, len: 12, cable: 2 }, match: /jst[\s_-]?xh|b\dB-XH|xh[\s_-]?\d/i, cradle: false },
   { id: 'jst_ph', name: 'JST-PH (top entry)', entry: 'top', body: { w: 7.9, l: 4.5, h: 6 }, zc: 0, overhang: 0, plug: { w: 7.9, h: 4.5, len: 10, cable: 2 }, match: /jst[\s_-]?ph|b\dB-PH|ph[\s_-]?\d/i, cradle: false },
+  // debug connectors: a probe (J-Link, ST-Link) plugs in from above with an IDC socket on a ribbon
+  { id: 'swd10', name: 'Debug 10-pin (Cortex, 1.27 mm)', entry: 'top', body: { w: 12.7, l: 5.8, h: 5.6 }, zc: 0, overhang: 0, plug: { w: 12.4, h: 5.4, len: 9, cable: 1 }, match: /$^/, cradle: false, note: 'A J-Link plugs in with its 10-pin ribbon (the 20-to-10-pin adapter on a 20-pin J-Link).' },
+  { id: 'jtag20', name: 'Debug 20-pin (JTAG, 2.54 mm)', entry: 'top', body: { w: 33.2, l: 8.9, h: 9 }, zc: 0, overhang: 0, plug: { w: 31, h: 7.6, len: 12, cable: 1.2 }, match: /$^/, cradle: false, note: "A J-Link's own 20-pin ribbon plugs straight in." },
+  { id: 'tagconnect', name: 'Tag-Connect pads', entry: 'top', body: { w: 10, l: 5, h: 0.1 }, zc: 0, overhang: 0, plug: { w: 10, h: 5, len: 22, cable: 1 }, match: /$^/, cradle: false, note: 'Pads only: the Tag-Connect cable clips onto the board from above.' },
   { id: 'header', name: 'Pin header (Dupont)', entry: 'top', body: { w: 10.2, l: 2.54, h: 8.5 }, zc: 0, overhang: 0, plug: { w: 10.2, h: 2.54, len: 14, cable: 1.5 }, match: /pin[\s_-]?header|pin[\s_-]?socket|conn_\d+x\d+|header_\d|idc|box[\s_-]?header/i, cradle: false },
   { id: 'iec_c7', name: 'Mains (figure-8, C7)', entry: 'edge', body: { w: 11.5, l: 12, h: 8 }, zc: 4, overhang: 0, plug: { w: 13, h: 9, len: 30, cable: 6 }, match: /iec[\s_-]?60320|figure[\s_-]?8/i, cradle: false },
   { id: 'custom', name: 'Custom connector', entry: 'edge', body: { w: 10, l: 8, h: 5 }, zc: 2.5, overhang: 0.5, plug: { w: 12, h: 8, len: 20, cable: 4 }, match: /$^/, cradle: true },
@@ -107,6 +111,9 @@ export function guessPackage(pkg: string, ref = '', value = ''): PkgGuess {
   if (/LED/.test(p) || /^LED/i.test(ref)) g = { ...g, kind: 'led' };
   if (/^(SW|S|BTN|KEY)\d/i.test(ref) || /SW_|SWITCH|TACT|BUTTON|PUSH/.test(p)) g = { ...g, kind: 'switch', h: Math.max(g.h, 3.5) };
   if (/INDUCTOR|^L_|CRYSTAL|XTAL/.test(p)) g = { ...g, h: Math.max(g.h, 2) };
+  // a debug header (SWD / JTAG) by its shape or its name: a probe plugs in there
+  const dbg = debugType(pkg, ref, value);
+  if (dbg) { const t = connById(dbg); return { w: t.body.w, l: t.body.l, h: t.body.h, kind: 'connector', tht: dbg !== 'tagconnect' && !/smd/i.test(pkg), conn: t }; }
   // connectors
   const isConnRef = /^(J|P|CN|X|USB|CON|JP)\d/i.test(ref);
   const hit = CONNECTORS.find((c) => c.id !== 'custom' && c.match.test(name));
@@ -118,6 +125,26 @@ export function guessPackage(pkg: string, ref = '', value = ''): PkgGuess {
     };
   } else if (isConnRef && !g.kind) g = { ...g, kind: 'connector', conn: connById('custom') };
   return g;
+}
+
+/**
+ * The debug connector a footprint is, if any (debugType() picks them; their `match` never does): Tag-Connect pads;
+ * a 2 x 5 header at 1.27 mm (the Cortex debug connector, whatever it is called); or a 10 or 20-pin header whose
+ * name, value or reference says JTAG / SWD / debug. Other headers named for debug (a 1 x 4 SWD header) stay pin
+ * headers: jumper wires go there, and they still count as a debug port.
+ */
+export function debugType(pkg: string, ref = '', value = ''): 'swd10' | 'jtag20' | 'tagconnect' | null {
+  const text = `${pkg} ${value} ${ref}`;
+  if (/tag[\s_-]?connect|tc20[35]0/i.test(text)) return 'tagconnect';
+  const grid = pkg.match(/(\d+)x(\d+)/i);
+  const rows = grid ? +grid[1] : 0, pins = grid ? rows * +grid[2] : 0;
+  const pitch = /1\.27/.test(pkg) ? 1.27 : /2\.54/.test(pkg) ? 2.54 : 0;
+  if (/ftsh[\s_-]?105/i.test(pkg) || (pins === 10 && rows === 2 && pitch === 1.27)) return 'swd10';
+  if (!DEBUG_HINT.test(text)) return null;
+  const n = pins || +(text.match(/(?:_|\b)(10|20)(?:[\s_-]?pins?)?\b/i)?.[1] ?? 0);
+  if (n === 10 && pitch !== 2.54) return 'swd10';
+  if (n === 20 && pitch !== 1.27) return 'jtag20';
+  return null;
 }
 
 /** Fill in kind / connector setup for a component from its names. Keeps sizes that are already known. */

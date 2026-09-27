@@ -133,7 +133,7 @@ export function slope(e: CableEnd, lane: number, zc: number): Route | null {
   return { pts: [e.p, p1, [p1[0], lane, zc]], kinds: ['exit', 'escape'] };
 }
 
-export interface Choice { route: Route; street: number; hits: Hit[]; len: number; score: number; ea: Route | 'slope'; eb: Route | 'slope' }
+export interface Choice { route: Route; street: number; hits: Hit[]; len: number; score: number; ea: Route | 'slope'; eb: Route | 'slope'; direct?: boolean } // direct: straight across, no street (street = -1)
 
 /**
  * Best route for one cable over the given streets (v of each). Score: length, plus 300 per obstacle hit and 4 per
@@ -154,6 +154,50 @@ export function bestRoute(A: CableEnd, B: CableEnd, streets: number[], zc: numbe
       const score = len + cost * 0.2 + h.length * 300 + h.reduce((s, x) => s + x.depth, 0) * 4;
       if (!best || score < best.score) best = { route, street: k, hits: h, len, score, ea: ea === sa ? 'slope' : ea, eb: eb === sb ? 'slope' : eb };
     }
+  }
+  return best;
+}
+
+/**
+ * Short ways across for a cable that stays by its boards instead of going down to a street (a probe's ribbon to the
+ * board beside it): out of each plug, then over the top of both boards, round either end of them, round either side,
+ * or straight across. The one that is shortest and hits least wins; `own` is the two ends' boards together.
+ */
+export function directRoute(A: CableEnd, B: CableEnd, radius: number, obs: Obstacle[], ownA: Box | null, ownB: Box | null): Choice | null {
+  // a ribbon bends flat right behind its plug, once it is clear of its own board and holder
+  const out = (e: CableEnd, ob: Box | null) => {
+    let t = 5;
+    if (ob && [0, 1, 2].every((k) => e.p[k] > ob[k] - 0.1 && e.p[k] < ob[k + 3] + 0.1)) {
+      const k = [0, 1, 2].reduce((m, j) => (Math.abs(e.d[j]) > Math.abs(e.d[m]) ? j : m), 0);
+      t = Math.min(30, Math.max(t, ((e.d[k] > 0 ? ob[k + 3] : ob[k]) - e.p[k]) / e.d[k] + radius + 1));
+    }
+    return add(e.p, e.d, t);
+  };
+  const a1 = out(A, ownA), b1 = out(B, ownB);
+  const own = ownA && ownB ? [0, 1, 2].map((k) => Math.min(ownA[k], ownB[k])).concat([0, 1, 2].map((k) => Math.max(ownA[k + 3], ownB[k + 3]))) : ownA ?? ownB;
+  const box = own ?? [Math.min(a1[0], b1[0]), Math.min(a1[1], b1[1]), Math.min(a1[2], b1[2]), Math.max(a1[0], b1[0]), Math.max(a1[1], b1[1]), Math.max(a1[2], b1[2])];
+  const clear = radius + 6;
+  const mk = (mid: number[][]): Route => {
+    const pts = [A.p, a1, ...mid, b1, B.p];
+    return { pts, kinds: pts.slice(1).map((_, i) => (i === 0 || i === pts.length - 2 ? 'exit' : 'escape') as SegKind) };
+  };
+  // across at a height: from the lower plug up to over both boards, every 6 mm (the lowest that is clear wins), straight
+  // across or in two legs (across the rail first, or along it first)
+  const zs: number[] = [];
+  for (let z = Math.min(a1[2], b1[2]); z < box[5] + clear; z += 6) zs.push(z);
+  zs.push(Math.max(box[5], a1[2], b1[2]) + clear);
+  const cands: Route[] = [mk([])];
+  for (const z of zs) {
+    const up = [a1[0], a1[1], z], down = [b1[0], b1[1], z];
+    cands.push(mk([up, down]), mk([up, [a1[0], b1[1], z], down]), mk([up, [b1[0], a1[1], z], down]));
+  }
+  for (const u of [box[0] - clear, box[3] + clear]) cands.push(mk([[u, a1[1], a1[2]], [u, b1[1], b1[2]]]));
+  for (const v of [box[1] - clear, box[4] + clear]) cands.push(mk([[a1[0], v, a1[2]], [b1[0], v, b1[2]]]));
+  let best: Choice | null = null;
+  for (const route of cands) {
+    const len = routeLength(route), h = hits(route, obs, [A, B], radius);
+    const score = len + h.length * 300 + h.reduce((q, x) => q + x.depth, 0) * 4;
+    if (!best || score < best.score) best = { route, street: -1, hits: h, len, score, ea: route, eb: route, direct: true };
   }
   return best;
 }

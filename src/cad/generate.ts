@@ -3,6 +3,7 @@
 import type { Anim, Board, Check, Comp, EdgeName, Feature, GenResult, Ghost, HolderSettings, Loop, MeshData, MountSettings, PartOut, PickTag, Project, V2 } from '../model/types';
 import { holeKeepout, isMountHole } from '../model/holes';
 import { boxProblems } from '../model/boxes';
+import { DEBUG_TYPES, isDebugPort, isUartPort } from '../model/links';
 import { DEFAULT_FEATURES, MATERIALS } from '../model/library';
 import { bbox, centroid, compRect, extentAlong, inside, rad, rayExit, round, segDist } from '../geom/poly';
 import type { CS, MF } from './kernel';
@@ -138,8 +139,8 @@ function wallPiece(C: Ctx, q: V2, d: V2, s0: number, s1: number, z1: number) {
 
 export { computeLevels } from './levels';
 
-/** Where a plug's cable leaves it (holder frame): the end of the plug body and the way it points. */
-export interface PlugEnd { module: string; ref: string; p: [number, number, number]; d: [number, number, number]; cable: number }
+/** Where a cable leaves a plug: point, outward direction, cable size, and (for a ribbon) the plug's width axis. */
+export interface PlugEnd { module: string; ref: string; p: [number, number, number]; d: [number, number, number]; cable: number; w?: [number, number, number] }
 export interface ModuleOut { parts: PartOut[]; ghosts: Ghost[]; warnings: string[]; checks: Check[]; levels: GenResult['report']['levels']; clipAt: V2 | null; clipT: number[] | null; dockM: M4 | null; features: Feature[]; plugs: PlugEnd[] }
 
 // Built modules are cached by their inputs: moving, turning or re-pairing docks does not rebuild holders.
@@ -162,9 +163,21 @@ export function buildModule(job: Job): ModuleOut {
   }
 }
 
-/** Boxes (hubs, chargers) sit in low guards and are strapped down; no snap fingers, notches or label. */
+/**
+ * A debug probe (J-Link): a thin box that slides down into a slot from its open end, plugs first out, and stays there
+ * (see slotBody). Several for one board stack as slots on corner towers.
+ */
+const isProbeBox = (b: Board) => b.kind === 'box' && b.comps.some(isDebugPort);
+
+/** Boxes (hubs, chargers, probes) sit in low guards: no snap fingers, notches or label. Hubs and chargers are strapped down. */
 const holderFor = (H: HolderSettings, b: Board): HolderSettings =>
   b.kind === 'box' ? { ...H, tabs: 'off', notches: false, label: '', wallAbove: Math.min(H.wallAbove, -(b.thickness - 8)), standoff: H.standoff ?? 1.2, minStandoff: 1.2 } : H;
+
+/** A holder's heights as it is really built: box settings applied, and raised over the dock's spine when docked. */
+export function builtLevels(b: Board, H0: HolderSettings, dockEdge?: EdgeName | null) {
+  const H = holderFor(H0, b);
+  return computeLevels(b, H, dockEdge ? dockSite(b, H, dockEdge).minZb : 0);
+}
 
 function build(job: Job): ModuleOut {
   const { p, b } = job;
@@ -196,7 +209,8 @@ function build(job: Job): ModuleOut {
   checks.push({ group: 'Board', name: 'Clearance under the board', value: `${round(s, 1)} mm`, status: 'info', detail: needMax ? `tallest underside item needs ${round(needMax, 1)} mm (${keepouts.sort((a, c) => c.need - a.need)[0].why}); deeper items get pockets in the base` : 'nothing under the board' });
 
   // ---- base and wall ----
-  if (frame) frameBody(C);
+  if (isProbeBox(b)) slotBody(C);
+  else if (frame) frameBody(C);
   else {
     C.pos.push(extCh(outer, 0, base, 0, H.chamfer ? 0.4 : 0));
     const ring = outer.subtract(inner);
@@ -209,7 +223,7 @@ function build(job: Job): ModuleOut {
   }
 
   connectors(C);
-  if (b.kind === 'box') strapLoops(C);
+  if (b.kind === 'box' && !isProbeBox(b)) strapLoops(C);
   overhangs(C);
   if (site) dockBlocks(C, site);
   // label first so it gets a long free wall; if that leaves no room for two fingers, drop the label
@@ -344,9 +358,13 @@ function connectors(C: Ctx) {
     if (cn.entry === 'top') {
       if (cn.tie && F.ties) tieAnchor(C, [c.x, c.y], null, c.ref);
       const zTop = (c.side === 'top' ? zt + c.h : zb - c.h) + cn.plug.len + 0.6;
-      // a port in the top of a box gets its plug drawn standing in it
-      if (b.kind === 'box' && c.side === 'top') C.ghosts.push(...plugUp(c.x, c.y, zt + c.h, cn.plug, { kind: 'plug', module: C.mid, refs: [c.ref] }, { seq: 30, dir: [0, 0, 1] }, cn.type));
-      C.plugs.push({ module: C.mid, ref: c.ref, p: [c.x, c.y, zTop], d: [0, 0, c.side === 'top' ? 1 : -1], cable: cn.plug.cable });
+      // a port in the top of a box gets its plug drawn standing in it, a debug header its probe's IDC socket (along
+      // the header's long side)
+      const ang = b.kind === 'box' ? 0 : c.w >= c.l ? c.rot : c.rot + 90;
+      // (a UART header's socket as long as the header)
+      const plug = isUartPort(c) && cn.type === 'header' ? { ...cn.plug, w: Math.max(cn.plug.w, c.w, c.l) } : cn.plug;
+      if (c.side === 'top' && (b.kind === 'box' || DEBUG_TYPES.has(cn.type) || isUartPort(c))) C.ghosts.push(...plugUp(c.x, c.y, zt + c.h, plug, { kind: 'plug', module: C.mid, refs: [c.ref] }, { seq: 30, dir: [0, 0, 1] }, cn.type, ang));
+      C.plugs.push({ module: C.mid, ref: c.ref, p: [c.x, c.y, zTop], d: [0, 0, c.side === 'top' ? 1 : -1], cable: cn.plug.cable, w: [Math.cos(rad(ang)), Math.sin(rad(ang)), 0] });
       continue;
     }
     const d = dirOf(cn.angle);
@@ -366,7 +384,7 @@ function connectors(C: Ctx) {
     if (cn.type === 'usb_a_dual') {
       const off = c.side === 'top' ? 3.9 : -3.9;
       C.plugs.push({ module: C.mid, ref: c.ref, p: [pe[0], pe[1], zAx - off], d: [d[0], d[1], 0], cable: cn.plug.cable }, { module: C.mid, ref: `${c.ref}:2`, p: [pe[0], pe[1], zAx + off], d: [d[0], d[1], 0], cable: cn.plug.cable });
-    } else C.plugs.push({ module: C.mid, ref: c.ref, p: [pe[0], pe[1], zAx], d: [d[0], d[1], 0], cable: cn.plug.cable });
+    } else C.plugs.push({ module: C.mid, ref: c.ref, p: [pe[0], pe[1], zAx], d: [d[0], d[1], 0], cable: cn.plug.cable, w: [-d[1], d[0], 0] });
     if (cn.cradle && F.cradles && ph > 0.5) {
       specs.push({ ref: c.ref, mouth, d, sEdge, toOut, zAx, pw, ph, pl, cap: cn.cap && F.caps, angle: cn.angle });
     } else if (cn.guard && F.guards) {
@@ -709,6 +727,42 @@ function frameBody(C: Ctx) {
   const ring = outer.subtract(inner);
   const guards = ring.intersect(unionCS(guardPoints(C.b.outline).map(([x, y]) => circle2(x, y, 7, 32))));
   if (!guards.isEmpty()) C.pos.push(extCh(guards, 0, C.zw, H.chamfer ? 0.4 : 0, 0));
+}
+
+/**
+ * A slot for a thin probe: it slides in from its open end (the end its plugs are on, which in a dock points up, away
+ * from the rail) down to a stop, under a lip along each side, and rests on a rim. Nothing to strap, snap or screw:
+ * lift it out the way it went in.
+ */
+function slotBody(C: Ctx) {
+  const { H, O, outer, zb, zt } = C;
+  const ol = C.b.outline, gw = H.gap + H.wall;
+  // the open end: away from the dock, else the side most of its plugs are on
+  let open: V2 = C.dock ? [-C.dock.n[0], -C.dock.n[1]] : [0, 0];
+  if (!C.dock) {
+    for (const c of C.b.comps) if (c.conn?.entry === 'edge' && !c.hidden) { const d = dirOf(c.conn.angle); open = [open[0] + d[0], open[1] + d[1]]; }
+    const L = Math.hypot(open[0], open[1]);
+    open = L > 0.3 ? [open[0] / L, open[1] / L] : [0, 1];
+  }
+  const side = left(open);
+  const u = (q: V2) => q[0] * open[0] + q[1] * open[1], t = (q: V2) => q[0] * side[0] + q[1] * side[1];
+  const u0 = Math.min(...ol.map(u)), u1 = Math.max(...ol.map(u)), t0 = Math.min(...ol.map(t)), t1 = Math.max(...ol.map(t));
+  const LIP = 1.6, zL = zt + 0.3, zTop = zL + 1.2;
+  // the rim it rests on
+  C.pos.push(extCh(outer.subtract(O.offset(-RIM_IN - 1, 'Round')), 0, zb, H.chamfer ? 0.4 : 0, 0));
+  // a channel along each side: the wall, and the lip over the probe's edge
+  for (const [tE, sg] of [[t1, 1], [t0, -1]] as const) {
+    const w0 = tE + sg * H.gap, w1 = tE + sg * gw;
+    C.pos.push(orientedBox([0, 0], open, u0 - gw, u1, Math.min(w0, w1), Math.max(w0, w1), 0, zTop));
+    const l0 = tE - sg * LIP, l1 = tE + sg * (H.gap + 0.01);
+    C.pos.push(orientedBox([0, 0], open, u0 - gw, u1 - 1.5, Math.min(l0, l1), Math.max(l0, l1), zL, zTop));
+    // a lead-in at the open end: the lip starts 1.5 mm in, chamfered
+    C.pos.push(orientedBox([0, 0], open, u1 - 1.5, u1, Math.min(l0, l1) + (sg > 0 ? 0.8 : 0), Math.max(l0, l1) - (sg < 0 ? 0.8 : 0), zL + 0.4, zTop));
+    feat(C, 'rim', orientedRect([0, 0], open, u0 - gw, u1, Math.min(w1, l0), Math.max(w1, l0)), 0, zTop, ['slot']);
+  }
+  // the stop at the closed end
+  C.pos.push(orientedBox([0, 0], open, u0 - gw, u0 - H.gap, t0 - gw, t1 + gw, 0, zTop));
+  C.checks.push({ group: 'Holder', name: 'Slot', value: `${round(zt - zb, 1)} mm, open ${Math.abs(open[1]) > 0.7 ? (open[1] > 0 ? 'at the back' : 'at the front') : open[0] > 0 ? 'at the right' : 'at the left'}`, status: 'info', detail: `the probe slides in from its open end (plugs out), under a ${LIP} mm lip along each side, down to the stop; ${C.dock ? 'in the dock the open end points up, so it stays put' : 'friction holds it'}. Set its thickness under Box (Height) to match yours. Not print-tested yet.` });
 }
 
 /**
@@ -1264,6 +1318,13 @@ function boltedGhosts(C: Ctx, bo: NonNullable<Job['bolted']>[number]) {
   C.checks.push({ group: 'Stack', name: `${b.name} bolted on top`, value: `${round(dz, 1)} mm standoffs`, status: 'info', detail: `sits on standoffs screwed into the holes it shares with ${C.b.name}; those holes get no holder pins and the holder leaves room under them for screw heads or nuts. Its plugs get no cradles of their own.` });
 }
 
+/** Press-fit socket for a Ø4 tower peg, open at z = 0: three crush ribs make it a firm fit. */
+function pegSocket(q: V2): MF {
+  let hole = unionMF([cyl(q[0], q[1], -1, 4.6, 2.12), cyl(q[0], q[1], 4.59, 6.7, 2.12, 0.02)]);
+  for (const a of [90, 210, 330]) hole = hole.subtract(box(-0.35, 1.85, -1, 0.35, 2.3, 4.6).rotate([0, 0, a - 90]).translate([q[0], q[1], 0]));
+  return hole;
+}
+
 // ------------------------------- multi-board arrangement features --------------------------------
 function arrangeFeatures(C: Ctx) {
   const A = C.job.hooks;
@@ -1274,12 +1335,7 @@ function arrangeFeatures(C: Ctx) {
     for (const q of pts) {
       let tw = extCh(roundCS(rect2(q[0] - 3.5, q[1] - 3.5, q[0] + 3.5, q[1] + 3.5), 1.5), 0, height, 0.4, 0.4);
       if (peg) tw = unionMF([tw, cyl(q[0], q[1], height - 0.01, height + 3.4, 2.0), cyl(q[0], q[1], height + 3.39, height + 4.0, 2.0, 1.4)]);
-      if (socket) {
-        let hole = unionMF([cyl(q[0], q[1], -1, 4.6, 2.12), cyl(q[0], q[1], 4.59, 6.7, 2.12, 0.02)]);
-        // three crush ribs for a firm press fit
-        for (const a of [90, 210, 330]) hole = hole.subtract(box(-0.35, 1.85, -1, 0.35, 2.3, 4.6).rotate([0, 0, a - 90]).translate([q[0], q[1], 0]));
-        tw = tw.subtract(hole);
-      }
+      if (socket) tw = tw.subtract(pegSocket(q));
       // arm back to the tray, clipped so it never enters the board area
       const d: V2 = [cen[0] - q[0], cen[1] - q[1]];
       const L = Math.hypot(d[0], d[1]) || 1;

@@ -331,6 +331,24 @@ When a new revision of one of your boards comes out, select it (in 3D, or its ch
 
 **Print its holder** goes straight to Export with just that board (its dock on the rack stays, so it is left out); on a rack marked as built, **What's new** lists exactly its new parts, and the old holder is listed as spare. Slice it there for the G-code. One ⌘Z goes back to the old version.
 
+## J-Links and serial cables
+
+A board's debug headers are found on import:
+- by shape: a 2 × 5 header at 1.27 mm (the Cortex debug connector, whatever its footprint is called), Tag-Connect pads;
+- by name: a 10 or 20-pin header whose reference, value or footprint says SWD, JTAG or debug.
+
+UART headers are found by name (UART, serial, console, FTDI, TX/RX). To mark any other part, select it and choose **Debug / UART…**. A board you measure by hand can be given debug and UART headers when you create it.
+
+The Board step lists them under **Debug & UART headers**:
+- **Add 2 J-Links** puts a J-Link on each free debug header, cabled to it.
+  - A J-Link (about 50 × 50 × 3 mm, 10-pin ribbon and USB on one end: set yours under Box) slides down into a slot in the back of its board's dock, plugs up, under a lip along each side.
+  - A second J-Link for the same board gets the next slot, pressed onto corner towers.
+  - Each ribbon goes up and round the dock to its header. It is drawn flat and grey with a red pin-1 edge, checked against the ribbon's length (200 mm unless you set yours) and never on the shopping list. An adapter is listed where the pin counts differ.
+  - **Auto-connect** plugs the J-Links' USB into a hub, and pairs any loose J-Link with a free debug header.
+- **Add a USB-serial cable** runs a USB to TTL serial cable (3.3 V, FTDI style: the adapter is in the cable) from each free UART header to the nearest free hub port, or a computer's. It is routed, numbered and bought like any cable, and never counted as powering the board.
+
+The examples to try it on are under **Start › Example: dual-MCU board…** and **Example: sensor board…**, and as KiCad files in `examples/`. None of this has been printed yet.
+
 ## Coming back to add a board
 
 Once the rack is built, press **Mark the rack as built** in Export. BoardDock remembers what you printed, the rail lengths you cut and the cables you bought, and freezes the layout: every dock keeps its place, turn, lever side and board edges.

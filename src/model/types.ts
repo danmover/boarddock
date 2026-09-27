@@ -67,7 +67,11 @@ export interface Comp {
 export type BoxFace = 'front' | 'back' | 'left' | 'right' | 'top';
 /** A row of identical ports on one face of a box. */
 export interface BoxPortGroup { id: string; type: string; count: number; face: BoxFace; role: string; refs?: string[] } // refs: the group's port names, kept as ports are added or removed
-export interface BoxSpec { l: number; w: number; h: number; groups: BoxPortGroup[]; supply?: number /* A at 5 V the whole box can give (charger, powered hub); unset: a typical figure */ }
+export interface BoxSpec {
+  l: number; w: number; h: number; groups: BoxPortGroup[];
+  supply?: number; // A at 5 V the whole box can give (charger, powered hub); unset: a typical figure
+  ribbon?: number; // a debug probe (J-Link): length of the ribbon it comes with, mm
+}
 
 export interface Board {
   name: string;
@@ -220,7 +224,7 @@ export interface PanelSettings {
 
 /** A cable between two plugs (connectors on two boards, or a board and a box such as a hub). */
 export interface PlugRef { module: string; ref: string }
-export interface Link { id: string; a: PlugRef; b: PlugRef; kind?: 'usb' | 'power' | 'video' | 'net' | 'audio' | 'wire'; no?: number } // no: the cable's number, kept for good
+export interface Link { id: string; a: PlugRef; b: PlugRef; kind?: 'usb' | 'power' | 'video' | 'net' | 'audio' | 'wire' | 'debug' | 'uart'; no?: number } // no: the cable's number, kept for good
 
 /** What was printed, cut and bought when the rack was built: what Export compares against to list only what's new. */
 export interface Built {
@@ -332,7 +336,7 @@ export interface GenReport {
   panel?: PanelReport | null;
   features?: Feature[];
   frames?: Record<string, number[]>; // module id -> holder frame to assembly
-  cables?: { id: string; a: string; b: string; ends?: string; kind: NonNullable<Link['kind']>; length: number; buy: number; clash?: string; no?: number; label?: string; mid?: number[] }[]; // ends: "module/ref|module/ref"; no: cable number; label: what it is for; mid: where its number shows (assembly frame)
+  cables?: { id: string; a: string; b: string; ends?: string; kind: NonNullable<Link['kind']>; length: number; buy: number; clash?: string; no?: number; label?: string; mid?: number[]; ribbon?: number }[]; // ends: "module/ref|module/ref"; no: cable number; label: what it is for; mid: where its number shows (assembly frame); ribbon: a probe's own ribbon (mm), nothing to buy
 }
 
 export type AccessDir = 'front' | 'up' | 'down' | 'left' | 'right' | 'wall';

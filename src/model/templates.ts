@@ -173,11 +173,42 @@ export const TEMPLATES: Template[] = [
       return b;
     },
   },
+  // two made-up boards to try debug probes and serial cables on: one debug header per MCU, and a UART header
+  {
+    id: 'example_dual_swd', name: 'Example: dual-MCU board, two 10-pin SWD headers and a UART (80 × 60)',
+    make: () => {
+      const b = rectBoard('Dual-MCU controller', 80, 60, 1.5, 'example');
+      b.holes = holes(3.2, [[3.5, 3.5], [76.5, 3.5], [3.5, 56.5], [76.5, 56.5]]);
+      b.comps.push(edgeConn('J1', 'usb_c', -90, 40, 0, 0.6));
+      b.comps.push(comp('U1', 'LQFP-64_10x10mm_P0.5mm', 22, 28, 12, 12, 1.6));
+      b.comps.push(comp('U2', 'LQFP-48_7x7mm_P0.5mm', 58, 28, 9, 9, 1.6));
+      const swd = connById('swd10');
+      for (const [ref, x] of [['J_SWD1', 22], ['J_SWD2', 58]] as const) b.comps.push(comp(ref, 'PinHeader_2x05_P1.27mm_Vertical_SMD', x, 47, swd.body.w, swd.body.l, swd.body.h, { kind: 'connector', conn: connSetup(swd, 0) }));
+      b.comps.push(comp('J_UART', 'PinHeader_1x06_P2.54mm_Vertical', 64, 10, 15.24, 2.54, 8.5, { kind: 'header', tht: true, value: 'FTDI', conn: connSetup(connById('header'), 0) }));
+      b.notes = ['An example board to try J-Links and a serial cable on: two MCUs, each with its own 10-pin SWD header, and a 6-pin FTDI UART header. Board › Debug & UART headers.'];
+      return b;
+    },
+  },
+  {
+    id: 'example_jtag', name: 'Example: sensor board, a 20-pin JTAG header and a UART (70 × 45)',
+    make: () => {
+      const b = rectBoard('Sensor board', 70, 45, 1.5, 'example');
+      b.holes = holes(3.2, [[3.5, 3.5], [66.5, 3.5], [3.5, 41.5], [66.5, 41.5]]);
+      b.comps.push(edgeConn('J1', 'usb_micro_b', 180, 22, 0, 0.6));
+      b.comps.push(comp('U1', 'QFN-48_7x7mm_P0.5mm', 48, 15, 7, 7, 0.9));
+      const jtag = connById('jtag20');
+      b.comps.push(comp('J_JTAG', 'IDC-Header_2x10_P2.54mm_Vertical', 35, 33, jtag.body.w, jtag.body.l, jtag.body.h, { kind: 'connector', tht: true, conn: connSetup(jtag, 0) }));
+      b.comps.push(comp('J_UART', 'PinHeader_1x04_P2.54mm_Vertical', 58, 40, 10.16, 2.54, 8.5, { kind: 'header', tht: true, value: 'UART', conn: connSetup(connById('header'), 0) }));
+      b.notes = ['An example board to try a J-Link and a serial cable on: one 20-pin JTAG box header and a 4-pin UART header. Board › Debug & UART headers.'];
+      return b;
+    },
+  },
   { id: 'usb_hub', name: 'USB hub, 4 ports (box 100 × 30 × 22)', accessory: true, make: () => makeBox('hub4') },
   { id: 'usb_hub7', name: 'Powered USB hub, 7 ports on top (160 × 48)', accessory: true, make: () => makeBox('hub7') },
   { id: 'usb_hubc', name: 'USB-C hub with Ethernet (110 × 32)', accessory: true, make: () => makeBox('hubc') },
   { id: 'usb_charger', name: 'USB charger, 4 ports (box 90 × 60 × 28)', accessory: true, make: () => makeBox('charger4') },
   { id: 'usb_charger6', name: 'USB charger, 4 A + 2 C (110 × 70)', accessory: true, make: () => makeBox('charger6') },
+  { id: 'jlink', name: 'J-Link debug probe (50 × 50 × 3, 10-pin ribbon)', accessory: true, make: () => makeBox('jlink') },
   {
     id: 'power_dist', name: 'DC power distribution board (60 × 40)', accessory: true,
     make: () => {

@@ -4,7 +4,8 @@ import type { Board, BoxFace, BoxSpec, Comp, Hole, HoleRole, PartOut, Project, V
 import { applyHoleRoles, boltedOn, detectHoleRoles, ROLE_INFO } from '../model/holes';
 import { baseRef, refText, cableNumbers, cablePurpose, shortName, compatible, KIND_COLOR, linkKind, linkOf, plugName, plugRole, plugsOf, portBudget, sameRef } from '../model/links';
 import { applyBox, BOX_PORT_TYPES, BOX_PRESETS, BOX_ROLES, boxProblems, FACE_NAME, inferBox, layoutPorts, makeBox, tightFaces } from '../model/boxes';
-import { addLinks, removeLinks, setLink } from './linkOps';
+import { addJLinks, addLinks, addUartCables, removeLinks, setLink } from './linkOps';
+import { adapterFor, debugHeaders, isDebugPort, isProbe, isUartPort, markDebug, uartHeaders, type DebugKind } from '../model/probes';
 import { Icon, I } from './icons';
 import { CONNECTORS, DEFAULT_FEATURES, HOLDER_PRESETS, MATERIALS, PRINTERS, connById, connSetup } from '../model/library';
 import { printerByName, printSettings } from '../model/printers';
@@ -210,6 +211,8 @@ function BoardSketch({ b }: { b: Board }) {
   );
 }
 
+const DEBUG_KINDS: [DebugKind, string][] = [['swd10', '10-pin, 1.27 mm (Cortex)'], ['jtag20', '20-pin, 2.54 mm (JTAG)'], ['tagconnect', 'Tag-Connect pads'], ['pins', 'Pins for jumper wires (SWD)']];
+
 const EDGE_TYPES = ['usb_c', 'usb_micro_b', 'usb_mini_b', 'usb_a', 'usb_a_dual', 'usb_b', 'barrel', 'rj45', 'hdmi_a', 'hdmi_mini', 'hdmi_micro', 'audio35', 'microsd', 'sma', 'terminal'];
 const EDGE_ANGLE: Record<'bottom' | 'top' | 'left' | 'right', number> = { bottom: -90, top: 90, left: 180, right: 0 };
 const REF_OF: Record<string, string> = { barrel: 'DC', usb_c: 'USB', usb_micro_b: 'USB', usb_mini_b: 'USB', usb_a: 'USB', usb_a_dual: 'USB', usb_b: 'USB', rj45: 'ETH', hdmi_a: 'HDMI', hdmi_mini: 'HDMI', hdmi_micro: 'HDMI', audio35: 'AUDIO', microsd: 'SD', sma: 'ANT', terminal: 'TB' };
@@ -221,6 +224,7 @@ export function ManualBoard({ put }: { put: (b: Board) => void }) {
   const [holeMode, setHoleMode] = useState<'corners' | 'spacing' | 'none'>('corners');
   const [inset, setInset] = useState(3.5), [hd, setHd] = useState(3.2), [sx, setSx] = useState(53), [sy, setSy] = useState(33);
   const [conns, setConns] = useState<{ type: string; edge: 'bottom' | 'top' | 'left' | 'right'; at: number }[]>([]);
+  const [dbgN, setDbgN] = useState(0), [dbgT, setDbgT] = useState<DebugKind>('swd10'), [uartN, setUartN] = useState(0);
   const make = () => {
     const outline: V2[] = shape === 'circle' ? circleLoop(w / 2, w / 2, w / 2, 96) : roundedRectLoop(w, h, shape === 'round' ? r : 0.01, 8).map(([x, y]) => [x + w / 2, y + h / 2] as V2);
     const holes: Hole[] = [];
@@ -238,6 +242,16 @@ export function ManualBoard({ put }: { put: (b: Board) => void }) {
       const edge = c.edge === 'bottom' || c.edge === 'left' ? 0 : c.edge === 'top' ? h : w;
       return edgeConn(ref, c.type, EDGE_ANGLE[c.edge], along, edge, (ty as { overhang?: number }).overhang ?? 1);
     });
+    // debug headers across the middle, each for a J-Link (moved to where they really are in the next step)
+    for (let i = 0; i < dbgN; i++) {
+      const ty = connById(dbgT === 'pins' ? 'header' : dbgT);
+      comps.push({ id: uid('c'), ref: `J_DBG${dbgN > 1 ? i + 1 : ''}`, pkg: ty.name, side: 'top', x: (w * (i + 1)) / (dbgN + 1), y: H * 0.62, rot: 0, w: ty.body.w, l: ty.body.l, h: ty.body.h,
+        kind: dbgT === 'pins' ? 'header' : 'connector', tht: dbgT !== 'tagconnect', conn: connSetup(ty, 0), role: 'debug' });
+    }
+    // UART headers (1 x 6, the FTDI layout) along the top
+    const hdr = connById('header');
+    for (let i = 0; i < uartN; i++) comps.push({ id: uid('c'), ref: `J_UART${uartN > 1 ? i + 1 : ''}`, pkg: 'PinHeader_1x06_P2.54mm', value: 'UART', side: 'top', x: (w * (i + 1)) / (uartN + 1), y: H * 0.85, rot: 0, w: 15.24, l: 2.54, h: hdr.body.h,
+      kind: 'header', tht: true, conn: connSetup(hdr, 0), role: 'uart' });
     put({ name: name.trim() || 'My board', outline, cutouts: [], thickness: t, holes, comps, source: 'drawn', notes: [] });
   };
   const setC = (i: number, patch: Partial<(typeof conns)[number]>) => setConns((xs) => xs.map((x, k) => (k === i ? { ...x, ...patch } : x)));
@@ -276,6 +290,12 @@ export function ManualBoard({ put }: { put: (b: Board) => void }) {
           {conns.length > 0 && <p className="hint" style={{ margin: '4px 0 0' }}>“From corner”: along the edge from the bottom-left corner, to the middle of the connector.</p>}
         </div>
       )}
+      <div className="row" style={{ marginTop: 10 }}>
+        <Num label="Debug headers" value={dbgN} min={0} max={4} step={1} unit="" onChange={(v) => setDbgN(Math.max(0, Math.min(4, Math.round(v))))} />
+        <Pick label="Kind" value={dbgT} options={DEBUG_KINDS} onChange={setDbgT} />
+        <Num label="UART headers" value={uartN} min={0} max={4} step={1} unit="" onChange={(v) => setUartN(Math.max(0, Math.min(4, Math.round(v))))} />
+      </div>
+      {dbgN + uartN > 0 && <p className="hint" style={{ margin: '4px 0 0' }}>Put across the board: move {dbgN + uartN > 1 ? 'them' : 'it'} to the right place in the next step. {dbgN > 0 ? 'Each debug header takes a J-Link. ' : ''}{uartN > 0 ? 'Each UART header (1 × 6) takes a USB-serial cable.' : ''}</p>}
       <p className="hint">Parts on the board and anything else can be added in the board editor afterwards.</p>
       <div className="btns" style={{ marginTop: 8 }}><button className="btn primary" disabled={holeMode === 'spacing' && (sx + hd > w || sy + hd > (shape === 'circle' ? w : h))} onClick={make}>Create board</button></div>
     </Section>
@@ -357,6 +377,7 @@ export function BoardPanel() {
         {b.notes.length > 0 && <div className="warns">{b.notes.map((n, i) => <div key={i}>{n}</div>)}</div>}
       </Section>
       {b.kind === 'box' && <BoxEditor />}
+      {b.kind !== 'box' && <DebugProbes />}
       {sel.length > 0 && <Inspector />}
       {b.kind !== 'box' && <HoleWizard />}
       {b.kind !== 'box' && <CleanUp />}
@@ -385,7 +406,41 @@ export function BoardPanel() {
   );
 }
 
-const ROLE_COLOR: Record<string, string> = { 'hub-down': '#8b95a3', 'hub-up': '#4c8dff', 'power-out': '#d0443a', 'power-in': '#f08a4b', host: '#8b95a3', device: '#4c8dff', net: '#3b7dd8', other: '#e0a030' };
+const ROLE_COLOR: Record<string, string> = { 'hub-down': '#8b95a3', 'hub-up': '#4c8dff', 'power-out': '#d0443a', 'power-in': '#f08a4b', host: '#8b95a3', device: '#4c8dff', net: '#3b7dd8', debug: '#a3a9b1', other: '#e0a030' };
+
+/**
+ * A board's debug headers (a J-Link for each, one press) and UART headers (a USB-serial cable to the nearest free USB
+ * port, one press).
+ */
+function DebugProbes() {
+  const p = useApp((s) => s.project)!;
+  const m = activeModule(p);
+  const heads = debugHeaders(m.board), uarts = uartHeaders(m.board);
+  if (!heads.length && !uarts.length) return null;
+  const other = (c: Comp) => { const l = linkOf(p, { module: m.id, ref: c.ref }); const o = l && (l.a.module === m.id ? l.b : l.a); return o ? { m: p.modules.find((x) => x.id === o.module), ref: o.ref } : null; };
+  const freeDbg = heads.filter((c) => !other(c)), freeUart = uarts.filter((c) => !other(c));
+  const row = (c: Comp, chip: ReactNode) => (
+    <SelRow key={c.id} it={{ kind: 'comp', id: c.id }}>
+      <span className="grow"><b>{c.ref}</b> <small>{isUartPort(c) ? 'UART' : plugName(c.conn!.type)}</small></span>
+      {chip}
+    </SelRow>
+  );
+  return (
+    <Section title={`${heads.length ? 'Debug' : ''}${heads.length && uarts.length ? ' & ' : ''}${uarts.length ? 'UART' : ''} headers · ${heads.length + uarts.length}`}>
+      <div className="list">
+        {heads.map((c) => { const o = other(c); return row(c, o?.m ? <Chip status="ok">{o.m.board.name.replace(/\s*\(.*\)$/, '')}</Chip> : <Chip status="info">no probe</Chip>); })}
+        {uarts.map((c) => { const o = other(c); return row(c, o?.m ? <Chip status="ok">{shortName(o.m.board.name)} {refText(o.m, o.ref)}</Chip> : <Chip status="info">no cable</Chip>); })}
+      </div>
+      {(freeDbg.length > 0 || freeUart.length > 0) && (
+        <div className="btns" style={{ marginTop: 8, flexWrap: 'wrap' }}>
+          {freeDbg.length > 0 && <button className="btn small soft" onClick={() => addJLinks(m.id)}>Add {freeDbg.length > 1 ? `${freeDbg.length} J-Links` : 'a J-Link'}</button>}
+          {freeUart.length > 0 && <button className="btn small soft" onClick={() => addUartCables(m.id)}>Add {freeUart.length > 1 ? `${freeUart.length} USB-serial cables` : 'a USB-serial cable'}</button>}
+        </div>
+      )}
+      <p className="hint">{heads.length > 0 && 'Each J-Link slides down into a slot in the back of this board\'s dock, plugs up (more than one: the slots stack on towers); its ribbon goes round the dock to its header and its USB to a hub (Auto-connect). '}{uarts.length > 0 && 'A USB-serial cable (USB to TTL, 3.3 V: the adapter is in the cable) goes from each UART header straight to the nearest free USB port. '}Found by shape (2 × 5 at 1.27 mm) or name (SWD, JTAG, debug, UART, serial, TX/RX); mark others by selecting them and choosing <b>Debug / UART</b>.</p>
+    </Section>
+  );
+}
 
 /** Size and ports of a box (hub, charger): presets, rows of ports per face, a top-view preview. */
 function BoxEditor() {
@@ -408,7 +463,7 @@ function BoxEditor() {
   );
   const probs = boxProblems(spec);
   const count = (r: string) => spec.groups.filter((x) => x.role === r).reduce((a, x) => a + x.count, 0);
-  const sum = [['hub-down', 'hub port'], ['hub-up', 'upstream'], ['power-out', 'power out'], ['power-in', 'power in'], ['host', 'host port']].map(([r, n]) => [count(r), n] as [number, string]).filter(([k]) => k).map(([k, n]) => `${k} ${n}${k > 1 ? 's' : ''}`).join(', ');
+  const sum = [['hub-down', 'hub port'], ['hub-up', 'upstream'], ['power-out', 'power out'], ['power-in', 'power in'], ['host', 'host port'], ['device', 'USB device port'], ['debug', 'debug port']].map(([r, n]) => [count(r), n] as [number, string]).filter(([k]) => k).map(([k, n]) => `${k} ${n}${k > 1 ? 's' : ''}`).join(', ');
   return (
     <Section title="Box" right={<span className="chip">{sum || 'no ports'}</span>}>
       <div className="btns" style={{ flexWrap: 'wrap' }}>
@@ -428,6 +483,7 @@ function BoxEditor() {
           </div>
         );
       })()}
+      {spec.groups.some((g) => g.role === 'debug') && <div className="row" style={{ marginTop: 8 }}><Num label="Ribbon length" value={spec.ribbon ?? 200} min={50} max={2000} step={10} onChange={(v) => set((s) => { s.ribbon = v; })} hint="The ribbon it came with: the rack checks that it reaches the board." /></div>}
       <BoxPreview spec={spec} />
       <div className="boxgroups">
         {spec.groups.map((g, i) => (
@@ -449,7 +505,7 @@ function BoxEditor() {
           {tightFaces(spec).slice(0, 1).map((t) => <button key={t.face} className="btn small soft" style={{ marginTop: 6 }} onClick={() => set((s) => { s[t.dim] = Math.max(s[t.dim], ...tightFaces(s).filter((x) => x.dim === t.dim).map((x) => x.need)); })}>Make the box {Math.max(...tightFaces(spec).filter((x) => x.dim === t.dim).map((x) => x.need))} mm {t.dim === 'l' ? 'long' : 'wide'}</button>)}
         </div>
       )}
-      <p className="hint">Front and back are the long sides; the box lies on its base in its holder, strapped down. Ports on top are fine: the strap loops move to miss them. Cables to ports you remove are removed too.</p>
+      <p className="hint">{isProbe(m) ? 'A debug probe slides down into a slot in the back of its board\'s dock, plugs up, and stays there; the next probe for that board gets the next slot, on corner towers. Height is its thickness.' : 'Front and back are the long sides; the box lies on its base in its holder, strapped down. Ports on top are fine: the strap loops move to miss them.'} Cables to ports you remove are removed too.</p>
     </Section>
   );
 }
@@ -536,6 +592,14 @@ export function Inspector() {
           {one && <p className="hint">{comps[0].pkg}{comps[0].value ? ` · ${comps[0].value}` : ''}</p>}
           <div className="btns" style={{ marginTop: 6 }}>
             {comps.some((c) => !c.conn) && <button className="btn small" onClick={() => setC((x) => { if (!x.conn) { x.conn = connSetup(connById('custom'), 0); x.kind = 'connector'; } })}>Treat as connector{multi ? 's' : ''}</button>}
+            {activeModule(store.get().project!).board.kind !== 'box' && (
+              <select className="btn small" value="" title="A probe (J-Link) or a USB-serial cable plugs in here" onChange={(e) => { const v = e.target.value; if (v) setC((x) => markDebug(x, v === 'none' ? null : (v as DebugKind))); }}>
+                <option value="">{comps.every(isDebugPort) ? 'Debug header ✓' : comps.every(isUartPort) ? 'UART header ✓' : 'Debug / UART…'}</option>
+                {DEBUG_KINDS.map(([k, n]) => <option key={k} value={k}>Debug: {n}</option>)}
+                <option value="uart">UART header (USB-serial cable)</option>
+                {comps.some((c) => isDebugPort(c) || isUartPort(c)) && <option value="none">Neither</option>}
+              </select>
+            )}
             {comps.some((c) => c.conn) && <button className="btn small" onClick={() => store.set({ step: 'plugs' })}>Plug settings →</button>}
             <button className="btn small ghost" onClick={() => { setC((x) => { x.hidden = true; }); select([]); }}>Hide (ignore)</button>
           </div>
@@ -1308,7 +1372,7 @@ function shopping(p: Project, res: Res, d: Delta | null, tot: { g: number; m: nu
   if (pick) {
     const other: string[] = [];
     for (const m of p.modules.filter((x) => pick.has(x.id))) {
-      if (m.board.kind === 'box') other.push(`12 mm hook-and-loop strap for the ${m.board.name}`);
+      if (m.board.kind === 'box' && !isProbe(m)) other.push(`12 mm hook-and-loop strap for the ${m.board.name}`);
       if (m.on && pick.has(m.on) && (m.onMode ?? 'bolted') === 'bolted') other.push(`4 M2.5 standoffs, ${m.onGap ?? 11} mm, and 8 M2.5 screws (${m.board.name})`);
     }
     if (other.length) out.push({ head: 'Hardware', items: other });
@@ -1323,24 +1387,36 @@ function shopping(p: Project, res: Res, d: Delta | null, tot: { g: number; m: nu
   ] });
   const rails = d ? d.rails.map((r) => r.length) : (res.report.panel?.rails ?? []).map((r) => r.length);
   if (rails.length) out.push({ head: 'Rails', items: count(rails.map((l) => `TS35 × 7.5 top-hat rail, cut to ${Math.round(l)} mm`)) });
-  const cables = d ? d.cables : res.report.cables ?? [];
+  // a probe's ribbon comes with it: not bought, but it may need an adapter
+  const cables = (d ? d.cables : res.report.cables ?? []).filter((c) => c.ribbon == null);
   const typeOf = (id: string, end: 'a' | 'b') => { const l = (p.links ?? []).find((x) => x.id === id); const r = l?.[end]; return plugName(p.modules.find((m) => m.id === r?.module)?.board.comps.find((c) => c.ref === baseRef(r?.ref ?? ''))?.conn?.type ?? ''); };
   if (cables.length) {
     const g = new Map<string, number[]>();
-    for (const c of cables) { const k = `${c.buy} m ${typeOf(c.id, 'a')} to ${typeOf(c.id, 'b')} cable`; g.set(k, [...(g.get(k) ?? []), c.no ?? 0]); }
+    for (const c of cables) { const k = c.kind === 'uart' ? `USB to TTL serial cable, 3.3 V (FTDI TTL-232R-3V3 or similar), ${c.buy} m or longer` : `${c.buy} m ${typeOf(c.id, 'a')} to ${typeOf(c.id, 'b')} cable`; g.set(k, [...(g.get(k) ?? []), c.no ?? 0]); }
     out.push({ head: 'Cables', items: [...g.entries()].map(([k, ns]) => `${ns.length} × ${k} (number${ns.length > 1 ? 's' : ''} ${ns.sort((a, b) => a - b).join(', ')})`) });
   }
   const newIds = new Set(p.built ? p.modules.filter((m) => !p.built!.boards.includes(m.id)).map((m) => m.id) : p.modules.map((m) => m.id));
   const mods = p.modules.filter((m) => !d || newIds.has(m.id));
   const other: string[] = [];
   // straps: one line with the total, the lengths per box after it
-  const straps = mods.filter((m) => m.board.kind === 'box').map((m) => { const b = m.board.box; return { name: m.board.name, per: b ? Math.ceil((2 * (b.w + b.h) + 80) / 50) * 5 : 30 }; });
+  const straps = mods.filter((m) => m.board.kind === 'box' && !isProbe(m)).map((m) => { const b = m.board.box; return { name: m.board.name, per: b ? Math.ceil((2 * (b.w + b.h) + 80) / 50) * 5 : 30 }; });
   if (straps.length) {
     const lo = Math.min(...straps.map((x) => x.per)), hi = Math.max(...straps.map((x) => x.per)), all = straps.reduce((a, x) => a + 2 * x.per, 0);
     other.push(`${2 * straps.length} × 12 mm hook-and-loop strap, ${lo === hi ? `about ${lo} cm` : `${lo} to ${hi} cm`} each (${(all / 100).toFixed(1)} m in all, or a roll to cut): 2 for each of ${straps.length > 3 ? `the ${straps.length} boxes` : straps.map((x) => x.name).join(', ')}`);
   }
   for (const m of mods) if (m.on && stackBase(p, m) !== m && (m.onMode ?? 'bolted') === 'bolted') other.push(`4 M2.5 standoffs, ${m.onGap ?? 11} mm, and 8 M2.5 screws (${m.board.name} on ${p.modules.find((x) => x.id === m.on)?.board.name ?? 'its board'})`);
   if (other.length) out.push({ head: 'Hardware', items: other });
+  const adapters = new Map<string, string[]>();
+  for (const l of p.links ?? []) {
+    if (l.kind !== 'debug') continue;
+    const end = (r: typeof l.a) => { const m = p.modules.find((x) => x.id === r.module); return m && { m, c: m.board.comps.find((x) => x.ref === baseRef(r.ref)) }; };
+    const A = end(l.a), B = end(l.b);
+    if (!A?.c || !B?.c || !mods.some((m) => m === A.m || m === B.m)) continue;
+    const [pr, bd] = isProbe(A.m) ? [A, B] : [B, A];
+    const need = adapterFor(pr.c!, bd.c!);
+    if (need) adapters.set(need, [...(adapters.get(need) ?? []), pr.m.board.name]);
+  }
+  if (adapters.size) out.push({ head: 'Debug probes', items: [...adapters.entries()].map(([k, who]) => `${who.length} × ${k} (${who.length > 2 ? `${who.length} probes` : who.join(', ')})`) });
   out.push({ head: 'Filament', items: [`about ${tot.g.toFixed(0)} g of ${activeModule(p).holder.material} (roughly ${fmtMin(tot.m)} of printing)`] });
   return out;
 }

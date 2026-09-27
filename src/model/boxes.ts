@@ -5,7 +5,7 @@ import type { Board, BoxFace, BoxPortGroup, BoxSpec, Comp } from './types';
 import { connById, connSetup } from './library';
 import { roundedRectLoop, uid } from '../geom/poly';
 
-export const BOX_PORT_TYPES = ['usb_a', 'usb_c', 'usb_micro_b', 'usb_b', 'barrel', 'iec_c7', 'rj45', 'hdmi_a', 'audio35', 'terminal'] as const;
+export const BOX_PORT_TYPES = ['usb_a', 'usb_c', 'usb_micro_b', 'usb_b', 'barrel', 'iec_c7', 'rj45', 'hdmi_a', 'audio35', 'terminal', 'jtag20', 'swd10'] as const;
 
 export const BOX_ROLES: [string, string][] = [
   ['hub-down', 'hub port: a device plugs in'],
@@ -15,6 +15,7 @@ export const BOX_ROLES: [string, string][] = [
   ['host', 'host: devices plug in (a computer port)'],
   ['device', 'device: goes to a hub or computer'],
   ['net', 'network'],
+  ['debug', "debug: a ribbon to a board's debug header"],
   ['other', 'leaves the rack (mains, supply, screen)'],
 ];
 
@@ -23,12 +24,15 @@ const ANGLE: Record<Exclude<BoxFace, 'top'>, number> = { front: -90, back: 90, l
 
 const g = (type: string, count: number, face: BoxFace, role: string): BoxPortGroup => ({ id: uid('pg'), type, count, face, role });
 
-export const BOX_PRESETS: Record<string, { name: string; color: string; spec: () => BoxSpec }> = {
+export const BOX_PRESETS: Record<string, { name: string; color: string; spec: () => BoxSpec; note?: string }> = {
   hub4: { name: 'USB hub', color: '#2b2f36', spec: () => ({ l: 100, w: 30, h: 22, groups: [g('usb_a', 4, 'front', 'hub-down'), g('usb_micro_b', 1, 'left', 'hub-up')] }) },
   hub7: { name: 'Powered USB hub', color: '#2b2f36', spec: () => ({ l: 160, w: 48, h: 24, groups: [g('usb_a', 7, 'top', 'hub-down'), g('usb_c', 1, 'left', 'hub-up'), g('barrel', 1, 'right', 'other')] }) },
   hubc: { name: 'USB-C hub', color: '#3a3f47', spec: () => ({ l: 110, w: 32, h: 14, groups: [g('usb_a', 3, 'front', 'hub-down'), g('usb_c', 1, 'front', 'hub-down'), g('usb_c', 1, 'left', 'hub-up'), g('rj45', 1, 'right', 'net')] }) },
   charger4: { name: 'USB charger', color: '#e9e7e2', spec: () => ({ l: 90, w: 60, h: 28, groups: [g('usb_a', 4, 'back', 'power-out'), g('iec_c7', 1, 'front', 'other')] }) },
   charger6: { name: 'USB charger (A + C)', color: '#e9e7e2', spec: () => ({ l: 110, w: 70, h: 30, groups: [g('usb_a', 4, 'back', 'power-out'), g('usb_c', 2, 'back', 'power-out'), g('iec_c7', 1, 'front', 'other')] }) },
+  // a debug probe: a slim board about 5 cm square and 3 mm thick, its 10-pin ribbon and USB on one end
+  jlink: { name: 'J-Link', color: '#9c2b25', spec: () => ({ l: 50, w: 50, h: 3, ribbon: 200, groups: [g('swd10', 1, 'back', 'debug'), g('usb_micro_b', 1, 'back', 'device')] }),
+    note: "A debug probe: it slides down into a slot in the back of its board's dock, plugs up; its ribbon goes to the board's debug header, its USB to a hub. Set its size, thickness (Height), ports and ribbon length under Box to match yours." },
 };
 
 /** Length of a face and the ports' spacing on it. */
@@ -70,12 +74,13 @@ export function boxProblems(s: BoxSpec): string[] {
   for (const face of Object.keys(FACE_NAME) as BoxFace[]) {
     const gs = s.groups.filter((x) => x.face === face && x.count > 0);
     const hMax = Math.max(0, ...gs.map((x) => connById(x.type).body.h));
-    if (face !== 'top' && hMax > s.h - 1) out.push(`${FACE_NAME[face]}: a ${connById(gs.find((x) => connById(x.type).body.h === hMax)!.type).name} is taller than the box.`);
+    // a slim probe's connectors stand proud of it, as on a bare board
+    if (face !== 'top' && hMax > s.h - 1 && !s.groups.some((x) => x.role === 'debug')) out.push(`${FACE_NAME[face]}: a ${connById(gs.find((x) => connById(x.type).body.h === hMax)!.type).name} is taller than the box.`);
   }
   return out;
 }
 
-const PREFIX: Record<string, string> = { 'hub-down': 'P', 'hub-up': 'UP', 'power-out': 'OUT', 'power-in': 'PWR', host: 'USB', device: 'USB', net: 'LAN' };
+const PREFIX: Record<string, string> = { 'hub-down': 'P', 'hub-up': 'UP', 'power-out': 'OUT', 'power-in': 'PWR', host: 'USB', device: 'USB', net: 'LAN', debug: 'DBG' };
 const prefixOf = (x: BoxPortGroup) => PREFIX[x.role] ?? (x.type === 'iec_c7' ? 'AC' : x.type === 'barrel' ? 'DC' : x.type === 'rj45' ? 'LAN' : 'J');
 
 /**
@@ -123,7 +128,7 @@ export function boxPorts(s: BoxSpec): Comp[] {
     const edge = group.face === 'front' ? 0 : group.face === 'back' ? s.w : group.face === 'left' ? 0 : s.l;
     const out = angle === 0 || angle === 90 ? 1 : -1;
     const c = edge - out * (t.body.l / 2);
-    const conn = { ...connSetup(t, angle), zc: -s.h / 2, cradle: false, cap: false, guard: false, tie: false };
+    const conn = { ...connSetup(t, angle), entry: 'edge' as const, zc: -s.h / 2, cradle: false, cap: false, guard: false, tie: false };
     return { id: uid('c'), ref, pkg: t.name, side: 'top', x: horizontal ? c : along, y: horizontal ? along : c, rot: 0,
       w: horizontal ? 2 : t.body.w, l: horizontal ? t.body.w : 2, h: 0.2, kind: 'connector', tht: false, role: group.role, conn } as Comp;
   });
@@ -141,7 +146,7 @@ export function applyBox(b: Board, s: BoxSpec) {
 
 export function makeBox(preset: keyof typeof BOX_PRESETS, name?: string): Board {
   const P = BOX_PRESETS[preset];
-  const b: Board = { name: name ?? P.name, outline: [], cutouts: [], thickness: 1, holes: [], comps: [], source: 'box', notes: ['A box: set its size and ports under Box to match yours. Every port knows what it is for, so Auto-connect wires it right.'], kind: 'box', color: P.color };
+  const b: Board = { name: name ?? P.name, outline: [], cutouts: [], thickness: 1, holes: [], comps: [], source: 'box', notes: [P.note ?? 'A box: set its size and ports under Box to match yours. Every port knows what it is for, so Auto-connect wires it right.'], kind: 'box', color: P.color };
   applyBox(b, P.spec());
   return b;
 }

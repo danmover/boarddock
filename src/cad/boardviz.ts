@@ -417,8 +417,10 @@ export function plugDetail(mouth: V2, d: V2, zAx: number, p: PlugSize, tag: Pick
 }
 
 /** A plug pointing straight up out of a port in a top face at (x, y, z). */
-export function plugUp(x: number, y: number, z: number, p: PlugSize, tag: PickTag, anim: Anim, type = ''): Ghost[] {
-  return plugAt([0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 0, 0, x, y, z, 1], p, tag, anim, type); // plug x up, its width along the box's length
+/** A plug standing in a top-entry socket at (x, y, z): its width along `ang` degrees (the box's length at 0). */
+export function plugUp(x: number, y: number, z: number, p: PlugSize, tag: PickTag, anim: Anim, type = '', ang = 0): Ghost[] {
+  const c = Math.cos((ang * Math.PI) / 180), s = Math.sin((ang * Math.PI) / 180);
+  return plugAt([0, 0, 1, 0, c, s, 0, 0, -s, c, 0, 0, x, y, z, 1], p, tag, anim, type); // plug x up, y along its width, z = x × y
 }
 
 /** A cross-section of a loft: a rounded rectangle w × h (corner radius r) at x along the axis, centred at (y, z). */
@@ -572,6 +574,18 @@ function plugAt(T: number[], p: PlugSize, tag: PickTag, anim: Anim, type: string
       if (type === 'header') push('black', loft(T, rect(-1, x0 + Math.min(12, p.len), W, H, 0.3)));
       body([{ x: x0 + Math.min(6, p.len) - 0.5, w: Math.max(2, W - 1.5), h: 1.2, r: 0.5 }, { x: x1 + 6, w: Math.max(2, W - 1.5), h: 1.2, r: 0.5 }], 'cable');
       return bin.ghosts('plug', tag, anim, {}, true);
+    case 'swd10': case 'jtag20':
+      // an IDC socket pressed onto a ribbon: its body (the lower part goes into the header's shroud), the cable clamp
+      // across its top, and the polarising key on one side
+      push('black', loft(T, rect(-2.5, x1 - 1.8, W, H, 0.5)));
+      push('black', loft(T, rect(x1 - 1.8, x1, W + 0.8, H - 1.4, 0.4)));
+      push('black', loft(T, rect(0.5, x1 - 3, Math.min(4.5, W * 0.3), 1.4, 0.3, H / 2 + 0.6)));
+      return bin.ghosts('plug', tag, anim, {}, true);
+    case 'tagconnect':
+      // the spring-pin head held on the pads, then its ribbon
+      push('plug', loft(T, rect(-0.2, x0 + 8, W, H, 1.6)));
+      push('black', loft(T, [{ x: x0 + 8, w: W * 0.85, h: H * 0.8, r: 1.2 }, { x: x1, w: W * 0.7, h: 1.4, r: 0.5 }]));
+      return bin.ghosts('plug', tag, anim, {}, true);
     case 'iec_c7':
       body([{ x: -2, w: W - 1.4, h: H - 1.4, r: (H - 1.4) / 2 }, { x: x0, w: W - 1.4, h: H - 1.4, r: (H - 1.4) / 2 }, ...overmold(W, H, H / 2, x0, x1, p.cable, 0.3)]);
       break;
@@ -631,7 +645,7 @@ export function filletPath(pts: number[][], r: number): number[][] {
     const un = u.map((x) => x / lu), vn = v.map((x) => x / lv);
     const cos = Math.max(-1, Math.min(1, un[0] * vn[0] + un[1] * vn[1] + un[2] * vn[2]));
     const th = Math.acos(cos); // angle between the two legs at the corner
-    if (th > Math.PI - 0.02) { out.push(b); continue; } // straight on
+    if (th > Math.PI - 0.02 || th < 0.02) { out.push(b); continue; } // straight on, or straight back (no arc fits a U-turn)
     // tangent length for radius r, at most half of each neighbouring segment (the other half is the next corner's)
     let t = r / Math.tan(th / 2);
     t = Math.min(t, segLen[i - 1] * 0.5, segLen[i] * 0.5);
@@ -686,6 +700,48 @@ export function tubeMesh(pts: number[][], r: number, sides = 16): MeshData {
   pos.copyWithin(r1 * 3, (n - 1) * sides * 3, n * sides * 3);
   for (let j = 0; j < 3; j++) { pos[e0 * 3 + j] = pts[0][j]; pos[e1 * 3 + j] = pts[n - 1][j]; }
   for (let k = 0; k < sides; k++) { idx.push(e0, r0 + ((k + 1) % sides), r0 + k); idx.push(e1, r1 + k, r1 + ((k + 1) % sides)); }
+  return { pos, idx: Uint32Array.from(idx) };
+}
+
+/**
+ * A flat ribbon cable along a polyline: `w` wide, `t` thick, its width along `side` at the start and carried along
+ * without twisting (a ribbon bends across its flat, and twists where it has to). `off` shifts it sideways across its
+ * width, for the red stripe that marks pin 1.
+ */
+export function ribbonMesh(pts: number[][], w: number, t: number, side: number[], off = 0): MeshData {
+  const n = pts.length, K = 4;
+  const pos = new Float32Array((n * K + 2 * K + 2) * 3), idx: number[] = [];
+  let u = side;
+  const corner: [number, number][] = [[1, 1], [-1, 1], [-1, -1], [1, -1]];
+  for (let i = 0; i < n; i++) {
+    const a = pts[Math.max(0, i - 1)], b = pts[Math.min(n - 1, i + 1)];
+    let tg = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    const L = Math.hypot(tg[0], tg[1], tg[2]) || 1;
+    tg = tg.map((v) => v / L);
+    // the width axis, kept square to the cable
+    const dp = u[0] * tg[0] + u[1] * tg[1] + u[2] * tg[2];
+    let q = [u[0] - dp * tg[0], u[1] - dp * tg[1], u[2] - dp * tg[2]];
+    let lq = Math.hypot(q[0], q[1], q[2]);
+    if (lq < 1e-6) { q = Math.abs(tg[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0]; const d2 = q[0] * tg[0] + q[1] * tg[1] + q[2] * tg[2]; q = [q[0] - d2 * tg[0], q[1] - d2 * tg[1], q[2] - d2 * tg[2]]; lq = Math.hypot(q[0], q[1], q[2]); }
+    u = q.map((v) => v / lq);
+    const v = [tg[1] * u[2] - tg[2] * u[1], tg[2] * u[0] - tg[0] * u[2], tg[0] * u[1] - tg[1] * u[0]];
+    corner.forEach(([sx, sy], k) => {
+      const o = (i * K + k) * 3, cx = sx * w / 2 + off, cy = sy * t / 2;
+      for (let j = 0; j < 3; j++) pos[o + j] = pts[i][j] + u[j] * cx + v[j] * cy;
+    });
+  }
+  for (let i = 0; i + 1 < n; i++) for (let k = 0; k < K; k++) {
+    const a = i * K + k, b = i * K + ((k + 1) % K), c = a + K, d = b + K;
+    idx.push(a, b, d, a, d, c);
+  }
+  const r0 = n * K, r1 = r0 + K, e0 = r1 + K, e1 = e0 + 1;
+  pos.copyWithin(r0 * 3, 0, K * 3);
+  pos.copyWithin(r1 * 3, (n - 1) * K * 3, n * K * 3);
+  for (let j = 0; j < 3; j++) {
+    pos[e0 * 3 + j] = (pos[r0 * 3 + j] + pos[(r0 + 2) * 3 + j]) / 2;
+    pos[e1 * 3 + j] = (pos[r1 * 3 + j] + pos[(r1 + 2) * 3 + j]) / 2;
+  }
+  for (let k = 0; k < K; k++) { idx.push(e0, r0 + ((k + 1) % K), r0 + k); idx.push(e1, r1 + k, r1 + ((k + 1) % K)); }
   return { pos, idx: Uint32Array.from(idx) };
 }
 

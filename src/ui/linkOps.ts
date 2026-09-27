@@ -1,5 +1,7 @@
 // Cable edits (undoable).
 import { autoLinks, numberLinks, portBudget, sameRef } from '../model/links';
+import { addProbes, addUartLinks, stackProbes } from '../model/probes';
+import { appendDock } from '../cad/dockplan';
 import type { PlugRef } from '../model/types';
 import { edit, select, store, toast } from '../state';
 
@@ -10,8 +12,9 @@ export function addLinks() {
   const add = autoLinks(p);
   const left = () => { const b = portBudget(store.get().project!); return [b.devices.length ? `${b.devices.length} USB device${b.devices.length > 1 ? 's have' : ' has'} no free port: add a hub or give it more ports.` : '', b.powerIns.length ? `${b.powerIns.length} board${b.powerIns.length > 1 ? 's need' : ' needs'} power: add a charger.` : ''].filter(Boolean).join(' '); };
   if (!add.length) { toast(`Every plug that has a partner is already connected. ${left() || 'Add hubs or chargers (Start › accessories) for more.'}`); return; }
-  edit((q) => { q.links = numberLinks([...(q.links ?? []), ...add]); });
-  toast(`Connected ${add.length} cable${add.length > 1 ? 's' : ''}. ${left()} ⌘Z undoes it.`);
+  let stacked = false;
+  edit((q) => { q.links = numberLinks([...(q.links ?? []), ...add]); stacked = stackProbes(q); });
+  toast(`Connected ${add.length} cable${add.length > 1 ? 's' : ''}.${stacked ? " The debug probes on one board stack up behind it." : ''} ${left()} ⌘Z undoes it.`);
 }
 
 export function removeLinks(ids: string[]) {
@@ -24,5 +27,32 @@ export function setLink(a: PlugRef, b: PlugRef | null, kind: NonNullable<import(
   edit((q) => {
     q.links = (q.links ?? []).filter((l) => !sameRef(l.a, a) && !sameRef(l.b, a) && !(b && (sameRef(l.a, b) || sameRef(l.b, b))));
     if (b) q.links = numberLinks([...q.links, { id: `l${Math.random().toString(36).slice(2, 8)}`, a, b, kind }]);
+    if (kind === 'debug') stackProbes(q);
   });
+}
+
+/**
+ * A J-Link for each free debug header of a board: cabled to its header and stacked in one pile, which goes in the
+ * back slot of the board's dock (on a laid-out rack, when that slot is free). Their USB cables are left to
+ * Auto-connect.
+ */
+export function addJLinks(moduleId: string) {
+  let n = 0, name = '';
+  edit((q) => {
+    const m = q.modules.find((x) => x.id === moduleId);
+    name = m?.board.name ?? '';
+    const added = addProbes(q, moduleId);
+    n = added.length;
+    if (q.layout === 'panel' && !q.panel.auto) for (const pm of added) if (!pm.on) appendDock(q, pm.id);
+  });
+  if (!n) { toast('Every debug header on this board already has a probe.'); return; }
+  toast(`Added ${n} J-Link${n > 1 ? 's' : ''} for the ${name}${n > 1 ? ', stacked,' : ''} behind it in its dock. Press Auto-connect to plug ${n > 1 ? 'their' : 'its'} USB into a hub. ⌘Z undoes it.`);
+}
+
+/** A USB-serial cable from each free UART header of a board to the nearest free USB port. */
+export function addUartCables(moduleId: string) {
+  let r = { added: 0, left: 0 };
+  edit((q) => { r = addUartLinks(q, moduleId); });
+  if (!r.added && !r.left) { toast('Every UART header on this board already has a cable.'); return; }
+  toast(`${r.added ? `Added ${r.added} USB-serial cable${r.added > 1 ? 's' : ''} (USB to TTL, 3.3 V) to the nearest free USB port${r.added > 1 ? 's' : ''}.` : ''}${r.left ? ` ${r.left} UART header${r.left > 1 ? 's' : ''} found no free USB port: add a hub (Start › accessories).` : ''} ⌘Z undoes it.`);
 }

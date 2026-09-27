@@ -98,7 +98,8 @@ export function delta(p: Project, res: GenResult): Delta | null {
   const now = res.report.cables ?? [];
   const info = b.cableInfo ?? [];
   // a cable whose route got shorter keeps the one you have (it still reaches); only new or longer ones are to buy
-  const cables: Delta['cables'] = now.filter((c) => !had.has(cableSig(c))).map((c): Delta['cables'][number] => { const o = info.find((x) => c.no != null && x.no === c.no); return o ? { ...c, was: o.buy } : c; })
+  // a probe's ribbon comes with the probe: never on the list to buy
+  const cables: Delta['cables'] = now.filter((c) => c.ribbon == null && !had.has(cableSig(c))).map((c): Delta['cables'][number] => { const o = info.find((x) => c.no != null && x.no === c.no); return o ? { ...c, was: o.buy } : c; })
     .filter((c) => c.was == null || c.buy > c.was);
   const nowSigs = new Set(now.map(cableSig));
   // a cable is spare when no cable on the rack has its number any more (one that changed length is still in use)
