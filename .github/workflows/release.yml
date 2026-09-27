@@ -10,7 +10,22 @@ permissions:
   pages: write
   id-token: write
 jobs:
+  # one draft release first: three build jobs each creating their own (at the same moment) made duplicate drafts
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create the draft release
+        run: |
+          if gh release list --repo "$GITHUB_REPOSITORY" --json tagName --jq '.[].tagName' | grep -qx "$GITHUB_REF_NAME"; then
+            echo "A release for $GITHUB_REF_NAME exists already"
+          else
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --title "${GITHUB_REF_NAME#v}" --generate-notes
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   desktop:
+    needs: release
     strategy:
       fail-fast: false
       matrix:
@@ -24,8 +39,15 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx vite build
+      # uploads to GitHub sometimes time out (Windows did on v0.1.0): try up to three times
       - name: Build and publish installers
-        run: npx electron-builder --publish always
+        shell: bash
+        run: |
+          for i in 1 2 3; do
+            npx electron-builder --publish always && exit 0
+            echo "Attempt $i failed; trying again in 30 s"; sleep 30
+          done
+          exit 1
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
@@ -50,3 +72,11 @@ jobs:
           path: dist
       - id: deploy
         uses: actions/deploy-pages@v4
+  # the release goes public only when every installer is on it
+  publish:
+    needs: desktop
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
