@@ -1,7 +1,7 @@
 // Hole wizard: sort a board's holes into what they are for. Only mounting holes get holder pins; connector
 // pegs, part leads and the standoffs of a board stacked on top stay free and get clearance underneath.
-import type { Board, Hole, HoleRole, Module, Project } from './types';
-import { bbox, compRect, inside, segDist } from '../geom/poly';
+import type { Board, Hole, HoleRole, Loop, Module, Project, V2 } from './types';
+import { bbox, compRect, extentAlong, inside, rad, round, segDist } from '../geom/poly';
 
 export interface HoleGuess { id: string; role: HoleRole; why: string; sure: boolean }
 
@@ -178,13 +178,67 @@ export function stackHardware(p: Project, m: Module): { n: number; screws: numbe
   const d = ds.length ? Math.min(...ds) : 2.7;
   const size = d < 2.4 ? 'M2' : d < 3.0 ? 'M2.5' : d < 3.6 ? 'M3' : 'M4';
   const n = shared ? hit.length : 4;
-  return { n, screws: 2 * n, size, gap: m.onGap ?? 11, shared };
+  return { n, screws: 2 * n, size, gap: stackGap(p, m), shared };
+}
+
+/** Standoffs as sold (mm): a board bolted on top gets the shortest that clears what is under it, never less than the 11 mm a Pi HAT uses. */
+export const STANDOFF_LENGTHS = [11, 12, 15, 16, 18, 20, 25, 30, 35, 40];
+
+/** Whether two outlines overlap: a corner of one inside the other, or two edges crossing. */
+function overlaps(a: Loop, b: Loop): boolean {
+  const A = bbox(a), B = bbox(b);
+  if (A.x1 <= B.x0 || B.x1 <= A.x0 || A.y1 <= B.y0 || B.y1 <= A.y0) return false;
+  if (a.some((q) => inside(q, b)) || b.some((q) => inside(q, a))) return true;
+  const cross = (p: V2, q: V2, r: V2) => (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+  for (let i = 0; i < a.length; i++) for (let j = 0; j < b.length; j++) {
+    const p1 = a[i], p2 = a[(i + 1) % a.length], q1 = b[j], q2 = b[(j + 1) % b.length];
+    if (cross(p1, p2, q1) * cross(p1, p2, q2) < 0 && cross(q1, q2, p1) * cross(q1, q2, p2) < 0) return true;
+  }
+  return false;
+}
+
+/**
+ * What a board bolted on top has to clear, above the top of the board under it: the tallest part of that board under
+ * its outline (a plug in a jack counts as far as the plug reaches, as high as it stands), and the parts and leads on
+ * its own underside, plus 1 mm. `under`: the part that sets it, and how tall it stands.
+ */
+export function stackNeed(below: Board, upper: Board): { need: number; under: { ref: string; h: number } | null } {
+  const a = stackAlign(below, upper);
+  const foot = upper.outline.map(([x, y]) => [x + a.dx, y + a.dy] as V2);
+  let under: { ref: string; h: number } | null = null;
+  for (const c of below.comps) {
+    if (c.hidden || c.side !== 'top' || c.h <= 0) continue;
+    const shapes: Loop[] = [compRect(c)];
+    let h = c.h;
+    if (c.conn?.entry === 'edge') {
+      // the plug in it, out along its axis
+      const d: V2 = [Math.cos(rad(c.conn.angle)), Math.sin(rad(c.conn.angle))], n: V2 = [-d[1], d[0]], e = extentAlong(c, c.conn.angle), w = c.conn.plug.w / 2;
+      const at = (s2: number, t: number): V2 => [c.x + d[0] * s2 + n[0] * t, c.y + d[1] * s2 + n[1] * t];
+      shapes.push([at(e, -w), at(e + c.conn.plug.len, -w), at(e + c.conn.plug.len, w), at(e, w)]);
+      h = Math.max(h, c.conn.zc + c.conn.plug.h / 2);
+    }
+    if ((!under || h > under.h) && shapes.some((q) => overlaps(q, foot))) under = { ref: c.ref, h: round(h, 1) };
+  }
+  // under the top board: its parts on that side, and the leads of its through-hole parts (about 1.6 mm)
+  const beneath = Math.max(0, ...upper.comps.filter((c) => !c.hidden && c.side === 'bottom').map((c) => c.h), ...upper.comps.filter((c) => !c.hidden && c.side === 'top' && c.tht).map(() => 1.6));
+  return { need: round((under?.h ?? 0) + beneath + 1, 1), under };
+}
+
+/** How long a bolted board's standoffs are: yours if you set it, else the shortest standard length that clears what is under it. */
+export function stackGap(p: Project, m: Module): number {
+  if (m.onGap != null) return m.onGap;
+  const below = p.modules.find((x) => x.id === m.on);
+  if (!below) return 11;
+  const { need } = stackNeed(below.board, m.board);
+  return STANDOFF_LENGTHS.find((s) => s >= need) ?? Math.ceil(need);
 }
 
 export interface StackLayer {
   mod: Module;
   dx: number; dy: number; // this layer's board frame in the base board's frame
-  bolted: { mod: Module; dx: number; dy: number; dz: number }[]; // boards screwed on top: offset in this layer's frame, dz = board bottom above this board's top
+  // boards screwed on top: offset in this layer's frame, dz = board bottom above this board's top; gap: its standoffs,
+  // need and under: what they have to clear (see stackNeed)
+  bolted: { mod: Module; dx: number; dy: number; dz: number; gap: number; need: number; under: { ref: string; h: number } | null; below: string }[];
 }
 
 /** A stack from its base: printed holder layers, each with the boards bolted onto it. */
@@ -196,8 +250,9 @@ export function stackLayers(p: Project, base: Module): StackLayer[] {
     const a = stackAlign(prev.board, r.board);
     const L = layers[layers.length - 1];
     if (stackMode(p, r) === 'bolted') {
-      const dz = top + (r.onGap ?? 11);
-      L.bolted.push({ mod: r, dx: px + a.dx, dy: py + a.dy, dz });
+      const gap = stackGap(p, r), { need, under } = stackNeed(prev.board, r.board);
+      const dz = top + gap;
+      L.bolted.push({ mod: r, dx: px + a.dx, dy: py + a.dy, dz, gap, need, under, below: prev.board.name });
       px += a.dx; py += a.dy;
       top = dz + r.board.thickness;
     } else {

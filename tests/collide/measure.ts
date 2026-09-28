@@ -5,6 +5,8 @@
 // pick which pairs to intersect.
 import { K, freeAll, type MF } from '../../src/cad/kernel';
 import { compRect } from '../../src/geom/poly';
+import { mul as mulM } from '../../src/cad/assembly';
+import { stackLayers } from '../../src/model/holes';
 import type { Feature, GenResult, MeshData, PickTag, Project } from '../../src/model/types';
 
 /** What a solid is, for sorting what it meets. */
@@ -134,8 +136,18 @@ function featureSolid(f: Feature, T: number[], grow = 0): MF {
 function allowed(p: Project, r: GenResult) {
   const jack = new Map<string, MF>(); // module/ref -> the jack's footprint
   const pins = new Map<string, MF>(); // module -> its holder's pins
+  // a board bolted on top has no holder (so no frame) of its own: it sits on its layer's holder, moved over
+  const frame = new Map<string, number[]>(Object.entries(r.report.frames ?? {}));
   for (const m of p.modules) {
-    const T = r.report.frames?.[m.id] ?? (p.modules.length === 1 ? I4 : null);
+    const F = frame.get(m.id);
+    if (!F || m.on) continue;
+    for (const L of stackLayers(p, m)) {
+      const FL = frame.get(L.mod.id);
+      if (FL) for (const bo of L.bolted) frame.set(bo.mod.id, mulM(FL, [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, bo.dx, bo.dy, 0, 1]));
+    }
+  }
+  for (const m of p.modules) {
+    const T = frame.get(m.id) ?? (p.modules.length === 1 ? I4 : null);
     if (!T) continue;
     for (const c of m.board.comps) if (c.conn) {
       // a box's port is only a marker inside its face (the box is drawn solid): the plug goes in along its axis

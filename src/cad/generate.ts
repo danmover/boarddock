@@ -1,7 +1,7 @@
 // Builds every printable part for a project: the board holder (tray), DIN clip, plug caps, plus display ghosts
 // (board, components, plugs, rail) and a report of checks. All parts come out in print orientation.
 import type { Anim, Board, Check, Comp, EdgeName, Feature, GenResult, Ghost, HolderSettings, Loop, MeshData, MountSettings, PartOut, PickTag, Pin, Project, V2 } from '../model/types';
-import { holeKeepout, isMountHole } from '../model/holes';
+import { holeKeepout, isMountHole, STANDOFF_LENGTHS } from '../model/holes';
 import { boxProblems } from '../model/boxes';
 import { DEBUG_TYPES, isDebugPort, isUartPort } from '../model/links';
 import { headerPins, UART_WIRES, uartPins } from '../model/probes';
@@ -34,7 +34,9 @@ export interface ArrangeHooks {
 export interface Job {
   p: Project; mi: number; b: Board; H: HolderSettings; din: boolean; stand: boolean; hooks: ArrangeHooks; name: string;
   level?: number; // 0 = bottom of a stack (default), 1 = the board above it...
-  bolted?: { b: Board; dx: number; dy: number; dz: number; mid: string }[]; // boards screwed on top on standoffs (shown, no holder of their own)
+  // boards screwed on top on standoffs (shown, no holder of their own); gap: the standoffs, need: what they have to
+  // clear, under: the part under it that sets that, below: the board it sits on, own: the length was set by hand
+  bolted?: { b: Board; dx: number; dy: number; dz: number; mid: string; gap?: number; need?: number; under?: { ref: string; h: number } | null; below?: string; own?: boolean }[];
   mount?: MountSettings; // overrides p.mount (panel flat clips)
   dock?: { edge: EdgeName; fit?: number; shift?: number; lie?: 'flat' }; // holder plugs into a rail dock with this board edge (shift: its tongue that far off the middle; lie: flat, by an ear on that edge)
   used?: string[]; // the plugs that will have something in them (set by buildModule from the project): only they get cradles, caps, collars and ties
@@ -1707,7 +1709,12 @@ function boltedGhosts(C: Ctx, bo: NonNullable<Job['bolted']>[number]) {
     C.plugs.push({ module: mid, ref: c.ref, p: [pe[0], pe[1], zAx - off], d: [d[0], d[1], 0], cable: cn.plug.cable });
     if (off) C.plugs.push({ module: mid, ref: `${c.ref}:2`, p: [pe[0], pe[1], zAx + off], d: [d[0], d[1], 0], cable: cn.plug.cable });
   }
-  C.checks.push({ group: 'Stack', name: `${b.name} bolted on top`, value: `${round(dz, 1)} mm standoffs`, status: 'info', detail: `sits on standoffs screwed into the holes it shares with ${C.b.name}; those holes get no holder pins and the holder leaves room under them for screw heads or nuts. Its plugs get no cradles of their own.` });
+  const gap = bo.gap ?? dz, short = bo.need != null && gap < bo.need - 0.05;
+  const clears = bo.under ? `the ${bo.under.ref} under it stands ${bo.under.h} mm tall on the ${bo.below}` : '';
+  const why = short
+    ? ` Too short: ${clears}, so it needs ${bo.need} mm (${STANDOFF_LENGTHS.find((x) => x >= bo.need!) ?? Math.ceil(bo.need!)} mm standoffs). Set the length in the Rails step, or clear it to let BoardDock pick.`
+    : bo.under && !bo.own && gap > 11 ? ` Longer than a HAT's 11 mm: ${clears}.` : '';
+  C.checks.push({ group: 'Stack', name: `${b.name} bolted on top`, value: `${round(gap, 1)} mm standoffs`, status: short ? 'bad' : 'info', detail: `sits on standoffs screwed into the holes it shares with ${C.b.name}; those holes get no holder pins and the holder leaves room under them for screw heads or nuts. Its plugs get no cradles of their own.${why}` });
 }
 
 /** Press-fit socket for a Ø4 tower peg, open at z = 0: three crush ribs make it a firm fit. */

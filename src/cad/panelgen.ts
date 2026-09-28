@@ -101,7 +101,7 @@ function stackPlan(p: Project, layers: StackLayer[], dockEdge: EdgeName | null) 
   });
 }
 
-const boltedOf = (L: StackLayer) => L.bolted.map((bo) => ({ b: bo.mod.board, dx: bo.dx, dy: bo.dy, dz: bo.dz, mid: bo.mod.id }));
+const boltedOf = (L: StackLayer) => L.bolted.map((bo) => ({ b: bo.mod.board, dx: bo.dx, dy: bo.dy, dz: bo.dz, mid: bo.mod.id, gap: bo.gap, need: bo.need, under: bo.under, below: bo.below, own: bo.mod.onGap != null }));
 
 let shoeRest: (ReturnType<typeof rest> & { body: MeshData; lever: MeshData }) | null = null, sockRest: ReturnType<typeof rest> | null = null;
 

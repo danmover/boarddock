@@ -4,18 +4,14 @@ What still needs doing on BoardDock, in the order it's being worked through. New
 
 Nothing BoardDock makes has been printed and tried yet, so anything below about fit, strength or clips is from the model and its checks, not from a real print.
 
-## 0. Serious: a board bolted on top goes through the parts of the board under it
-
-A Pi 4 bolted onto a Pi 4, or a Pi Zero onto a Pi 4, sits on the default 11 mm standoffs while the lower Pi's USB and Ethernet jacks stand 16 mm tall, so they go through the top board (about 3900 mm³ of board inside board and plug in the collision test's "stacks" rack). Nothing warns: Check lists the stack as info. The stack can't be built as shown. Raise the standoffs to clear the tallest part under the top board (or say what length is needed), and say so in Check. Found by the collision test (`src/model/holes.ts`, `src/cad/panelgen.ts`).
-
 ## 1. A collision test for whole racks (the test is in; fixing what it finds)
 
 Done: `tests/collide/` builds 140 racks through `generate()` (every template alone standing, lying flat, loose and on a DIN flat clip; back to back; stacks; probes and adapters; boxes; stands off; rails along, rows, lying flat, whichever suits each, an L of rails, an L-shaped board; the Pi cluster and the busy mixed rack with Auto-connect; a rack changed by hand; a built rack with boards added), with seeded ids, and intersects every printed part, board, plug, rail, stand and cable exactly (manifold), by category, with volume and depth. Allowed: a plug in its own jack (a box's port reaches into the box along the plug), a cable in its own plugs, a board on its own holder's pins, a DIN clip's hooks in its own holder. Automatic layouts are also checked for failing Check lines (a failing tongue root says which ways of docking would pass), overlap and "runs into" warnings, rails over Longest rail (unless one dock is longer than the limit) and blocked plugs in use. Baseline: `tests/collide/baseline.json`; `npm test` runs 7 quick racks (about 30 s), `npm run collisions` all 140 (about 90 s, in CI too), `npm run collisions:update` rewrites the baseline.
 
-Baseline now: 8272 mm³ over the 140 racks, and 9 layout problems. The measure also showed that the item-1 settling change (cables back to the side they were laid on, crossing beads kept further apart) made cables worse over the whole matrix (cable categories 1360 → 2363 mm³), so it was taken back out.
+Baseline now: 4604 mm³ over the 140 racks (8272 before bolted stacks got standoffs that clear what is under them), and 9 layout problems. The measure also showed that the item-1 settling change (cables back to the side they were laid on, crossing beads kept further apart) made cables worse over the whole matrix (cable categories 1360 → 2363 mm³), so it was taken back out.
 
 Left, biggest first (from the baseline):
-- Boards in boards and plugs in boards in a bolted stack: item 0.
+- On a printed stacking layer, each tower's peg reaches 4 mm into the holder above (about 24 mm³ a tower, in the stacks rack): the peg is longer than its socket, or the socket is in the wrong place.
 - A DIN rail clip's (pull tab) snap hooks reach 0.7 mm up into every box resting on the holder (about 23 mm³ a box; most of holder-board's 2262 mm³). Also item 3's last bullet.
 - Holder into holder, 718 mm³ in 18 racks, up to 4 mm deep: not looked at yet.
 - Cable into cable, 675 mm³ in 14 racks, up to 7.35 mm deep; among them a pair pressing where they cross beside a stand's comb or under a rail edge (the item-1 fix for it made things worse and was taken out).

@@ -213,7 +213,7 @@ The board editor colours every hole by its kind.
 ## Stacks
 
 A board can sit on top of another; the bottom one carries the dock. In the **Rails** step, drag a board onto another board, or pick **on top of…** in Stacks. There are two kinds:
-- **Bolted on standoffs:** a HAT on a Pi, a shield on an Arduino. The top board is lined up on the holes the two boards share (for example the Pi's 58 × 49 pattern), and shown on standoffs of the length you set (11 mm by default). The shared holes of the bottom board become stacking standoffs in the hole wizard: no pins there, and room underneath.
+- **Bolted on standoffs:** a HAT on a Pi, a shield on an Arduino. The top board is lined up on the holes the two boards share (for example the Pi's 58 × 49 pattern), and shown on standoffs. BoardDock picks the shortest standard length that clears the tallest part under the top board, plus the parts and leads on its underside and 1 mm (11 mm, a HAT's, at the least: a whole Pi 4 on a Pi 4 gets 20 mm, over its 16 mm USB jacks). You can type your own length; if it is too short, Check fails and says what length it needs. The shared holes of the bottom board become stacking standoffs in the hole wizard: no pins there, and room underneath.
 - **Printed layer:** a separate board gets its own light holder that presses onto four corner towers on the holder below, with press-fit pegs. The towers on a docked holder stay back from the dock face.
 
 Bolted is chosen automatically when at least two holes line up; you can switch it. Only sensible targets are offered: boards about as big or bigger, the ones it bolts onto first, and never a hub, charger or powerboard (a J-Link only on another J-Link of the same board).

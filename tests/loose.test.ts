@@ -31,7 +31,8 @@ describe('stack hardware', () => {
     const hat = newModule(T('rpi4'));
     hat.on = p.modules[0].id;
     p.modules.push(hat);
-    expect(stackHardware(p, hat)).toEqual({ n: 4, screws: 8, size: 'M2.5', gap: 11, shared: true });
+    // (a whole Pi on a Pi covers its 16 mm USB jacks: 20 mm standoffs, not a HAT's 11)
+    expect(stackHardware(p, hat)).toEqual({ n: 4, screws: 8, size: 'M2.5', gap: 20, shared: true });
 
     const q = newProject(T('uno'));
     const shield = newModule(T('uno'));

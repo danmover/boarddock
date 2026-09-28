@@ -396,13 +396,14 @@ export function quickLayout(kind: 'row' | 'rows' | 'cols') {
   select([]);
 }
 
-/** How a stacked board is held, and its standoff length. */
-export function setStackMode(moduleId: string, mode: 'bolted' | 'towers', gap?: number) {
+/** How a stacked board is held, and its standoff length (null: BoardDock picks it again). */
+export function setStackMode(moduleId: string, mode: 'bolted' | 'towers', gap?: number | null) {
   edit((p) => {
     const m = p.modules.find((x) => x.id === moduleId);
     if (!m) return;
     m.onMode = mode;
-    if (gap != null) m.onGap = gap;
+    if (gap === null) delete m.onGap;
+    else if (gap != null) m.onGap = gap;
     const below = p.modules.find((x) => x.id === m.on);
     if (below) refreshStandoffs(p, below);
   });
