@@ -239,7 +239,7 @@ export interface PanelSettings {
 
 /** A cable between two plugs (connectors on two boards, or a board and a box such as a hub). */
 export interface PlugRef { module: string; ref: string }
-export interface Link { id: string; a: PlugRef; b: PlugRef; kind?: 'usb' | 'power' | 'video' | 'net' | 'audio' | 'wire' | 'debug' | 'uart' | 'jumper' | 'mains'; no?: number; wires?: Wire[] } // no: the cable's number, kept for good; wires: jumper wires, pin to pin
+export interface Link { id: string; a: PlugRef; b: PlugRef; kind?: 'usb' | 'power' | 'video' | 'net' | 'audio' | 'wire' | 'debug' | 'uart' | 'jumper' | 'mains'; no?: number; wires?: Wire[]; auto?: boolean; why?: string } // no: the cable's number, kept for good; wires: jumper wires, pin to pin; auto: made by Auto-connect (Rewire may change it); why: what Auto-connect chose it for
 /** One jumper wire between two pin headers: pin a on the link's a end to pin b on its b end. */
 export interface Wire { a: string; b: string; colour?: string }
 
@@ -376,6 +376,7 @@ export interface PanelReport {
   height?: number; // tallest point above the table (on stands) or the rail base
   collisions: string[][]; // pairs of module / mount ids that overlap
   stands?: { station: number; foot: [number, number, number, number]; pieces: number; combs: number }[]; // table sleepers, panel-frame footprints
+  plugs?: Record<string, [number, number, number]>; // where each plug's cable leaves it ("module/ref"), panel frame: Auto-connect measures cables with it
 }
 
 export interface GenResult {

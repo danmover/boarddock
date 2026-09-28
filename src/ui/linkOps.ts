@@ -1,20 +1,52 @@
 // Cable edits (undoable).
-import { autoLinks, numberLinks, portBudget, sameRef } from '../model/links';
+import { autoLinks, numberLinks, portBudget, sameRef, type PlugAt } from '../model/links';
+import { TEMPLATES } from '../model/templates';
 import { addAdapters, addProbes, addUartLinks, fillWires, stackProbes } from '../model/probes';
 import { seatCompanion } from '../cad/dockplan';
 import type { PlugRef } from '../model/types';
-import { edit, select, store, toast } from '../state';
+import { edit, putBoards, select, store, toast } from '../state';
 
-/** Add Auto-connect's suggestions for every plug still free. */
-export function addLinks() {
+/** Where each plug is on the rack as laid out now (for measuring cables), if it has been laid out. */
+export const plugPlaces = (): PlugAt | undefined => { const m = store.get().result?.report.panel?.plugs; return m ? (k: string) => m[k] : undefined; };
+
+/** Add Auto-connect's suggestions for every plug still free (or only cables of one kind: "the same for the others"). */
+export function addLinks(only?: NonNullable<import('../model/types').Link['kind']>) {
   const p = store.get().project;
   if (!p) return;
-  const add = autoLinks(p);
+  const add = autoLinks(p, plugPlaces()).filter((l) => !only || l.kind === only);
   const left = () => { const b = portBudget(store.get().project!); return [b.devices.length ? `${b.devices.length} USB device${b.devices.length > 1 ? 's have' : ' has'} no free port: add a hub or give it more ports.` : '', b.powerIns.length ? `${b.powerIns.length} board${b.powerIns.length > 1 ? 's need' : ' needs'} power: add a charger.` : ''].filter(Boolean).join(' '); };
   if (!add.length) { toast(`Every plug that has a partner is already connected. ${left() || 'Add hubs or chargers (Start › accessories) for more.'}`); return; }
   let stacked = false;
   edit((q) => { q.links = numberLinks([...(q.links ?? []), ...add]).map((l) => fillWires(q, l)); stacked = stackProbes(q); });
   toast(`Connected ${add.length} cable${add.length > 1 ? 's' : ''}.${stacked ? ' The probes and adapters for one board stack up behind it.' : ''} ${left()} ⌘Z undoes it.`);
+}
+
+/**
+ * Rewire: take out every cable Auto-connect made (the ones you connected yourself stay) and connect again, measured on
+ * the rack as it is laid out now. A built rack keeps its cables (they are bought): it asks first.
+ */
+export function rewire() {
+  const p = store.get().project;
+  if (!p) return;
+  const autoOnes = (p.links ?? []).filter((l) => l.auto);
+  if (p.built && autoOnes.length && !confirm('The rack is built: rewiring can change cables you have already bought and tagged. Rewire anyway?')) return;
+  let n = 0;
+  edit((q) => {
+    q.links = (q.links ?? []).filter((l) => !l.auto);
+    const add = autoLinks(q, plugPlaces());
+    n = add.length;
+    q.links = numberLinks([...q.links, ...add]).map((l) => fillWires(q, l));
+    stackProbes(q);
+  });
+  toast(`Rewired: ${n} cable${n === 1 ? '' : 's'} chosen again for the rack as it stands now; the ones you connected yourself stayed. ⌘Z undoes it.`);
+}
+
+/** Add an accessory from the library (a charger, a hub, a switch) and connect what it was added for. */
+export function addAccessory(id: string, count = 1) {
+  const t = TEMPLATES.find((x) => x.id === id);
+  if (!t) return;
+  putBoards(Array.from({ length: count }, () => t.make()), false, { stay: true }); // staying where you are
+  addLinks();
 }
 
 export function removeLinks(ids: string[]) {

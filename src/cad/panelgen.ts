@@ -991,7 +991,8 @@ export function generatePanel(p: Project): GenResult {
   if (parts.some((x) => x.tag?.kind === 'cap')) steps.push({ seq: CAP_SEQ, text: 'Snap the caps over the plugs to lock them in.' });
   if (parts.some((x) => x.tag?.kind === 'cabletag')) steps.push({ seq: TAG_SEQ, text: 'Snap a numbered tag round each end of every cable, a hand-width from the plug: the numbers match the Wiring view and the shopping list.' });
 
-  const panel: PanelReport = { rails: rails as PanelReport['rails'], mounts: mountOut, modules: access, unplaced, depth, height: round(depth + (standOut?.length ? STAND.H : 0), 1), collisions, stands: standOut };
+  const plugAt = Object.fromEntries([...ends].map(([k, e]) => [k, [round(e.p[0], 1), round(e.p[1], 1), round(e.p[2], 1)] as [number, number, number]]));
+  const panel: PanelReport = { rails: rails as PanelReport['rails'], mounts: mountOut, modules: access, unplaced, depth, height: round(depth + (standOut?.length ? STAND.H : 0), 1), collisions, stands: standOut, plugs: plugAt };
   return {
     parts,
     ghosts,

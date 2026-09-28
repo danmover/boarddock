@@ -3,6 +3,7 @@
 // power), and Auto-connect pairs them up. The panel then routes each cable and sizes it.
 import type { Board, Comp, Link, Module, PlugRef, Project } from './types';
 import { needOf, portCap, poweredHub, supplyOf } from './powerdata';
+import { assign } from './assign';
 
 export type PlugRole = 'host' | 'device' | 'power-in' | 'power-in-dc' | 'power-out' | 'hub-up' | 'hub-down' | 'net' | 'video' | 'audio' | 'wire' | 'debug' | 'uart' | 'mains-in' | 'mains-out' | 'other';
 
@@ -110,61 +111,168 @@ export function refText(m: Module | undefined, ref: string): string {
 export const sameRef = (a: PlugRef, b: PlugRef) => a.module === b.module && a.ref === b.ref;
 export const linkOf = (p: Project, r: PlugRef) => (p.links ?? []).find((l) => sameRef(l.a, r) || sameRef(l.b, r));
 
+/** Where each plug is on the laid-out rack ("module/ref" -> panel-frame point, mm), when it has been laid out. */
+export type PlugAt = (key: string) => number[] | undefined;
+const keyOf = (x: PlugInfo) => `${x.ref.module}/${x.ref.ref}`;
+
+/** A network switch or router: a box with three or more Ethernet ports. */
+export const isSwitch = (b: Board) => b.kind === 'box' && b.comps.filter((c) => c.conn?.type === 'rj45' && !c.hidden).length >= 3;
+
 /**
- * Suggest cables for every plug still free: power inputs from a charger (or a hub or host port), devices to a hub
- * (or a host), a hub to a host. Boards are matched in panel order, so neighbours get each other's cables.
+ * Suggest cables for every plug still free, the way you would lay them out yourself: a hub to the nearest computer
+ * or board that hosts it, power for the hungriest boards first from ports that give enough on chargers that have
+ * enough left, devices to the nearest hub port, each board's Ethernet to a switch, mains leads to the nearest
+ * outlet, probes and adapters to the headers they serve. Each kind is paired all at once (the cheapest pairing in
+ * all, not first come first served), by how long the cable would be on the laid-out rack (`at`), else by the boards'
+ * order. Every suggestion says why it was made.
  */
-export function autoLinks(p: Project): Link[] {
+export function autoLinks(p: Project, at?: PlugAt): Link[] {
   const plugs = plugsOf(p);
   const taken = new Set((p.links ?? []).flatMap((l) => [`${l.a.module}/${l.a.ref}`, `${l.b.module}/${l.b.ref}`]));
-  const free = (r: PlugRole) => plugs.filter((x) => x.role === r && !taken.has(`${x.ref.module}/${x.ref.ref}`));
+  const free = (r: PlugRole) => plugs.filter((x) => x.role === r && !taken.has(keyOf(x)));
   const out: Link[] = [];
-  const idx = (m: Module) => p.modules.indexOf(m);
-  const take = (a: PlugInfo, b: PlugInfo) => {
-    taken.add(`${a.ref.module}/${a.ref.ref}`); taken.add(`${b.ref.module}/${b.ref.ref}`);
-    out.push({ id: `l${Math.random().toString(36).slice(2, 8)}`, a: a.ref, b: b.ref, kind: linkKind(a.role, b.role) });
+  /** Roughly how long the cable would be: along, across and up the rack, and a hand-width out of each plug. */
+  const reach = (a: PlugInfo, b: PlugInfo) => cableReach(p, a, b, at); // (not laid out yet: about 90 mm a board apart)
+  const cm = (a: PlugInfo, b: PlugInfo) => `about ${Math.round(reach(a, b) / 10) * 1} cm`;
+  const take = (a: PlugInfo, b: PlugInfo, why: string) => {
+    taken.add(keyOf(a)); taken.add(keyOf(b));
+    out.push({ id: `l${Math.random().toString(36).slice(2, 8)}`, a: a.ref, b: b.ref, kind: linkKind(a.role, b.role), auto: true, why });
   };
-  const nearest = (a: PlugInfo, pool: PlugInfo[]) => pool.filter((x) => x.module !== a.module).sort((x, y) => Math.abs(idx(x.module) - idx(a.module)) - Math.abs(idx(y.module) - idx(a.module)))[0];
-  // hubs hang off a host first, so their ports can feed devices
-  for (const up of free('hub-up')) { const h = nearest(up, free('host')); if (h) take(up, h); }
-  // power: the hungriest boards pick first, each from a port that gives enough, on a charger with the most left over
-  // (so six Pi 4s end up split over two chargers, on their USB-C ports where there are some), nearest after that
-  const left = new Map<string, number>();
-  const room = (x: PlugInfo) => {
-    if (!left.has(x.module.id)) {
-      const total = supplyOf(x.module.board, plugs.filter((q) => q.module === x.module && q.role === 'power-out').map((q) => ({ c: q.comp, role: q.role }))).total;
+  /** The cheapest pairing of `from` with `to` (cost null: can't), never a board with itself. */
+  const pairUp = (from: PlugInfo[], to: PlugInfo[], cost: (a: PlugInfo, b: PlugInfo) => number | null) => {
+    const M = from.map((a) => to.map((b) => { if (a.module === b.module) return Infinity; const c = cost(a, b); return c == null ? Infinity : c; }));
+    return assign(M).map((j, i) => (j >= 0 ? [from[i], to[j]] as const : null)).filter(Boolean) as (readonly [PlugInfo, PlugInfo])[];
+  };
+  const nm = (x: PlugInfo) => shortName(x.module.board.name);
+
+  // 1. hubs hang off a host (a computer's or a board's USB port) first, so their ports can feed devices
+  for (const [up, h] of pairUp(free('hub-up'), free('host'), reach)) take(up, h, `${nm(up)} goes to the nearest free USB port of the ${nm(h)} (${cm(up, h)}), so its ports can feed the boards round it.`);
+
+  // 2. power: every board that takes power over USB, from a port that gives what it needs at its peak, on a charger
+  // that still has enough to give; the cheapest pairing in all, and a charger that would be overloaded gets costlier
+  // until the load moves (six Pi 4s end up split over two chargers, on their USB-C ports where there are some)
+  const supply = new Map<string, number>();
+  const room = (m: Module) => {
+    if (!supply.has(m.id)) {
+      const total = supplyOf(m.board, plugs.filter((q) => q.module === m && q.role === 'power-out').map((q) => ({ c: q.comp, role: q.role }))).total;
       // minus what the cables already on it carry
       const used = (p.links ?? []).reduce((a, l) => {
-        const other = l.a.module === x.module.id ? l.b.module : l.b.module === x.module.id ? l.a.module : null;
-        const om = other ? p.modules.find((m) => m.id === other) : null;
-        return a + (om ? needOf(om.board, true).load : 0);
+        const other = l.a.module === m.id ? l.b.module : l.b.module === m.id ? l.a.module : null;
+        const om = other ? p.modules.find((x) => x.id === other) : null;
+        return a + (om && (l.kind === 'power' || l.kind == null) ? needOf(om.board, true).load : 0);
       }, 0);
-      left.set(x.module.id, total - used);
+      supply.set(m.id, total - used);
     }
-    return left.get(x.module.id)!;
+    return supply.get(m.id)!;
   };
-  const pins = free('power-in').map((x) => ({ x, n: needOf(x.module.board, true) })).sort((a, b) => b.n.peak - a.n.peak || idx(a.x.module) - idx(b.x.module));
-  for (const { x: pin, n } of pins) {
-    const outs = free('power-out').filter((o) => o.module !== pin.module);
-    const score = (o: PlugInfo) => (portCap(o.module.board, o.comp, o.role) >= n.peak ? 0 : 2) + (room(o) >= n.load ? 0 : 4);
-    // no charger port left: a powered hub's port will do; a hub without a supply of its own never powers a board
-    // (and a Pi never powers itself through the hub it feeds)
-    const src = outs.sort((a, b) => score(a) - score(b) || room(b) - room(a) || Math.abs(idx(a.module) - idx(pin.module)) - Math.abs(idx(b.module) - idx(pin.module)))[0] ?? nearest(pin, free('hub-down').filter((h) => poweredHub(h.module.board)));
-    if (!src) continue;
-    take(pin, src);
-    if (src.role === 'power-out') left.set(src.module.id, room(src) - n.load);
+  const pins = free('power-in');
+  const need = new Map(pins.map((x) => [x, needOf(x.module.board, true)]));
+  const outs = free('power-out');
+  // The best in all wins: the least cable, no port short of what its board needs, no charger overloaded, and the load
+  // spread over the chargers (an even spread is worth about 40 cm of cable, so two chargers side by side share the
+  // boards, but one far away is not dragged in).
+  const capPen = (a: PlugInfo, b: PlugInfo) => (portCap(b.module.board, b.comp, b.role) >= need.get(a)!.peak ? 0 : 400);
+  const chargers = [...new Set(outs.map((o) => o.module.id))];
+  const cost = (got: (readonly [PlugInfo, PlugInfo])[]) => {
+    const load = new Map<string, number>();
+    for (const [a, b] of got) load.set(b.module.id, (load.get(b.module.id) ?? 0) + need.get(a)!.load);
+    const frac = chargers.map((id) => (load.get(id) ?? 0) / Math.max(0.1, room(p.modules.find((m) => m.id === id)!)));
+    return got.reduce((t, [a, b]) => t + reach(a, b) + capPen(a, b), 0) + frac.filter((f) => f > 1 + 1e-6).length * 1000 + (frac.length > 1 ? 400 * (Math.max(...frac) - Math.min(...frac)) : 0) + (pins.length - got.length) * 2000;
+  };
+  // the cheapest pairing by cable and port first; then single moves and swaps while they make the whole better
+  let power = pairUp(pins, outs, (a, b) => reach(a, b) + capPen(a, b)).map((x) => [x[0], x[1]] as [PlugInfo, PlugInfo]);
+  let J = cost(power);
+  for (let it = 0; it < 200; it++) {
+    let better: [PlugInfo, PlugInfo][] | null = null, bJ = J;
+    const usedPorts = new Set(power.map(([, b]) => b));
+    for (let i = 0; i < power.length; i++) {
+      // move to a free port
+      for (const o of outs) {
+        if (usedPorts.has(o) || o.module === power[i][0].module) continue;
+        const cand = power.map((x, k) => (k === i ? [x[0], o] as [PlugInfo, PlugInfo] : x));
+        const c = cost(cand);
+        if (c < bJ - 1e-6) { bJ = c; better = cand; }
+      }
+      // or swap ports with another
+      for (let k = i + 1; k < power.length; k++) {
+        const cand = power.map((x, q) => (q === i ? [x[0], power[k][1]] as [PlugInfo, PlugInfo] : q === k ? [x[0], power[i][1]] as [PlugInfo, PlugInfo] : x));
+        const c = cost(cand);
+        if (c < bJ - 1e-6) { bJ = c; better = cand; }
+      }
+    }
+    if (!better) break;
+    power = better; J = bJ;
   }
-  for (const dev of free('device')) { const h = nearest(dev, free('hub-down')) ?? nearest(dev, free('host')); if (h) take(dev, h); }
-  // mains: each charger's (or hub's) lead to the nearest free outlet of a powerboard; never a powerboard's own lead
-  // into another powerboard (daisy-chained powerboards overload the first)
+  for (const [a, b] of power) {
+    const n = need.get(a)!, cap = portCap(b.module.board, b.comp, b.role);
+    take(a, b, `The ${nm(a)} needs about ${n.peak} A at its peak: ${b.label} on the ${nm(b)} gives ${cap} A${cap < n.peak ? ' (less than it wants: add a charger with a stronger port)' : ''}${outs.filter((o) => o.module !== b.module).length ? ', on the charger with room to spare nearest to it' : ''} (${cm(a, b)}).`);
+  }
+  // no charger port left: a powered hub's port will do; a hub without a supply of its own never powers a board
+  for (const [a, b] of pairUp(free('power-in'), free('hub-down').filter((h) => poweredHub(h.module.board)), reach))
+    take(a, b, `No charger port was free, so the ${nm(a)} takes power from the powered ${nm(b)} (a hub port gives about ${portCap(b.module.board, b.comp, b.role)} A: fine for a small board, not for a Pi under load).`);
+
+  // 3. devices (an Arduino's USB, a probe's or an adapter's USB) to the nearest hub port, else a computer's port
+  for (const [d, h] of pairUp(free('device'), [...free('hub-down'), ...free('host')], (a, b) => reach(a, b) + (b.role === 'host' ? 80 : 0)))
+    take(d, h, `${h.role === 'hub-down' ? `The nearest free port of the ${nm(h)}` : `No hub port was free, so a USB port of the ${nm(h)}`} (${cm(d, h)}).`);
+
+  // 4. each board's Ethernet to a switch in the rack, when there is one
+  const sw = free('net').filter((x) => isSwitch(x.module.board));
+  if (sw.length) for (const [n, s] of pairUp(free('net').filter((x) => !isSwitch(x.module.board) && !isAccessory(x.module.board)), sw, reach))
+    take(n, s, `The ${nm(n)}'s Ethernet to the nearest free port of the ${nm(s)} (${cm(n, s)}).`);
+
+  // 5. mains: each charger's (or hub's) lead to the nearest free outlet of a powerboard; never a powerboard's own
+  // lead into another powerboard (daisy-chained powerboards overload the first)
   const outlets = (x: Module) => x.board.comps.some((c) => c.conn?.type.startsWith('ac_'));
-  for (const lead of free('mains-in').filter((x) => !outlets(x.module))) { const o = nearest(lead, free('mains-out')); if (o) take(lead, o); }
-  // debug probes and serial adapters: each free one to the nearest free header of its kind on a board (never probe to
-  // probe); an adapter's jumper wires are filled in by the caller
-  for (const r of ['debug', 'uart'] as const) for (const pr of free(r).filter((x) => isAccessory(x.module.board))) {
-    const h = nearest(pr, free(r).filter((x) => !isAccessory(x.module.board)));
-    if (h) take(pr, h);
-  }
+  for (const [lead, o] of pairUp(free('mains-in').filter((x) => !outlets(x.module)), free('mains-out'), reach))
+    take(lead, o, `The ${nm(lead)}'s mains lead to the nearest free outlet on the ${nm(o)} (${cm(lead, o)}).`);
+
+  // 6. debug probes and serial adapters: each free one to the nearest free header of its kind on a board (never probe
+  // to probe); an adapter's jumper wires are filled in by the caller
+  for (const r of ['debug', 'uart'] as const)
+    for (const [pr, h] of pairUp(free(r).filter((x) => isAccessory(x.module.board)), free(r).filter((x) => !isAccessory(x.module.board)), reach))
+      take(pr, h, `The ${nm(pr)} ${r === 'debug' ? 'debugs' : 'is the serial console of'} the ${nm(h)} (${h.label}, ${cm(pr, h)}).`);
+  return out;
+}
+
+/** Roughly how long a cable between two plugs would be on the rack (mm): see autoLinks. */
+export function cableReach(p: Project, a: PlugInfo, b: PlugInfo, at?: PlugAt): number {
+  const pa = at?.(keyOf(a)), pb = at?.(keyOf(b));
+  if (pa && pb) return Math.abs(pa[0] - pb[0]) + Math.abs(pa[1] - pb[1]) + Math.abs(pa[2] - pb[2]) + 60;
+  return Math.abs(p.modules.indexOf(a.module) - p.modules.indexOf(b.module)) * 90 + 60;
+}
+
+/**
+ * The best plugs for this one to go to, best first: free plugs it fits, by how long the cable would be and how well
+ * the other end suits it (power from a port that gives enough, a device on a hub rather than a computer's own port).
+ * Each with a short note for the list.
+ */
+export function rankTargets(p: Project, ref: PlugRef, at?: PlugAt, n = 5): { plug: PlugInfo; cost: number; note: string }[] {
+  const plugs = plugsOf(p), me = plugs.find((x) => sameRef(x.ref, ref));
+  if (!me) return [];
+  const taken = new Set((p.links ?? []).flatMap((l) => [`${l.a.module}/${l.a.ref}`, `${l.b.module}/${l.b.ref}`]));
+  const need = me.role === 'power-in' ? needOf(me.module.board, true) : null;
+  return plugs.filter((x) => x.module !== me.module && compatible(me.role, x.role) && !taken.has(keyOf(x)) && !(me.role === 'power-in' && x.role === 'hub-down' && !poweredHub(x.module.board)))
+    .map((x) => {
+      const len = cableReach(p, me, x, at);
+      const cap = need ? portCap(x.module.board, x.comp, x.role) : 0;
+      let pen = 0, note = `about ${Math.round(len / 10)} cm`;
+      if (need) { if (cap < need.peak) { pen += 400; note += `, gives ${cap} A of the ${need.peak} A it wants`; } else note += `, gives ${cap} A`; if (x.role !== 'power-out') pen += 300; }
+      if ((me.role === 'device' || me.role === 'uart') && x.role === 'host') { pen += 80; note += ', a USB port of the board itself'; }
+      if (me.role === 'uart' && (x.role === 'host' || x.role === 'hub-down')) note += ' (a USB-serial cable)';
+      return { plug: x, cost: len + pen, note };
+    })
+    .sort((a, b) => a.cost - b.cost).slice(0, n);
+}
+
+/** What the rack still needs, with the accessory (a library template id) that would give it. */
+export function wiringAdvice(p: Project): { text: string; add?: string; count?: number }[] {
+  const b = portBudget(p), out: { text: string; add?: string; count?: number }[] = [];
+  const hasCharger = p.modules.some((m) => m.board.kind === 'box' && m.board.comps.some((c) => c.role === 'power-out'));
+  if (b.powerIns.length > b.powerOuts.length) out.push({ text: `${b.powerIns.length - b.powerOuts.length} board${b.powerIns.length - b.powerOuts.length > 1 ? 's need' : ' needs'} power and no charger port is free.`, add: 'usb_charger6', count: Math.ceil((b.powerIns.length - b.powerOuts.length) / 6) });
+  if (b.devices.length > b.usbPorts.length) out.push({ text: `${b.devices.length - b.usbPorts.length} USB device${b.devices.length - b.usbPorts.length > 1 ? 's have' : ' has'} no free port${hasCharger ? '' : ''}.`, add: 'usb_hub7', count: Math.ceil((b.devices.length - b.usbPorts.length) / 7) });
+  const net = plugsOf(p).filter((x) => x.role === 'net' && !isAccessory(x.module.board) && !linkOf(p, x.ref));
+  if (net.length >= 2 && !p.modules.some((m) => isSwitch(m.board))) out.push({ text: `${net.length} boards have Ethernet and there is no switch in the rack.`, add: 'net_switch8', count: 1 });
+  for (const u of b.unwired) out.push({ text: `${u.name}: its ${u.refs.join(', ')} ${u.refs.length > 1 ? 'are' : 'is'} for wires you connect yourself (click a pin, then the pin it goes to).` });
   return out;
 }
 

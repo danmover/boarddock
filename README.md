@@ -298,12 +298,25 @@ Each plug gets a role from its type, its name and its board:
 - a hub's ports feed devices;
 - a charger's ports give power.
 
-**Auto-connect** pairs the free plugs, nearest boards first:
-1. hubs to hosts;
-2. power inputs to chargers: the hungriest boards first, each to a port that gives enough (a Pi 4 to a USB-C port where there is one), on the charger with the most to spare. Six Pi 4s on two chargers get three each. With no charger port left, a powered hub's port will do; a hub without its own supply never powers a board;
-3. devices to hubs (or hosts).
+**Auto-connect** pairs the free plugs the way you would lay them out yourself, and says why it chose each one (hover a cable):
+1. hubs to the nearest computer or board that hosts them;
+2. power: every board that takes power over USB, from a port that gives what it needs at its peak (a Pi 5 or a Pi 4 on a USB-C port where there is one), with no charger loaded past what it gives and the load spread over the chargers. Six Pi 4s on two chargers get three each. With no charger port left, a powered hub's port will do; a hub without its own supply never powers a board;
+3. devices (an Arduino's USB, a probe's or an adapter's USB) to the nearest hub port, else a computer's own port;
+4. each board's Ethernet to a **network switch** in the rack (Start › Hubs and chargers has 5- and 8-port ones);
+5. mains leads to the nearest free outlet of a powerboard (never one powerboard into another);
+6. J-Links and serial adapters to the headers they serve.
 
-You can also connect plugs by hand. In the **Wiring** view, click a plug, then the plug it goes to; plugs that fit light up green. In the Plugs step, pick **Cable to** for any plug.
+Each kind is paired all at once (the cheapest pairing in all, not first come, first served), by how long each cable would be on the rack as it is laid out. **Rewire** chooses Auto-connect's cables again after you move boards, and leaves the ones you connected yourself.
+
+In the **Wiring** view:
+- **Drag** from a plug to the plug it goes to, or just onto the board (it takes that board's best free plug that fits). Plugs that fit light up green as you drag.
+- **Click** a plug for its **best matches**: the free plugs it fits, best first, each with how long the cable would be and what the port gives. Or click the plug it goes to.
+- **Drag a plug that already has a cable** to move that end of the cable to another plug (it keeps its number).
+- After you connect one by hand, **Connect N more like this** does the same for the other boards like it.
+- The **List** panel's **To do** says what still needs a cable (a board without power, a device without a port, a header without a probe) with the best match and a **Connect** button for each. It also says what the rack is short of: not enough charger ports, hub ports, or no switch. **Add a USB charger** (or a hub, or a switch) puts one in and connects it. **Cables** lists every cable with its number, its two ends, what it is and its length.
+- Pin headers open into their pins, and a pin then a pin adds a jumper wire.
+
+In the Plugs step, pick **Cable to** for any plug.
 
 The panel routes every cable:
 1. Out of its plug and clear of its own board. A plug pointing up out of a board standing on edge steps sideways off the board before going down; a plug pointing sideways drops, reaches further out first, or slopes straight into a lane it faces. A drop that would land on a sleeper steps along the rail first.
