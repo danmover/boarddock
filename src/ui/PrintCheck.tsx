@@ -34,7 +34,7 @@ export function PrintCheckSection() {
   const bad = parts.filter(([k, x]) => done[k] && verdict(done[k]!, MOVING.test(x.name)).status === 'bad').length;
   return (
     <Section title="Printability" right={<span className="chip">{left ? `slicing ${parts.length - left}/${parts.length}` : bad ? `${bad} need support` : 'no supports'}</span>}>
-      <p className="hint" style={{ marginTop: 0 }}>Each part is cut into 0.2 mm layers the way it lies on the bed, and every layer is checked against the one under it: nothing may start in mid-air (that would need support), bridges and overhangs are measured, and walls thinner than a line or slots too narrow to stay open are found.</p>
+      <p className="hint" style={{ marginTop: 0 }}>Each part is cut into 0.2 mm layers the way it lies on the bed, and every layer is checked against the one under it: nothing may start in mid-air (that would need support); overhangs (fine to 2 mm) and bridges (fine to 12 mm) are measured along the layer from the wall that holds them; roofs flatter than 45 degrees, parts on a tiny foot, walls thinner than a line and slots too narrow to stay open are found.</p>
       {parts.map(([k, x]) => {
         const r = done[k];
         const v = r ? verdict(r, MOVING.test(x.name)) : null;
