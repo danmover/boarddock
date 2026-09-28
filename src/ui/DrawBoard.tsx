@@ -3,7 +3,7 @@
 // from the toolbox. The three plain shapes come first; More shapes has the ones odd boards often are (an L, a notch, a
 // corner cut off, a polygon, a round board with a flat), and Your own opens straight in the editor's Shape tool. Or
 // build a box of your own (a hub, a charger...): see DrawBox.
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Board, Hole, Loop, V2 } from '../model/types';
 import { bbox, circleLoop, inside, nearestEdge, rectLoop, roundedRectLoop, uid } from '../geom/poly';
 import { circlePts, combine, cornerCut, cornerHoles, polygonLoop } from '../geom/shape';
@@ -126,6 +126,7 @@ function DrawPcb({ put }: { put: (b: Board) => void }) {
   const [n, setN] = useState(6), [f, setF] = useState(8);
   const [holes, setHoles] = useState<Holes>('corners');
   const [inset, setInset] = useState(3.5), [d, setD] = useState(3.2), [sx, setSx] = useState(53), [sy, setSy] = useState(33);
+  const [spacingSet, setSpacingSet] = useState(false); // typed by hand: until then the spacing follows the board's size
   const [photo, setPhoto] = useState<{ url: string; w: number; h: number; name: string } | null>(null);
   const file = useRef<HTMLInputElement>(null);
   const opts: DrawOpts = { name, shape, w, h, r, t, holes, inset, d, sx, sy, cw, ch, nw, nd, side, c, one, n, f };
@@ -133,6 +134,8 @@ function DrawPcb({ put }: { put: (b: Board) => void }) {
   const b = useMemo(() => drawnBoard(opts), [name, shape, w, h, r, t, holes, inset, d, sx, sy, cw, ch, nw, nd, side, c, one, n, f]);
   const bb = bbox(b.outline), W = bb.x1 - bb.x0, H = bb.y1 - bb.y0;
   const round = shape === 'circle' || shape === 'poly' || shape === 'flat'; // sized by one number
+  // holes by spacing sit as far in from the edges as corner holes would, until a spacing is typed
+  useEffect(() => { if (!spacingSet) { setSx(Math.max(1, Math.round((W - 2 * inset) * 2) / 2)); setSy(Math.max(1, Math.round((H - 2 * inset) * 2) / 2)); } }, [W, H, inset, spacingSet]);
   const bad = 'error' in made ? made.error
     : holes === 'spacing' && (sx + d > W || sy + d > H || b.holes.some((q) => !holeFits(b.outline, [q.x, q.y], d))) ? `Holes ${sx} × ${sy} mm apart don't fit on this board.`
     : holes === 'corners' && shape !== 'custom' && !b.holes.length ? 'No room for holes in its corners: make them closer to the edges, or smaller.'
@@ -207,11 +210,10 @@ function DrawPcb({ put }: { put: (b: Board) => void }) {
         {shape !== 'custom' && <>
           <div className="field" style={{ marginTop: 10 }}><span>Holes</span></div>
           <Seg value={holes} options={[['corners', 'At the corners'], ['spacing', 'By spacing'], ['none', 'None']]} onChange={(v) => {
-            if (v === 'spacing' && (sx >= W - 2 || sy >= H - 2)) { setSx(Math.max(1, Math.round(W - 2 * inset))); setSy(Math.max(1, Math.round(H - 2 * inset))); }
             setHoles(v);
           }} />
           {holes === 'corners' && <div className="row" style={{ marginTop: 6 }}><Num label="In from each edge" value={inset} onChange={setInset} step={0.5} /><Num label="Hole Ø" value={d} min={1} onChange={setD} step={0.1} /></div>}
-          {holes === 'spacing' && <div className="row3" style={{ marginTop: 6 }}><Num label="Apart across" value={sx} min={1} onChange={setSx} step={0.5} /><Num label="Apart up" value={sy} min={1} onChange={setSy} step={0.5} /><Num label="Hole Ø" value={d} min={1} onChange={setD} step={0.1} /></div>}
+          {holes === 'spacing' && <div className="row3" style={{ marginTop: 6 }}><Num label="Apart across" value={sx} min={1} onChange={(v) => { setSpacingSet(true); setSx(v); }} step={0.5} /><Num label="Apart up" value={sy} min={1} onChange={(v) => { setSpacingSet(true); setSy(v); }} step={0.5} /><Num label="Hole Ø" value={d} min={1} onChange={setD} step={0.1} /></div>}
           {holes === 'spacing' && !bad && <p className="hint" style={{ margin: '4px 0 0' }}>Many boards give their hole spacing (a Pi: 58 across × 49 up). Centred on the board; move any of them after.</p>}
           {holes === 'none' && <p className="hint" style={{ margin: '4px 0 0' }}>No holes: the holder grips it by its edges with snap fingers.</p>}
         </>}

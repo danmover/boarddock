@@ -8,7 +8,7 @@ import { connById } from '../model/library';
 import { plugName, plugRole } from '../model/links';
 import { isProbe } from '../model/probes';
 import { poweredHub, supplyOf, watts } from '../model/powerdata';
-import { activeModule, editMod, store, toast, useApp } from '../state';
+import { activeModule, editMod, store, toast, uniqueName, useApp } from '../state';
 import { Check, Num, Pick, Section, Seg, Text } from './controls';
 import { Icon, I } from './icons';
 import { uid } from '../geom/poly';
@@ -81,9 +81,21 @@ export function BoxEditor() {
   return (
     <Section title="Box" right={<span className="chip">{sum || 'no ports'}</span>}>
       <details className="boxpresets">
-        <summary>Start again from a preset</summary>
+        <summary>Start again from a preset (it takes the preset's name too)</summary>
         <div className="btns" style={{ flexWrap: 'wrap', marginTop: 6 }}>
-          {Object.entries(BOX_PRESETS).map(([k, P]) => <button key={k} className="btn small" onClick={() => set((s) => { for (const key of Object.keys(s) as (keyof BoxSpec)[]) delete s[key]; Object.assign(s, P.spec()); })}>{P.name}</button>)}
+          {Object.entries(BOX_PRESETS).map(([k, P]) => <button key={k} className="btn small" onClick={() => {
+            const was = b.name;
+            // the box becomes that preset: its ports and size, and its name and colour with them (so the board chips say what it is)
+            editMod((q, pp) => {
+              const s = structuredClone(P.spec());
+              applyBox(q.board, s);
+              q.board.name = uniqueName(pp.modules.filter((x) => x.id !== q.id).map((x) => x.board.name), P.name);
+              q.board.color = P.color;
+              const refs = new Set(q.board.comps.map((c) => c.ref));
+              pp.links = (pp.links ?? []).filter((l) => !((l.a.module === q.id && !refs.has(l.a.ref)) || (l.b.module === q.id && !refs.has(l.b.ref))));
+            });
+            toast(`${was} is now a ${P.name.toLowerCase()}: its ports, size, name and colour. ⌘Z undoes it.`);
+          }}>{P.name}</button>)}
         </div>
       </details>
       <div className="row3" style={{ marginTop: 10 }}>
