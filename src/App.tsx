@@ -71,8 +71,13 @@ export function App() {
 
   useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
 
-  // rebuild whenever the project changes (debounced, latest wins; unchanged holders come from the worker's cache)
+  // rebuild whenever the project changes (debounced, latest wins; unchanged holders come from the worker's cache), but
+  // not for what the build never reads: the rack's name, where the Wiring view's cards sit, marking it built
+  const buildKey = useMemo(() => (project ? JSON.stringify({ ...project, name: undefined, wiring: undefined, built: undefined }) : ''), [project]);
+  const latestProject = useRef(project);
+  latestProject.current = project;
   useEffect(() => {
+    const project = latestProject.current;
     if (!project) return;
     store.set({ building: true });
     const t = setTimeout(async () => {
@@ -84,7 +89,7 @@ export function App() {
       }
     }, 120);
     return () => clearTimeout(t);
-  }, [project]);
+  }, [buildKey]);
 
   const picks = sel.filter((s) => s.kind === 'module' || s.kind === 'mount' || s.kind === 'rail' || s.kind === 'feature' || s.kind === 'link' || s.kind === 'railstand');
   const [keys, setKeys] = useState(false);
@@ -298,6 +303,7 @@ function SelPanel({ items }: { items: SelItem[] }) {
         <div className="acts">
           {one && <button className="btn small" onClick={edit1}>Edit <Icon d={I.right} /></button>}
           {one?.kind === 'module' && p.modules.find((m) => m.id === one.id)?.board.kind !== 'box' && <NewVersionButton moduleId={one.id} small />}
+          {one?.kind === 'module' && p.modules.length > 1 && <button className="btn small" onClick={() => { const mi = p.modules.findIndex((m) => m.id === one.id); if (mi >= 0 && mi !== p.active) setActive(mi); store.set({ addSheet: true, replaceMode: true }); }} title="Pick another board from the library (or its files) to take this one's place: its dock, stack, holder settings and the cables to plugs it also has stay">Replace with…</button>}
           {removable.length > 0 && <button className="btn small danger" onClick={() => removeItems(removable.map((x) => x.it))}><Icon d={I.trash} /> {one ? ds[0].d.removable : `Remove ${removable.length}`}</button>}
           <button className="btn small ghost icon" onClick={() => select([])} title="Clear (Esc)"><Icon d={I.x} /></button>
         </div>

@@ -252,6 +252,8 @@ export function migrate(p: any): Project {
 export function setLayout(p: Project, layout: Project['layout']) {
   p.layout = layout;
   if (layout === 'loose' && !p.mount.picked) p.mount.kind = 'none';
+  // loose holders start side by side (a stack of towers is a choice, not a surprise)
+  if (layout === 'loose' && !p.arrange.picked) p.arrange.mode = 'side';
 }
 
 /** Ports that only matter with a screen or speakers plugged in: what a headless board (a Pi run over the network) can do without. */

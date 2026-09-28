@@ -1166,3 +1166,5 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
   .selpanel .top .acts { flex-basis: 100%; order: 4; }
   .mountq { margin-top: 4px; padding-top: 6px; }
 }
+/* narrow screens: the steps are numbered dots, but the one you're on keeps its name beside it */
+@media (max-width: 1180px) { .stepper button.on span.l { display: inline; font-size: 12px; } .stepper button.on { padding-right: 8px; } }

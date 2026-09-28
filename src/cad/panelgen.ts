@@ -895,7 +895,8 @@ export function generatePanel(p: Project): GenResult {
   for (const mb of mainsBudget(p)) { const t = mainsText(mb); checks.push({ group: 'Power', name: t.name, value: t.value, status: mb.status, detail: t.detail, module: mb.module.id }); }
   // a board whose only supply is a DC input with nothing on it: a supply off the rack, or none at all
   const dcFree = plugsOf(p).filter((x) => (x.role === 'power-in-dc' || (x.role === 'wire' && /^(v?in|pwr|power|dc ?in)\d*$/i.test(x.comp.ref))) && !(p.links ?? []).some((l) => [l.a, l.b].some((r) => r.module === x.ref.module && r.ref === x.ref.ref)));
-  if (dcFree.length) checks.push({ group: 'Power', name: 'DC inputs with no supply', value: dcFree.map((x) => `${shortName(x.module.board.name)} ${x.comp.ref}`).join(', '), status: 'warn', module: dcFree[0].module.id,
+  // (a box, such as a network switch, comes with its own plug pack: only a note for it)
+  if (dcFree.length) checks.push({ group: 'Power', name: 'DC inputs with no supply', value: dcFree.map((x) => `${shortName(x.module.board.name)} ${x.comp.ref}`).join(', '), status: dcFree.every((x) => x.module.board.kind === 'box') ? 'info' : 'warn', module: dcFree[0].module.id,
     detail: `${dcFree.length > 1 ? 'These boards take' : 'This board takes'} power only through a DC input (a barrel jack or an input terminal) with nothing on it. Give ${dcFree.length > 1 ? 'each' : 'it'} a DC supply (Start › Hubs and chargers has a 12 V plug pack) and check its voltage and polarity against the board's label: BoardDock can't check either. If ${dcFree.length > 1 ? 'they have their' : 'it has its'} own supply off the rack, this is fine.` });
   if ((p.links ?? []).some((l) => l.kind === 'mains') || p.modules.some((m) => m.board.comps.some((c) => c.conn?.type.startsWith('ac_'))))
     checks.push({ group: 'Power', name: 'Mains: what BoardDock checks', value: 'plugs and outlets only', status: 'info',

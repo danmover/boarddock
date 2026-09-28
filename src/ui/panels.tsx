@@ -320,6 +320,17 @@ function BoardCard() {
         <button className="btn small" onClick={() => { const ok = saveBoard(b); toast(ok ? `Saved ${b.name} to My boards: the library lists it for any rack.` : 'This browser would not store it (private window, or storage full).'); }} title="Keep this board to add again to any rack">Save to My boards</button>
         {!box && <NewVersionButton moduleId={m.id} small />}
         {p.modules.length > 1 && <button className="btn small" onClick={() => store.set({ addSheet: true, replaceMode: true })} title="Pick another board from the library (or its files) to take this one's place: its dock, stack, holder settings and the cables to plugs it also has stay">Replace with…</button>}
+        {(() => {
+          // several of the same board (a cluster's Pis): name them all at once, node1, node2...
+          const kind = (x: typeof m) => kindName(p, (x.original ?? x.board).name.replace(/ #\d+$/, ''));
+          const kin = p.modules.filter((x) => kind(x) === kind(m));
+          return kin.length > 1 && <button className="btn small ghost" title={`Give all ${kin.length} of these boards names with a number (node1, node2…), in the order they are on the rack`} onClick={() => {
+            const pre = prompt(`Name all ${kin.length} ${kind(m)} boards as… (a number is added: node1, node2…)`, 'node')?.trim();
+            if (!pre) return;
+            edit((q) => { kin.forEach((k, i) => { const x = q.modules.find((y) => y.id === k.id); if (x) x.board.name = `${pre}${i + 1}`; }); });
+            toast(`Named them ${pre}1 to ${pre}${kin.length}. ⌘Z undoes it.`);
+          }}>Name all {kin.length}…</button>;
+        })()}
         {p.modules.length > 1 && <button className="btn small ghost" onClick={() => removeItems([{ kind: 'module', id: m.id }])} title="Take this board out of the rack (Undo brings it back)"><Icon d={I.trash} /> Remove</button>}
       </div>
       {b.notes.some((n) => !b.ack?.includes(n)) && <div className="warns">{b.notes.filter((n) => !b.ack?.includes(n)).map((n, i) => (
@@ -1617,7 +1628,7 @@ export function LayoutSection() {
       </div>
       {multi ? (
         <>
-          <div style={{ marginTop: 10 }}><Seg value={A.mode} options={[['stack', 'Stacked'], ['side', 'Side by side'], ['back', 'Back to back']]} onChange={(v) => setA((a) => { a.mode = v; })} /></div>
+          <div style={{ marginTop: 10 }}><Seg value={A.mode} options={[['stack', 'Stacked'], ['side', 'Side by side'], ['back', 'Back to back']]} onChange={(v) => setA((a) => { a.mode = v; a.picked = true; })} /></div>
           {A.mode === 'stack' && <>
             <p className="hint">Board 1 is at the bottom{p.mount.kind === 'din' ? ' and carries the DIN clip' : p.stand.enabled ? ' and carries the stand socket' : ''}. Each holder gets four corner towers; the next layer presses onto their pegs. Towers clear the tallest part plus the gap.{p.modules.some((m) => m.board.kind === 'box') ? ' Boxes (hubs, chargers, powerboards) stand beside the stack, never in it, so nothing covers their ports and outlets.' : ''}</p>
             <div className="row" style={{ marginTop: 6 }}><Num label="Gap above tallest part" value={A.stackGap} min={0} max={40} onChange={(v) => setA((a) => { a.stackGap = v; })} /></div>

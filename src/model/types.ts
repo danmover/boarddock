@@ -222,6 +222,7 @@ export interface ArrangeSettings {
   sideGap: number; // side by side: gap between the walls (the link bosses fill it)
   sideAxis: 'x' | 'y'; // side by side along board X or Y
   links: boolean; // side by side: print link bars that lock neighbours together
+  picked?: boolean; // the arrangement was chosen by hand (else loose holders start side by side)
 }
 
 export type Turn = 0 | 90 | 180 | 270;
