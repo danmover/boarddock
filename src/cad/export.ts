@@ -112,6 +112,9 @@ export function placedMesh(it: Placed, bed: V2, used: V2): MeshData {
   const f = footprint(it.part);
   const m = it.part.mesh;
   const pos = new Float32Array(m.pos.length);
+  // every part sits on the bed, whatever pose it came in (a part below z = 0 would drop the whole plate)
+  let z0 = Infinity;
+  for (let i = 2; i < m.pos.length; i += 3) z0 = Math.min(z0, m.pos[i]);
   // centre the used area on the bed
   const cx = (bed[0] - used[0]) / 2, cy = (bed[1] - used[1]) / 2;
   for (let i = 0; i < m.pos.length; i += 3) {
@@ -119,7 +122,7 @@ export function placedMesh(it: Placed, bed: V2, used: V2): MeshData {
     if (it.rot90) { const t = x; x = f.h - y; y = t; }
     pos[i] = x + it.x + cx;
     pos[i + 1] = y + it.y + cy;
-    pos[i + 2] = m.pos[i + 2];
+    pos[i + 2] = m.pos[i + 2] - z0;
   }
   return { pos, idx: m.idx };
 }
@@ -168,11 +171,15 @@ export function estimate(p: PartOut, density: number) {
 
 /**
  * Printability of a part in its print pose: faces pointing down more steeply than 45 degrees that are not on the
- * bed. Flat ones are bridges (fine when short); sloped ones need support. Returns the flagged triangles too.
+ * bed (measured from the part's own bottom). Flat ones are bridges or ledges (fine when short); sloped ones need
+ * support. `span`: the farthest any flat underside reaches from the wall that holds it, in plan. Returns the flagged
+ * triangles too (the print plates paint them). The Check step's layer check is the finer tool (printcheck.ts).
  */
 export function printability(m: MeshData) {
   const { pos, idx } = m;
   const nT = idx.length / 3;
+  let z0 = Infinity;
+  for (let i = 2; i < pos.length; i += 3) z0 = Math.min(z0, pos[i]);
   const kind = new Uint8Array(nT); // 0 ok, 1 slope overhang, 2 flat (bridge)
   let slope = 0, flat = 0;
   for (let t = 0; t < nT; t++) {
@@ -183,27 +190,65 @@ export function printability(m: MeshData) {
     const L = Math.hypot(nx, ny, nz);
     if (L < 1e-12) continue;
     const zc = (pos[a + 2] + pos[b + 2] + pos[c + 2]) / 3;
-    if (zc < 0.3 || nz / L > -0.72) continue;
+    if (zc < z0 + 0.3 || nz / L > -0.72) continue;
     const area = L / 2;
     if (nz / L < -0.985) { kind[t] = 2; flat += area; } else { kind[t] = 1; slope += area; }
   }
-  // bridge spans: connected flat regions, narrowest side of their footprint
+  // flat regions: triangles joined across shared edges
+  const nv = pos.length / 3;
+  const ek = (i: number, j: number) => (i < j ? i * nv + j : j * nv + i);
+  const edges = new Map<number, number[]>();
+  for (let t = 0; t < nT; t++) if (kind[t] === 2) for (let k = 0; k < 3; k++) {
+    const key = ek(idx[3 * t + k], idx[3 * t + ((k + 1) % 3)]);
+    const l = edges.get(key); if (l) l.push(t); else edges.set(key, [t]);
+  }
   const parent = new Int32Array(nT).map((_, i) => i);
   const find = (i: number): number => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
-  const byVert = new Map<number, number>();
-  for (let t = 0; t < nT; t++) if (kind[t] === 2) for (let k = 0; k < 3; k++) {
-    const v = idx[3 * t + k];
-    const o = byVert.get(v);
-    if (o === undefined) byVert.set(v, t); else parent[find(t)] = find(o);
-  }
-  const box = new Map<number, number[]>();
-  for (let t = 0; t < nT; t++) if (kind[t] === 2) {
-    const r = find(t);
-    const b = box.get(r) ?? [Infinity, Infinity, -Infinity, -Infinity];
-    for (let k = 0; k < 3; k++) { const v = idx[3 * t + k] * 3; b[0] = Math.min(b[0], pos[v]); b[1] = Math.min(b[1], pos[v + 1]); b[2] = Math.max(b[2], pos[v]); b[3] = Math.max(b[3], pos[v + 1]); }
-    box.set(r, b);
+  for (const l of edges.values()) if (l.length === 2) parent[find(l[0])] = find(l[1]);
+  // each region's edges on its rim are where the wall below holds it (the neighbour face goes down from there)
+  const regions = new Map<number, { tris: number[]; rim: number[] }>();
+  for (let t = 0; t < nT; t++) if (kind[t] === 2) { const r = find(t); (regions.get(r) ?? regions.set(r, { tris: [], rim: [] }).get(r)!).tris.push(t); }
+  const rimEdges = new Map<number, number>(); // edge -> its flat triangle
+  for (const [key, l] of edges) if (l.length === 1) rimEdges.set(key, l[0]);
+  for (let t = 0; t < nT; t++) if (kind[t] !== 2) for (let k = 0; k < 3; k++) {
+    const i = idx[3 * t + k], j = idx[3 * t + ((k + 1) % 3)], key = ek(i, j), ft = rimEdges.get(key);
+    if (ft === undefined) continue;
+    const o = idx[3 * t + ((k + 2) % 3)]; // the neighbour's third corner: below the edge means a wall going down holds it here
+    if (pos[o * 3 + 2] < Math.max(pos[i * 3 + 2], pos[j * 3 + 2]) - 0.002) regions.get(find(ft))!.rim.push(i, j);
   }
   let span = 0;
-  for (const b of box.values()) span = Math.max(span, Math.min(b[2] - b[0], b[3] - b[1]));
+  for (const { tris, rim } of regions.values()) {
+    const d2 = (x: number, y: number) => {
+      let best = Infinity;
+      for (let k = 0; k < rim.length; k += 2) {
+        const a = rim[k] * 3, b = rim[k + 1] * 3, dx = pos[b] - pos[a], dy = pos[b + 1] - pos[a + 1];
+        const f = Math.max(0, Math.min(1, ((x - pos[a]) * dx + (y - pos[a + 1]) * dy) / (dx * dx + dy * dy || 1e-12)));
+        best = Math.min(best, Math.hypot(x - pos[a] - f * dx, y - pos[a + 1] - f * dy));
+      }
+      return best;
+    };
+    // the farthest centre of a triangle from where it is held: how far this underside reaches out (a bridge: half its
+    // span); held nowhere, all of it
+    if (!rim.length) {
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const t of tris) for (let k = 0; k < 3; k++) { const v = idx[3 * t + k] * 3; x0 = Math.min(x0, pos[v]); x1 = Math.max(x1, pos[v]); y0 = Math.min(y0, pos[v + 1]); y1 = Math.max(y1, pos[v + 1]); }
+      span = Math.max(span, Math.hypot(x1 - x0, y1 - y0));
+      continue;
+    }
+    let far = 0;
+    const step = Math.max(1, Math.floor(tris.length / 400));
+    const nMax = Math.max(1, Math.floor(Math.sqrt(6000 / Math.ceil(tris.length / step)))); // (about 3000 points a region)
+    for (let q = 0; q < tris.length; q += step) {
+      const t = tris[q], a = idx[3 * t] * 3, b = idx[3 * t + 1] * 3, c = idx[3 * t + 2] * 3;
+      // points over the triangle about 0.5 mm apart
+      const L = Math.max(Math.hypot(pos[b] - pos[a], pos[b + 1] - pos[a + 1]), Math.hypot(pos[c] - pos[a], pos[c + 1] - pos[a + 1]), Math.hypot(pos[c] - pos[b], pos[c + 1] - pos[b + 1]));
+      const n = Math.min(nMax, Math.max(1, Math.ceil(L / 0.5)));
+      for (let i = 0; i <= n; i++) for (let j = 0; i + j <= n; j++) {
+        const u = i / n, v = j / n, w = 1 - u - v;
+        far = Math.max(far, d2(pos[a] * w + pos[b] * u + pos[c] * v, pos[a + 1] * w + pos[b + 1] * u + pos[c + 1] * v));
+      }
+    }
+    span = Math.max(span, far);
+  }
   return { slope, flat, span, kind };
 }
