@@ -86,7 +86,8 @@ export const PALETTE: PaletteItem[] = [
   debug('dbg_jtag20', 'jtag20', 'Debug 20-pin, 2.54 mm', 'IDC-Header_2x10_P2.54mm_Vertical', "JTAG box header: a J-Link's own ribbon plugs straight in", true),
   debug('dbg_tag', 'tagconnect', 'Tag-Connect pads', 'Tag-Connect_TC2050', 'no connector: the Tag-Connect cable clips on from above', false),
   { id: 'uart6', group: 'Debug and serial', label: 'UART header, FTDI 6-pin', hint: 'GND CTS VCC RX TX DTR: a USB-serial adapter wires onto it', size: mm(15.24, 2.54, 8.5),
-    make: (b, at) => { const c = header(1, 6).make(b, at).comp!; return { comp: { ...c, ref: nextRef(b, 'J_UART'), value: 'FTDI', role: 'uart' } }; } },
+    // the usual FTDI order, pin 1 = GND: the board's RX on pin 4 and TX on pin 5 (set, so they are not a guess)
+    make: (b, at) => { const c = header(1, 6).make(b, at).comp!; return { comp: { ...c, ref: nextRef(b, 'J_UART'), value: 'FTDI', role: 'uart', uart: { gnd: '1', rx: '4', tx: '5' } } }; } },
   { id: 'uart4', group: 'Debug and serial', label: 'UART header, 4-pin', hint: 'GND RX TX VCC (check yours): a USB-serial adapter wires onto it', size: mm(10.16, 2.54, 8.5),
     make: (b, at) => { const c = header(1, 4).make(b, at).comp!; return { comp: { ...c, ref: nextRef(b, 'J_UART'), value: 'UART', role: 'uart' } }; } },
   hole('M2', 2.2), hole('M2.5', 2.7), hole('M3', 3.2), hole('M4', 4.3),

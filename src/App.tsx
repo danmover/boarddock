@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
-import { activeModule, closeProject, redo, select, setActive, store, toastPast, undo, useApp, type Layer, type SelItem, type Step } from './state';
+import { activeModule, closeProject, redo, select, setActive, store, toast, toastPast, undo, useApp, type Layer, type SelItem, type Step } from './state';
 import { generateProject } from './worker/client';
 import { AddBoardSheet } from './ui/AddBoard';
 import { Viewer3D } from './ui/Viewer3D';
@@ -15,7 +15,7 @@ import { openFiles } from './ui/importFlow';
 import { describe, removeItems } from './ui/pickOps';
 import { Icon, I } from './ui/icons';
 import { WiringView } from './ui/WiringView';
-import { rackName } from './model/diff';
+import { rackCount, rackName } from './model/diff';
 
 const STEPS: { id: Step; label: string; title: string; text: string }[] = [
   { id: 'import', label: 'Start', title: 'Bring a board in', text: 'Drop a KiCad, Altium, Eagle or Gerber export, or start from a known board.' },
@@ -109,7 +109,10 @@ export function App() {
 
   const saveProject = () => {
     const p = store.get().project;
-    if (p) download(`${safeName(rackName(p))}.boarddock.json`, JSON.stringify(p, null, 1), 'application/json');
+    if (!p) return;
+    const file = `${safeName(rackName(p))}.boarddock.json`;
+    download(file, JSON.stringify(p, null, 1), 'application/json');
+    toast(`Saved ${file}.${p.name?.trim() ? '' : ' Name the rack on Start to save it under its own name.'}`);
   };
 
   const stats = useMemo(() => {
@@ -148,7 +151,7 @@ export function App() {
       <AddBoardSheet />
       <header className="topbar">
         <div className="brand"><Mark className="mark" /><span className="word">Board<b>Dock</b></span></div>
-        {project && <span className="projname" title={project.name ? `${project.modules.length} boards` : 'Name this rack on the Start step'}>{project.name?.trim() || (project.modules.length > 1 ? `${project.modules.length} boards` : activeModule(project).board.name)}</span>}
+        {project && <span className="projname" title={project.name ? rackCount(project) : 'Name this rack on the Start step'}>{project.name?.trim() || (project.modules.length > 1 ? rackCount(project) : activeModule(project).board.name)}</span>}
         {project && <button className="btn small soft addboard" onClick={() => store.set({ addSheet: true })} title="Add a board (A)" aria-label="Add a board"><Icon d={I.plus} /><span>Board</span></button>}
         <nav className="stepper" ref={navRef}>
           {STEPS.map((s, i) => (

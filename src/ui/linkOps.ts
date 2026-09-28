@@ -2,9 +2,11 @@
 import { autoLinks, numberLinks, portBudget, powerShort, sameRef, strongerPower, type PlugAt } from '../model/links';
 import { TEMPLATES } from '../model/templates';
 import { addAdapters, addProbes, addUartLinks, fillWires, stackProbes } from '../model/probes';
-import { seatCompanion } from '../cad/dockplan';
-import type { PlugRef } from '../model/types';
+import { seatCompanion, seatCompanions, type Seated } from '../cad/dockplan';
+import type { Module, PlugRef, Project } from '../model/types';
 import { edit, putBoards, select, store, toast } from '../state';
+import { afterBuild, watchRelayout } from './panelOps';
+import { mountLabels } from '../model/built';
 
 /** Where each plug is on the rack as laid out now (for measuring cables), if it has been laid out. */
 export const plugPlaces = (): PlugAt | undefined => { const m = store.get().result?.report.panel?.plugs; return m ? (k: string) => m[k] : undefined; };
@@ -35,7 +37,8 @@ export function addLinks(only?: NonNullable<import('../model/types').Link['kind'
   };
   if (!add.length) { toast(`Every plug that has a partner is already connected. ${left() || 'Add hubs or chargers (Start › accessories) for more.'}`); return; }
   let stacked = false;
-  edit((q) => { q.links = numberLinks([...(q.links ?? []), ...add]).map((l) => fillWires(q, l)); stacked = stackProbes(q); });
+  watchRelayout();
+  edit((q) => { q.links = numberLinks([...(q.links ?? []), ...add]).map((l) => fillWires(q, l)); stacked = stackProbes(q); seatCompanions(q); });
   toast(`Connected ${add.length} cable${add.length > 1 ? 's' : ''}.${stacked ? ' The probes and adapters for one board stack up behind it.' : ''} ${left()} ⌘Z undoes it.`);
 }
 
@@ -74,46 +77,87 @@ export function removeLinks(ids: string[]) {
 
 /** Connect plug a to plug b (or disconnect a when b is null), replacing whatever either was connected to. */
 export function setLink(a: PlugRef, b: PlugRef | null, kind: NonNullable<import('../model/types').Link['kind']> = 'usb') {
+  watchRelayout();
   edit((q) => {
     q.links = (q.links ?? []).filter((l) => !sameRef(l.a, a) && !sameRef(l.b, a) && !(b && (sameRef(l.a, b) || sameRef(l.b, b))));
     if (b) q.links = numberLinks([...q.links, { id: `l${Math.random().toString(36).slice(2, 8)}`, a, b, kind }]).map((l) => fillWires(q, l));
-    if (kind === 'debug' || kind === 'jumper') stackProbes(q);
+    if (kind === 'debug' || kind === 'jumper') { stackProbes(q); seatCompanions(q); }
   });
 }
 
 /**
- * A J-Link for each free debug header of a board: cabled to its header and stacked in one pile, which goes in the
- * back slot of the board's dock (on a laid-out rack, when that slot is free). Their USB cables are left to
- * Auto-connect.
+ * Where new probes or adapters went, in words for the toast: behind the board, in a dock beside it, or in a new dock
+ * (and then, once the rack is built again, how long that made the rail).
  */
-export function addJLinks(moduleId: string) {
-  let n = 0, name = '';
-  edit((q) => {
-    const m = q.modules.find((x) => x.id === moduleId);
-    name = m?.board.name ?? '';
-    const added = addProbes(q, moduleId);
-    n = added.length;
-    if (q.layout === 'panel' && !q.panel.auto) for (const pm of added) if (!pm.on) seatCompanion(q, pm.id);
+function seatNote(q: Project, board: string, seats: Seated[], n: number, what: string): { text: string; fresh: Seated | undefined } {
+  const lab = mountLabels(store.get().result?.report.panel);
+  const they = n > 1 ? 'they' : 'it';
+  const fresh = seats.find((x) => x.where === 'new');
+  const near = seats.find((x) => x.where === 'near');
+  const nameOf = (id?: string) => q.modules.find((m) => m.id === id)?.board.name;
+  if (!seats.length || seats.every((x) => x.where === 'home')) return { text: `${n > 1 ? ', stacked,' : ','} behind it in its dock`, fresh: undefined };
+  if (near && !fresh) return { text: `: its dock had no free slot, so ${they} went in the free slot of dock ${lab.get(near.mount) ?? ''}${near.beside ? `, behind ${nameOf(near.beside)}` : ''} on the same rail`.replace(/ +/g, ' '), fresh: undefined };
+  const rail = q.panel.rails.findIndex((r) => r.id === fresh?.rail) + 1;
+  return { text: `: there was no free slot behind the ${board}, so ${they} got a new dock${rail ? ` on rail ${rail}` : ''}, in the first gap that fits or on the end of the rail (which then gets longer). ${what === 'J-Link' ? 'Its ribbon' : 'Its jumper wires'} may not reach from there: Check says`, fresh };
+}
+
+/** Seat new companions on a laid-out rack (behind their board where there is room), stacking them first. */
+function seatNew(q: Project, added: Module[]): Seated[] {
+  if (q.layout !== 'panel' || q.panel.auto) return [];
+  return added.filter((x) => !x.on).map((x) => seatCompanion(q, x.id));
+}
+
+/** Once the rack is built again: say how long a new dock at the end made its rail. */
+function railNote(fresh: Seated | undefined, name: string) {
+  if (!fresh) return;
+  const len0 = store.get().result?.report.panel?.rails.find((r) => r.id === fresh.rail)?.length;
+  afterBuild((r) => {
+    const pr = r.report.panel, mt = pr?.mounts.find((x) => x.id === fresh.mount), rail = mt && pr?.rails.find((x) => x.id === mt.rail);
+    if (!pr || !mt || !rail) return;
+    const k = pr.rails.indexOf(rail) + 1;
+    const longer = len0 != null && rail.length > len0 + 0.5;
+    const far = (r.report.warnings ?? []).find((w) => /ribbon is .* but has to run|jumper wires from .* have to run/.test(w) && w.includes(name));
+    toast(`${name}: no free slot behind its board, so it got a new dock ${mountLabels(pr).get(mt.id) ?? ''} on rail ${k}${longer ? `, which is now ${Math.round(rail.length)} mm long (it was ${Math.round(len0!)})` : ''}.${far ? ` ${far}` : ''} To keep it behind its board, free that dock's back slot (drag the board there to another dock in the Rails step). ⌘Z undoes it.`);
   });
-  if (!n) { toast('Every debug header on this board already has a probe.'); return; }
-  toast(`Added ${n} J-Link${n > 1 ? 's' : ''} for the ${name}${n > 1 ? ', stacked,' : ''} behind it in its dock. Press Auto-connect to plug ${n > 1 ? 'their' : 'its'} USB into a hub. ⌘Z undoes it.`);
 }
 
 /**
- * A USB-serial adapter (the FT232RL board) for each free UART header of a board: jumper wires from its pins to the
- * header, stacked with the board's probes behind it. Their USB cables are left to Auto-connect.
+ * J-Links for the free debug headers of a board (all of them, or just `refs`): cabled to its header and stacked in
+ * one pile, which goes in the back slot of the board's dock (on a laid-out rack, when that slot is free). Their USB
+ * cables are left to Auto-connect.
  */
-export function addSerialAdapters(moduleId: string) {
-  let n = 0, name = '';
+export function addJLinks(moduleId: string, refs?: string[]) {
+  let n = 0, name = '', note = { text: '', fresh: undefined as Seated | undefined }, first = '';
   edit((q) => {
     const m = q.modules.find((x) => x.id === moduleId);
     name = m?.board.name ?? '';
-    const added = addAdapters(q, moduleId);
+    const added = addProbes(q, moduleId, refs);
     n = added.length;
-    if (q.layout === 'panel' && !q.panel.auto) for (const am of added) if (!am.on) seatCompanion(q, am.id);
+    first = added[0]?.board.name ?? '';
+    note = seatNote(q, name, seatNew(q, added), n, 'J-Link');
   });
-  if (!n) { toast('Every UART header on this board already has something on it.'); return; }
-  toast(`Added ${n > 1 ? `${n} USB-serial adapters` : 'a USB-serial adapter'} for the ${name}, behind it in its dock, with jumper wires on GND, TX and RX (crossed over). Press Auto-connect to plug ${n > 1 ? 'their' : 'its'} USB into a hub. ⌘Z undoes it.`);
+  if (!n) { toast(refs ? 'That header already has a probe.' : 'Every debug header on this board already has a probe.'); return; }
+  toast(`Added ${n} J-Link${n > 1 ? 's' : ''} for the ${name}${note.text}. Press Auto-connect to plug ${n > 1 ? 'their' : 'its'} USB into a hub. ⌘Z undoes it.`);
+  railNote(note.fresh, first);
+}
+
+/**
+ * USB-serial adapters (the FT232RL board) for the free UART headers of a board (all, or just `refs`): jumper wires
+ * from its pins to the header, stacked with the board's probes behind it. Their USB cables are left to Auto-connect.
+ */
+export function addSerialAdapters(moduleId: string, refs?: string[]) {
+  let n = 0, name = '', note = { text: '', fresh: undefined as Seated | undefined }, first = '';
+  edit((q) => {
+    const m = q.modules.find((x) => x.id === moduleId);
+    name = m?.board.name ?? '';
+    const added = addAdapters(q, moduleId, refs);
+    n = added.length;
+    first = added[0]?.board.name ?? '';
+    note = seatNote(q, name, seatNew(q, added), n, 'adapter');
+  });
+  if (!n) { toast(refs ? 'That header already has something on it.' : 'Every UART header on this board already has something on it.'); return; }
+  toast(`Added ${n > 1 ? `${n} USB-serial adapters` : 'a USB-serial adapter'} for the ${name}${note.text}, with jumper wires on GND, TX and RX (crossed over). Press Auto-connect to plug ${n > 1 ? 'their' : 'its'} USB into a hub. ⌘Z undoes it.`);
+  railNote(note.fresh, first);
 }
 
 /** A USB-serial cable from each free UART header of a board to the nearest free USB port. */

@@ -1,6 +1,7 @@
 // What changed between two versions of a project, in a few words: undo and redo say what they took back or put
 // back ("Undid: removed Raspberry Pi Pico 2"), so a user stepping through the history knows where they are.
 import type { Project } from './types';
+import { isProbe } from './probes';
 
 const same = (a: unknown, b: unknown) => a === b || JSON.stringify(a) === JSON.stringify(b);
 const names = (xs: string[]) => (xs.length > 2 ? `${xs.length} boards` : xs.join(' and '));
@@ -45,7 +46,13 @@ export function describeChange(a: Project, b: Project): string {
 /** The name files are saved under: the one the user gave, or the board when there is one, or "Rack, 8 boards". */
 export function rackName(p: Project): string {
   if (p.name?.trim()) return p.name.trim();
-  return p.modules.length === 1 ? p.modules[0].board.name : `Rack, ${p.modules.length} boards`;
+  return p.modules.length === 1 ? p.modules[0].board.name : `Rack, ${rackCount(p)}`;
+}
+
+/** "8 boards + 3 probes": J-Links and USB-serial adapters are counted apart, as they ride behind the boards they serve. */
+export function rackCount(p: Project): string {
+  const probes = p.modules.filter(isProbe).length, boards = p.modules.length - probes;
+  return `${boards} board${boards === 1 ? '' : 's'}${probes ? ` + ${probes} probe${probes === 1 ? '' : 's'}` : ''}`;
 }
 
 /** A board's kind by name: "Raspberry Pi 4B 3" is a "Raspberry Pi 4B" when the rack has one by that name. */

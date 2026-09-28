@@ -2,7 +2,7 @@
 import { useSyncExternalStore } from 'react';
 import type { Board, Feature, GenResult, Module, PartOut, Project } from './model/types';
 import { activeModule, migrate, newModule, newProject } from './model/library';
-import { appendDock } from './cad/dockplan';
+import { seatBoard } from './cad/dockplan';
 import { describeChange } from './model/diff';
 import { carryOver, compareBoards } from './model/revision';
 
@@ -152,6 +152,19 @@ export function commitFrom(prev: Project) {
   persist(state.project);
 }
 
+/**
+ * Finish the last change with a follow-up worked out after it was built (docks slid apart to make room, say): the
+ * project changes but no new undo step is made, so one ⌘Z still takes back both.
+ */
+export function amend(fn: (p: Project) => void) {
+  const cur = state.project;
+  if (!cur) return;
+  const next = structuredClone(cur);
+  fn(next);
+  store.set({ project: next });
+  persist(next);
+}
+
 /** Change the active module (board + holder) through a mutating function on a copy (undoable). */
 export function editMod(fn: (m: Module, p: Project) => void) {
   edit((p) => fn(activeModule(p), p));
@@ -250,7 +263,8 @@ export function putBoards(bs: Board[], replace: boolean, opts: { stay?: boolean 
     const name = uniqueName(p.modules.map((m) => m.board.name), b0.name);
     const b = name === b0.name ? b0 : { ...b0, name };
     p.modules.push(newModule(b, activeModule(p).holder));
-    if (p.layout === 'panel' && !p.panel.auto) appendDock(p, p.modules[p.modules.length - 1].id);
+    // on a rack laid out by hand or built: a free slot of a dock already there, else a new dock at the end
+    if (p.layout === 'panel' && !p.panel.auto) seatBoard(p, p.modules[p.modules.length - 1].id);
   }
   p.active = first;
   store.set({ project: p, past: [...state.past, cur], future: [], sel: [], replaceMode: false, ...(opts.stay ? {} : { step: 'board' as const, view: 'editor' as const }) });
@@ -261,7 +275,8 @@ export function putBoards(bs: Board[], replace: boolean, opts: { stay?: boolean 
 export function loadProject(raw: unknown) {
   const p = migrate(raw);
   const cur = state.project;
-  store.set({ project: p, past: cur ? [...state.past.slice(-60), cur] : [], future: [], sel: [], step: 'import', result: null });
+  // it opens on Start, where the rack's card says what it is, whether it is built and what is new
+  store.set({ project: p, past: cur ? [...state.past.slice(-60), cur] : [], future: [], sel: [], step: 'import', view: 'library', result: null });
   persist(p);
 }
 

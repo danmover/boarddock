@@ -193,7 +193,7 @@ A board can sit on top of another; the bottom one carries the dock. In the **Rai
 - **Bolted on standoffs:** a HAT on a Pi, a shield on an Arduino. The top board is lined up on the holes the two boards share (for example the Pi's 58 × 49 pattern), and shown on standoffs of the length you set (11 mm by default). The shared holes of the bottom board become stacking standoffs in the hole wizard: no pins there, and room underneath.
 - **Printed layer:** a separate board gets its own light holder that presses onto four corner towers on the holder below, with press-fit pegs. The towers on a docked holder stay back from the dock face.
 
-Bolted is chosen automatically when at least two holes line up; you can switch it.
+Bolted is chosen automatically when at least two holes line up; you can switch it. Only sensible targets are offered: boards about as big or bigger, the ones it bolts onto first, and never a hub, charger or powerboard (a J-Link only on another J-Link of the same board).
 
 ## The panel
 
@@ -227,7 +227,15 @@ The **Rails** view shows the rack from above: rails, table stands, docks, and ev
 - Keeps boards that are cabled together next to each other.
 - Settings: rail direction, longest rail, gap between docks, space between rails, and pairing on or off.
 
-**Editing by hand.** The first edit keeps everything where it is and switches to manual.
+Under **Boards in their docks**, a small table compares the choices you have tried on this rack: rails and their length, how far it stands out from the wall, and cable to buy. **Whichever suits each** says which boards it laid flat.
+
+Auto-arrange also keeps each holder's tongue (the part that plugs into the dock) well under the plastic's limit: a long board is docked by an edge that gives a shorter lever. Where a board still fails a check, the Rails tree shows it under the board, and for a tongue over its limit a button docks it by another edge (or lays it flat) when that fixes it.
+
+With Auto-arrange on, every change lays the rack out again, a new cable too. When a new cable adds a rail, moves a board to another rail or adds 30 cm or more of cable to buy, a toast says so and offers **Keep the old layout**.
+
+On a built rack, **Auto-arrange** asks first, as it moves built boards.
+
+**Editing by hand.** The first edit keeps everything where it is and switches to manual. A dock dropped on top of another slides to the nearest gap beside it, and a dock a board leaves empty goes. **Tidy up** takes out empty docks and slides overlapping docks apart along their rail, leaving everything else where it is.
 
 | Action | How |
 |---|---|
@@ -420,6 +428,10 @@ When a new revision of one of your boards comes out, select it (in 3D, or its ch
 - the choices made on the old one carry over where the part is still there: plug cradles, caps, guards and tie anchors, hidden parts, and holes set by hand;
 - what changed is listed (the Board step keeps the list): "Connectors: J2 moved 2 mm; J4 new (USB-C)", "Holes: 1 moved (up to 0.8 mm)", "Tallest part underneath: 2 → 3.5 mm", or "No mechanical changes: the holder comes out the same".
 
+If the new version makes something fail in Check that did not before (a bigger holder now overlapping its neighbour, say), the toast and the board's list of changes say so.
+
+To put a **different** board in a board's place (an Arduino Mega for an Uno), press **Replace with…** on its card in the Board step and pick one from the library, or drop its files. It keeps the old one's dock, stack, holder settings and the cables to plugs it also has; What's new calls it a swap.
+
 **Print its holder** goes straight to Export with just that board (its dock on the rack stays, so it is left out); on a rack marked as built, **What's new** lists exactly its new parts, and the old holder is listed as spare. Slice it there for the G-code. One ⌘Z goes back to the old version.
 
 ## J-Links and serial cables
@@ -431,7 +443,7 @@ A board's debug headers are found on import:
 UART headers are found by name (UART, serial, console, FTDI, TX/RX). To mark any other part, select it and choose **Debug / UART…**. A board you measure by hand can be given debug and UART headers when you create it.
 
 The Board step lists them under **Debug & UART headers**:
-- **Add 2 J-Links** puts a J-Link on each free debug header, cabled to it.
+- **+ J-Link** on a header's row puts one J-Link on just that header; **Add 2 J-Links** puts one on each free debug header. Each is cabled to its header and named after it ("J-Link (Dual-MCU controller J_SWD1)", shown as "J-Link → J_SWD1" in the rack). A header with a J-Link shows its ribbon length, which you can set right there, and how long it needs to be when it is too short.
   - A J-Link (about 50 × 50 × 3 mm, its 10-pin ribbon socket, a shrouded box header with its key slot, on the top face by one edge and its micro-USB on the edge opposite, its MCU, crystal, regulator and power and activity LEDs drawn on it: set yours under Box) slides down into a slot in the back of its board's dock, USB end up, under a lip along each side.
   - A second J-Link for the same board gets the next slot, pressed onto corner towers.
   - Each ribbon leaves its socket flat, lies up along the J-Link, loops over the top of the dock and comes down the board to its header; a second one loops over the first. It is drawn grey with a red pin-1 edge, checked against the ribbon's length (200 mm unless you set yours) and never on the shopping list. An adapter is listed where the pin counts differ.
@@ -439,7 +451,7 @@ The Board step lists them under **Debug & UART headers**:
 - **Add a USB-serial adapter** puts a USB to TTL adapter board (the red FT232RL one: mini-USB at one end, six right-angle pins at the other with GND, CTS, VCC, TXD, RXD and DTR printed beside them, the FT232RL chip, TX and RX LEDs, the 3.3/5 V jumper; set yours under Box) in the slot behind the board, on top of its J-Links. Female–female jumper wires go from its pins to the UART header, crossed over: GND to GND, its TXD to the board's RX, its RXD to the board's TX. They are drawn one by one, a housing on each pin, bundled round the dock, and bought by the wire (10, 15, 20 or 30 cm). Its USB goes to a hub with Auto-connect.
 - **or a serial cable** runs a USB to TTL serial cable (3.3 V, the kind with loose jumper ends) from the nearest free hub port, or a computer's, to each free UART header. Its black end goes on GND, green (its TX) on the board's RX, white (its RX) on the board's TX, and red (power) stays off. The pins come from the nets in a KiCad file (GND, RX, TX); otherwise they are a guess from the header's size, which you can change under the header. It is routed, numbered and bought like any cable, and never counted as powering the board.
 
-On a rack that is already built, a new J-Link or adapter goes into the free slot of its board's dock (else the nearest free slot on that rail, else a new dock at the end): Export lists just its own slot holder and what comes with it, nothing you have printed changes, and it slides along the dock only as far as the board's holder reaches, so the rail stays as it is.
+On a rack laid out by hand or already built, a new J-Link or adapter goes into the free slot of its board's dock (else the nearest free slot on that rail, else a new dock at the end), and the toast says which, and how much longer the rail got. A J-Link added from the library goes the same way as soon as it is cabled to a board's header. Auto-arrange puts each board's probes in its dock's back slot, and any more right beside it, so ribbons and jumper wires reach; Check warns about jumper wires longer than 30 cm. Export lists just its own slot holder and what comes with it, nothing you have printed changes, and it slides along the dock only as far as the board's holder reaches, so the rail stays as it is.
 
 The examples to try it on are under **Start › Example: dual-MCU board…** and **Example: sensor board…**, and as KiCad files in `examples/`. None of this has been printed yet.
 
@@ -452,15 +464,19 @@ Later, open BoardDock. A saved rack opens on **Your rack**, with its boards, whe
 2. otherwise into the first gap on the rails that is clear in 3D, preferably on the rail of a board it is cabled to;
 3. otherwise on the end of a rail, and Export tells you that rail has to be longer.
 
-Nothing else moves. Connect its cables (Auto-connect only fills plugs that are still free). Export then lists what to do since the build:
+Nothing else moves; where a board in a free slot makes its dock reach further, the docks beside it slide along the rail just enough to clear it, and the toast says where the board went. Connect its cables (Auto-connect only fills plugs that are still free). Export then lists what to do since the build:
 
 ![What changed since the rack was built](docs/images/whatsnew.png)
 
-- **Take off** the boards you removed, with the parts and cables (by number) they leave spare;
+It is a numbered checklist in the order you would work at the rack, each step with the parts to print for it; tick steps off as you go:
+- **Take off** the boards you removed, from their dock ("dock 1.3 front");
+- **Swap** a board for its new version, or for the board that took its place, in the same dock;
+- **Cut** any rail that has to be longer, and **move the end block** out to the new end;
 - **Move** boards that now sit somewhere else ("Arduino Uno R3 from dock 1.3 front to dock 1.2 front"; docks are numbered by rail and place);
-- **Print** only the new or changed parts, each with why ("new: Arduino Nano", "Pi 4B 2 became Raspberry Pi 5");
-- **Buy** new cables, and say when a cable you have is now too short ("#4 is now 1 m, yours is 0.5 m");
-- **Cut** any rail that has to be longer.
+- **Clip on** each new dock, at its distance in mm from the rail's start;
+- **Seat** each new board in its holder and plug it into its dock (or onto the board it stacks on);
+- **Plug in** the new cables, and say when a cable you have is now too short ("#4 is now 1 m, yours is 0.5 m");
+- what is **spare** now: parts and cables (by number) the rack no longer uses.
 
 Plates, the estimate and the download (with the same list in its README) follow it. Press **I've built these too** when you have.
 

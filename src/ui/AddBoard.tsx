@@ -5,9 +5,10 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Board } from '../model/types';
 import { ACCEPT } from '../import';
-import { putBoards, store, toast, useApp } from '../state';
+import { activeModule, lastReplace, putBoards, store, toast, useApp } from '../state';
 import { openFiles } from './importFlow';
-import { bedNote, placementNote } from './panelOps';
+import { rackCount } from '../model/diff';
+import { bedNote, placementNote, settleOverlaps } from './panelOps';
 import { DrawBoard } from './DrawBoard';
 import { Library } from './Library';
 import { Icon, I } from './icons';
@@ -23,13 +24,27 @@ export function countNames(bs: Board[]): string {
 /** Add boards without leaving the step, and say where they went. */
 export function addBoards(bs: Board[]) {
   if (!bs.length) return;
+  const before = store.get().project?.modules.length ?? 0;
   putBoards(bs, false, { stay: true });
   const p = store.get().project!;
-  toast(`Added ${countNames(bs)} (${p.modules.length} boards).${placementNote(p)}${bedNote(p, bs)} ⌘Z undoes it.`, { label: bs.length > 1 ? 'Check them' : 'Check its board', run: () => store.set({ step: 'board', view: 'assembly' }) });
+  toast(`Added ${countNames(bs)} (${rackCount(p)}).${placementNote(p, p.modules.slice(before).map((m) => m.id))}${bedNote(p, bs)} ⌘Z undoes it.`, { label: bs.length > 1 ? 'Check them' : 'Check its board', run: () => store.set({ step: 'board', view: 'assembly' }) });
+  // a board in a dock's free slot makes that dock reach further: slide its neighbours along if they now overlap
+  if (p.layout === 'panel' && !p.panel.auto) settleOverlaps();
+}
+
+/** Put a library board in place of the board being edited, and say what it kept. */
+export function replaceWith(b: Board) {
+  const p = store.get().project;
+  if (!p) return;
+  const old = activeModule(p).board.name;
+  putBoards([b], true);
+  toast(`Replaced ${old} with ${store.get().project ? activeModule(store.get().project!).board.name : b.name}.${lastReplace} ⌘Z undoes it.`);
 }
 
 export function AddBoardSheet() {
   const open = useApp((s) => s.addSheet);
+  const replacing = useApp((s) => s.replaceMode && !!s.project);
+  const target = useApp((s) => (s.project ? activeModule(s.project).board.name : ''));
   const n = useApp((s) => s.project?.modules.length ?? 0);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -38,7 +53,8 @@ export function AddBoardSheet() {
   const file = useRef<HTMLInputElement>(null);
   const sheet = useRef<HTMLDivElement>(null);
   const opener = useRef<HTMLElement | null>(null);
-  const close = () => { store.set({ addSheet: false }); opener.current?.focus?.(); };
+  // (replace mode is for this one pick: closing the sheet ends it)
+  const close = () => { store.set({ addSheet: false, replaceMode: false }); opener.current?.focus?.(); };
   useEffect(() => {
     if (!open) return;
     opener.current = document.activeElement as HTMLElement | null;
@@ -58,16 +74,18 @@ export function AddBoardSheet() {
     return () => window.removeEventListener('keydown', k);
   }, [open]);
   if (!open) return null;
-  const add = (bs: Board[]) => { close(); addBoards(bs); };
+  const add = (bs: Board[]) => { if (replacing && bs.length) { store.set({ addSheet: false }); replaceWith(bs[0]); if (bs.length > 1) addBoards(bs.slice(1)); return; } close(); addBoards(bs); };
   const files = async (fl: FileList | File[]) => {
     setErr(null); setBusy(true);
     try { await openFiles(fl, { stay: true }); close(); } catch (e: any) { setErr(e.message ?? String(e)); } finally { setBusy(false); }
   };
   return (
     <div className="sheet-veil" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}>
-      <div className="sheet wide" role="dialog" aria-modal="true" aria-label="Add a board" ref={sheet}>
+      <div className="sheet wide" role="dialog" aria-modal="true" aria-label={replacing ? `Replace ${target}` : 'Add a board'} ref={sheet}>
         <div className="sheet-head">
-          <div><b>Add a board</b><small>{n ? `It joins your ${n}-board rack${store.get().project?.built ? ' without moving anything that is built' : ''}. You stay on this step.` : 'Start a rack with it.'} Click a picture to add it, or “+” to pick several.</small></div>
+          {replacing
+            ? <div><b>Replace {target}</b><small>The board you pick takes its place: its dock, its stack, its holder settings and the cables to plugs the new one also has. Click a picture, or drop its files.</small></div>
+            : <div><b>Add a board</b><small>{n ? `It joins your ${n}-board rack${store.get().project?.built ? ' without moving anything that is built' : ''}. You stay on this step.` : 'Start a rack with it.'} Click a picture to add it, or “+” to pick several.</small></div>}
           <button className="iconbtn" title="Close (Esc)" onClick={close}><Icon d={I.x} /></button>
         </div>
         <div className="sheet-body">

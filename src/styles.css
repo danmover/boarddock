@@ -1080,3 +1080,30 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 .bcheck li.warn .bcheck-text::before { content: "● "; color: var(--warn); }
 .bcheck .linkbtn { background: none; border: 0; padding: 0; color: var(--accent); font: inherit; font-size: 12px; cursor: pointer; }
 .dimedit-mates { display: flex; gap: 6px; align-items: center; font-size: 11.5px; color: var(--muted); margin-top: 4px; }
+
+/* Board › Debug & UART headers: a probe's ribbon length in its row */
+.ribbon { display: inline-flex; align-items: center; gap: 4px; flex: none; }
+.ribbon input { width: 58px; height: 24px; font-size: 12px; padding: 0 4px; }
+.ribbon small { color: var(--subtle); font-size: 11px; }
+
+/* Export › Built: what's new, as the steps to take at the rack */
+.deltaplan { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; counter-reset: plan; }
+.deltaplan > li { counter-increment: plan; padding: 6px 8px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--surface-2); font-size: 12.5px; line-height: 1.45; }
+.deltaplan > li > label { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; }
+.deltaplan > li > label input { margin-top: 2px; flex: none; }
+.deltaplan > li > label span::before { content: counter(plan) ". "; font-weight: 650; color: var(--muted); }
+.deltaplan > li.done > label span { color: var(--subtle); text-decoration: line-through; }
+.deltaparts { margin: 4px 0 0 26px; padding: 0; list-style: disc; color: var(--muted); font-size: 12px; }
+
+/* Rails tree: what Check fails for a board, under its chip */
+.probs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 3px 0 2px 14px; font-size: 11.5px; color: var(--bad); }
+.probs .prob { display: inline-flex; align-items: center; gap: 4px; }
+.probs .prob .chip { padding: 0 5px; height: 18px; }
+
+/* Rails › Boards in their docks: the three choices compared */
+.modecmp { width: 100%; margin-top: 8px; border-collapse: collapse; font-size: 11.5px; }
+.modecmp th, .modecmp td { padding: 3px 4px; text-align: left; border-bottom: 1px solid var(--line-2); font-weight: 400; }
+.modecmp thead th { color: var(--subtle); font-size: 10.5px; }
+.modecmp tbody th { font-weight: 600; white-space: nowrap; }
+.modecmp tr.on th, .modecmp tr.on td { color: var(--accent); }
+.modecmp td.hint { margin: 0; color: var(--subtle); }

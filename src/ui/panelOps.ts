@@ -1,21 +1,71 @@
 // Panel edits (all undoable). The first manual edit turns the automatic layout into editable rails and docks
 // exactly where they are, so nothing jumps.
-import type { Project, RailMount, Slot, Turn } from '../model/types';
+import type { GenResult, PanelReport, Project, RailMount, Slot, Turn } from '../model/types';
 import { round, uid } from '../geom/poly';
-import { appendDock, bestDock, withRiders } from '../cad/dockplan';
+import { appendDock, bestDock, seatBoard, dropEmptied, nearestFree, spreadOut, withRiders } from '../cad/dockplan';
 import { baseOf, refreshStandoffs } from '../model/holes';
-import { edit, select, store, toast, uniqueName } from '../state';
+import { amend, edit, select, store, toast, uniqueName } from '../state';
 import { mountLabels, snapshot } from '../model/built';
+import { isProbe } from '../model/probes';
 
 const rep = () => store.get().result?.report.panel ?? null;
 
 export function materialise(p: Project) {
   if (!p.panel.auto) return;
   const r = rep();
-  if (!r) return;
+  if (r) materialiseFrom(p, r);
+}
+
+/** Write a layout down as rails and docks you can edit (it stops being automatic). */
+export function materialiseFrom(p: Project, r: PanelReport) {
   p.panel.rails = r.rails.map((x) => ({ id: x.id, x: round(x.x, 1), y: round(x.y, 1), dir: x.dir, length: null }));
   p.panel.mounts = r.mounts.map((m) => ({ id: m.id, rail: m.rail, at: round(m.at, 1), kind: m.kind, turn: m.turn, lever: m.lever, slots: m.slots.map((s) => ({ ...s })) }));
   p.panel.auto = false;
+}
+
+/**
+ * Run `fn` once with the build of the project as it is now, when it is ready: for a message that needs the new layout
+ * (how long a rail became, what now overlaps). Given up when another change comes first.
+ */
+export function afterBuild(fn: (r: GenResult) => void) {
+  const p0 = store.get().project, r0 = store.get().result;
+  let done = false;
+  const off = store.sub(() => {
+    if (done) return;
+    const s = store.get();
+    if (s.project !== p0) { done = true; off(); return; }
+    if (!s.building && s.result && s.result !== r0) { done = true; off(); fn(s.result); }
+  });
+}
+
+const railNo = (id: string) => id.replace(/^r/, '');
+
+/**
+ * An automatic layout lays the whole rack out again after every change, a new cable too. Call this just before a
+ * cable edit: when the new layout needs another rail, moves a board to another rail or makes the cables to buy much
+ * longer, a toast says so and offers to keep the layout as it was (with the new cable).
+ */
+export function watchRelayout() {
+  const s0 = store.get(), p0 = s0.project, r0 = s0.result;
+  if (!p0 || p0.layout !== 'panel' || !p0.panel.auto || !r0?.report.panel) return;
+  const before = r0.report.panel, cable0 = (r0.report.cables ?? []).reduce((a, c) => a + c.buy, 0);
+  // (the edit happens right after this call: wait for it, then for its build)
+  queueMicrotask(() => afterBuild((r) => {
+    const now = r.report.panel, p = store.get().project;
+    if (!now || !p?.panel.auto) return;
+    const railOf = (rp: PanelReport, id: string) => { const m = rp.modules.find((x) => x.id === id); return m ? rp.mounts.find((x) => x.id === m.mount)?.rail : undefined; };
+    const moved = p.modules.filter((m) => !isProbe(m) && railOf(before, m.id) && railOf(now, m.id) && railOf(before, m.id) !== railOf(now, m.id));
+    const cable = (r.report.cables ?? []).reduce((a, c) => a + c.buy, 0), more = cable - cable0;
+    if (now.rails.length === before.rails.length && !moved.length && more < 0.3) return;
+    const bits = [
+      now.rails.length !== before.rails.length ? `${before.rails.length} → ${now.rails.length} rails` : '',
+      moved.length ? (moved.length > 2 ? `${moved.length} boards on other rails` : moved.map((m) => `${m.board.name} to rail ${railNo(railOf(now, m.id)!)}`).join(', ')) : '',
+      Math.abs(more) >= 0.3 ? `${more > 0 ? '+' : '−'}${round(Math.abs(more), 1)} m of cable to buy` : '',
+    ].filter(Boolean);
+    toast(`Auto-arrange laid the rack out again for the new cable: ${bits.join(', ')}. Keep the old layout to leave every board where it was (it stops being automatic). ⌘Z undoes it.`, {
+      label: 'Keep the old layout', run: () => { amend((q) => materialiseFrom(q, before)); toast('Kept the layout as it was, with the new cable. Auto-arrange lays it all out again when you want.'); },
+    });
+  }));
 }
 
 /** Fix the position of every mount on these rails, so moving one doesn't make the rest re-pack. */
@@ -92,14 +142,20 @@ export function nudge(ids: string[], d: number) {
   });
 }
 
+/** Move a dock to a spot on a rail; dropped onto another dock, it slides to the nearest gap beside it. */
 export function placeMount(id: string, rail: string, at: number) {
+  const r = rep(), dir = (rid: string) => r?.rails.find((x) => x.id === rid)?.dir;
+  const own = r?.mounts.find((x) => x.id === id);
+  // (turned onto a rail the other way, its reach along the rail changes: the next build says if it overlaps)
+  const to = r && own && dir(own.rail) === dir(rail) ? nearestFree(r, id, rail, at) : at;
   panelEdit((p) => {
     const m = p.panel.mounts.find((x) => x.id === id);
     if (!m) return;
     pin(p, [m.rail, rail]);
     m.rail = rail;
-    m.at = round(Math.max(0, at), 1);
+    m.at = round(Math.max(0, to), 1);
   });
+  if (Math.abs(to - at) > 1) toast(`That spot was taken: the dock went into the nearest gap, ${round(Math.abs(to - at), 0)} mm ${to > at ? 'further along' : 'back'}. ⌘Z undoes it.`);
 }
 
 export function moveRail(id: string, dx: number, dy: number) {
@@ -146,12 +202,51 @@ export function seat(moduleId: string, target?: { mount: string; slot: number } 
   const where = !target ? 'a new dock at the end of the rails' : 'mount' in target
     ? `dock ${mountLabels(r0).get(target.mount) ?? ''}${(r0?.mounts.find((x) => x.id === target.mount)?.slots.length ?? 1) > 1 ? (target.slot ? ' (back)' : ' (front)') : ''}`
     : `a new dock on rail ${Math.max(1, (r0?.rails.findIndex((x) => x.id === target.rail) ?? 0) + 1)}`;
-  seatNow(moduleId, target);
-  toast(`${r0?.modules.some((x) => x.id === moduleId) ? 'Moved' : 'Placed'} ${name} ${r0?.modules.some((x) => x.id === moduleId) ? 'to' : 'in'} ${where.replace(/ +/g, ' ')}. ⌘Z undoes it.`);
+  const was = r0?.modules.some((x) => x.id === moduleId);
+  const msg = `${was ? 'Moved' : 'Placed'} ${name} ${was ? 'to' : 'in'} ${where.replace(/ +/g, ' ')}`;
+  const left = seatNow(moduleId, target);
+  toast(`${msg}${left ? '; the dock it left, empty now, went' : ''}. ⌘Z undoes it.`);
+  // a board in a dock's other slot makes that dock reach further, and a new dock may land on another: slide the docks
+  // along that rail if they now overlap
+  if (target) settleOverlaps((pr) => ['mount' in target ? pr.mounts.find((x) => x.id === target.mount)?.rail : target.rail], (n) => `${msg}; ${n > 1 ? `${n} docks` : 'the dock'} beside it slid along the rail to make room${left ? ', and the dock it left, empty now, went' : ''}. ⌘Z undoes it.`);
 }
 
-function seatNow(moduleId: string, target?: { mount: string; slot: number } | { rail: string; at: number }) {
+/**
+ * Once the rack is built again after a change by hand: where docks on a rail now overlap (a bigger board in a back
+ * slot reaches further), slide them apart along that rail, as part of the same undo step. `rails`: which rails to
+ * look at (all of them when left out); `say`: the toast, given how many docks moved.
+ */
+export function settleOverlaps(rails?: (pr: PanelReport) => (string | undefined)[], say: (n: number) => string = (n) => `${n > 1 ? `${n} docks` : 'A dock'} slid along the rail to make room, as the new board made its dock reach further. ⌘Z undoes it.`) {
+  afterBuild((r) => {
+    const pr = r.report.panel;
+    if (!pr || store.get().project?.panel.auto) return;
+    const on = rails ? rails(pr).filter((x): x is string => !!x) : pr.rails.map((x) => x.id);
+    const mountOf = (id: string) => pr.mounts.find((x) => x.id === id) ?? pr.mounts.find((x) => x.id === pr.modules.find((q) => q.id === id)?.mount);
+    if (!pr.collisions.some((pair) => pair.every((id) => { const rl = mountOf(id)?.rail; return !!rl && on.includes(rl) && rl === mountOf(pair[0])?.rail; }))) return;
+    let moved: string[] = [];
+    amend((q) => { if (!q.panel.auto) moved = spreadOut(q, pr, 2, on); });
+    if (moved.length) toast(say(moved.length));
+  });
+}
+
+/** Seat a board; returns whether a dock it left behind empty was taken out. */
+function seatNow(moduleId: string, target?: { mount: string; slot: number } | { rail: string; at: number }): boolean {
+  const before = store.get().project;
+  let left = false;
   panelEdit((p) => {
+    seatInto(p, moduleId, target);
+    // the dock it came from goes when nothing is left in it (an empty dock you added yourself stays)
+    // (an automatic layout has no empty docks of its own: any empty one now is the one it left)
+    const n = p.panel.mounts.length;
+    if (before && !before.panel.auto) dropEmptied(p, before);
+    else p.panel.mounts = p.panel.mounts.filter((mt) => mt.slots.some((sl) => sl.module));
+    left = p.panel.mounts.length < n;
+  });
+  return left;
+}
+
+function seatInto(p: Project, moduleId: string, target?: { mount: string; slot: number } | { rail: string; at: number }) {
+  {
     for (const mt of p.panel.mounts) for (const sl of mt.slots) if (sl.module === moduleId) sl.module = null;
     const m = p.modules.find((x) => x.id === moduleId);
     if (!m) return;
@@ -166,7 +261,7 @@ function seatNow(moduleId: string, target?: { mount: string; slot: number } | { 
     pin(p, [rail.id]);
     const o = bestDock(m, rail.dir, 0);
     p.panel.mounts.push({ id: uid('d'), rail: rail.id, at: round(target.at, 1), kind: 'dock', turn: o.turn, slots: [{ module: moduleId, edge: o.edge }, { module: null, edge: 'auto' }] });
-  });
+  }
 }
 
 export function unseat(moduleId: string) {
@@ -185,15 +280,38 @@ export function setSlot(mountId: string, slot: number, fn: (s: Slot) => void) {
 }
 
 export function autoArrange() {
-  edit((p) => { p.panel.auto = true; });
+  const p = store.get().project;
+  if (p?.built && !confirm('This rack is built. Auto-arrange lays every board out again: built boards move, and you may need new rails and docks. ⌘Z undoes it. Lay it all out again?')) return;
+  edit((q) => { q.panel.auto = true; });
   select([]);
+}
+
+/**
+ * Tidy a layout done by hand without starting over: docks with nothing in them go, and along each rail each dock
+ * slides on just far enough to clear the one before it. Order, rails, turns and slots stay as they are.
+ */
+export function tidyUp() {
+  const r = rep(), p0 = store.get().project;
+  if (!r || !p0 || p0.layout !== 'panel') return;
+  const tidy = (p: Project) => {
+    const n = p.panel.mounts.length;
+    p.panel.mounts = p.panel.mounts.filter((mt) => mt.slots.some((sl) => sl.module));
+    return { gone: n - p.panel.mounts.length, moved: spreadOut(p, r, 2) };
+  };
+  // try it on a copy first: nothing to do is not an undo step
+  const trial = structuredClone(p0);
+  materialise(trial);
+  const { gone, moved } = tidy(trial);
+  if (!gone && !moved.length) { toast('Nothing to tidy: no empty docks, and nothing overlaps along a rail.'); return; }
+  panelEdit((p) => { tidy(p); });
+  toast(`Tidied up: ${[gone ? `${gone} empty dock${gone > 1 ? 's' : ''} taken out` : '', moved.length ? `${moved.length} dock${moved.length > 1 ? 's' : ''} slid along to clear the one before` : ''].filter(Boolean).join(', ')}. Everything else stayed where it was.${p0.built && moved.length ? " Export lists the docks that moved under What's new." : ''} ⌘Z undoes it.`);
 }
 
 export function setLever(ids: string[], lever: RailMount['lever']) {
   panelEdit((p) => { for (const m of mountsOf(p, ids)) m.lever = lever; });
 }
 
-/** Copy a board and its holder settings; on a manual panel the copy gets a dock at the end of the last rail. */
+/** Copy a board and its holder settings; on a manual panel the copy goes in a free dock slot, else a new dock at the end. */
 export function duplicateModule(i: number) {
   edit((q) => {
     const src = q.modules[i];
@@ -203,8 +321,9 @@ export function duplicateModule(i: number) {
     copy.board.name = uniqueName(all, m && all.includes(m[1]) ? m[1] : src.board.name);
     q.modules.splice(i + 1, 0, copy);
     q.active = i + 1;
-    if (q.layout === 'panel' && !q.panel.auto) appendDock(q, copy.id);
+    if (q.layout === 'panel' && !q.panel.auto) seatBoard(q, copy.id);
   });
+  settleOverlaps();
 }
 
 /** Put a board in a new dock at the end of a rail. */
@@ -314,9 +433,23 @@ export function bedNote(p: Project, boards: { name: string; outline: [number, nu
   return ` ${big.length === 1 ? `${big[0].name}'s holder` : `The holders of ${big.map((b) => b.name).join(', ')}`} will not fit the ${p.printer.name} bed (${bx} × ${by} mm): a printer with a bigger bed can be picked in Export.`;
 }
 
-/** One line on where a newly added board goes. */
-export function placementNote(p: Project): string {
+/**
+ * One line on where newly added boards go. With `ids` (the boards just added, on a rack laid out by hand or built),
+ * where each one actually went: a free slot of a dock already there, or a new dock.
+ */
+export function placementNote(p: Project, ids?: string[]): string {
   if (p.layout !== 'panel') return '';
   if (p.panel.auto) return ' Auto-arrange lays out the whole rack again with it (mark the rack as built in Export to keep boards where they are).';
-  return ' It goes into an empty dock slot if one fits (nothing new to print but its holder), else the first free spot on the rails, near a board it is cabled to; the rest stay put.';
+  const r = rep(), labels = mountLabels(r);
+  const spots = (ids ?? []).map((id) => {
+    const mt = p.panel.mounts.find((x) => x.slots.some((s) => s.module === id));
+    if (!mt) return null;
+    const m = p.modules.find((x) => x.id === id), other = mt.slots.find((s) => s.module && s.module !== id)?.module;
+    const known = labels.get(mt.id);
+    if (known) return `${m?.board.name ?? 'It'} went into the free slot of dock ${known}${other ? `, back to back with ${p.modules.find((x) => x.id === other)?.board.name}` : ''} (nothing new to print but its holder)`;
+    const k = p.panel.rails.findIndex((x) => x.id === mt.rail) + 1;
+    return `${m?.board.name ?? 'It'} got a new dock${k ? ` on rail ${k}` : ''}, in the first gap that fits or on the end of the rail (Check says if the rail gets longer)`;
+  }).filter(Boolean) as string[];
+  if (spots.length && spots.length <= 3) return ` ${spots.join('. ')}; the rest stay put.`;
+  return ' Each goes into a free dock slot where it docks well (nothing new to print but its holder), else a new dock in the first gap on the rails or on the end of a rail, which then gets longer (Check says by how much); the rest stay put.';
 }

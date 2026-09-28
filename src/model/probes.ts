@@ -5,7 +5,7 @@
 import type { Board, Comp, Link, Module, Pin, Project, Wire } from './types';
 import { connById, connSetup, newModule } from './library';
 import { BOX_PRESETS, makeBox } from './boxes';
-import { baseRef, DEBUG_TYPES, isAccessory, isDebugPort, isUartPort, numberLinks, plugsOf } from './links';
+import { baseRef, DEBUG_TYPES, isAccessory, isDebugPort, isUartPort, numberLinks, plugsOf, shortName } from './links';
 
 export { DEBUG_TYPES, isDebugPort, isUartPort } from './links';
 
@@ -157,24 +157,45 @@ export function stackProbes(p: Project): boolean {
   return changed;
 }
 
+/**
+ * A probe's or adapter's name: what it is and the header it serves, "J-Link (Pi 4B J_SWD1)". The board's name is
+ * written out in full (only a maker's name in front is left off), so two probes never differ by a cut-off "…".
+ */
+export function companionName(taken: Set<string>, kind: string, board: string, ref: string): string {
+  const who = `${shortName(board)} ${ref}`;
+  let name = `${kind} (${who})`;
+  for (let n = 2; taken.has(name); n++) name = `${kind} ${n} (${who})`;
+  return name;
+}
+
+/** "J-Link → J_SWD1": a probe or adapter by what it is and the header it serves (for chips and short lists). */
+export function companionLabel(p: Project, m: Module): string {
+  const kind = m.board.name.replace(/\s*\(.*\)$/, '');
+  if (!isProbe(m)) return m.board.name;
+  for (const l of p.links ?? []) {
+    const other = l.a.module === m.id ? l.b : l.b.module === m.id ? l.a : null;
+    const t = other && p.modules.find((x) => x.id === other.module);
+    if (t && !isAccessory(t.board)) return `${kind} → ${baseRef(other!.ref)}`;
+  }
+  return kind;
+}
+
 /** A J-Link: a slim box with its 10-pin ribbon and its USB on one end. */
 export const makeProbe = (name: string): Board => makeBox('jlink', name);
 
 /**
- * A J-Link for every debug header of a board that has none yet: cabled to its header, its USB left for Auto-connect,
- * stacked in one pile. Mutates the project; returns the new probes.
+ * A J-Link for every debug header of a board that has none yet (or only for the headers in `refs`): cabled to its
+ * header, its USB left for Auto-connect, stacked in one pile. Mutates the project; returns the new probes.
  */
-export function addProbes(p: Project, boardId: string): Module[] {
+export function addProbes(p: Project, boardId: string, refs?: string[]): Module[] {
   const m = p.modules.find((x) => x.id === boardId);
   if (!m) return [];
   const taken = new Set((p.links ?? []).flatMap((l) => [`${l.a.module}/${baseRef(l.a.ref)}`, `${l.b.module}/${baseRef(l.b.ref)}`]));
-  const free = debugHeaders(m.board).filter((c) => !taken.has(`${m.id}/${c.ref}`));
+  const free = debugHeaders(m.board).filter((c) => !taken.has(`${m.id}/${c.ref}`) && (!refs || refs.includes(c.ref)));
   const names = new Set(p.modules.map((x) => x.board.name));
   const out: Module[] = [];
-  const short = m.board.name.length > 18 ? `${m.board.name.slice(0, 17)}…` : m.board.name;
   for (const c of free) {
-    let name = `${BOX_PRESETS.jlink.name} (${short} ${c.ref})`;
-    for (let n = 2; names.has(name); n++) name = `${BOX_PRESETS.jlink.name} ${n} (${short} ${c.ref})`;
+    const name = companionName(names, BOX_PRESETS.jlink.name, m.board.name, c.ref);
     names.add(name);
     const pb = makeProbe(name);
     const port = pb.comps.find(isDebugPort)!;
@@ -213,21 +234,19 @@ export function fillWires(p: Project, l: Link): Link {
 }
 
 /**
- * A USB-serial adapter for every UART header of a board that has nothing on it yet: jumper wires from its pins to the
- * header (the crossover), stacked with the board's probes behind it; its USB left for Auto-connect. Mutates the
+ * A USB-serial adapter for every UART header of a board that has nothing on it yet (or only for the headers in
+ * `refs`): jumper wires from its pins to the header (the crossover), stacked with the board's probes behind it; its USB left for Auto-connect. Mutates the
  * project; returns the new adapters.
  */
-export function addAdapters(p: Project, boardId: string): Module[] {
+export function addAdapters(p: Project, boardId: string, refs?: string[]): Module[] {
   const m = p.modules.find((x) => x.id === boardId);
   if (!m) return [];
   const taken = new Set((p.links ?? []).flatMap((l) => [`${l.a.module}/${baseRef(l.a.ref)}`, `${l.b.module}/${baseRef(l.b.ref)}`]));
-  const free = uartHeaders(m.board).filter((c) => !taken.has(`${m.id}/${c.ref}`));
+  const free = uartHeaders(m.board).filter((c) => !taken.has(`${m.id}/${c.ref}`) && (!refs || refs.includes(c.ref)));
   const names = new Set(p.modules.map((x) => x.board.name));
-  const short = m.board.name.length > 18 ? `${m.board.name.slice(0, 17)}…` : m.board.name;
   const out: Module[] = [];
   for (const c of free) {
-    let name = `${BOX_PRESETS.ftdi.name} (${short} ${c.ref})`;
-    for (let n = 2; names.has(name); n++) name = `${BOX_PRESETS.ftdi.name} ${n} (${short} ${c.ref})`;
+    const name = companionName(names, BOX_PRESETS.ftdi.name, m.board.name, c.ref);
     names.add(name);
     const ab = makeBox('ftdi', name), pins = ab.comps.find(isUartPort)!;
     const mod = newModule(ab, m.holder);

@@ -844,6 +844,8 @@ export function generatePanel(p: Project): GenResult {
       const wires = kind === 'jumper' ? jumperWiring(p, l) : head ? uartWiring(head) : undefined;
       cables.push({ id: l.id, a: `${nameOf2(l.a.module)} ${refText(mods.get(l.a.module)?.m, l.a.ref)}`, b: `${nameOf2(l.b.module)} ${refText(mods.get(l.b.module)?.m, l.b.ref)}`, ends: `${l.a.module}/${l.a.ref}|${l.b.module}/${l.b.ref}`, kind, length: round(len, 0), buy: ribbon != null ? 0 : kind === 'jumper' ? jumperToBuy(len) / 1000 : cableToBuy(len), no, label: purpose.text, mid: [m0.p[0], m0.p[1], m0.p[2] + d / 2 + 2], ...(ribbon != null ? { ribbon } : {}), ...(wires ? { wires } : {}), ...(clash.length ? { clash: clash.join(', ') } : {}) });
       if (probe && ribbon != null && len > ribbon) warnings.push(`The ${probe.board.name} ribbon is ${ribbon} mm but has to run about ${Math.round(len)} mm to ${purpose.to === probe.board.name ? purpose.from : purpose.to}. Use a longer ribbon (set its length under Box), or put the probe closer: in the back slot of that board's dock.`);
+      // jumper wires past the usual 30 cm ones: the adapter is too far from its header
+      if (kind === 'jumper' && len > 300) warnings.push(`The jumper wires from ${purpose.from} to ${purpose.to} have to run about ${Math.round(len)} mm, longer than the usual 30 cm ones. Put the adapter closer: in the back slot of that board's dock (drag it there in the Rails step).`);
       // numbered tags, a hand-width from each plug: ring round the cable, flag standing up
       if (P.cableTags !== false) {
         const key = `${no}:${d.toFixed(1)}`;

@@ -1,8 +1,11 @@
 // One import path for the drop zone, the file picker and drag-and-drop anywhere in the window. Several files make
 // several boards (a Gerber set or an IDF pair stays one board); they join the project unless "replace" is ticked.
 import { importMany } from '../import';
-import { lastReplace, loadProject, putBoards, reviseBoard, store, toast } from '../state';
-import { bedNote, placementNote } from './panelOps';
+import { amend, lastReplace, loadProject, putBoards, reviseBoard, store, toast } from '../state';
+import { afterBuild, bedNote, placementNote, settleOverlaps } from './panelOps';
+
+/** A warning that two things on the rack overlap or a cable runs into something. */
+const isClash = (w: string) => / overlap on the panel\.| runs into /.test(w);
 
 let inFlight = false;
 
@@ -87,7 +90,9 @@ async function openNow(files: File[], opts: { stay?: boolean }): Promise<void> {
     ? `Replaced ${s.project ? s.project.modules[s.project.active].board.name : 'the board'} with ${names[0]}${names.length > 1 ? ` and added ${names.slice(1).join(', ')}` : ''}`
     : `${had ? 'Added' : 'Imported'} ${boards.length > 1 ? `${boards.length} boards: ${names.join(', ')}` : names[0]}`;
   const added = had && (!replace || boards.length > 1);
-  toast(`${what}${n > 1 ? ` (${n} boards in the project)` : ''}.${replace && had ? lastReplace : ''}${added ? placementNote(store.get().project!) : ''}${bedNote(store.get().project!, boards)}${had ? ' ⌘Z undoes it.' : ''}${errors.length ? ` Skipped: ${errors.join('; ')}` : ''}`, opts.stay && !replace ? { label: boards.length > 1 ? 'Check them' : 'Check its board', run: () => store.set({ step: 'board', view: 'assembly' }) } : undefined);
+  const p1 = store.get().project!;
+  toast(`${what}${n > 1 ? ` (${n} boards in the project)` : ''}.${replace && had ? lastReplace : ''}${added ? placementNote(p1, p1.modules.slice(had).map((m) => m.id)) : ''}${bedNote(store.get().project!, boards)}${had ? ' ⌘Z undoes it.' : ''}${errors.length ? ` Skipped: ${errors.join('; ')}` : ''}`, opts.stay && !replace ? { label: boards.length > 1 ? 'Check them' : 'Check its board', run: () => store.set({ step: 'board', view: 'assembly' }) } : undefined);
+  if (added && p1.layout === 'panel' && !p1.panel.auto) settleOverlaps();
 }
 
 /**
@@ -101,12 +106,23 @@ export async function openRevision(fl: FileList | File[], moduleId: string): Pro
   try {
     const { boards, errors } = await importMany(await readAll(files));
     if (!boards.length) throw new Error(errors[0] ?? 'No board in those files.');
+    // what Check says now, to tell afterwards what the new version broke
+    const res0 = store.get().result;
+    const bad0 = new Set([...(res0?.report.checks ?? []).filter((c) => c.status === 'bad').map((c) => `${c.group}|${c.name}`), ...(res0?.report.warnings ?? []).filter(isClash)]);
     const r = reviseBoard(moduleId, boards[0]);
     if (!r) throw new Error('That board is no longer in the project.');
     const what = r.changes.length ? r.changes.join('. ') : 'No mechanical changes: the holder comes out the same';
     const cables = r.kept || r.dropped ? ` Cables kept: ${r.kept}${r.dropped ? `; ${r.dropped} dropped (their plugs are gone)` : ''}.` : '';
     const more = boards.length > 1 ? ` The files held ${boards.length} boards; the first was used.` : '';
-    toast(`New version of ${r.name}. ${what}.${cables}${more} ⌘Z undoes it.`, { label: 'Print its holder', run: () => store.set({ step: 'export', view: 'assembly', exportPick: [moduleId] }) });
+    const act = { label: 'Print its holder', run: () => store.set({ step: 'export', view: 'assembly', exportPick: [moduleId] }) };
+    toast(`New version of ${r.name}. ${what}.${cables}${more} ⌘Z undoes it.`, act);
+    // once it is built: anything Check now fails (an overlap from a bigger holder, say) that it did not before
+    afterBuild((res) => {
+      const now = [...res.report.checks.filter((c) => c.status === 'bad' && !bad0.has(`${c.group}|${c.name}`)).map((c) => `${c.group.replace(/ · .*$/, '')}: ${c.name}${c.value ? ` (${c.value})` : ''}`), ...res.report.warnings.filter((w) => isClash(w) && !bad0.has(w)).map((w) => w.replace(/ Move one along.*$/, ''))];
+      if (!now.length) return;
+      amend((q) => { const m = q.modules.find((x) => x.id === moduleId); if (m?.revision) m.revision.changes = [...m.revision.changes, ...now.map((x) => `Now in Check: ${x}`)]; });
+      toast(`New version of ${r.name}. ${what}.${cables} It also brings ${now.length > 1 ? `${now.length} new problems` : 'a new problem'} in Check: ${now.join('; ')}. Move or turn its dock in the Rails step, or ⌘Z to go back to the old version.`, act);
+    });
   } finally {
     inFlight = false;
   }
