@@ -27,6 +27,7 @@ import { baseOf as stackBase, ridersOf } from '../model/holes';
 import { DockFeaSection } from './DockFea';
 import { powerBudget, powerText } from '../model/power';
 import { saveBoard } from '../model/myboards';
+import { ackNote, summarizeChecks } from '../model/checkSummary';
 import { boardSig, useKeptPicture } from './pics';
 import { paletteFor } from '../model/palette';
 import { PartPic } from './Toolbox';
@@ -89,7 +90,8 @@ function RackSummary() {
   const res = useApp((s) => s.result);
   const d = res ? delta(p, res) : null;
   const rails = res?.report.panel?.rails.length ?? 0;
-  const nl = (p.links ?? []).length, warn = res?.report.warnings.length ?? 0;
+  const sum = summarizeChecks(p, res?.report);
+  const nl = (p.links ?? []).length, bad = sum.failing.length, warn = sum.nLook;
   const plugs = p.modules.reduce((a, m) => a + m.board.comps.filter((c) => c.conn).length, 0);
   const when = p.built ? new Date(p.built.at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : null;
   const s = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
@@ -98,7 +100,7 @@ function RackSummary() {
     { step: 'board', label: 'Boards', state: `${s(p.modules.length, 'board')}, ${s(plugs, 'plug')}`, done: p.modules.length > 0 },
     { step: 'plugs', label: 'Cables', state: nl ? s(nl, 'cable') : 'none wired yet', done: nl > 0 },
     { step: 'mount', label: 'Rails', state: p.layout === 'panel' ? (rails ? `on ${s(rails, 'rail')}` : 'laying out…') : 'loose holders', done: p.layout !== 'panel' || rails > 0 },
-    { step: 'check', label: 'Check', state: warn ? s(warn, 'note') : 'nothing to look at', done: !warn, tone: warn ? 'warn' : undefined },
+    { step: 'check', label: 'Check', state: bad ? `${bad} failing${warn ? `, ${warn} to look at` : ''}` : warn ? `${warn} to look at` : 'nothing to look at', done: !bad && !warn, tone: bad || warn ? 'warn' : undefined },
     { step: 'export', label: 'Print', state: p.built ? (d?.any ? `${d.parts.reduce((a, x) => a + x.qty, 0)} new parts to print` : `built ${when}`) : 'not printed yet', done: !!p.built && !d?.any },
   ];
   return (
@@ -304,7 +306,9 @@ function BoardCard() {
         <button className="btn small" onClick={() => { const ok = saveBoard(b); toast(ok ? `Saved ${b.name} to My boards: the library lists it for any rack.` : 'This browser would not store it (private window, or storage full).'); }} title="Keep this board to add again to any rack">Save to My boards</button>
         {!box && <NewVersionButton moduleId={m.id} small />}
       </div>
-      {b.notes.length > 0 && <div className="warns">{b.notes.map((n, i) => <div key={i}>{n}</div>)}</div>}
+      {b.notes.some((n) => !b.ack?.includes(n)) && <div className="warns">{b.notes.filter((n) => !b.ack?.includes(n)).map((n, i) => (
+        <div key={i}>{n} <button className="linkbtn" title="Tick it off once you've done it" onClick={() => edit((q) => ackNote(q, [m.id], n))}>Done</button></div>
+      ))}</div>}
     </div>
   );
 }
@@ -1094,11 +1098,23 @@ export function CheckPanel() {
   const [feaBusy, setFeaBusy] = useState<string | null>(null);
   const [feaErr, setFeaErr] = useState<string | null>(null);
   const [fine, setFine] = useState(false);
+  // the tiles filter the list: every check, only passing, only the ones to look at (failing ones always show on top)
+  const [only, setOnly] = useState<'all' | 'ok' | 'warn' | 'bad'>('all');
+  const sum = useMemo(() => summarizeChecks(p, res?.report), [p, res]);
   const groups = useMemo(() => {
     const g = new Map<string, NonNullable<typeof res>['report']['checks']>();
-    for (const c of res?.report.checks ?? []) (g.get(c.group) ?? g.set(c.group, []).get(c.group)!).push(c);
+    for (const c of res?.report.checks ?? []) {
+      if (c.status === 'bad' || (only !== 'all' && c.status !== only)) continue;
+      (g.get(c.group) ?? g.set(c.group, []).get(c.group)!).push(c);
+    }
     return [...g.entries()];
-  }, [res]);
+  }, [res, only]);
+  const tile = (k: 'ok' | 'warn' | 'bad', n: number, color: string, label: string) => (
+    <button className={only === k ? 'on' : ''} aria-pressed={only === k} onClick={() => setOnly(only === k ? 'all' : k)} title={only === k ? 'Show every check' : `Show only the checks ${label}`}>
+      <b style={{ color }}>{n}</b><span>{label}</span>
+    </button>
+  );
+  const show = (module?: string) => { if (!module) return; select([{ kind: 'module', id: module }]); store.set({ view: 'assembly' }); };
   const mat = MATERIALS[activeModule(p).holder.material];
   const run = async () => {
     setFeaErr(null);
@@ -1114,19 +1130,36 @@ export function CheckPanel() {
   };
   return (
     <div>
-      <div className="bigstat">
-        <div><b style={{ color: 'var(--good)' }}>{res?.report.checks.filter((c) => c.status === 'ok').length ?? 0}</b><span>passing</span></div>
-        <div><b style={{ color: 'var(--warn)' }}>{(res?.report.checks.filter((c) => c.status === 'warn').length ?? 0) + (res?.report.warnings.length ?? 0)}</b><span>to look at</span></div>
-        <div><b style={{ color: 'var(--bad)' }}>{res?.report.checks.filter((c) => c.status === 'bad').length ?? 0}</b><span>failing</span></div>
+      <div className="bigstat tiles">
+        {tile('ok', sum.passing.length, 'var(--good)', 'passing')}
+        {tile('warn', sum.nLook, 'var(--warn)', 'to look at')}
+        {tile('bad', sum.failing.length, 'var(--bad)', 'failing')}
       </div>
-      {res?.report.warnings.length ? <div className="warns">{res.report.warnings.map((w, i) => <div key={i}>{w}</div>)}</div> : null}
-      {groups.map(([g, list]) => (
+      {sum.failing.length > 0 && (
+        <Section title="Failing">
+          {sum.failing.map((c, i) => (
+            <div key={i} className="checkrow"><div className="grow">{c.name}<div className="hint">{c.group}{c.detail ? ` · ${c.detail}` : ''}</div>{c.module && <button className="btn small ghost" style={{ marginTop: 4 }} onClick={() => show(c.module)}><Icon d={I.cube} /> Show in 3D</button>}</div><Chip status={c.status}>{c.value}</Chip></div>
+          ))}
+        </Section>
+      )}
+      {only !== 'ok' && sum.warnings.length > 0 && <div className="warns">{sum.warnings.map((w, i) => <div key={i}>{w}</div>)}</div>}
+      {only === 'bad' && !sum.failing.length && <p className="hint">Nothing is failing.</p>}
+      {only !== 'bad' && groups.map(([g, list]) => (
         <Section key={g} title={g}>
           {list.map((c, i) => (
             <div key={i} className="checkrow"><div className="grow">{c.name}{c.detail && <div className="hint">{c.detail}</div>}</div><Chip status={c.status}>{c.value}</Chip></div>
           ))}
         </Section>
       ))}
+      {sum.reminders.length > 0 && (
+        <details className="reminders">
+          <summary>{sum.reminders.length} reminder{sum.reminders.length === 1 ? '' : 's'} from the boards' templates</summary>
+          {sum.reminders.map((r, i) => (
+            <div key={i} className="checkrow"><div className="grow hint" style={{ marginTop: 0 }}>{r.text}</div>
+              <button className="btn small" title="Tick it off once you've done it: it stops showing here" onClick={() => edit((q) => ackNote(q, r.modules, r.note))}><Icon d={I.check} /> Done</button></div>
+          ))}
+        </details>
+      )}
       <p className="hint">Hand calculations for every spring and snap, plus finite-element models of the clips. Linear and idealised: print the test-fit kit before a batch.</p>
       <PrintCheckSection />
       {p.layout === 'panel' && <DockFeaSection />}

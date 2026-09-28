@@ -16,6 +16,7 @@ import { describe, removeItems } from './ui/pickOps';
 import { Icon, I } from './ui/icons';
 import { WiringView } from './ui/WiringView';
 import { rackName } from './model/diff';
+import { summarizeChecks } from './model/checkSummary';
 
 const STEPS: { id: Step; label: string; title: string; text: string }[] = [
   { id: 'import', label: 'Start', title: 'Bring a board in', text: 'Drop a KiCad, Altium, Eagle or Gerber export, or start from a known board.' },
@@ -127,8 +128,9 @@ export function App() {
   const shown = useMemo(() => (printParts && result ? { ...result, parts: printParts } : result), [printParts, result]);
 
   const panel = { import: <ImportPanel />, board: <BoardPanel />, plugs: <PlugsPanel />, holder: <HolderPanel />, mount: <MountPanel />, check: <CheckPanel />, export: <ExportPanel /> }[step];
-  const warnCount = result?.report.warnings.length ?? 0;
-  const badCount = result?.report.checks.filter((c) => c.status === 'bad').length ?? 0;
+  // one count everywhere (Start, the step bar, the stats and Check): failing checks, and what to look at
+  const checkSum = useMemo(() => summarizeChecks(project, result?.report), [project, result]);
+  const warnCount = checkSum.nLook, badCount = checkSum.failing.length;
   const si = STEPS.findIndex((s) => s.id === step);
   const S = STEPS[si];
   // Start shows the library, Board the board editor; the other steps the rack (in 3D, unless you picked another view)
@@ -156,8 +158,8 @@ export function App() {
         {project && <button className="btn small soft addboard" onClick={() => store.set({ addSheet: true })} title="Add a board (A)" aria-label="Add a board"><Icon d={I.plus} /><span>Board</span></button>}
         <nav className="stepper" ref={navRef}>
           {STEPS.map((s, i) => (
-            <button key={s.id} className={`${step === s.id ? 'on' : i < si ? 'done' : ''} ${s.id === 'check' && badCount > 0 ? 'flag bad' : s.id === 'check' && warnCount > 0 ? 'flag' : ''}`} disabled={!project && s.id !== 'import'} onClick={() => goStep(s.id)} title={s.title}>
-              <span className="n">{i < si && step !== s.id ? <Icon d={I.check} /> : s.id === 'check' && badCount + warnCount > 0 && step !== s.id ? '!' : i + 1}</span>
+            <button key={s.id} className={`${step === s.id ? 'on' : i < si ? 'done' : ''} ${s.id === 'check' && badCount > 0 ? 'flag bad' : ''}`} disabled={!project && s.id !== 'import'} onClick={() => goStep(s.id)} title={s.title}>
+              <span className="n">{i < si && step !== s.id ? <Icon d={I.check} /> : s.id === 'check' && badCount > 0 && step !== s.id ? '!' : i + 1}</span>
               <span className="l">{s.label}</span>
             </button>
           ))}
@@ -232,7 +234,7 @@ export function App() {
                       <span><b>{stats.plates}</b>plate{stats.plates > 1 ? 's' : ''}</span>
                       <span><b>{stats.g.toFixed(0)}</b>g</span>
                       <span title="Rough estimate, slicer numbers are the real ones"><b>{fmtTime(stats.min)}</b></span>
-                      {(warnCount > 0 || badCount > 0) && <span className="warn" onClick={() => store.set({ step: 'check' })}><b>{badCount + warnCount}</b>notes</span>}
+                      {(warnCount > 0 || badCount > 0) && <span className="warn" onClick={() => store.set({ step: 'check' })}><b>{badCount || warnCount}</b>{badCount ? 'failing' : 'to look at'}</span>}
                     </div>
                   )}
                   {error && <div className="floating err" style={{ position: 'absolute', left: '50%', top: 60, transform: 'translateX(-50%)', zIndex: 7 }}>{error}</div>}

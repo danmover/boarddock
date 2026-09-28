@@ -5,6 +5,7 @@ import { useRef, useState } from 'react';
 import type { Board } from '../model/types';
 import { ACCEPT } from '../import';
 import { activeModule, putBoards, store, toast, useApp } from '../state';
+import { summarizeChecks } from '../model/checkSummary';
 import { openFiles } from './importFlow';
 import { addBoards } from './AddBoard';
 import { Library } from './Library';
@@ -35,7 +36,7 @@ export function StartStage() {
     try { await openFiles(fl, { stay: !!store.get().project }); } catch (e: any) { setErr(e.message ?? String(e)); } finally { setBusy(false); }
   };
   const nLinks = p?.links?.length ?? 0, rails = res?.report.panel?.rails.length ?? 0;
-  const warn = (res?.report.warnings.length ?? 0);
+  const sum = summarizeChecks(p ?? null, res?.report), bad = sum.failing.length, warn = sum.nLook;
   return (
     <div className="start">
       <div className="start-in">
@@ -49,7 +50,7 @@ export function StartStage() {
             <div className="start-head-acts">
               <button className="btn small" onClick={() => store.set({ view: 'assembly' })}><Icon d={I.cube} /> See it in 3D</button>
               <button className="btn small" onClick={() => store.set({ step: 'board', view: 'editor' })}><Icon d={I.board} /> Its boards</button>
-              {warn > 0 && <button className="btn small ghost" onClick={() => store.set({ step: 'check' })}>{warn} note{warn > 1 ? 's' : ''}</button>}
+              {bad + warn > 0 && <button className="btn small ghost" onClick={() => store.set({ step: 'check' })}>{bad ? `${bad} failing` : `${warn} to look at`}</button>}
             </div>
           </header>
         ) : (

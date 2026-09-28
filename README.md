@@ -41,7 +41,7 @@ Everything is checked with FEA and packed onto as few print plates as possible.
   - Switch cradles, caps, tie anchors, guards, fingers or labels off for a whole holder, or remove single ones in 3D.
   - Hide small parts, ignore holes, strip plug protection, or revert to the import, for one board or all of them.
 - **Efficient:**
-  - Only changed holders are rebuilt: moving or turning docks takes milliseconds.
+  - Only changed holders are rebuilt, and the 3D view keeps its compiled shaders between edits (it used to compile them all again, a freeze of seconds). The header says **Rendering…** while a new look is being prepared.
   - Sturdy, balanced and lean presets; duplicate a board.
   - A tongue-fit tolerance and a 30–40 minute test-fit kit to print before the real thing.
 - **Exports** binary STL or 3MF, one file per print plate, packed onto your printer's bed.
@@ -66,7 +66,7 @@ The desktop builds are not code-signed yet:
 3. **Plugs:** pick the plug type and size for each connector, and what each one is cabled to (or press **Auto-connect**).
 4. **Holder:** frame or tray, a preset, where the release button goes, and the features you want.
 5. **Rails:** BoardDock has already placed every board on a rail. Pick one rail, rows or columns; drag, turn, pair or stack boards if you like.
-6. **Check:** read the notes and run the dock FEA for your material.
+6. **Check:** failing checks come first (each with **Show in 3D**); tap the passing / to look at / failing tiles to see only those. The boards' template reminders ("measure yours") are folded away at the bottom: tick each off with **Done** once you've done it (on the board card too). Run the dock FEA for your material. The Start page, the step bar and the 3D view's stats all count the same way, and the step bar only flags failing checks.
 7. **Export:** download the plates and print them in PETG. The shopping list has the rail lengths, the cables (length and plug types), straps and standoffs. The download's README has the assembly steps.
 8. **Build it**, following the play button in the 3D view. Then press **Mark the rack as built** in Export.
 
