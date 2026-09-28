@@ -138,9 +138,12 @@ describe('plugs and leads in 3D', () => {
     const pi = p.modules[0].id;
     const leads = r0.ghosts.filter((g) => g.name.startsWith('off-rack cable'));
     const pis = leads.filter((g) => g.tag?.module === pi);
-    expect(pis.map((g) => g.tag?.refs?.[0]).sort()).toEqual(['AUDIO', 'HDMI0', 'HDMI1']);
+    // (its power socket too, if the charger here is too weak for it: that lead goes to a supply off the rack)
+    const av = pis.filter((g) => g.tag?.refs?.[0] !== 'J_PWR');
+    expect(av.map((g) => g.tag?.refs?.[0]).sort()).toEqual(['AUDIO', 'HDMI0', 'HDMI1']);
     for (const g of pis) expect(boxOf(g).lo[2]).toBeGreaterThan(20); // up by the board, not down on the table
-    expect(pis.map((g) => g.fx?.fade?.label).sort()).toEqual(['to a screen', 'to a screen', 'to speakers']);
+    expect(av.map((g) => g.fx?.fade?.label).sort()).toEqual(['to a screen', 'to a screen', 'to speakers']);
+    for (const g of pis.filter((x) => x.tag?.refs?.[0] === 'J_PWR')) expect(g.fx?.fade?.label).toBe('to its power supply');
     // the powerboard's lead: to the wall
     expect(leads.find((g) => g.tag?.module === p.modules[2].id)?.fx?.fade?.label).toBe('to the wall');
 
