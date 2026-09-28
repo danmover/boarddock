@@ -5,15 +5,18 @@ import { importKicad } from './kicad';
 import { importFab, classifyFabFile, type FabFiles } from './fab';
 import { importEagle, importIdf, importDxf } from './other';
 import { importStep } from './step';
+import { importEagleBinary, isEagleBinary } from './eaglebin';
+import { importBoardView, sniffBoardView } from './boardview';
 
 export interface InFile { name: string; bytes: Uint8Array }
 
-export const ACCEPT = '.kicad_pcb,.brd,.emn,.emp,.idf,.step,.stp,.dxf,.zip,.gbr,.gko,.gm1,.gml,.gtl,.gbl,.drl,.xln,.txt,.csv,.pos,.tsv,.ger,.gtp,.gbp,.gts,.gbs,.gto,.gbo,.json';
+export const ACCEPT = '.kicad_pcb,.brd,.bdv,.bv,.bvr,.emn,.emp,.idf,.step,.stp,.dxf,.zip,.gbr,.gko,.gm1,.gml,.gtl,.gbl,.drl,.xln,.txt,.csv,.pos,.tsv,.ger,.gtp,.gbp,.gts,.gbs,.gto,.gbo,.json';
 
 export const FORMATS = [
   ['KiCad', '.kicad_pcb (outline, holes, courtyards, 3D model names)'],
   ['Altium / OrCAD / EasyEDA / any tool', 'STEP of the board, or a fab zip: Gerber outline + NC drill + pick & place'],
-  ['Eagle / Fusion Electronics', '.brd'],
+  ['Eagle / Fusion Electronics', '.brd (XML, and the binary files of Eagle 5 and older)'],
+  ['Board viewers (OpenBoardView formats)', '.brd, .bdv, .bvr (outline, and parts as the spread of their pins)'],
   ['IDF 3.0', '.emn + .emp (outline, holes, parts with real heights)'],
   ['DXF', 'board outline drawing; holes from round cut-outs'],
 ] as const;
@@ -30,19 +33,35 @@ function expand(files: InFile[]): InFile[] {
 }
 
 const BOARD_FILE = /\.(kicad_pcb|step|stp|dxf|emn|idf)$/i;
+const BRD_FILE = /\.(brd|bdv|bvr?)$/i;
+
+/**
+ * What a .brd (or board-viewer) file really is, by its content: Eagle XML (6 and later), binary Eagle (5 and
+ * older), a board-viewer file, Cadence Allegro (its version tag at byte 0xf8, as OpenBoardView checks it), or unknown.
+ */
+export function brdKind(f: InFile): 'eagle-xml' | 'eagle-bin' | 'boardview' | 'allegro' | null {
+  if (!BRD_FILE.test(f.name)) return null;
+  const b = f.bytes;
+  if (/<eagle/i.test(strFromU8(b.slice(0, 2000)))) return 'eagle-xml';
+  if (isEagleBinary(b)) return 'eagle-bin';
+  if (sniffBoardView(b)) return 'boardview';
+  const tag = String.fromCharCode(b[0xf8] ?? 0, b[0xf9] ?? 0, b[0xfa] ?? 0);
+  if (tag === 'all' || tag === 'vie') return 'allegro';
+  return null;
+}
+const isBrdBoard = (f: InFile) => { const k = brdKind(f); return k === 'eagle-xml' || k === 'eagle-bin' || k === 'boardview'; };
 const base = (n: string) => n.replace(/\.[^.]+$/, '').toLowerCase();
 
 /**
  * Split one drop into boards: every KiCad, STEP, DXF or IDF file (with the .emp of the same name) and every Eagle
- * .brd is a board of its own; a zip is one board unless it holds several board files; loose Gerber, drill and
+ * or board-viewer .brd is a board of its own; a zip is one board unless it holds several board files; loose Gerber, drill and
  * pick-and-place files together make one board. Files sharing a board file's name go with it.
  */
 export function groupFiles(files: InFile[]): InFile[][] {
   const groups: InFile[][] = [];
   const loose: InFile[] = [];
-  const isEagle = (f: InFile) => /\.brd$/i.test(f.name) && /<eagle/i.test(strFromU8(f.bytes.slice(0, 2000)));
   const split = (list: InFile[], rest: InFile[]) => {
-    const heads = list.filter((f) => BOARD_FILE.test(f.name) || isEagle(f));
+    const heads = list.filter((f) => BOARD_FILE.test(f.name) || isBrdBoard(f));
     const used = new Set<InFile>();
     for (const h of heads) {
       if (used.has(h)) continue;
@@ -55,7 +74,7 @@ export function groupFiles(files: InFile[]): InFile[][] {
   for (const f of files) {
     if (!/\.zip$/i.test(f.name)) { loose.push(f); continue; }
     const inner = expand([f]);
-    if (inner.filter((x) => BOARD_FILE.test(x.name) || isEagle(x)).length > 1) { const rest: InFile[] = []; split(inner, rest); if (rest.length) groups.push(rest); }
+    if (inner.filter((x) => BOARD_FILE.test(x.name) || isBrdBoard(x)).length > 1) { const rest: InFile[] = []; split(inner, rest); if (rest.length) groups.push(rest); }
     else groups.push(inner);
   }
   const rest: InFile[] = [];
@@ -107,8 +126,11 @@ async function readBoard(files: InFile[]): Promise<Board> {
   if (step) return importStep(step.bytes, step.name);
   const emn = by(/\.(emn|idf|brd_idf)$/i) ?? all.find((f) => /^\s*\.HEADER[\s\S]*BOARD_FILE/.test(text(f).slice(0, 200)));
   if (emn) return importIdf(text(emn), by(/\.emp$/i) ? text(by(/\.emp$/i)!) : '', emn.name);
-  const brd = all.find((f) => /\.brd$/i.test(f.name) && /<eagle/i.test(text(f).slice(0, 2000)));
-  if (brd) return importEagle(text(brd), brd.name);
+  const brds = all.map((f) => ({ f, kind: brdKind(f) })).filter((x) => x.kind);
+  const brd = brds.find((x) => x.kind === 'eagle-xml') ?? brds.find((x) => x.kind === 'eagle-bin') ?? brds.find((x) => x.kind === 'boardview');
+  if (brd?.kind === 'eagle-xml') return importEagle(text(brd.f), brd.f.name);
+  if (brd?.kind === 'eagle-bin') return importEagleBinary(brd.f.bytes, brd.f.name);
+  if (brd?.kind === 'boardview') return importBoardView(brd.f.bytes, brd.f.name);
   const fab: FabFiles[] = all.filter((f) => !/\.(pdf|png|jpg|step|stp|zip)$/i.test(f.name) && f.bytes.length < 60e6).map((f) => ({ name: f.name, text: text(f) }));
   if (fab.some((f) => classifyFabFile(f) === 'outline')) {
     const base = files[0]?.name.replace(/\.[^.]+$/, '').replace(/[-_](gerbers?|fab|outputs?)$/i, '') || 'Board';
@@ -117,6 +139,7 @@ async function readBoard(files: InFile[]): Promise<Board> {
   const dxf = by(/\.dxf$/i);
   if (dxf) return importDxf(text(dxf), dxf.name);
   if (by(/\.pcbdoc$/i)) throw new Error('Altium .PcbDoc is a binary format. In Altium use File > Export > STEP 3D (best), or open the fab outputs (Gerber + NC Drill + Pick and Place) as one zip.');
-  if (by(/\.brd$/i)) throw new Error('This .brd is a binary (Eagle 5 or older, or Allegro) file. Export IDF, STEP or Gerber + drill instead.');
-  throw new Error('No board outline found. Supported: KiCad .kicad_pcb, STEP, IDF .emn, Eagle .brd, Gerber outline + drill (+ pick & place), DXF.');
+  if (brds.some((x) => x.kind === 'allegro')) throw new Error('This .brd is a Cadence Allegro board, a closed binary format. The free KiCad 10 or later can import Allegro 16 to 23 boards (from its File menu, import a non-KiCad board): save it there as a .kicad_pcb and drop that in. Otherwise ask whoever made it for STEP, IDF or Gerber + drill files.');
+  if (by(BRD_FILE)) throw new Error('This .brd is not an Eagle board (XML or binary) or a board-viewer file BoardDock knows. Export STEP, IDF or Gerber + drill from the program that made it.');
+  throw new Error('No board outline found. Supported: KiCad .kicad_pcb, STEP, IDF .emn, Eagle .brd (XML or binary), board-viewer .brd / .bdv / .bvr, Gerber outline + drill (+ pick & place), DXF.');
 }

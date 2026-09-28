@@ -15,7 +15,7 @@ Everything is checked with FEA and packed onto as few print plates as possible.
 
 ![A panel of boards on a DIN rail](docs/images/hero.png)
 
-- **Imports:** KiCad, Altium (via STEP or Gerber), Eagle, IDF, DXF and Gerber + drill + pick-and-place.
+- **Imports:** KiCad, Altium (via STEP or Gerber), Eagle (new XML and old binary boards), board-viewer files, IDF, DXF and Gerber + drill + pick-and-place.
   - You can also draw a board by hand or start from a template.
 - **Hole wizard:** sorts every hole into mounting holes (they get pins), connector pegs, part leads and stacking standoffs (kept clear, with room underneath). You can change any of them.
 - **Fits holders automatically:**
@@ -439,13 +439,21 @@ Plates, the estimate and the download (with the same list in its README) follow 
 |---|---|---|
 | **KiCad** 6–9 | the `.kicad_pcb` file | outline (lines and arcs), holes, footprints with courtyard sizes, top and bottom parts, copper traces and vias |
 | **Altium Designer** | *File → Export → STEP 3D*, or Gerber + NC drill + pick-and-place | STEP: board outline, holes and part bodies. Fab files: outline, holes, parts. |
-| **Fusion 360 / Eagle** | the `.brd` file, or STEP | outline, holes, packages |
+| **Fusion 360 / Eagle** 6 and later | the `.brd` file, or STEP | outline, holes, packages |
+| **Old Eagle** (3 to 5, binary) | the `.brd` file as it is: no Eagle needed | outline (lines, arcs and circles), cut-outs, holes, parts with their sizes and sides, pin header pins, copper tracks and vias |
+| **Board viewers** (the files OpenBoardView opens) | the `.brd`, `.bdv`, `.bv` or `.bvr` file | outline, each part as the spread of its pins, top or bottom, pin nets. No holes or heights. |
 | **EasyEDA / JLCPCB** | Gerber zip + CPL (pick and place) | outline, holes, parts |
 | **Any EDA tool** | IDF 3.0 (`.emn` + `.emp`) | outline, cut-outs, holes, part outlines and heights |
 | **Mechanical drawing** | DXF | outline and round holes |
 | **No files** | draw it, or start from a template (Raspberry Pi 4 / Zero / Pico, Arduino Uno / Nano, perfboard) | |
 
 Connectors are recognised by footprint name: USB-C, micro and mini USB, USB-A and B, HDMI, RJ45, barrel jacks, 3.5 mm audio, microSD, SMA, Qwiic, terminal blocks, JST and pin headers. Each one gets a plug size you can change.
+
+A `.brd` can be many things, so BoardDock looks inside to tell them apart: an Eagle XML board, an old binary Eagle board, or a board-viewer file (Test_Link `.brd`, BRD2, `.bdv`, BVR). A zip holding one works too.
+
+- **Old binary Eagle boards** (Eagle 5 and older) are read directly, so you don't need Eagle, which Autodesk no longer sells. Their format was never published: BoardDock follows the layout worked out by the open-source readers pyeagle and pcb-rnd, and says so on the board. Check the outline, holes and parts against your board before you print.
+- **Board-viewer files** are the repair-shop kind: they hold part names and pin positions but no package names, holes or heights. A part's size is the spread of its pins, and connectors are found by their names (J1, USB1, CN2), so check each connector's type and add the mounting holes yourself.
+- **Cadence Allegro** `.brd` files can't be read here. BoardDock recognises them and tells you what to do: the free KiCad 10 or later imports Allegro 16 to 23 boards, and saves them as a `.kicad_pcb` you can drop in.
 
 Altium `.PcbDoc` files use a proprietary binary format. Export STEP or fabrication files instead; BoardDock explains this if you drop one in.
 
@@ -567,7 +575,7 @@ The board tiles on Start and in **Add a board** are pictures shipped in `public/
 
 **Project layout:**
 
-- `src/import/`: KiCad, Gerber, Excellon, pick-and-place, IDF, Eagle, DXF and STEP importers.
+- `src/import/`: KiCad, Gerber, Excellon, pick-and-place, IDF, Eagle (XML in `other.ts`, binary in `eaglebin.ts`), board-viewer (`boardview.ts`), DXF and STEP importers.
 - `src/cad/`: geometry.
   - `generate.ts`: the holder around one board.
   - `dock.ts`: rail shoe, socket, tongue, spine and rod.
