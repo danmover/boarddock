@@ -19,15 +19,23 @@ export function MountQuick({ item }: { item: SelItem }) {
 
   if (p.layout === 'loose') {
     const M = p.mount, din = M.kind === 'din';
-    const set = (fn: (q: typeof M) => void) => edit((q) => { fn(q.mount); q.mount.picked = true; });
+    const setAll = (fn: (q: typeof M) => void) => edit((q) => { fn(q.mount); q.mount.picked = true; });
+    // this holder's own clip: on or off, and which way its release tab points
+    const own = m?.clip ?? {}, mine = (fn: (c: NonNullable<typeof own>) => void) => edit((q) => { const x = q.modules.find((y) => y.id === m?.id); if (!x) return; const c = { ...(x.clip ?? {}) }; fn(c); x.clip = c.off || c.tab ? c : undefined; });
     return (
       <div className="mountq">
-        <span className="mq-lbl">DIN clip</span>
-        <Seg value={din ? 'din' : 'none'} options={[['din', 'On a rail'], ['none', 'No clip']]} onChange={(v) => set((q) => { q.kind = v as 'din' | 'none'; })} />
-        {din && <Seg value={M.mode} options={[['flat', 'Flat on the rail'], ['rack', 'Across it'], ['inline', 'Along it']]} onChange={(v) => set((q) => { q.mode = v; })} />}
-        {din && M.mode === 'flat' && <button className="btn small ghost" onClick={() => set((q) => { q.rotation = (((q.rotation + 90) % 360) as typeof q.rotation); })} title="Turn the clip (the rail's direction under the board)">Turn clip ⟳</button>}
-        {din && M.mode !== 'flat' && <select value={M.edge} onChange={(e) => set((q) => { q.edge = e.target.value as EdgeName; })} aria-label="Holder edge on the rail">{EDGES.slice(1).map(([k, n]) => <option key={k} value={k}>{n} on the rail</option>)}</select>}
-        {din && <Seg value={M.tabSide} options={[['down', 'Tab down'], ['up', 'Tab up']]} onChange={(v) => set((q) => { q.tabSide = v; })} />}
+        {din && m && (
+          <>
+            <span className="mq-lbl">This holder</span>
+            <Seg value={own.off ? 'off' : 'on'} options={[['on', 'Clipped on'], ['off', 'No clip']]} onChange={(v) => mine((c) => { if (v === 'off') c.off = true; else delete c.off; })} />
+            {!own.off && <Seg value={own.tab ?? M.tabSide} options={[['down', 'Tab down'], ['up', 'Tab up']]} onChange={(v) => mine((c) => { c.tab = v === M.tabSide ? undefined : v; })} />}
+          </>
+        )}
+        <span className="mq-lbl">{din ? 'All holders (one rail)' : 'DIN clip'}</span>
+        <Seg value={din ? 'din' : 'none'} options={[['din', 'On a rail'], ['none', 'No clips']]} onChange={(v) => setAll((q) => { q.kind = v as 'din' | 'none'; })} />
+        {din && <Seg value={M.mode} options={[['flat', 'Flat on it'], ['rack', 'Across it'], ['inline', 'Along it']]} onChange={(v) => setAll((q) => { q.mode = v; })} />}
+        {din && M.mode === 'flat' && <button className="btn small ghost" onClick={() => setAll((q) => { q.rotation = (((q.rotation + 90) % 360) as typeof q.rotation); })} title="Turn the clips (the rail's direction under the boards)">Turn clips ⟳</button>}
+        {din && M.mode !== 'flat' && <select value={M.edge} onChange={(e) => setAll((q) => { q.edge = e.target.value as EdgeName; })} aria-label="Holder edge on the rail">{EDGES.slice(1).map(([k, n]) => <option key={k} value={k}>{n} on the rail</option>)}</select>}
       </div>
     );
   }

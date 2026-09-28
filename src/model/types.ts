@@ -211,7 +211,8 @@ export interface Module {
   original?: Board; // the board as imported, for "revert to import"
   on?: string | null; // stacked on top of this module
   onMode?: 'bolted' | 'towers'; // bolted: screwed to the board below on standoffs (HAT, shield); towers: its own printed layer
-  onGap?: number; // bolted: gap between the boards (standoff length), mm
+  onGap?: number;
+  clip?: { off?: boolean; tab?: 'down' | 'up' }; // loose holders: this one's DIN clip left off, or its release tab the other way (the rail's direction is the rack's) // bolted: gap between the boards (standoff length), mm
   revision?: { at: string; from: string; to: string; changes: string[] }; // the last new version swapped in: files and what changed
 }
 

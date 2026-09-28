@@ -136,7 +136,8 @@ function generateLoose(p: Project): GenResult {
   const inStack = mode === 'stack' ? stackOrder(p) : [];
   const base = mode === 'stack' ? inStack[0] ?? 0 : 0;
   const outs = mods.slice(0, mode === 'back' ? 2 : n).map((m, i) => {
-    const job: Job = { p, mi: i, b: m.board, H: m.holder, din: din[i] && !(mode === 'back' && p.mount.mode === 'flat'), stand: i === base, hooks: hooks[i], name: m.board.name };
+    // (a holder can leave its clip off, or turn its release tab the other way; the rail's direction is the rack's)
+    const job: Job = { p, mi: i, b: m.board, H: m.holder, din: din[i] && !m.clip?.off && !(mode === 'back' && p.mount.mode === 'flat'), stand: i === base, hooks: hooks[i], name: m.board.name, ...(m.clip?.tab && m.clip.tab !== p.mount.tabSide ? { mount: { ...p.mount, tabSide: m.clip.tab } } : {}) };
     try {
       return buildModule(job);
     } catch (e: any) {

@@ -170,3 +170,19 @@ describe('cables to buy', () => {
     expect(buyText('usb', 0.3, 'USB-A', 'USB-C')).toBe('0.3 m USB-A to USB-C cable');
   });
 });
+
+describe('each loose holder its own clip', () => {
+  beforeAll(async () => { await initKernel(); });
+  it('turning one holder\'s clip off leaves the others on; defaults side by side', () => {
+    const p = newProject(T('pico'));
+    p.modules.push(newModule(T('nano')));
+    setLayout(p, 'loose');
+    expect(p.arrange.mode).toBe('side');
+    p.mount.kind = 'din'; p.mount.picked = true;
+    const clips = (r: ReturnType<typeof generate>) => r.parts.filter((x) => x.tag?.kind === 'clip').reduce((a, x) => a + 1 + (x.instances?.length ?? 0), 0);
+    const both = clips(generate(p));
+    expect(both).toBe(2);
+    p.modules[1].clip = { off: true };
+    expect(clips(generate(p))).toBe(1);
+  }, 300_000);
+});
