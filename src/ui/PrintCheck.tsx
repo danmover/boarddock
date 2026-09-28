@@ -24,9 +24,7 @@ export function PrintCheckSection() {
     (async () => {
       for (const [k, x] of parts) {
         if (!live) return;
-        const expect = (res?.report.features ?? []).filter((f) => f.kind === 'finger' && x.tag?.kind === 'holder' && f.module === x.tag.module)
-          .map((f) => ({ box: [f.box[0], f.box[1], f.box[3], f.box[4]] as [number, number, number, number], why: 'snap-finger undersides overhang their slot' }));
-        const r = await checkLayers(k, x.mesh, expect).catch(() => null);
+        const r = await checkLayers(k, x.mesh).catch(() => null);
         if (live) setDone((d) => ({ ...d, [k]: r }));
       }
     })();

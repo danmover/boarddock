@@ -1,6 +1,6 @@
 // Promise wrappers around the workers. Generation is "latest wins": stale requests are dropped.
 import type { Board, GenResult, HolderSettings, MeshData, PartOut, Project } from '../model/types';
-import type { Expected, LayerReport } from '../cad/printcheck';
+import type { LayerReport } from '../cad/printcheck';
 import type { ClipFeaResult } from '../fea/clipfea';
 import type { DockFeaResult } from '../fea/dockfea';
 
@@ -59,10 +59,10 @@ export const boardPicture = (b: Board) => side().call<PicPart[]>('board', b);
 export const holderPicture = (board: Board, holder: HolderSettings) => side().call<PicPart[]>('holder', { board, holder });
 const layerCache = new Map<string, Promise<LayerReport | null>>();
 /** Slice one part layer by layer (cached by its signature, so an unchanged part is checked once). */
-export function checkLayers(key: string, mesh: MeshData, expect: Expected[]): Promise<LayerReport | null> {
+export function checkLayers(key: string, mesh: MeshData): Promise<LayerReport | null> {
   const hit = layerCache.get(key);
   if (hit) return hit;
-  const p = side().call<LayerReport | null>('layers', { mesh, expect });
+  const p = side().call<LayerReport | null>('layers', { mesh });
   layerCache.set(key, p);
   p.catch(() => layerCache.delete(key));
   if (layerCache.size > 200) layerCache.delete(layerCache.keys().next().value!);
