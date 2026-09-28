@@ -198,8 +198,8 @@ export function duplicateModule(i: number) {
   edit((q) => {
     const src = q.modules[i];
     const copy = { ...structuredClone(src), id: Math.random().toString(36).slice(2, 9) };
-    // the same numbering as adding one: "Raspberry Pi 4B" -> "Raspberry Pi 4B 2"
-    const all = q.modules.map((x) => x.board.name), m = /^(.*) (?:(\d+)|\((\d+)\))$/.exec(src.board.name);
+    // the same numbering as adding one: "Raspberry Pi 4B" -> "Raspberry Pi 4B #2"
+    const all = q.modules.map((x) => x.board.name), m = /^(.*) (?:#?(\d+)|\((\d+)\))$/.exec(src.board.name);
     copy.board.name = uniqueName(all, m && all.includes(m[1]) ? m[1] : src.board.name);
     q.modules.splice(i + 1, 0, copy);
     q.active = i + 1;

@@ -22,6 +22,7 @@ import type { ClipFeaResult } from '../fea/clipfea';
 import { clipDims } from '../cad/dinclip';
 import { RackBuilder } from './RackBuilder';
 import { duplicateModule, markBuilt, unmarkBuilt } from './panelOps';
+import { removeItems } from './pickOps';
 import { delta, partsFor, type Delta } from '../model/built';
 import { baseOf as stackBase, ridersOf } from '../model/holes';
 import { DockFeaSection } from './DockFea';
@@ -254,7 +255,12 @@ export function BoardPanel() {
     if (picked && tab !== 'sel') { back.current = tab; setTab('sel'); }
     else if (!picked && tab === 'sel') setTab(back.current);
   }, [picked]);
-  useEffect(() => { setTab(box ? 'box' : 'parts'); back.current = box ? 'box' : 'parts'; }, [m.id]);
+  // another board: the same tab when it has one (Headers, Holes), else its first
+  useEffect(() => {
+    const t = back.current, has = t === 'board' || (box ? t === 'box' : t === 'parts' || t === 'holes') || (t === 'headers' && debugHeaders(b).length + uartHeaders(b).length > 0);
+    const next = has ? t : box ? 'box' : 'parts';
+    setTab(next); back.current = next;
+  }, [m.id]);
   const nHeaders = debugHeaders(b).length + uartHeaders(b).length;
   const shown = b.comps.filter((c) => !c.hidden);
   const tabs: [BTab, string, number | null][] = [
@@ -309,6 +315,7 @@ function BoardCard() {
         {view !== 'editor' ? <button className="btn small primary" onClick={() => store.set({ view: 'editor' })}><Icon d={I.board} /> Open the editor</button> : <button className="btn small" onClick={() => store.set({ view: 'assembly' })}><Icon d={I.cube} /> In 3D</button>}
         <button className="btn small" onClick={() => { const ok = saveBoard(b); toast(ok ? `Saved ${b.name} to My boards: the library lists it for any rack.` : 'This browser would not store it (private window, or storage full).'); }} title="Keep this board to add again to any rack">Save to My boards</button>
         {!box && <NewVersionButton moduleId={m.id} small />}
+        {p.modules.length > 1 && <button className="btn small ghost" onClick={() => removeItems([{ kind: 'module', id: m.id }])} title="Take this board out of the rack (Undo brings it back)"><Icon d={I.trash} /> Remove</button>}
       </div>
       {b.notes.some((n) => !b.ack?.includes(n)) && <div className="warns">{b.notes.filter((n) => !b.ack?.includes(n)).map((n, i) => (
         <div key={i}>{n} <button className="linkbtn" title="Tick it off once you've done it" onClick={() => edit((q) => ackNote(q, [m.id], n))}>Done</button></div>
@@ -1576,7 +1583,8 @@ function ModulePicker() {
   if (p.modules.length <= 10) return (
     <div className="boardchips" role="tablist" aria-label="Boards">
       {p.modules.map((m, i) => (
-        <button key={m.id} role="tab" aria-selected={p.active === i} className={`bchip ${p.active === i ? 'on' : ''}`} title={m.board.name} onClick={() => pick(i)}>
+        <button key={m.id} role="tab" aria-selected={p.active === i} className={`bchip ${p.active === i ? 'on' : ''}`} title={`${m.board.name} · right-click to remove`} onClick={() => pick(i)}
+          onContextMenu={(e) => { e.preventDefault(); if (p.modules.length > 1 && confirm(`Remove ${m.board.name} from the rack? Undo brings it back.`)) removeItems([{ kind: 'module', id: m.id }]); }}>
           {dot(i)}{shortName(m.board.name)}
         </button>
       ))}
@@ -1599,7 +1607,7 @@ function ModulePicker() {
       {add}
       {sub.length > 1 && (
         <div className="bsub" aria-label={`${show} boards`}>
-          {sub.map((i) => { const nm = p.modules[i].board.name, n = nm === show ? '1' : nm.slice(show.length).trim(); return <button key={i} className={`bnum ${p.active === i ? 'on' : ''}`} title={nm} onClick={() => pick(i)}>{/^\d+$/.test(n) ? n : shortName(nm)}</button>; })}
+          {sub.map((i) => { const nm = p.modules[i].board.name, n = nm === show ? '1' : nm.slice(show.length).trim().replace(/^#/, ''); return <button key={i} className={`bnum ${p.active === i ? 'on' : ''}`} title={nm} onClick={() => pick(i)}>{/^\d+$/.test(n) ? n : shortName(nm)}</button>; })}
         </div>
       )}
     </div>

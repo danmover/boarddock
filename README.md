@@ -61,7 +61,7 @@ The desktop builds are not code-signed yet:
 
 ## Quick start
 
-1. **Start:** the middle of the window has three ways in: **drop your board's files** (several at once is fine: each becomes a board), **draw your own** (shape, size, holes, and a photo of it if you like), or **open a saved rack**. Below them is the library, every board and accessory with a 3D picture, on shelves (Raspberry Pi, Arduino and ESP32, hubs and chargers, powerboards, probes and adapters, My boards…), with a search. Click a tile to add it now, or **+** on several and **Add N boards** puts them all in as one undo step. With a rack open, Start says what it is and how far along it is, and the sidebar is a checklist of the steps (boards, cables, rails, check notes, what's left to print) you can click through. Later, **+ Board** in the top bar (or the **A** key) opens the same library from any step; a second Pi 4B is named "Raspberry Pi 4B 2", so every list, label and cable says which one.
+1. **Start:** the middle of the window has three ways in: **drop your board's files** (several at once is fine: each becomes a board), **draw your own** (shape, size, holes, and a photo of it if you like), or **open a saved rack**. Below them is the library, every board and accessory with a 3D picture, on shelves (Raspberry Pi, Arduino and ESP32, hubs and chargers, powerboards, probes and adapters, My boards…), with a search. Click a tile to add it now, or **+** on several and **Add N boards** puts them all in as one undo step. With a rack open, Start says what it is and how far along it is, and the sidebar is a checklist of the steps (boards, cables, rails, check notes, what's left to print) you can click through. Later, **+ Board** in the top bar (or the **A** key) opens the same library from any step; a second Pi 4B is named "Raspberry Pi 4B #2" (the # so it never reads like a product name, such as a Pico 2), so every list, label and cable says which one. On a phone the library is the whole Start page and the four-step explainer folds away. To take a board out, use **Remove** on its card in the Board step (or right-click its chip); Undo brings it back.
 2. **Board:** check the outline, parts and the hole wizard; fix anything in the board editor.
 3. **Plugs:** pick the plug type and size for each connector, and what each one is cabled to (or press **Auto-connect**).
 4. **Holder:** frame or tray, a preset, where the release button goes, and the features you want.
@@ -425,7 +425,7 @@ Nothing else moves. Connect its cables (Auto-connect only fills plugs that are s
 
 - **Take off** the boards you removed, with the parts and cables (by number) they leave spare;
 - **Move** boards that now sit somewhere else ("Arduino Uno R3 from dock 1.3 front to dock 1.2 front"; docks are numbered by rail and place);
-- **Print** only the new or changed parts, each with why ("new: Arduino Nano", "Pi 4B 2 became Raspberry Pi 5");
+- **Print** only the new or changed parts, each with why ("new: Arduino Nano", "Pi 4B #2 became Raspberry Pi 5");
 - **Buy** new cables, and say when a cable you have is now too short ("#4 is now 1 m, yours is 0.5 m");
 - **Cut** any rail that has to be longer.
 

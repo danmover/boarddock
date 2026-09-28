@@ -48,9 +48,9 @@ export function rackName(p: Project): string {
   return p.modules.length === 1 ? p.modules[0].board.name : `Rack, ${p.modules.length} boards`;
 }
 
-/** A board's kind by name: "Raspberry Pi 4B 3" is a "Raspberry Pi 4B" when the rack has one by that name. */
+/** A board's kind by name: "Raspberry Pi 4B #3" is a "Raspberry Pi 4B" when the rack has one by that name. */
 export function kindName(p: Project, name: string): string {
-  const m = /^(.*) (\d+)$/.exec(name);
+  const m = /^(.*) #?(\d+)$/.exec(name); // "#2" now; plain "2" in racks saved before
   return m && p.modules.some((x) => x.board.name === m[1]) ? m[1] : name;
 }
 
