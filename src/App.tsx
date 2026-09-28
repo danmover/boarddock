@@ -36,6 +36,7 @@ export function App() {
   const result = useApp((s) => s.result);
   const printParts = useApp((s) => s.printParts);
   const building = useApp((s) => s.building);
+  const rendering = useApp((s) => s.rendering);
   const error = useApp((s) => s.error);
   const theme = useApp((s) => s.theme);
   const sel = useApp((s) => s.sel);
@@ -122,6 +123,9 @@ export function App() {
     return { g, n, plates, min };
   }, [result, project?.printer.bed[0], project?.printer.bed[1]]);
 
+  // the print view's parts: one object per change, so the 3D view doesn't rebuild on every render of the app
+  const shown = useMemo(() => (printParts && result ? { ...result, parts: printParts } : result), [printParts, result]);
+
   const panel = { import: <ImportPanel />, board: <BoardPanel />, plugs: <PlugsPanel />, holder: <HolderPanel />, mount: <MountPanel />, check: <CheckPanel />, export: <ExportPanel /> }[step];
   const warnCount = result?.report.warnings.length ?? 0;
   const badCount = result?.report.checks.filter((c) => c.status === 'bad').length ?? 0;
@@ -162,8 +166,8 @@ export function App() {
           {project && (
             <>
               <div className="status" title={error ?? (result ? `Built in ${result.report.timeMs} ms` : '')}>
-                <span className={`dot ${error ? 'err' : building ? 'busy' : result ? 'ok' : ''}`} />
-                <span className="st">{error ? 'Build failed' : building ? 'Building…' : result ? 'Up to date' : ''}</span>
+                <span className={`dot ${error ? 'err' : building || rendering ? 'busy' : result ? 'ok' : ''}`} />
+                <span className="st">{error ? 'Build failed' : building ? 'Building…' : rendering ? 'Rendering…' : result ? 'Up to date' : ''}</span>
               </div>
               <button className="iconbtn" disabled={!canUndo} onClick={undo} title="Undo (⌘Z)"><Icon d={I.undo} /></button>
               <button className="iconbtn" disabled={!canRedo} onClick={redo} title="Redo (⇧⌘Z)"><Icon d={I.redo} /></button>
@@ -201,7 +205,7 @@ export function App() {
               <div className="tabs"><div className="seg">{views.map(([k, l]) => <button key={k} className={view === k ? 'on' : ''} onClick={() => store.set({ view: k })}>{l}</button>)}</div></div>
               {view === 'library' ? <StartStage /> : view === 'editor' ? <BoardEditor tool={tool} setTool={setTool} /> : view === 'wiring' ? <WiringView /> : view === 'panel' && project.layout === 'panel' ? <PanelEditor /> : (
                 <>
-                  <Viewer3D result={view === 'print' && printParts && result ? { ...result, parts: printParts } : result} mode={view === 'print' ? 'print' : 'assembly'} bed={project.printer.bed} spacing={project.printer.spacing} theme={theme} camera={cam} overhangs={view === 'print' && overhangs}
+                  <Viewer3D result={view === 'print' ? shown : result} mode={view === 'print' ? 'print' : 'assembly'} bed={project.printer.bed} spacing={project.printer.spacing} theme={theme} camera={cam} overhangs={view === 'print' && overhangs}
                     layers={layers} sel={sel} onPick={(it, add) => (it ? select([it], add ? 'toggle' : 'set') : !add && select([]))} label={(it) => describe(store.get().project!, it)} />
                   <div className="tools">
                     <div className="tgroup floating">

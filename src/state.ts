@@ -33,6 +33,7 @@ export interface State {
   sel: Sel;
   result: GenResult | null;
   building: boolean;
+  rendering: boolean; // the 3D view is compiling shaders for a new scene (the old one stays up meanwhile)
   error: string | null;
   showGhosts: boolean;
   theme: 'dark' | 'light';
@@ -74,6 +75,7 @@ let state: State = {
   sel: [],
   result: null,
   building: false,
+  rendering: false,
   error: null,
   showGhosts: true,
   replaceMode: false,

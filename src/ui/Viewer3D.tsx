@@ -14,7 +14,7 @@ import { toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.j
 import { remaining } from '../cad/motion';
 import type { Anim, Feature, Motion, GenResult, Ghost, MeshData, PickTag, V2 } from '../model/types';
 import { packPlates, placedMesh, printability, type Plate } from '../cad/export';
-import type { Layer, SelItem } from '../state';
+import { store, type Layer, type SelItem } from '../state';
 import { featureItem } from './pickOps';
 import { KIND_COLOR } from '../model/links';
 
@@ -78,8 +78,35 @@ function geom(m: MeshData, edges: boolean, smooth = false) {
   if (edges && !c.e && m.idx.length < 90000) c.e = new THREE.EdgesGeometry(c.g, 28);
   return c;
 }
-function sweepCache() {
-  for (const [k, c] of geoCache) if (buildNo - c.used > 2) { c.g.dispose(); c.e?.dispose(); geoCache.delete(k); }
+/** Geometry no build has used for a while: handed back to be disposed once the new scene has been drawn. */
+function sweepCache(): { dispose(): void }[] {
+  const out: { dispose(): void }[] = [];
+  for (const [k, c] of geoCache) if (buildNo - c.used > 2) { out.push(c.g); if (c.e) out.push(c.e); geoCache.delete(k); }
+  return out;
+}
+
+// Materials, shared between meshes and kept from one build to the next. three.js keeps a compiled shader program
+// only while a material that uses it is alive: making every material new and disposing the old ones first meant it
+// compiled every shader again on each edit, which froze the window for seconds. A key holds everything that makes
+// two materials differ, so equal ones are one material.
+const matPool = new Map<string, { m: THREE.Material; used: number }>();
+function pooled<T extends THREE.Material>(key: string, make: () => T): T {
+  let e = matPool.get(key);
+  if (!e) { e = { m: make(), used: buildNo }; matPool.set(key, e); }
+  e.used = buildNo;
+  return e.m as T;
+}
+// the highlighted copy of a material, shown on the mesh under the pointer (the shared one must not light up everywhere)
+const hoverMats = new Map<THREE.Material, THREE.Material>();
+function sweepMaterials(): THREE.Material[] {
+  const out: THREE.Material[] = [];
+  for (const [k, e] of matPool) if (buildNo - e.used > 2) {
+    out.push(e.m);
+    const h = hoverMats.get(e.m);
+    if (h) { out.push(h); hoverMats.delete(e.m); }
+    matPool.delete(k);
+  }
+  return out;
 }
 
 /** Fading grid on a plane (xy or xz). */
@@ -135,6 +162,75 @@ export function surface(mat: Ghost['mat'] | undefined, color: string, opacity: n
   }
 }
 
+/** The one 3D view's renderer, scene, lights and post chain (made the first time the view opens, then kept). */
+let kept: any = null;
+function makeContext() {
+  const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false, preserveDrawingBuffer: true, powerPreference: 'high-performance' });
+  renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.3;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(32, 1, 0.5, 5000);
+  camera.up.set(0, 0, 1);
+  camera.position.set(140, -180, 150);
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.14;
+  controls.zoomToCursor = true;
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+  pmrem.dispose();
+  // light levels set with the ambient occlusion reading real normals (it used to read none and darken every part,
+  // which the light made up for); the backdrop keeps its brightness
+  const L = 0.4;
+  scene.environmentIntensity = 1.05 * L;
+  const hemi = new THREE.HemisphereLight(0xf4f7ff, 0x3a4048, 0.9 * L);
+  scene.add(hemi);
+  const key = new THREE.DirectionalLight(0xfff6ec, 2.4 * L);
+  key.castShadow = true;
+  key.shadow.mapSize.set(2048, 2048);
+  key.shadow.bias = -0.0004;
+  key.shadow.normalBias = 0.6;
+  key.shadow.radius = 5;
+  scene.add(key, key.target);
+  const rim = new THREE.DirectionalLight(0xa9d4ff, 0.7 * L);
+  rim.position.set(-300, 250, 160);
+  scene.add(rim);
+  const world = new THREE.Group();
+  world.matrixAutoUpdate = false;
+  scene.add(world);
+  const floor = new THREE.Group();
+  scene.add(floor);
+
+  // HDR target with MSAA for the post chain
+  const rt = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, samples: 4 });
+  const composer = new EffectComposer(renderer, rt);
+  composer.addPass(new RenderPass(scene, camera));
+  const gtao = new GTAOPass(scene, camera, 4, 4);
+  gtao.blendIntensity = 0.65;
+  gtao.updateGtaoMaterial({ radius: 6, distanceExponent: 1.4, thickness: 2, scale: 1.1, samples: 12 });
+  gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 12 });
+  composer.addPass(gtao);
+  const outline = new OutlinePass(new THREE.Vector2(4, 4), scene, camera);
+  outline.edgeStrength = 4;
+  outline.edgeGlow = 0.35;
+  outline.edgeThickness = 1.2;
+  outline.visibleEdgeColor.set('#4c8dff');
+  outline.hiddenEdgeColor.set('#1d3f80');
+  composer.addPass(outline);
+  composer.addPass(new OutputPass());
+
+  const c: any = { renderer, scene, camera, controls, world, floor, key, composer, gtao, outline, objs: [] as Obj[], features: [] as Feature[], frames: {} as Record<string, number[]>, dirty: true, fitted: '', tween: null, hover: null as THREE.Mesh | null, radius: 100, ranks: 0, highlights: new THREE.Group(), anim: { t: Infinity, explode: 0 }, afterFrame: [] as (() => void)[], result: null as GenResult | null };
+  world.add(c.highlights);
+  // dev-only handle for scripted checks and screenshots: point the camera, then it renders
+  if (import.meta.env.DEV) (window as any).__bdView = { ctx: c, look: (pos: number[], target: number[]) => { c.tween = null; camera.position.set(pos[0], pos[1], pos[2]); controls.target.set(target[0], target[1], target[2]); controls.update(); c.dirty = true; composer.render(); }, pose: (t: number) => { c.anim = { t, explode: 0 }; applyPose(c); composer.render(); } };
+  c.invalidate = () => { c.dirty = true; };
+  controls.addEventListener('change', c.invalidate);
+  return c;
+}
+
 export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, installed, overhangs, layers, sel, onPick, label }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const tip = useRef<HTMLDivElement>(null);
@@ -145,74 +241,17 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
   const cb = useRef({ onPick, label });
   cb.current = { onPick, label };
 
-  // ---------------------------------------------------------------- setup (once)
+  // ---------------------------------------------------------------- setup (the renderer is made once and kept)
   useEffect(() => {
     const el = host.current!;
-    const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false, preserveDrawingBuffer: true, powerPreference: 'high-performance' });
-    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.3;
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    el.appendChild(renderer.domElement);
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(32, 1, 0.5, 5000);
-    camera.up.set(0, 0, 1);
-    camera.position.set(140, -180, 150);
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.14;
-    controls.zoomToCursor = true;
-    const pmrem = new THREE.PMREMGenerator(renderer);
-    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    // light levels set with the ambient occlusion reading real normals (it used to read none and darken every part,
-    // which the light made up for); the backdrop keeps its brightness
-    const L = 0.4;
-    scene.environmentIntensity = 1.05 * L;
-    const hemi = new THREE.HemisphereLight(0xf4f7ff, 0x3a4048, 0.9 * L);
-    scene.add(hemi);
-    const key = new THREE.DirectionalLight(0xfff6ec, 2.4 * L);
-    key.castShadow = true;
-    key.shadow.mapSize.set(2048, 2048);
-    key.shadow.bias = -0.0004;
-    key.shadow.normalBias = 0.6;
-    key.shadow.radius = 5;
-    scene.add(key, key.target);
-    const rim = new THREE.DirectionalLight(0xa9d4ff, 0.7 * L);
-    rim.position.set(-300, 250, 160);
-    scene.add(rim);
-    const world = new THREE.Group();
-    world.matrixAutoUpdate = false;
-    scene.add(world);
-    const floor = new THREE.Group();
-    scene.add(floor);
-
-    // HDR target with MSAA for the post chain
-    const rt = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, samples: 4 });
-    const composer = new EffectComposer(renderer, rt);
-    composer.addPass(new RenderPass(scene, camera));
-    const gtao = new GTAOPass(scene, camera, 4, 4);
-    gtao.blendIntensity = 0.65;
-    gtao.updateGtaoMaterial({ radius: 6, distanceExponent: 1.4, thickness: 2, scale: 1.1, samples: 12 });
-    gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 12 });
-    composer.addPass(gtao);
-    const outline = new OutlinePass(new THREE.Vector2(4, 4), scene, camera);
-    outline.edgeStrength = 4;
-    outline.edgeGlow = 0.35;
-    outline.edgeThickness = 1.2;
-    outline.visibleEdgeColor.set('#4c8dff');
-    outline.hiddenEdgeColor.set('#1d3f80');
-    composer.addPass(outline);
-    composer.addPass(new OutputPass());
-
-    const c: any = { renderer, scene, camera, controls, world, floor, key, composer, gtao, outline, objs: [] as Obj[], features: [] as Feature[], frames: {} as Record<string, number[]>, dirty: true, fitted: '', tween: null, hover: null as THREE.Mesh | null, radius: 100, ranks: 0, highlights: new THREE.Group(), anim: { t: Infinity, explode: 0 } };
-    world.add(c.highlights);
+    // the renderer, scene and post chain outlive the view: switching to Wiring or the board editor and back keeps
+    // its compiled shaders, so coming back to 3D doesn't compile them all again
+    const c = kept ?? (kept = makeContext());
     ctx.current = c;
-    // dev-only handle for scripted checks and screenshots: point the camera, then it renders
-    if (import.meta.env.DEV) (window as any).__bdView = { ctx: c, look: (pos: number[], target: number[]) => { c.tween = null; camera.position.set(pos[0], pos[1], pos[2]); controls.target.set(target[0], target[1], target[2]); controls.update(); c.dirty = true; composer.render(); }, pose: (t: number) => { c.anim = { t, explode: 0 }; applyPose(c); composer.render(); } };
-    const invalidate = () => { c.dirty = true; };
-    c.invalidate = invalidate;
-    controls.addEventListener('change', invalidate);
+    const { renderer, camera, controls, composer } = c;
+    el.appendChild(renderer.domElement);
+    c.dirty = true;
+    const invalidate = c.invalidate as () => void;
 
     const ro = new ResizeObserver(() => {
       const w = Math.max(1, el.clientWidth), h = Math.max(1, el.clientHeight);
@@ -240,6 +279,8 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
       c.dirty = false;
       composer.render();
       c.placeLabels?.();
+      // what the scene before this one used, freed only now it has been drawn without it
+      if (c.afterFrame.length) for (const f of c.afterFrame.splice(0)) f();
     };
     raf = requestAnimationFrame(loop);
 
@@ -336,10 +377,12 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
       dom.removeEventListener('pointermove', onMove);
       dom.removeEventListener('pointerleave', onLeave);
       dom.removeEventListener('dblclick', onDbl);
-      controls.dispose();
-      composer.dispose();
-      renderer.dispose();
-      el.removeChild(dom);
+      // kept for the next time the view opens: only what belongs to this page goes
+      setEmissive(c.hover, 0);
+      c.hover = null;
+      c.onFrame = null;
+      c.placeLabels = undefined;
+      if (dom.parentElement === el) el.removeChild(dom);
       ctx.current = null;
     };
   }, []);
@@ -356,150 +399,34 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
   }, [theme]);
 
   // ---------------------------------------------------------------- content
+  // The new scene is made beside the one on screen. Any shader it needs that isn't compiled yet is compiled first
+  // (in the background where the browser can), while the old scene stays up; then the two are swapped, and what
+  // only the old one used is freed after the new one's first frame, so equal shaders are never compiled twice.
+  const latest = useRef({ layers, sel });
+  latest.current = { layers, sel };
+  const [built, setBuilt] = useState(0);
   useEffect(() => {
     const c = ctx.current;
     if (!c) return;
-    const { world, camera, controls } = c;
+    let live = true;
     buildNo++;
-    for (const o of c.objs as Obj[]) { world.remove(o.mesh); (o.mesh.material as THREE.Material).dispose(); o.mesh.children.forEach((k: any) => k.material?.dispose?.()); }
-    c.objs = [];
-    c.hover = null;
-    c.mode = mode;
-    c.features = result?.report.features ?? [];
-    c.frames = result?.report.frames ?? {};
-    for (const o of [...c.floor.children]) { c.floor.remove(o); o.traverse((x: any) => { if (x.geometry && !x.userData.cached) x.geometry.dispose?.(); x.material?.dispose?.(); }); }
-    world.matrix.identity();
-    if (!result) { c.invalidate(); return; }
-    const edgeCol = new THREE.Color(theme === 'dark' ? 0x0a0d10 : 0x2a3138);
-
-    const add = (m: MeshData, color: string, opacity: number, matrix: number[] | null, tag: PickTag | undefined, anim: Anim | undefined, ghost: boolean, edges = true, kind?: Ghost['mat'], smooth = false) => {
-      const cg = geom(m, edges && opacity >= 1 && !smooth, smooth);
-      const board = tag?.kind === 'board';
-      const mat = surface(kind, color, opacity, ghost, board, smooth);
-      const mesh = new THREE.Mesh(cg.g, mat);
-      mesh.castShadow = opacity >= 0.8;
-      mesh.receiveShadow = false;
-      mesh.matrixAutoUpdate = false;
-      if (matrix) mesh.matrix.fromArray(matrix);
-      mesh.userData = { tag, ghost, cached: true };
-      if (cg.e && edges && opacity >= 1) {
-        const e = new THREE.LineSegments(cg.e, new THREE.LineBasicMaterial({ color: edgeCol, transparent: true, opacity: 0.22 }));
-        e.matrixAutoUpdate = false;
-        e.userData.cached = true;
-        mesh.add(e);
-      }
-      world.add(mesh);
-      c.objs.push({ mesh, tag, anim, rank: 0, base: mesh.matrix.clone(), ghost, moves: [], show: 0 });
+    const next = prepare(c, result, mode, bed, spacing, theme, installed, !!overhangs);
+    const commit = () => {
+      // a newer scene took over (it clears the flag when drawn), or the view closed while this one compiled
+      if (!live) { next.drop(); if (!ctx.current) store.set({ rendering: false }); return; }
+      swapIn(c, next, result, mode, !!installed, theme);
+      applyPose(c);
+      applyLayers(c, latest.current.layers);
+      applySel(c, latest.current.sel);
+      c.invalidate();
+      setBuilt((n) => n + 1);
     };
-
-    if (mode === 'assembly') {
-      for (const p of [...result.parts, ...(result.display ?? [])]) {
-        if (p.toAssembly[14] <= -300) continue;
-        const m = p.displayMesh ?? p.mesh;
-        add(m, p.color, 1, p.toAssembly, p.tag, p.anim, false);
-        (p.instances ?? []).forEach((T, k) => add(m, p.color, 1, T, p.tags?.[k] ?? p.tag, p.anims?.[k] ?? p.anim, false));
-      }
-      for (const gh of result.ghosts) add(gh.mesh, gh.color, gh.opacity, null, gh.tag, gh.anim, true, false, gh.mat, !!gh.smooth);
-      // animation ranks: every distinct step (moves and appearances) in order
-      const movesOf = (a?: Anim): Motion[] => [...(a?.pre ?? []), { seq: a?.seq ?? 0, dir: a?.dir ?? [0, 0, 1], dist: a?.dist, style: a?.style, rot: a?.rot }];
-      const seqs = [...new Set((c.objs as Obj[]).flatMap((o) => [...movesOf(o.anim).map((m) => m.seq), ...(o.anim?.show != null ? [o.anim.show] : [])]))].sort((a, b) => a - b);
-      const rk = (s: number) => seqs.indexOf(s);
-      for (const o of c.objs as Obj[]) {
-        const mv = movesOf(o.anim);
-        o.moves = mv.map((m) => ({ rank: rk(m.seq), dir: m.dir, dist: m.dist, style: m.style, rot: m.rot }));
-        o.rank = rk(o.anim?.seq ?? 0);
-        o.show = o.anim?.show != null ? rk(o.anim.show) : Math.min(...o.moves.map((m) => m.rank));
-      }
-      c.ranks = seqs.length;
-      c.phases = seqs;
-      const cf = result.report.clipFrame;
-      if (installed && cf) {
-        const W = installed === 'h' ? [0, -1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0, 0, 0, 1] : [0, -1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
-        world.matrix.copy(new THREE.Matrix4().fromArray(W).multiply(new THREE.Matrix4().fromArray(rigidInverse(cf))));
-      }
-    } else {
-      const plates: Plate[] = packPlates(result.parts, bed, spacing);
-      const gap = 30;
-      plates.forEach((pl, i) => {
-        const ox = i * (bed[0] + gap);
-        const bedMesh = new THREE.Mesh(new THREE.PlaneGeometry(bed[0], bed[1]), new THREE.MeshStandardMaterial({ color: theme === 'dark' ? 0x1c2229 : 0xd9dee4, roughness: 0.85, metalness: 0.1 }));
-        bedMesh.position.set(ox + bed[0] / 2, bed[1] / 2, -0.05);
-        bedMesh.receiveShadow = true;
-        c.floor.add(bedMesh);
-        const border = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.PlaneGeometry(bed[0], bed[1])), new THREE.LineBasicMaterial({ color: 0x4c8dff, transparent: true, opacity: 0.8 }));
-        border.position.copy(bedMesh.position);
-        c.floor.add(border);
-        for (const it of pl.items) {
-          const m = placedMesh(it, bed, pl.used);
-          const pos = new Float32Array(m.pos);
-          for (let k = 0; k < pos.length; k += 3) pos[k] += ox;
-          add({ pos, idx: m.idx }, it.part.color, overhangs ? 0.35 : 1, null, undefined, undefined, false);
-          if (overhangs) {
-            const q = printability({ pos, idx: m.idx });
-            for (const [k, col] of [[1, 0xff3b5c], [2, 0xffb020]] as const) {
-              const tri: number[] = [];
-              q.kind.forEach((v, t) => { if (v === k) tri.push(m.idx[3 * t], m.idx[3 * t + 1], m.idx[3 * t + 2]); });
-              if (!tri.length) continue;
-              const g = new THREE.BufferGeometry();
-              g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-              g.setIndex(tri);
-              c.floor.add(new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: col, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })));
-            }
-          }
-        }
-      });
-      c.ranks = 0;
-    }
-    sweepCache();
-    world.updateMatrixWorld(true);
-
-    // content box (world frame), floor or wall, lights
-    const box = new THREE.Box3();
-    for (const o of c.objs as Obj[]) { o.mesh.updateMatrixWorld(true); box.expandByObject(o.mesh); }
-    if (box.isEmpty()) { c.invalidate(); return; }
-    const size = box.getSize(new THREE.Vector3()), ctr = box.getCenter(new THREE.Vector3());
-    c.radius = size.length() / 2;
-    const wall = mode === 'assembly' && !!installed;
-    const R = Math.max(size.x, size.y, size.z) * 1.4 + 120;
-    const gridCol = new THREE.Color(theme === 'dark' ? 0x7d8894 : 0x9aa5b1);
-    const grid = new THREE.Mesh(new THREE.PlaneGeometry(R * 2.2, R * 2.2), gridMaterial(gridCol, wall ? 1 : 0));
-    const shadow = new THREE.Mesh(new THREE.PlaneGeometry(R * 2, R * 2), new THREE.ShadowMaterial({ opacity: theme === 'dark' ? 0.38 : 0.2 }));
-    shadow.receiveShadow = true;
-    if (wall) {
-      grid.rotation.x = Math.PI / 2; shadow.rotation.x = Math.PI / 2;
-      grid.position.set(ctr.x, 0.3, ctr.z); shadow.position.set(ctr.x, 0.2, ctr.z);
-    } else {
-      grid.position.set(ctr.x, ctr.y, box.min.z - 0.12); shadow.position.set(ctr.x, ctr.y, box.min.z - 0.06);
-    }
-    (grid.material as THREE.ShaderMaterial).uniforms.uRadius.value = R;
-    (grid.material as THREE.ShaderMaterial).uniforms.uCenter.value.copy(ctr);
-    (grid.material as THREE.ShaderMaterial).uniforms.uMinor.value = size.length() > 600 ? 50 : 10;
-    (grid.material as THREE.ShaderMaterial).uniforms.uMajor.value = size.length() > 600 ? 250 : 50;
-    c.floor.add(grid, shadow);
-    const k = c.key as THREE.DirectionalLight;
-    const ldir = wall ? new THREE.Vector3(0.35, -1, 0.75) : new THREE.Vector3(0.45, -0.5, 1);
-    k.target.position.copy(ctr);
-    k.position.copy(ctr.clone().add(ldir.normalize().multiplyScalar(Math.max(size.length(), 60) * 1.5)));
-    const S = size.length() * 0.62 + 20;
-    Object.assign(k.shadow.camera, { left: -S, right: S, top: S, bottom: -S, near: 1, far: Math.max(size.length(), 60) * 4 });
-    k.shadow.camera.updateProjectionMatrix();
-    c.gtao.updateGtaoMaterial({ radius: Math.max(3, Math.min(14, size.length() / 40)) });
-
-    const fitKey = `${mode}:${installed}:${[...box.min.toArray(), ...box.max.toArray()].map((v) => Math.round(v / 25)).join(',')}`;
-    if (c.fitted !== fitKey) {
-      c.fitted = fitKey;
-      const dir = wall ? new THREE.Vector3(0.42, -1, 0.38) : mode === 'assembly' ? new THREE.Vector3(0.6, -0.8, 0.62) : new THREE.Vector3(0.1, -0.72, 0.9);
-      camera.near = Math.max(0.5, size.length() / 300);
-      camera.far = size.length() * 30 + 2000;
-      camera.updateProjectionMatrix();
-      flyTo(c, box, dir, 1.25, !c.didFit);
-      c.didFit = true;
-    }
-    void controls;
-    applyPose(c);
-    applyLayers(c, layers);
-    applySel(c, sel);
-    c.invalidate();
+    const props = c.renderer.properties;
+    const fresh = next.materials.some((m) => { const pr = props.get(m).currentProgram; return !pr || !pr.isReady(); });
+    if (!fresh) { commit(); return () => { live = false; }; }
+    store.set({ rendering: true });
+    c.renderer.compileAsync(next.group, c.camera, c.scene).then(commit, commit);
+    return () => { live = false; };
   }, [result, mode, bed[0], bed[1], spacing, theme, installed, overhangs]);
 
   useEffect(() => { const c = ctx.current; if (c) { applyLayers(c, layers); c.invalidate(); } }, [layers]);
@@ -511,7 +438,7 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
     const c = ctx.current, host = labelsEl.current;
     if (!c || !host) return;
     host.replaceChildren();
-    const list = showLabels ? (result?.report.cables ?? []).filter((x) => x.mid && x.no) : [];
+    const list = showLabels ? ((c.result as GenResult | null)?.report.cables ?? []).filter((x) => x.mid && x.no) : [];
     const compact = list.length > 8; // a busy rack shows the numbers; the words come on hover
     const items = list.map((x) => {
       const el = document.createElement('button');
@@ -554,8 +481,8 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
     };
     c.invalidate();
     return () => { c.placeLabels = undefined; host.replaceChildren(); };
-  }, [result, showLabels]);
-  useEffect(() => { const c = ctx.current; if (c) { applySel(c, sel); c.invalidate(); } }, [sel, result]);
+  }, [built, showLabels]);
+  useEffect(() => { const c = ctx.current; if (c) { applySel(c, sel); c.invalidate(); } }, [sel, built]);
 
   // ---------------------------------------------------------------- animation and explode
   useEffect(() => {
@@ -564,7 +491,7 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
     c.anim = { t: play.t, explode };
     applyPose(c);
     c.invalidate();
-  }, [play.t, explode, result]);
+  }, [play.t, explode, built]);
   useEffect(() => {
     const c = ctx.current;
     if (!c || !play.on) return;
@@ -606,7 +533,7 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
   const caption = (() => {
     if (!started || !ctx.current) return '';
     const seq = ctx.current.phases?.[stepIdx];
-    const text = result?.steps?.find((s) => s.seq === seq)?.text;
+    const text = (ctx.current.result as GenResult | null)?.steps?.find((s) => s.seq === seq)?.text;
     if (!text && import.meta.env.DEV) console.warn('assembly step without a caption', seq);
     return text ?? 'Fit the parts that are moving now.';
   })();
@@ -640,15 +567,227 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
   );
 }
 
+// ---------------------------------------------------------------- building a scene
+
+/** A scene made beside the one on screen, not shown yet. */
+interface Next {
+  group: THREE.Group; // every new mesh, placed as it will be in the world (for its bounds, and to compile ahead)
+  objs: Obj[];
+  floor: THREE.Object3D[];
+  grid: THREE.Mesh | null;
+  shadow: THREE.Mesh | null;
+  box: THREE.Box3;
+  worldMatrix: THREE.Matrix4;
+  ranks: number;
+  phases: number[];
+  materials: THREE.Material[];
+  own: { dispose(): void }[]; // made for this scene alone (not cached): freed when it goes
+  drop(): void;
+}
+
+function prepare(c: any, result: GenResult | null, mode: 'assembly' | 'print', bed: V2, spacing: number, theme: 'dark' | 'light', installed: 'h' | 'v' | null | undefined, overhangs: boolean): Next {
+  const group = new THREE.Group();
+  group.matrixAutoUpdate = false;
+  const objs: Obj[] = [], floor: THREE.Object3D[] = [], own: { dispose(): void }[] = [];
+  const mats = new Set<THREE.Material>();
+  const worldMatrix = new THREE.Matrix4();
+  const next: Next = { group, objs, floor, grid: null, shadow: null, box: new THREE.Box3(), worldMatrix, ranks: 0, phases: [], materials: [], own, drop: () => { for (const d of own) d.dispose(); } };
+  if (!result) return next;
+  const edgeCol = theme === 'dark' ? 0x0a0d10 : 0x2a3138;
+
+  const add = (m: MeshData, color: string, opacity: number, matrix: number[] | null, tag: PickTag | undefined, anim: Anim | undefined, ghost: boolean, edges = true, kind?: Ghost['mat'], smooth = false) => {
+    const cg = geom(m, edges && opacity >= 1 && !smooth, smooth);
+    const board = tag?.kind === 'board';
+    const mat = pooled(`s|${kind ?? ''}|${color}|${opacity}|${board}|${smooth}`, () => surface(kind, color, opacity, ghost, board, smooth));
+    mats.add(mat);
+    const mesh = new THREE.Mesh(cg.g, mat);
+    mesh.castShadow = opacity >= 0.8;
+    mesh.receiveShadow = false;
+    mesh.matrixAutoUpdate = false;
+    if (matrix) mesh.matrix.fromArray(matrix);
+    mesh.userData = { tag, ghost, cached: true };
+    if (cg.e && edges && opacity >= 1) {
+      const em = pooled(`e|${edgeCol}`, () => new THREE.LineBasicMaterial({ color: edgeCol, transparent: true, opacity: 0.22 }));
+      mats.add(em);
+      const e = new THREE.LineSegments(cg.e, em);
+      e.matrixAutoUpdate = false;
+      e.userData.cached = true;
+      mesh.add(e);
+    }
+    group.add(mesh);
+    objs.push({ mesh, tag, anim, rank: 0, base: mesh.matrix.clone(), ghost, moves: [], show: 0 });
+  };
+  const addFloor = (o: THREE.Mesh | THREE.LineSegments, m: THREE.Material) => { mats.add(m); own.push(o.geometry); floor.push(o); };
+
+  if (mode === 'assembly') {
+    for (const p of [...result.parts, ...(result.display ?? [])]) {
+      if (p.toAssembly[14] <= -300) continue;
+      const m = p.displayMesh ?? p.mesh;
+      add(m, p.color, 1, p.toAssembly, p.tag, p.anim, false);
+      (p.instances ?? []).forEach((T, k) => add(m, p.color, 1, T, p.tags?.[k] ?? p.tag, p.anims?.[k] ?? p.anim, false));
+    }
+    for (const gh of result.ghosts) add(gh.mesh, gh.color, gh.opacity, null, gh.tag, gh.anim, true, false, gh.mat, !!gh.smooth);
+    // animation ranks: every distinct step (moves and appearances) in order
+    const movesOf = (a?: Anim): Motion[] => [...(a?.pre ?? []), { seq: a?.seq ?? 0, dir: a?.dir ?? [0, 0, 1], dist: a?.dist, style: a?.style, rot: a?.rot }];
+    const seqs = [...new Set(objs.flatMap((o) => [...movesOf(o.anim).map((m) => m.seq), ...(o.anim?.show != null ? [o.anim.show] : [])]))].sort((a, b) => a - b);
+    const rk = (s: number) => seqs.indexOf(s);
+    for (const o of objs) {
+      const mv = movesOf(o.anim);
+      o.moves = mv.map((m) => ({ rank: rk(m.seq), dir: m.dir, dist: m.dist, style: m.style, rot: m.rot }));
+      o.rank = rk(o.anim?.seq ?? 0);
+      o.show = o.anim?.show != null ? rk(o.anim.show) : Math.min(...o.moves.map((m) => m.rank));
+    }
+    next.ranks = seqs.length;
+    next.phases = seqs;
+    const cf = result.report.clipFrame;
+    if (installed && cf) {
+      const W = installed === 'h' ? [0, -1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0, 0, 0, 1] : [0, -1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+      worldMatrix.copy(new THREE.Matrix4().fromArray(W).multiply(new THREE.Matrix4().fromArray(rigidInverse(cf))));
+    }
+  } else {
+    const plates: Plate[] = packPlates(result.parts, bed, spacing);
+    const gap = 30;
+    const bedMat = pooled(`bed|${theme}`, () => new THREE.MeshStandardMaterial({ color: theme === 'dark' ? 0x1c2229 : 0xd9dee4, roughness: 0.85, metalness: 0.1 }));
+    const borderMat = pooled('bedline', () => new THREE.LineBasicMaterial({ color: 0x4c8dff, transparent: true, opacity: 0.8 }));
+    plates.forEach((pl, i) => {
+      const ox = i * (bed[0] + gap);
+      const bedMesh = new THREE.Mesh(new THREE.PlaneGeometry(bed[0], bed[1]), bedMat);
+      bedMesh.position.set(ox + bed[0] / 2, bed[1] / 2, -0.05);
+      bedMesh.receiveShadow = true;
+      addFloor(bedMesh, bedMat);
+      const border = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.PlaneGeometry(bed[0], bed[1])), borderMat);
+      border.position.copy(bedMesh.position);
+      addFloor(border, borderMat);
+      for (const it of pl.items) {
+        const m = placedMesh(it, bed, pl.used);
+        const pos = new Float32Array(m.pos);
+        for (let k = 0; k < pos.length; k += 3) pos[k] += ox;
+        add({ pos, idx: m.idx }, it.part.color, overhangs ? 0.35 : 1, null, undefined, undefined, false);
+        if (overhangs) {
+          const q = printability({ pos, idx: m.idx });
+          for (const [k, col] of [[1, 0xff3b5c], [2, 0xffb020]] as const) {
+            const tri: number[] = [];
+            q.kind.forEach((v, t) => { if (v === k) tri.push(m.idx[3 * t], m.idx[3 * t + 1], m.idx[3 * t + 2]); });
+            if (!tri.length) continue;
+            const g = new THREE.BufferGeometry();
+            g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+            g.setIndex(tri);
+            const om = pooled(`over|${col}`, () => new THREE.MeshBasicMaterial({ color: col, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+            addFloor(new THREE.Mesh(g, om), om);
+          }
+        }
+      }
+    });
+  }
+
+  // content box (world frame), and the floor or wall under it
+  group.matrix.copy(worldMatrix);
+  group.updateMatrixWorld(true);
+  for (const o of objs) next.box.expandByObject(o.mesh);
+  if (!next.box.isEmpty()) {
+    const wall = mode === 'assembly' && !!installed;
+    const size = next.box.getSize(new THREE.Vector3());
+    const R = Math.max(size.x, size.y, size.z) * 1.4 + 120;
+    const gm = pooled(`grid|${wall ? 1 : 0}`, () => gridMaterial(new THREE.Color(), wall ? 1 : 0));
+    const sm = pooled(`shadow|${theme}`, () => new THREE.ShadowMaterial({ opacity: theme === 'dark' ? 0.38 : 0.2 }));
+    next.grid = new THREE.Mesh(new THREE.PlaneGeometry(R * 2.2, R * 2.2), gm);
+    next.shadow = new THREE.Mesh(new THREE.PlaneGeometry(R * 2, R * 2), sm);
+    next.shadow.receiveShadow = true;
+    addFloor(next.grid, gm);
+    addFloor(next.shadow, sm);
+  }
+  // the floor goes in the compile group too (its own frame: it is not under the world matrix)
+  const fl = new THREE.Group();
+  for (const f of floor) fl.add(f);
+  group.add(fl);
+  next.materials = [...mats];
+  return next;
+}
+
+/** Put a prepared scene on screen in place of the old one; the old one's leftovers go after the next frame. */
+function swapIn(c: any, next: Next, result: GenResult | null, mode: 'assembly' | 'print', installed: boolean, theme: 'dark' | 'light') {
+  const { world, camera } = c;
+  setEmissive(c.hover, 0);
+  c.hover = null;
+  for (const o of c.objs as Obj[]) world.remove(o.mesh);
+  const dead: { dispose(): void }[] = [...(c.own ?? [])];
+  for (const o of [...c.floor.children]) c.floor.remove(o);
+  c.objs = next.objs;
+  c.own = next.own;
+  for (const o of next.objs) world.add(o.mesh);
+  for (const f of next.floor) c.floor.add(f);
+  world.matrix.copy(next.worldMatrix);
+  c.mode = mode;
+  c.result = result;
+  c.features = result?.report.features ?? [];
+  c.frames = result?.report.frames ?? {};
+  c.ranks = mode === 'assembly' ? next.ranks : 0;
+  c.phases = next.phases;
+  dead.push(...sweepCache(), ...sweepMaterials());
+  c.afterFrame.push(() => { for (const d of dead) d.dispose(); store.set({ rendering: false }); });
+  world.updateMatrixWorld(true);
+  const box = next.box;
+  if (box.isEmpty()) return;
+
+  // floor or wall, lights
+  const size = box.getSize(new THREE.Vector3()), ctr = box.getCenter(new THREE.Vector3());
+  c.radius = size.length() / 2;
+  const wall = mode === 'assembly' && installed;
+  const R = Math.max(size.x, size.y, size.z) * 1.4 + 120;
+  const grid = next.grid!, shadow = next.shadow!;
+  if (wall) {
+    grid.rotation.x = Math.PI / 2; shadow.rotation.x = Math.PI / 2;
+    grid.position.set(ctr.x, 0.3, ctr.z); shadow.position.set(ctr.x, 0.2, ctr.z);
+  } else {
+    grid.position.set(ctr.x, ctr.y, box.min.z - 0.12); shadow.position.set(ctr.x, ctr.y, box.min.z - 0.06);
+  }
+  const u = (grid.material as THREE.ShaderMaterial).uniforms;
+  u.uColor.value.set(theme === 'dark' ? 0x7d8894 : 0x9aa5b1);
+  u.uRadius.value = R;
+  u.uCenter.value.copy(ctr);
+  u.uMinor.value = size.length() > 600 ? 50 : 10;
+  u.uMajor.value = size.length() > 600 ? 250 : 50;
+  const k = c.key as THREE.DirectionalLight;
+  const ldir = wall ? new THREE.Vector3(0.35, -1, 0.75) : new THREE.Vector3(0.45, -0.5, 1);
+  k.target.position.copy(ctr);
+  k.position.copy(ctr.clone().add(ldir.normalize().multiplyScalar(Math.max(size.length(), 60) * 1.5)));
+  const S = size.length() * 0.62 + 20;
+  Object.assign(k.shadow.camera, { left: -S, right: S, top: S, bottom: -S, near: 1, far: Math.max(size.length(), 60) * 4 });
+  k.shadow.camera.updateProjectionMatrix();
+  c.gtao.updateGtaoMaterial({ radius: Math.max(3, Math.min(14, size.length() / 40)) });
+
+  const fitKey = `${mode}:${installed}:${[...box.min.toArray(), ...box.max.toArray()].map((v) => Math.round(v / 25)).join(',')}`;
+  if (c.fitted !== fitKey) {
+    c.fitted = fitKey;
+    const dir = wall ? new THREE.Vector3(0.42, -1, 0.38) : mode === 'assembly' ? new THREE.Vector3(0.6, -0.8, 0.62) : new THREE.Vector3(0.1, -0.72, 0.9);
+    camera.near = Math.max(0.5, size.length() / 300);
+    camera.far = size.length() * 30 + 2000;
+    camera.updateProjectionMatrix();
+    flyTo(c, box, dir, 1.25, !c.didFit);
+    c.didFit = true;
+  }
+}
+
 // ---------------------------------------------------------------- helpers
 function escapeHtml(s: string) {
   return s.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]!);
 }
 
+/** Light up the mesh under the pointer: it wears a lit copy of its (shared) material until the pointer moves on. */
 function setEmissive(m: THREE.Mesh | null, level: number) {
   if (!m) return;
-  const mat = m.material as THREE.MeshStandardMaterial;
-  mat.emissiveIntensity = level ? 0.18 : 0;
+  const base = (m.userData.baseMat ?? m.material) as THREE.Material;
+  if (!level) { m.material = base; delete m.userData.baseMat; return; }
+  if (!(base as THREE.MeshStandardMaterial).isMeshStandardMaterial) return;
+  let lit = hoverMats.get(base);
+  if (!lit) {
+    const h = base.clone() as THREE.MeshStandardMaterial;
+    h.emissive = new THREE.Color(0x4c8dff);
+    h.emissiveIntensity = 0.18;
+    hoverMats.set(base, (lit = h));
+  }
+  m.userData.baseMat = base;
+  m.material = lit;
 }
 
 function contentBox(c: any) {
