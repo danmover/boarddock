@@ -29,6 +29,15 @@ type View = { x: number; y: number; k: number };
 
 const keyOf = (q: PlugInfo) => `${q.ref.module}/${q.ref.ref}`;
 const pinsOf = (q: PlugInfo): Pin[] => (q.comp.conn && PIN_TYPES.has(q.comp.conn.type) ? headerPins(q.comp) : []);
+/** A pin as a jumper label says it: its net ("TXD", "GND") where the board knows it, else its number. */
+const pinName = (q: PlugInfo, n: string) => pinsOf(q).find((x) => x.n === n)?.net?.replace(/^\//, '') || n;
+/** A near-white or pale wire colour (white, yellow): it needs a dark edge to show on light paper. */
+function light(col: string): boolean {
+  const m = /^#([0-9a-f]{6})$/i.exec(col);
+  if (!m) return false;
+  const v = parseInt(m[1], 16), r = (v >> 16) / 255, g = ((v >> 8) & 255) / 255, b = (v & 255) / 255;
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.8;
+}
 
 /** The rows of cards as the boards stand on the rails: rail by rail, along each, stacked boards after their base. */
 function railRows(p: Project, panel: NonNullable<NonNullable<ReturnType<typeof store.get>['result']>['report']['panel']> | undefined): string[][] {
@@ -88,11 +97,17 @@ export function WiringView() {
   const sizes = useMemo(() => new Map<string, Size>(p.modules.map((m) => [m.id, { w: W, h: cardH(m.id) }])), [rows, p.modules]);
 
   // where each card is: where it was put, else as on the rails; cards new since then go in a row underneath
+  // Until a card is moved, the first layout is kept as it is: every new cable re-lays the rack, and cards that
+  // followed it jumped under the pointer, so the next click landed on the wrong plug.
+  const firstPos = useRef<Pos | null>(null);
   const pos: Pos = useMemo(() => {
-    const saved = p.wiring?.pos ?? {};
-    const def = rackLayout(p, railRows(p, rep?.panel ?? undefined), sizes);
+    let saved = p.wiring?.pos ?? {};
+    if (!p.modules.some((m) => saved[m.id])) {
+      const kept = firstPos.current;
+      if (!kept || !p.modules.some((m) => kept.has(m.id))) return (firstPos.current = rackLayout(p, railRows(p, rep?.panel ?? undefined), sizes));
+      saved = Object.fromEntries(kept);
+    }
     const have = p.modules.filter((m) => saved[m.id]);
-    if (!have.length) return def;
     const out: Pos = new Map(have.map((m) => [m.id, saved[m.id]]));
     let x = 20, y = Math.max(...have.map((m) => saved[m.id][1] + sizes.get(m.id)!.h)) + 50;
     for (const m of p.modules) if (!out.has(m.id)) { out.set(m.id, [x, y]); x += W + 60; }
@@ -101,17 +116,24 @@ export function WiringView() {
   const at = (id: string) => { const q = pos.get(id) ?? [20, 20]; return drag?.id === id ? [q[0] + drag.dx, q[1] + drag.dy] : q; };
 
   // ---- the canvas: fit, pan, zoom at the pointer ----
-  const bounds = () => {
-    const ids = [...pos.keys()];
+  const bounds = (only?: string[]) => {
+    const ids = only?.filter((id) => pos.has(id)) ?? [...pos.keys()];
     if (!ids.length) return [0, 0, 600, 400];
     return [Math.min(...ids.map((id) => pos.get(id)![0])), Math.min(...ids.map((id) => pos.get(id)![1])), Math.max(...ids.map((id) => pos.get(id)![0] + W)), Math.max(...ids.map((id) => pos.get(id)![1] + sizes.get(id)!.h))];
   };
-  const fit = (): View => {
-    const el = box.current, [x0, y0, x1, y1] = bounds();
+  // the side list, when it stands on the right of the canvas (on a phone it is a sheet over the bottom instead)
+  const sideW = () => {
+    const el = box.current, sd = el?.parentElement?.querySelector<HTMLElement>('.wside');
+    return sideRef.current && el && sd && sd.offsetLeft > el.clientWidth / 2 ? el.clientWidth - sd.offsetLeft + 8 : 0;
+  };
+  const fit = (only?: string[]): View => {
+    const el = box.current, [x0, y0, x1, y1] = bounds(only);
     // (the side panel takes the right of a wide window)
-    const w = (el?.clientWidth ?? 800) - (sideRef.current && (el?.clientWidth ?? 0) > 760 ? 344 : 0), h = el?.clientHeight ?? 600;
-    const k = Math.max(0.2, Math.min(1.15, (w - 40) / (x1 - x0 + 40), (h - 170) / (y1 - y0 + 40)));
-    return { k, x: (w - (x1 - x0) * k) / 2 - x0 * k, y: 104 - y0 * k };
+    const w = (el?.clientWidth ?? 800) - sideW(), h = el?.clientHeight ?? 600;
+    // below the toolbar, however many lines it wraps to
+    const tb = el?.parentElement?.querySelector<HTMLElement>('.toolbar'), top = Math.max(104, tb ? tb.offsetTop + tb.offsetHeight + 16 : 0);
+    const k = Math.max(0.2, Math.min(1.15, (w - 40) / (x1 - x0 + 40), (h - top - 66) / (y1 - y0 + 40)));
+    return { k, x: (w - (x1 - x0) * k) / 2 - x0 * k, y: top - y0 * k };
   };
   useEffect(() => { if (!view && box.current) setView(fit()); }, [pos, view]);
   const v = view ?? { x: 0, y: 0, k: 1 };
@@ -215,8 +237,8 @@ export function WiringView() {
     const t = q.trim().toLowerCase();
     const m = t ? p.modules.find((x) => x.board.name.toLowerCase().includes(t)) : null;
     setFocus(m ? m.id : null);
-    const c = m && pos.get(m.id), el = box.current;
-    if (c && el) setView({ k: Math.max(v.k, 0.8), x: el.clientWidth / 2 - (c[0] + W / 2) * Math.max(v.k, 0.8), y: el.clientHeight / 3 - c[1] * Math.max(v.k, 0.8) });
+    // frame the board with the boards at the other ends of its cables (its charger, its adapter)
+    if (m && box.current) setView(fit([m.id, ...links.flatMap((l) => (l.a.module === m.id ? [l.b.module] : l.b.module === m.id ? [l.a.module] : []))]));
   };
 
   // ---- where a plug or a pin is on its card ----
@@ -367,8 +389,10 @@ export function WiringView() {
                       <g key={i} onClick={(e) => { e.stopPropagation(); select([{ kind: 'link', id: l.id }]); setSelWire({ link: l.id, i }); }}>
                         <title>{`Jumper wire: ${A.module.board.name} pin ${w.a} → ${B.module.board.name} pin ${w.b} (Del removes it)`}</title>
                         <path d={cv.d} fill="none" stroke="transparent" strokeWidth={10} />
-                        <path d={cv.d} fill="none" stroke="var(--bg)" strokeWidth={picked || on ? 5 : 3.6} strokeLinecap="round" opacity={0.7} />
+                        {/* a dark edge round a white or yellow wire, else it vanishes on the light theme's paper */}
+                        <path d={cv.d} fill="none" stroke={light(w.colour ?? KIND_COLOR.jumper) ? 'var(--fg)' : 'var(--bg)'} strokeWidth={picked || on ? 5 : 3.6} strokeLinecap="round" opacity={light(w.colour ?? KIND_COLOR.jumper) ? 0.35 : 0.7} />
                         <path d={cv.d} fill="none" stroke={w.colour ?? KIND_COLOR.jumper} strokeWidth={picked ? 3.4 : on ? 2.8 : 2} strokeLinecap="round" />
+                        {v.k > 0.6 && <text x={cv.mid.x} y={cv.mid.y - 4} textAnchor="middle" fontSize={9} className="mono wlabel">{`${pinName(A, w.a)}→${pinName(B, w.b)}`}</text>}
                       </g>
                     );
                   }) : <>
@@ -377,7 +401,6 @@ export function WiringView() {
                     <path d={main.d} fill="none" stroke={col} strokeWidth={on || (near && !dim) ? 4 : 2.6} strokeLinecap="round" opacity={on ? 1 : 0.85} strokeDasharray={l.kind === 'debug' ? '8 3' : undefined} />
                   </>}
                   {c && q.y !== main.mid.y && <line x1={main.mid.x} y1={main.mid.y} x2={q.x} y2={q.y} stroke={col} strokeWidth={1} strokeDasharray="2 3" />}
-                  {c && <g transform={`translate(${q.x},${q.y})`}><title>{`Cable ${c.no}: ${c.label ?? ''}${c.wires ? ` — ${c.wires}` : ''}`}</title><rect x={-40} y={-11} width={80} height={22} rx={11} fill="var(--surface)" stroke={col} /><circle cx={-28} cy={0} r={8.5} fill={col} /><text x={-28} y={3.8} textAnchor="middle" fontSize={10.5} fontWeight={700} className="mono" fill="#fff">{c.no}</text><text x={8} textAnchor="middle" y={4} fontSize={11} className="mono" fill="var(--fg)">{c.ribbon != null ? `${Math.round(c.length / 10)} cm` : l.kind === 'jumper' ? `${Math.round(c.buy * 100)} cm` : `${c.buy} m`}</text></g>}
                 </g>
               );
             })}
@@ -437,6 +460,13 @@ export function WiringView() {
                 </g>
               );
             })}
+            {/* cable numbers and lengths over the cards, so none hides behind one */}
+            {drawn.map(({ l, main }) => {
+              const c = cableOf(l.id), q = pillAt.get(l.id) ?? main.mid, col = wire(l.kind ?? 'usb');
+              const dim = near && !(l.a.module === focus || l.b.module === focus);
+              if (!c) return null;
+              return <g key={l.id} opacity={dim ? 0.12 : 1} style={{ cursor: 'pointer' }} onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); setSelWire(null); select([{ kind: 'link', id: l.id }], e.shiftKey ? 'toggle' : 'set'); }}><g transform={`translate(${q.x},${q.y})`}><title>{`Cable ${c.no}: ${c.label ?? ''}${c.wires ? ` — ${c.wires}` : ''}`}</title><rect x={-40} y={-11} width={80} height={22} rx={11} fill="var(--surface)" stroke={col} /><circle cx={-28} cy={0} r={8.5} fill={col} /><text x={-28} y={3.8} textAnchor="middle" fontSize={10.5} fontWeight={700} className="mono" fill="#fff">{c.no}</text><text x={8} textAnchor="middle" y={4} fontSize={11} className="mono" fill="var(--fg)">{c.ribbon != null ? `${Math.round(c.length / 10)} cm` : l.kind === 'jumper' ? `${Math.round(c.buy * 100)} cm` : `${c.buy} m`}</text></g></g>;
+            })}
             {/* the cable being drawn from a plug */}
             {wireDrag && (() => {
               const a = portAt(wireDrag.from, wireDrag.x >= at(wireDrag.from.module.id)[0] + W / 2 ? 1 : -1), sg = wireDrag.x >= a.x ? 1 : -1, k = Math.max(30, Math.abs(wireDrag.x - a.x) * 0.4);
@@ -470,7 +500,7 @@ export function WiringView() {
           </div>
         );
       })()}
-      {side && <WiringSide tab={side} setTab={setSide} onPick={(q) => { setPending(q); const c = pos.get(q.module.id), el2 = box.current; if (c && el2) setView({ k: Math.max(v.k, 0.8), x: el2.clientWidth / 2 - (c[0] + W / 2) * Math.max(v.k, 0.8), y: el2.clientHeight / 3 - c[1] * Math.max(v.k, 0.8) }); }} />}
+      {side && <WiringSide tab={side} setTab={setSide} onPick={(q) => { setPending(q); const c = pos.get(q.module.id), el2 = box.current; if (c && el2) setView({ k: Math.max(v.k, 0.8), x: (el2.clientWidth - sideW()) / 2 - (c[0] + W / 2) * Math.max(v.k, 0.8), y: el2.clientHeight / 3 - c[1] * Math.max(v.k, 0.8) }); }} />}
       <div className="toolbar floating">
         <button className="tbtn" onClick={() => addLinks()} title="Connect every free plug that has a partner: the shortest cables on the rack as it stands, power within what each port and charger gives, and why each was chosen"><Icon d={I.wand} /> Auto-connect</button>
         {links.some((l) => l.auto) && <button className="tbtn" onClick={rewire} title="Choose Auto-connect's cables again for the rack as it is laid out now (the ones you connected yourself stay)">Rewire</button>}
