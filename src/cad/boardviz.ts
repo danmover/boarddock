@@ -278,9 +278,9 @@ function silkText(bin: Bin, text: string, o: [number, number], hgt: number, zt: 
 }
 
 /** A spot on the board surface clear of parts for a label of w x h (bottom-left corner), or null. */
-function findFree(b: Board, comps: Comp[], w: number, h: number): [number, number] | null {
+function findFree(b: Board, comps: Comp[], w: number, h: number, also: { x0: number; y0: number; x1: number; y1: number }[] = []): [number, number] | null {
   const bb = bbox(b.outline);
-  const rects = comps.filter((c) => c.side === 'top').map((c) => bbox(compRect(c, 1)));
+  const rects = [...comps.filter((c) => c.side === 'top').map((c) => bbox(compRect(c, 1))), ...also];
   const holes = b.holes.map((q) => ({ x0: q.x - q.d, y0: q.y - q.d, x1: q.x + q.d, y1: q.y + q.d }));
   for (let y = bb.y0 + 2; y + h < bb.y1 - 2; y += 1.5) for (let x = bb.x0 + 2; x + w < bb.x1 - 2; x += 1.5) {
     const box = { x0: x - 0.5, y0: y - 0.5, x1: x + w + 0.5, y1: y + h + 0.5 };
@@ -455,7 +455,7 @@ export function boardDetail(b: Board, zb: number, zt: number, tag: PickTag, anim
     let deg = (Math.atan2(t[1], t[0]) * 180) / Math.PI;
     if (deg > 90.01) deg -= 180; else if (deg <= -90.01) deg += 180;
     const u = [Math.cos(rad(deg)), Math.sin(rad(deg))], v = [-u[1], u[0]];
-    let at = [c.x - d[0] * (back + 0.8 + hgt / 2), c.y - d[1] * (back + 0.8 + hgt / 2)];
+    let at = [c.x - d[0] * (back + 1.8 + hgt / 2), c.y - d[1] * (back + 1.8 + hgt / 2)]; // (far enough in to be seen past a tall plug)
     const box = (q: number[]) => { const hx = Math.abs(u[0]) * tw / 2 + Math.abs(v[0]) * hgt / 2, hy = Math.abs(u[1]) * tw / 2 + Math.abs(v[1]) * hgt / 2; return { x0: q[0] - hx, x1: q[0] + hx, y0: q[1] - hy, y1: q[1] + hy }; };
     const clash = (r: ReturnType<typeof box>) => ![[r.x0, r.y0], [r.x1, r.y1], [r.x0, r.y1], [r.x1, r.y0]].every((q) => inside(q as [number, number], b.outline)) || taken.some((o) => o.x0 < r.x1 && r.x0 < o.x1 && o.y0 < r.y1 && r.y0 < o.y1) || rects.some((o) => o.c !== c && o.r.x0 < r.x1 && r.x0 < o.r.x1 && o.r.y0 < r.y1 && r.y0 < o.r.y1);
     let k = 0;
@@ -466,7 +466,7 @@ export function boardDetail(b: Board, zb: number, zt: number, tag: PickTag, anim
   }
   const bbB = bbox(b.outline), nameH = Math.min(2.2, (bbB.y1 - bbB.y0) * 0.05);
   const nm = b.name.slice(0, 28), nw = textWidth(nm, nameH);
-  const spot = findFree(b, list, nw, nameH);
+  const spot = findFree(b, list, nw, nameH, taken); // (clear of the plugs' labels too)
   if (spot) silkText(bin, nm, spot, nameH, zt);
   return bin.ghosts('board', tag, anim, bare && b.color ? { mask: b.color } : {});
 }
