@@ -116,6 +116,8 @@ export interface MainsLoad {
 
 // mains voltage and a typical powerboard rating for each outlet type (AU/NZ 10 A, UK 13 A, US 15 A, EU 16 A)
 const MAINS: Record<string, { v: number; a: number; name: string }> = { ac_au: { v: 230, a: 10, name: 'AU' }, ac_uk: { v: 230, a: 13, name: 'UK' }, ac_us: { v: 120, a: 15, name: 'US' }, ac_eu: { v: 230, a: 16, name: 'EU' } };
+/** A typical powerboard rating for each outlet type (A). */
+export const MAINS_RATING: Record<string, number> = Object.fromEntries(Object.entries(MAINS).map(([k, v]) => [k, v.a]));
 const EFFICIENCY = 0.85; // a plug pack or charger turns about 85% of what it draws into what it gives (an estimate)
 
 /** What a box draws from the wall at full load (W), from what it gives; null when BoardDock can't tell. */

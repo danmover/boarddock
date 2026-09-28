@@ -67,7 +67,7 @@ The desktop builds are not code-signed yet:
 4. **Holder:** frame or tray, a preset, where the release button goes, and the features you want.
 5. **Rails:** BoardDock has already placed every board on a rail. Pick one rail, rows or columns; drag, turn, pair or stack boards if you like.
 6. **Check:** read the notes and run the dock FEA for your material.
-7. **Export:** download the plates and print them in PETG. The shopping list has the rail lengths, the cables (length and plug types), straps and standoffs. The download's README has the assembly steps.
+7. **Export:** download the plates and print them in PETG. The shopping list has the rail lengths, the cables (length and plug types; jumper wires by the wire; what comes with a part, like a probe's ribbon or a plug pack's lead, is listed as not to buy), straps and standoffs. The Plugs step's **Cables to buy** is the same list. The download's README has the assembly steps.
 8. **Build it**, following the play button in the 3D view. Then press **Mark the rack as built** in Export.
 
 Every step has **Back** and **Next** at the bottom of the sidebar.
@@ -243,23 +243,27 @@ The inspector sets:
 
 ## Hubs, chargers and other boxes
 
-A box is a size and rows of ports (Board step, **Box**). Pick a preset (USB hub, powered 7-port hub, USB-C hub with Ethernet, USB charger, USB charger with USB-C) or set your own:
+A box is a size and rows of ports (Board step, **Box**). Pick a preset (USB hub, powered 7-port hub, USB-C hub with Ethernet, USB charger, USB charger with USB-C, network switch, plug-pack supplies) or set your own:
 - length, width and height;
-- any number of rows of ports: how many, which type (USB-A, USB-C, micro-USB, USB-B, DC barrel, mains, RJ45, HDMI, audio, screw terminals), on which face (front, back, either end or the top), and what they are for (hub port, upstream, power out, power in, and so on).
+- any number of rows of ports: how many, which type (USB-A, USB-C, micro-USB, USB-B, DC barrel, mains, RJ45, HDMI, audio, screw terminals), on which face (front, back, either end or the top), and what they are for (hub port, upstream, power out, DC out, power in, and so on);
+- for ports that give power, what each one gives (a 27 W USB-C PD port gives 5 A, most USB-C charger ports 3 A), and a DC port's voltage;
+- a plug pack's own lead length, and a powerboard's rating (A, from its label).
+
+**Plug packs** (Start › Hubs and chargers: the Raspberry Pi 27 W (5 A) and 15 W (3 A) USB-C supplies, a 12 V DC plug pack) plug straight into a powerboard's outlet, so they stay off the rails; their own lead goes to the board. Auto-connect plugs them in, and the shopping list says their lead comes with them. A DC pack only goes to a DC input on its own when both say the same voltage: BoardDock can't check polarity, so check both labels.
 
 ![Box editor with a 7-port powered hub](docs/images/box.png)
 
 Ports are spaced evenly along their face, and a preview shows where they are. Every port knows its role, so Auto-connect never has to guess whether a USB-A socket on a box takes a device or gives power. Ports on the top get plugs standing in them, and the strap loops move to miss them. If ports don't fit their face, the editor says so. Fewer ports keep the first ports' names, so cables to them stay; cables to ports you remove go.
 
-The Plugs step counts what still needs a port: USB devices against free hub and computer ports, and boards that need power against free charger ports. When you are short, it offers to add a hub or a charger. A stacked pair of USB-A sockets, like on a Raspberry Pi, counts as two ports ("USB2 lower" and "USB2 upper"). Boards with screw terminals or jumper headers and nothing connected (a relay board, a power distribution board) are listed too: Auto-connect leaves wiring to you.
+The Plugs step counts what still needs a port: USB devices against free hub and computer ports, and boards that need power against free ports strong enough for them. A board on a port too weak for it (or powered through the hub it hosts) counts as still needing power, so the offer to add a charger (or, for Pi 5s, their own 27 W supplies) stays until every board has enough; adding one connects it and moves the boards on weak ports onto it. A USB device with no port on the rack can go to **your computer** instead of a hub. A stacked pair of USB-A sockets, like on a Raspberry Pi, counts as two ports ("USB2 lower" and "USB2 upper"). Boards with screw terminals or jumper headers and nothing connected (a relay board, a power distribution board) are listed too: Auto-connect leaves wiring to you.
 
 ![Power budget in the Plugs step](docs/images/power.png)
 
-**Power budget.** Every charger, powered hub, bus-powered hub and Raspberry Pi USB port gets a bar: what the boards on it take at full load against what it gives, at 5 V. It warns when a charger is asked for more than it gives, when a Pi's four USB ports (1.2 A between them) or a hub with no supply of its own carry too much, and when a board needs more than its port gives (a Pi 4 wants a 3 A supply; a USB-A charger port gives about 2.4 A). The figures are estimates: the makers' recommended supplies and typical draws under load. Set a board's own under **Board › Power** and a charger's total (the watts on its label, divided by 5) under **Box**. Check lists the same.
+**Power budget.** Every charger, powered hub, bus-powered hub and Raspberry Pi USB port gets a bar: what the boards on it take at full load against what it gives, at 5 V. It warns when a charger is asked for more than it gives, when a Pi's four USB ports (1.2 A between them) or a hub with no supply of its own carry too much, and when a board needs more than its port gives (a Pi 4 wants a 3 A supply; a USB-A charger port gives about 2.4 A). A Pi 5 wants 5 A, which only a 5 A USB-C PD supply gives (a USB-A to C cable never can): on a 3 A port it runs, but holds its USB ports to 0.6 A between them, and the budget says so. **Move boards to stronger ports** takes boards off ports too weak for them and onto stronger free ones, in one undo step. Under the sources, each powerboard gets a **mains** bar: what the supplies plugged into it draw from the wall at full load (an estimate, at about 85% efficiency) against its rating (typical figures: AU 10 A, UK 13 A, US 15 A, EU 16 A; set yours under **Box**). The figures are estimates: the makers' recommended supplies and typical draws under load. Set a board's own under **Board › Power** and a charger's total (the watts on its label, divided by 5) under **Box**. Check lists the same.
 
 ### Powerboards
 
-Powerboards (power strips) are boxes too, under Start's accessories: 4 or 6 outlets, with a switch by each, with outlets turned 45° so plug packs fit side by side, or with two USB ports. Set the outlets (AU/NZ, UK, US or EU), how many, their angle and the size under **Box**; the outlets spread evenly along the top. Auto-connect plugs each charger's mains lead into a free outlet, and buys the lead only if it is longer than the one most chargers come with. A powerboard's own lead goes to the wall: BoardDock never plugs one powerboard into another, and warns if you do.
+Powerboards (power strips) are boxes too, under Start's accessories: 4 or 6 outlets, with a switch by each, with outlets turned 45° so plug packs fit side by side, or with two USB ports. Set the outlets (AU/NZ, UK, US or EU), how many, their angle and the size under **Box**; the outlets spread evenly along the top. Auto-connect plugs each charger's mains lead into a free outlet, and buys the lead only if it is longer than the one most chargers come with. A powerboard's own lead goes to the wall: BoardDock never plugs one powerboard into another, refuses to in the Wiring view and **Cable to**, and fails Check if an older rack has one. It won't put a mains outlet onto screw terminals either: mains through relays belongs in a proper enclosure, wired by someone qualified to. BoardDock checks which plug goes into which outlet and adds up the load it knows about; it can't check your powerboard, its lead, earth or the wall socket.
 
 A box longer than your printer's bed (a powerboard usually is) gets its holder in two halves that meet end to end, each clipped to the rail on its own.
 
@@ -299,12 +303,13 @@ Each plug gets a role from its type, its name and its board:
 - a charger's ports give power.
 
 **Auto-connect** pairs the free plugs the way you would lay them out yourself, and says why it chose each one (hover a cable):
-1. hubs to the nearest computer or board that hosts them;
-2. power: every board that takes power over USB, from a port that gives what it needs at its peak (a Pi 5 or a Pi 4 on a USB-C port where there is one), with no charger loaded past what it gives and the load spread over the chargers. Six Pi 4s on two chargers get three each. With no charger port left, a powered hub's port will do; a hub without its own supply never powers a board;
-3. devices (an Arduino's USB, a probe's or an adapter's USB) to the nearest hub port, else a computer's own port;
+1. hubs to the nearest computer or board that hosts them (a hub with Ethernet or USB 3 ports on a USB 3 port where there is one); with nothing on the rack to host it, to **your computer**;
+2. power: every board that takes power over USB, only from a port that gives it enough (a Pi 5 on a 5 A supply where there is one, a Pi 4 on a USB-C port), with no charger loaded past what it gives and the load spread over the chargers. A board no free port can power is left free, and the Plugs step offers a charger or supply. With no charger port left, a powered hub's port will do for a small board, never a Pi, and never the hub that hangs off that same board;
+3. devices (an Arduino's USB, a probe's or an adapter's USB) to the nearest hub port, else a board's own USB port while their shared limit allows (a Pi 4's give 1.2 A between them), else **your computer** (off the rack; its 2 m cable is on the shopping list);
 4. each board's Ethernet to a **network switch** in the rack (Start › Hubs and chargers has 5- and 8-port ones);
-5. mains leads to the nearest free outlet of a powerboard (never one powerboard into another);
-6. J-Links and serial adapters to the headers they serve.
+5. a DC plug pack's lead to a DC input of the same voltage;
+6. mains leads and plug packs to the nearest free outlet of a powerboard (never one powerboard into another);
+7. J-Links and serial adapters to the headers they serve.
 
 Each kind is paired all at once (the cheapest pairing in all, not first come, first served), by how long each cable would be on the rack as it is laid out. **Rewire** chooses Auto-connect's cables again after you move boards, and leaves the ones you connected yourself.
 
@@ -361,7 +366,7 @@ A pin header (▸) opens into its pins, with their net names from your KiCad fil
 | Remove the selection (a cradle or cap is switched off, a pin becomes an ignored hole, a dock, rail or cable is removed, a board leaves the project, table stands are switched off) | Delete, or **Remove** in the bar below the view; one ⌘Z brings it all back |
 | Jump to the settings of the selected thing | **Edit** in the bar |
 | Fly to a part | double-click it |
-| Watch it go together | the play button. It goes step by step, the way you would build it, with an instruction for each step: saddles on the table, rails in, end blocks on, spacers in, shoes clipped on, sockets in; then for each board, its release rod into the spine, the board into its holder, anything stacked on it, and the holder into its dock; then the cables (power first), and the caps. **‹ ›** step back and forward; **✕** shows it assembled. |
+| Watch it go together | the play button. It goes step by step, the way you would build it, with an instruction for each step: saddles on the table, rails in, end blocks on, spacers in, shoes clipped on, sockets in; then for each board, its release rod into the spine, the board into its holder, anything stacked on it, and the holder into its dock; then the cables (power first, mains last), the caps, and a last step: check every screw terminal, switch the powerboards off, plug them into the wall, then switch on. **‹ ›** step back and forward; **✕** shows it assembled. |
 | Pull it apart | the **Explode** slider |
 | Show or hide holders, docks, caps, boards, plugs, cables, cable numbers or rails | **Layers** |
 | See every keyboard shortcut | **?** |

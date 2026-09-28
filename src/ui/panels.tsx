@@ -26,7 +26,7 @@ import { duplicateModule, markBuilt, unmarkBuilt } from './panelOps';
 import { delta, partsFor, type Delta } from '../model/built';
 import { baseOf as stackBase, ridersOf } from '../model/holes';
 import { DockFeaSection } from './DockFea';
-import { mainsBudget, mainsText, powerBudget, powerText } from '../model/power';
+import { MAINS_RATING, mainsBudget, mainsText, powerBudget, powerText } from '../model/power';
 import { saveBoard } from '../model/myboards';
 import { boardSig, useKeptPicture } from './pics';
 import { paletteFor } from '../model/palette';
@@ -502,7 +502,7 @@ function BoxEditor() {
   return (
     <Section title="Box" right={<span className="chip">{sum || 'no ports'}</span>}>
       <div className="btns" style={{ flexWrap: 'wrap' }}>
-        {Object.entries(BOX_PRESETS).map(([k, P]) => <button key={k} className="btn small" onClick={() => set((s) => { Object.assign(s, P.spec()); })}>{P.name}</button>)}
+        {Object.entries(BOX_PRESETS).map(([k, P]) => <button key={k} className="btn small" onClick={() => set((s) => { delete s.pack; delete s.rating; delete s.supply; Object.assign(s, P.spec()); })}>{P.name}</button>)}
       </div>
       <div className="row3" style={{ marginTop: 10 }}>
         <Num label="Length" value={spec.l} min={10} max={800} step={1} onChange={(v) => set((s) => { s.l = v; })} />
@@ -518,6 +518,8 @@ function BoxEditor() {
           </div>
         );
       })()}
+      {spec.groups.some((g) => g.type.startsWith('ac_')) && <div className="row" style={{ marginTop: 8, alignItems: 'end' }}><Num label={`Rating${spec.rating ? '' : ' (typical)'}`} unit="A" value={spec.rating ?? MAINS_RATING[spec.groups.find((g) => g.type.startsWith('ac_'))!.type] ?? 10} min={1} max={20} step={0.5} onChange={(v) => set((s) => { s.rating = v; })} hint="What the powerboard may carry in all: it is on its label or plug." /><small className="hint" style={{ margin: 0 }}>{spec.rating ? '' : 'A typical figure for its outlets: check the label on yours.'}</small></div>}
+      {spec.pack && <div className="row" style={{ marginTop: 8 }}><Num label="Its own lead" unit="mm" value={spec.pack.lead} min={100} max={5000} step={50} onChange={(v) => set((s) => { s.pack = { ...(s.pack ?? { lead: 1500 }), lead: v }; })} hint="A plug pack sits in an outlet: its lead has to reach the board it powers." /></div>}
       {spec.groups.some((g) => g.role === 'debug') && <div className="row" style={{ marginTop: 8 }}><Num label="Ribbon length" value={spec.ribbon ?? 200} min={50} max={2000} step={10} onChange={(v) => set((s) => { s.ribbon = v; })} hint="The ribbon it came with: the rack checks that it reaches the board." /></div>}
       <BoxPreview spec={spec} />
       <div className="boxgroups">
@@ -535,6 +537,12 @@ function BoxEditor() {
                 <Pick label="Where on top" value={g.near ?? 'mid'} options={[['mid', 'across the middle'], ['front', 'by the front edge'], ['back', 'by the back edge']]} onChange={(v) => set((s) => { s.groups[i].near = v === 'mid' ? undefined : (v as 'front' | 'back'); })} />
                 {g.type.startsWith('ac_') && <Pick label="Turned" value={g.rot ?? 0} options={[[0, 'square'], [45, '45° (plug packs fit)'], [90, 'across']]} onChange={(v) => set((s) => { s.groups[i].rot = v || undefined; })} />}
                 {g.type.startsWith('ac_') && <div className="field"><span>&nbsp;</span><Check label="A switch each" value={!!g.switched} onChange={(v) => set((s) => { s.groups[i].switched = v || undefined; })} /></div>}
+              </div>
+            )}
+            {(g.role === 'power-out' || g.role === 'dc-out') && (
+              <div className="row" style={{ marginTop: 6, alignItems: 'end' }}>
+                <Num label={`Each port gives${g.amps ? '' : ' (typical)'}`} unit="A" value={g.amps ?? (g.type === 'usb_c' ? 3 : g.type.startsWith('usb_a') ? 2.4 : 2)} min={0.5} max={10} step={0.1} onChange={(v) => set((s) => { s.groups[i].amps = v; })} hint={g.type === 'usb_c' ? 'A 27 W USB-C PD port gives 5 A (what a Pi 5 wants); most give 3 A.' : 'From its label.'} />
+                {g.role === 'dc-out' && <Num label="At" unit="V" value={g.volts ?? 12} min={3} max={48} step={0.5} onChange={(v) => set((s) => { s.groups[i].volts = v; })} hint="Its label's output voltage. BoardDock can't check polarity." />}
               </div>
             )}
             {g.type === 'pins_ra' && <div className="row" style={{ marginTop: 6 }}><Text label="Pin names, pin 1 first" value={(g.pins ?? []).join(', ')} onChange={(v) => set((s) => { s.groups[i].pins = v.split(/[,\s]+/).filter(Boolean).slice(0, 40); })} placeholder="GND, CTS, VCC, TXD, RXD, DTR" /></div>}
@@ -851,7 +859,7 @@ function PortBudget({ budget }: { budget: ReturnType<typeof portBudget> }) {
       {wires}
       {(powerIns.length > 0 || weak.length > 0) && <div>
         {powerIns.length > 0 && `${powerIns.length} board${powerIns.length > 1 ? 's need' : ' needs'} power (${powerIns.map((d) => d.module.board.name).join(', ')})`}{powerIns.length > 0 && weak.length > 0 && '; '}
-        {weak.length > 0 && `${weak.length} ${weak.length > 1 ? 'are' : 'is'} on a port too weak for ${weak.length > 1 ? 'them' : 'it'} (${weak.map((w) => `${shortName(w.take.module.board.name)} on ${w.src.label}${w.loop ? ', the hub it hosts' : ''}`).join(', ')})`}; {powerOuts.length} charger port{powerOuts.length === 1 ? '' : 's'} free.
+        {weak.length > 0 && `${weak.length} ${weak.length > 1 ? 'are' : 'is'} on a port too weak for ${weak.length > 1 ? 'them' : 'it'} (${weak.map((w) => `${shortName(w.take.module.board.name)} on ${w.src.label}${w.loop ? ', the hub it hosts' : ''}`).join(', ')})`}; {powerOuts.length} charger port{powerOuts.length === 1 ? '' : 's'} free{short.add && powerOuts.length ? `, not one strong enough for ${short.unserved.length > 1 ? `the ${short.unserved.length} left` : shortName(short.unserved[0].plug.module.board.name)}` : ''}.
         {short.add && <button className="btn small" style={{ marginLeft: 4 }} onClick={() => addAccessory(short.add!.id, short.add!.count)} title="Adds it and connects the boards that need it">Add {short.add.count > 1 ? `${short.add.count} × ` : 'a '}{named(short.add.id)}</button>}
       </div>}
     </div>
