@@ -364,7 +364,8 @@ A pin header (▸) opens into its pins, with their net names from your KiCad fil
 | Watch it go together | the play button. It goes step by step, the way you would build it, with an instruction for each step: saddles on the table, rails in, end blocks on, spacers in, shoes clipped on, sockets in; then for each board, its release rod into the spine, the board into its holder, anything stacked on it, and the holder into its dock; then the cables (power first), and the caps. **‹ ›** step back and forward; **✕** shows it assembled. |
 | Pull it apart | the **Explode** slider |
 | Show or hide holders, docks, caps, boards, plugs, cables, cable numbers or rails | **Layers** |
-| See every keyboard shortcut | **?** |
+| See every keyboard shortcut (the board editor's V, H, M, T and arrows too) | **?** |
+| Go to a step | **1** to **7** |
 
 Plugs are drawn after their type: a USB-C's slim oval overmould, a USB-A's metal shell and grip ridges (a stacked pair takes one plug per socket), an HDMI's flat shell, an RJ45's clear plug and boot, a barrel plug's sleeve, a 3.5 mm plug's rings, wires with ferrules in a screw terminal. A port shows a plug only where a cable goes: a cable to another board on the rack, a cradle the board has for one (a screen or a supply off the rack), or a box's own supply (mains, DC in); a free port stays empty. A cable that leaves the rack bends down and runs off along the table; cables in the rack bend in arcs of about four diameters, as real ones do.
 

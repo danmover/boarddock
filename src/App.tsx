@@ -98,6 +98,8 @@ export function App() {
       if (e.key === '?' || (e.key === '/' && e.shiftKey)) setKeys((k) => !k);
       if (!cmd && e.key.toLowerCase() === 'a' && project && !store.get().addSheet) { e.preventDefault(); store.set({ addSheet: true }); }
       if (e.key === 'Escape') setKeys(false);
+      // 1-7: the steps (not while the rails view uses the keys for its docks, nor in the board editor)
+      if (!cmd && !e.altKey && project && /^[1-7]$/.test(e.key) && store.get().view !== 'panel') { goStep(STEPS[+e.key - 1].id); return; }
       const v = store.get().view;
       if (v === 'assembly') {
         const p3 = store.get().sel.filter((s) => s.kind === 'module' || s.kind === 'mount' || s.kind === 'rail' || s.kind === 'feature' || s.kind === 'link' || s.kind === 'railstand');
@@ -134,7 +136,7 @@ export function App() {
   const si = STEPS.findIndex((s) => s.id === step);
   const S = STEPS[si];
   // Start shows the library, Board the board editor; the other steps the rack (in 3D, unless you picked another view)
-  const goStep = (id: Step) => store.set({ step: id, ...(id === 'import' ? { view: 'library' as const } : id === 'board' ? { view: 'editor' as const } : view === 'library' || view === 'editor' ? { view: 'assembly' as const } : {}) });
+  const goStep = (id: Step) => store.set({ step: id, ...(id === 'import' ? { view: 'library' as const } : id === 'board' ? { view: 'editor' as const } : ['library', 'editor'].includes(store.get().view) ? { view: 'assembly' as const } : {}) });
   const views: [typeof view, string][] = project ? [...(step === 'import' ? [['library', 'Add boards'] as [typeof view, string]] : []), ['assembly', '3D'], ...(project.layout === 'panel' ? [['panel', 'Rails'] as [typeof view, string]] : []), ['wiring', 'Wiring'], ['print', 'Plates'], ['editor', 'Board']] : [];
 
   return (
@@ -301,7 +303,12 @@ const KEYS: [string, string][] = [
   ['⌘Z / ⇧⌘Z', 'undo / redo'], ['⌘S', 'save the project file'], ['Click, Shift-click', 'select in 3D, add to the selection'],
   ['Delete', 'remove the selection'], ['Esc', 'clear the selection'], ['Double-click', 'fly to a part'],
   ['R / ⇧R', 'turn the selected docks (Rails view)'], ['F', 'swap front and back boards (Rails view)'], ['Arrows, ⇧Arrows', 'move docks 1 / 10 mm (Rails view)'],
-  ['A', 'add a board, from any step'], ['⌘A', 'select every dock (Rails view)'], ['?', 'show or hide this list'],
+  ['A', 'add a board, from any step'], ['⌘A', 'select every dock (Rails view)'], ['1 – 7', 'go to that step'], ['?', 'show or hide this list'],
+];
+// the board editor's own keys (they work while nothing is selected there)
+const EDITOR_KEYS: [string, string][] = [
+  ['V', 'select and move'], ['H', 'pan (or hold Space)'], ['M', 'measure'], ['T', 'show or hide the toolbox'],
+  ['Arrows, ⇧Arrows', 'nudge the selection 0.1 / 1 mm'], ['Alt-drag', 'move freely, without snapping'], ['R / ⇧R', 'turn the selected parts'], ['⌘D', 'duplicate the selection'], ['⌘A', 'select every hole and part'],
 ];
 function Shortcuts({ onClose }: { onClose: () => void }) {
   return (
@@ -309,6 +316,8 @@ function Shortcuts({ onClose }: { onClose: () => void }) {
       <div className="keys floating" onClick={(e) => e.stopPropagation()}>
         <div className="keys-head"><b>Keyboard shortcuts</b><button className="toast-x" onClick={onClose}>×</button></div>
         <div className="keys-grid">{KEYS.map(([k, t]) => <Fragment key={k}><kbd>{k}</kbd><span>{t}</span></Fragment>)}</div>
+        <div className="keys-head" style={{ marginTop: 12 }}><b>Board editor</b></div>
+        <div className="keys-grid">{EDITOR_KEYS.map(([k, t]) => <Fragment key={k}><kbd>{k}</kbd><span>{t}</span></Fragment>)}</div>
       </div>
     </div>
   );
