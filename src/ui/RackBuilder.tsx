@@ -3,7 +3,7 @@
 // Automatic until the first change by hand; every change is undoable.
 import { useMemo, useState, type ReactNode } from 'react';
 import type { Access, EdgeName, Module, PanelReport, Project, Turn } from '../model/types';
-import { baseOf, ridersOf, stackAlign, stackMode } from '../model/holes';
+import { baseOf, ridersOf, stackAlign, stackHardware, stackMode } from '../model/holes';
 import { bbox } from '../geom/poly';
 import { companionLabel, isProbe, targetOf } from '../model/probes';
 import { isAccessory } from '../model/links';
@@ -428,6 +428,10 @@ function StackSection() {
                 <div style={{ flex: 1 }}><Seg value={stackMode(p, m)} options={[['bolted', 'Bolted on standoffs'], ['towers', 'Printed layer']]} onChange={(v) => setStackMode(m.id, v)} /></div>
                 {stackMode(p, m) === 'bolted' && <input type="number" style={{ width: 62, height: 26 }} title="Standoff length (mm)" value={m.onGap ?? 11} step={0.5} min={2} max={40} onChange={(e) => setStackMode(m.id, 'bolted', Math.max(2, +e.target.value || 11))} />}
               </div>
+            {(() => {
+              const h = stackHardware(p, m);
+              return h && <small className="hint" style={{ margin: 0, paddingLeft: 18, width: '100%' }}>{h.shared ? `Bolted on the ${h.n} holes they share: ${h.n} ${h.size} standoffs, ${h.screws} screws.` : 'No holes line up with the board below: check where the standoffs go.'}</small>;
+            })()}
             </div>
           );
         })}

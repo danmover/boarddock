@@ -759,9 +759,10 @@ function plugAt(T: number[], p: PlugSize, tag: PickTag, anim: Anim, type: string
 }
 
 /**
- * A cable leaving a plug that nothing in the rack connects to (a screen, a supply, the mains): out of the boot,
- * a bend down, and along the table away from the rack. p, d: the boot's end and the plug's direction; floor: the
- * table's height.
+ * A cable leaving a plug that nothing in the rack connects to (the mains, a supply): out of the boot, a bend down,
+ * and along the table away from the rack. p, d: the boot's end and the plug's direction; floor: the table's height;
+ * bounds: the rack's footprint [x0, y0, x1, y1], so the lead runs on along the table until it is well clear of it
+ * (towards the wall socket or the supply) instead of stopping beside it.
  */
 /**
  * A lead that leaves the rack (to a screen, a supply, the wall), drawn as a short stretch out of its plug that fades

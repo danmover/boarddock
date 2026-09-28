@@ -19,6 +19,7 @@ import { featureItem } from './pickOps';
 import { KIND_COLOR } from '../model/links';
 import { liveFx } from './liveFx';
 import { growTo } from './cableGrow';
+import { badgeText } from '../model/cablebadge';
 
 interface Props {
   result: GenResult | null;
@@ -480,7 +481,7 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
       el.style.setProperty('--k', KIND_COLOR[x.kind]);
       el.title = `Cable ${x.no}: ${x.label ?? ''} · ${Math.round(x.length / 10)} cm, buy ${x.buy} m`;
       el.innerHTML = `<b>${x.no}</b><span></span>`;
-      (el.lastChild as HTMLElement).textContent = (x.label ?? '').replace(/^([^:]+): /, '$1 · ');
+      (el.lastChild as HTMLElement).textContent = badgeText(x.label ?? '');
       el.onclick = (e) => { e.stopPropagation(); cb.current.onPick({ kind: 'link', id: x.id }, e.shiftKey || e.metaKey); };
       host.appendChild(el);
       // its cable's meshes: the label shows only once the cable is there (in the assembly steps)

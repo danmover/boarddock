@@ -111,7 +111,7 @@ export function removeItems(items: SelItem[]) {
           case 'label': H.label = ''; break;
           case 'notch': H.notches = false; break;
           case 'stand': p.stand.enabled = false; break;
-          case 'clip': if (p.layout === 'loose') p.mount.kind = 'none'; else { onPanel(); p.panel.mounts = p.panel.mounts.filter((x) => !x.slots.some((s) => s.module === m.id)); } break;
+          case 'clip': if (p.layout === 'loose') { p.mount.kind = 'none'; p.mount.picked = true; } else { onPanel(); p.panel.mounts = p.panel.mounts.filter((x) => !x.slots.some((s) => s.module === m.id)); } break;
           case 'tower': m.on = null; for (const x of p.modules) if (x.on === m.id) x.on = null; break;
           case 'dock': onPanel(); for (const mt of p.panel.mounts) for (const sl of mt.slots) if (sl.module === m.id) sl.module = null; break;
           default: continue;

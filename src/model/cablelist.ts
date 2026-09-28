@@ -1,6 +1,7 @@
 // What to buy for the cables, one line per kind and length, worded the same everywhere (Plugs › Cables to buy, the
 // Export shopping list, the download's README). A probe's ribbon and a plug pack's own lead come with them, so they
 // are listed apart and never bought; jumper wires are bought by the wire; a cable to your computer is a 2 m one.
+import { buyText } from './cablebuy';
 import type { GenReport, Link, PlugRef, Project } from './types';
 import { baseRef, cableNumbers, findModule, isAccessory, PC, plugName, plugRole, shortName } from './links';
 import { isPlugPack } from './powerdata';
@@ -44,7 +45,7 @@ export function cableLines(p: Project, cables: CableOut[], onlyNew = false): Cab
     // a plug pack's lead is its own
     const pack = [A, B].find((e) => e.m && isPlugPack(e.m.board));
     if (pack) { comes.push(`${tag(n)}the ${pack.m!.board.name}'s own lead (about ${((pack.m!.board.box?.pack?.lead ?? 1500) / 1000).toFixed(1)} m)`); continue; }
-    add(`${c.buy} m ${plugName(A.type)} to ${plugName(B.type)} cable${pi5OnA(A, B) ? " (a USB-A to C cable can't give a Pi 5 its full 5 A)" : ''}`, [n]);
+    add(`${buyText(c.kind ?? 'usb', c.buy, plugName(A.type), plugName(B.type))}${pi5OnA(A, B) ? " (a USB-A to C cable can't give a Pi 5 its full 5 A)" : ''}`, [n]);
   }
   // cables that leave the rack: to your computer, and a plug pack's lead and body
   const routed = new Set(cables.map((c) => c.id));

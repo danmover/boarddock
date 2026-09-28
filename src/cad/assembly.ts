@@ -1,6 +1,6 @@
 // Multi-board assemblies: one holder per board, combined by stacking (corner towers with press-fit pegs),
 // side by side (bosses + printed link bars), or back to back (bases together, printed snap rivets).
-import type { Anim, Check, Feature, GenResult, Ghost, PartOut, PickTag, Project, V2 } from '../model/types';
+import type { Anim, Check, Comp, Feature, GenResult, Ghost, PartOut, PickTag, Project, V2 } from '../model/types';
 import { bbox, round } from '../geom/poly';
 import { buildModule, computeLevels, transformMesh, type ArrangeHooks, type Job } from './generate';
 import { box, cyl, freeAll, poly, rect2, toMesh, unionMF } from './kernel';
@@ -75,17 +75,24 @@ function generateLoose(p: Project): GenResult {
   const checks: Check[] = [];
 
   if (mode === 'stack') {
-    const HW = Math.max(...facts.map((f) => f.hw)), HH = Math.max(...facts.map((f) => f.hh));
+    // boxes (a powerboard, a hub, a charger) never go into the stack: a layer on top would cover their outlets and
+    // ports. They stand beside it instead (placed once built, by their real size).
+    const S = stackOrder(p);
+    din.fill(false);
+    if (S.length) din[S[0]] = true;
+    const HW = Math.max(0, ...S.map((i) => facts[i].hw)), HH = Math.max(0, ...S.map((i) => facts[i].hh));
     const common: V2[] = [[-HW - 3.3, -HH - 3.3], [HW + 3.3, -HH - 3.3], [HW + 3.3, HH + 3.3], [-HW - 3.3, HH + 3.3]];
     let z = 0;
-    mods.forEach((_, i) => {
+    S.forEach((i, k) => {
       const f = facts[i];
       const height = Math.max(f.lv.topMax + p.arrange.stackGap, f.lv.zw + 1);
       T[i] = tr(-f.c[0], -f.c[1], z);
-      hooks[i].towers = { pts: common.map(([x, y]) => [x + f.c[0], y + f.c[1]] as V2), height, peg: i < n - 1, socket: i > 0 };
+      if (S.length > 1) hooks[i].towers = { pts: common.map(([x, y]) => [x + f.c[0], y + f.c[1]] as V2), height, peg: k < S.length - 1, socket: k > 0 };
       z += height;
     });
-    checks.push({ group: 'Layout', name: `${n} boards stacked`, value: `${round(z, 0)} mm tall`, status: 'info', detail: 'press each layer onto the pegs of the one below; the bottom layer carries the mount' });
+    if (S.length > 1) checks.push({ group: 'Layout', name: `${S.length} boards stacked`, value: `${round(z, 0)} mm tall`, status: 'info', detail: 'press each layer onto the pegs of the one below; the bottom layer carries the mount' });
+    const boxes = mods.filter((_, i) => !S.includes(i)).map((m) => m.board.name);
+    if (boxes.length) checks.push({ group: 'Layout', name: `${boxes.length > 1 ? 'Boxes' : 'Box'} beside the stack`, value: boxes.join(', '), status: 'info', detail: 'a box never goes into the stack: a layer on top would cover its outlets and ports, so it stands on its own beside it' });
   } else if (mode === 'side') {
     // links sit on the facing walls; the actual spacing is set after building, from the real footprints
     const axis = sideAxisOf(p);
@@ -125,8 +132,11 @@ function generateLoose(p: Project): GenResult {
   }
 
   const warnings0: string[] = [];
+  // the holder that carries the stand socket: the bottom of a stack, else the first
+  const inStack = mode === 'stack' ? stackOrder(p) : [];
+  const base = mode === 'stack' ? inStack[0] ?? 0 : 0;
   const outs = mods.slice(0, mode === 'back' ? 2 : n).map((m, i) => {
-    const job: Job = { p, mi: i, b: m.board, H: m.holder, din: din[i] && !(mode === 'back' && p.mount.mode === 'flat'), stand: i === 0, hooks: hooks[i], name: m.board.name };
+    const job: Job = { p, mi: i, b: m.board, H: m.holder, din: din[i] && !(mode === 'back' && p.mount.mode === 'flat'), stand: i === base, hooks: hooks[i], name: m.board.name };
     try {
       return buildModule(job);
     } catch (e: any) {
@@ -135,8 +145,9 @@ function generateLoose(p: Project): GenResult {
     }
   });
   if (mode === 'side') placeSide(p, facts, outs, T, extra, checks, warnings0);
+  if (mode === 'stack') placeBeside(p, facts, outs, T);
   const parts: PartOut[] = [], ghosts: Ghost[] = [];
-  const hanging: { module: string; ref: string; p: number[]; d: number[]; cable: number }[] = [];
+  const hanging: { module: string; ref: string; p: number[]; d: number[]; cable: number; lead: boolean }[] = [];
   const steps: NonNullable<GenResult['steps']> = [];
   const features: Feature[] = [];
   const frames: Record<string, number[]> = {};
@@ -161,10 +172,12 @@ function generateLoose(p: Project): GenResult {
       }
     };
     for (const pt of o.parts) parts.push({ ...pt, toAssembly: mul(T[i], pt.toAssembly), anim: re(moveAnim(pt.anim, T[i]), pt.tag) });
-    // plugs: where a cable goes (a cable to another board, a cradle the board has for one, a box's supply), each with
-    // its cable hanging off to the table; a free port stays empty
+    // plugs: where a cable goes (a cable to another board, a cradle the board has for one, a box's supply); a free
+    // port stays empty. Cables between loose holders aren't routed, so each gets a short cut-off tail; a box's supply
+    // lead hangs to the table and runs off towards the wall.
     const used = (ref: string) => (p.links ?? []).some((l) => [l.a, l.b].some((e) => e.module === mods[i].id && e.ref === ref));
-    const wanted = (ref: string) => { const c = mods[i].board.comps.find((x) => x.ref === ref.replace(/:2$/, '')); return !!c?.conn && (used(ref) || (mods[i].board.kind === 'box' ? plugRole(mods[i], c) === 'other' : !!c.conn.cradle)); };
+    const supply = (c: Comp) => mods[i].board.kind === 'box' && ['other', 'mains-in'].includes(plugRole(mods[i], c));
+    const wanted = (ref: string) => { const c = mods[i].board.comps.find((x) => x.ref === ref.replace(/:2$/, '')); return !!c?.conn && (used(ref) || (mods[i].board.kind === 'box' ? supply(c) : !!c.conn.cradle)); };
     let powered: Set<string> | undefined;
     for (const g of o.ghosts) {
       if (g.tag?.kind === 'plug') { const r = g.tag.refs?.[0] ?? ''; if (!wanted(/upper/.test(g.name) ? `${r}:2` : r) && !(!/upper|lower/.test(g.name) && wanted(`${r}:2`))) continue; }
@@ -174,11 +187,11 @@ function generateLoose(p: Project): GenResult {
       if (!wanted(pe.ref)) continue;
       // only where a plug is drawn: edge connectors, and the ports of a box (a board's header gets no plug)
       const c = mods[i].board.comps.find((x) => x.ref === pe.ref.replace(/:2$/, ''));
-      if (c?.conn?.entry === 'edge' || mods[i].board.kind === 'box') hanging.push({ ...pe, p: ptM(T[i], pe.p), d: dirM(T[i], pe.d) });
+      if (c?.conn?.entry === 'edge' || mods[i].board.kind === 'box') hanging.push({ ...pe, p: ptM(T[i], pe.p), d: dirM(T[i], pe.d), lead: !!c && supply(c) && !used(pe.ref) });
     }
-    steps.push({ seq: b0 + 2, text: mode === 'stack' && i > 0 ? `Press the ${nm} holder onto the corner towers of the one below.` : `Set out the ${nm} holder.` });
+    steps.push({ seq: b0 + 2, text: mode === 'stack' && inStack.indexOf(i) > 0 ? `Press the ${nm} holder onto the corner towers of the one below.` : `Set out the ${nm} holder.` });
     if (o.parts.some((x) => x.tag?.kind === 'clip')) steps.push({ seq: b0 + 3, text: 'Press the DIN clip into the holder until both hooks click (any of four ways round).' });
-    steps.push({ seq: b0 + 4, text: `Snap the ${nm} into its holder: it clicks under the fingers or onto the pins.` });
+    steps.push({ seq: b0 + 4, text: mods[i].board.kind === 'box' ? `Set the ${nm} into its holder and strap it down with a hook-and-loop strap through the loops.` : `Snap the ${nm} into its holder: it clicks under the fingers or onto the pins.` });
     if (o.ghosts.some((g) => g.tag?.kind === 'board' && g.tag.module !== mods[i].id)) steps.push({ seq: b0 + 5, text: `Bolt the board that sits on the ${nm} onto its standoffs.` });
     features.push(...o.features);
     frames[mods[i].id] = T[i];
@@ -196,9 +209,12 @@ function generateLoose(p: Project): GenResult {
     ghosts.push(leadStub(`off-rack cable ${h.module}/${h.ref}`, h.p, h.d, h.cable, label, { kind: 'plug', module: h.module, refs: [ref] }, { seq: 1e6 + 90, dir: [0, 0, 1], dist: 0, grow: true }));
   }
 
+  // loose holders' cables aren't routed or sized: say so, rather than let the missing lengths pass unnoticed
+  const nLinks = (p.links ?? []).filter((l) => [l.a, l.b].every((e) => mods.some((m) => m.id === e.module))).length;
+  if (nLinks) checks.push({ group: 'Layout', name: 'Cables', value: `${nLinks} not routed`, status: 'info', detail: 'loose holders have no rails to route cables along, so BoardDock doesn\'t route or size them, and the shopping list has no lengths: lay the boards out on your bench and measure each one. On DIN rails every cable is routed and sized.' });
   if (ghosts.some((g) => g.tag?.kind === 'rail')) steps.push({ seq: 0, text: 'Your DIN rail: each holder hooks over its top edge and clicks in at the bottom; pull the tab to take it off.' });
   if (ghosts.some((g) => g.tag?.kind === 'stand')) steps.push({ seq: 1e6 + 50, text: 'Slide the holder onto its stand post.' });
-  if (ghosts.some((g) => g.tag?.kind === 'plug')) steps.push({ seq: 1e6 + 90, text: 'Plug in the cables.' });
+  if (ghosts.some((g) => g.tag?.kind === 'plug')) steps.push({ seq: 1e6 + 90, text: nLinks ? 'Plug in the cables (loose holders\' cables aren\'t sized: measure each one on your bench before you buy it).' : 'Plug in the cables.' });
   if (parts.some((x) => x.tag?.kind === 'cap')) steps.push({ seq: 1e6 + 100, text: 'Snap the caps over the plugs to lock them in.' });
   const ai = Math.min(p.active, outs.length - 1);
   const act = outs[ai] ?? outs.find(Boolean);
@@ -222,6 +238,44 @@ function generateLoose(p: Project): GenResult {
       frames,
     },
   };
+}
+
+/** Which boards go into a loose stack, bottom first: every board but the boxes (a box stands beside the stack). */
+export function stackOrder(p: Project): number[] {
+  return p.modules.map((m, i) => (m.board.kind === 'box' ? -1 : i)).filter((i) => i >= 0);
+}
+
+/**
+ * Loose stack: the boxes left out of it stand in a row beside it, clear of it by their real size (plugs included).
+ * A box goes on the side that keeps its end plugs (a powerboard's own lead) pointing away from the stack, so the lead
+ * runs off along the table instead of through the stack.
+ */
+function placeBeside(p: Project, facts: Facts[], outs: (ReturnType<typeof buildModule> | null)[], T: M4[]) {
+  const S = new Set(stackOrder(p));
+  // extent along x of the holder alone, and with its plugs
+  const extent = (i: number, M: M4) => {
+    let lo = Infinity, hi = -Infinity, plo = Infinity, phi = -Infinity;
+    const o = outs[i];
+    const scan = (pos: Float32Array, A: number[], plug: boolean) => {
+      for (let k = 0; k < pos.length; k += 3) {
+        const v = A[0] * pos[k] + A[4] * pos[k + 1] + A[8] * pos[k + 2] + A[12];
+        if (plug) { if (v < plo) plo = v; if (v > phi) phi = v; } else { if (v < lo) lo = v; if (v > hi) hi = v; }
+      }
+    };
+    if (o) { for (const pt of o.parts) scan(pt.mesh.pos, mul(M, pt.toAssembly), false); for (const g of o.ghosts) if (g.name.startsWith('plug')) scan(g.mesh.pos, M, true); }
+    if (!isFinite(lo)) { lo = facts[i].bb.x0 - facts[i].gw + M[12]; hi = facts[i].bb.x1 + facts[i].gw + M[12]; }
+    return { lo: Math.min(lo, plo), hi: Math.max(hi, phi), outL: Math.max(0, lo - plo), outR: Math.max(0, phi - hi) };
+  };
+  let right = -Infinity, left = Infinity;
+  for (const i of S) { const e = extent(i, T[i]); right = Math.max(right, e.hi); left = Math.min(left, e.lo); }
+  if (!isFinite(right)) { right = 0; left = 0; }
+  facts.forEach((f, i) => {
+    if (S.has(i) || !outs[i]) return;
+    const e = extent(i, I4);
+    // 40 mm apart: room for the short cable tails out of the plugs that face each other
+    if (e.outL > e.outR + 1) { T[i] = tr(left - 40 - e.hi, -f.c[1], 0); left -= 40 + e.hi - e.lo; }
+    else { T[i] = tr(right + 40 - e.lo, -f.c[1], 0); right += 40 + e.hi - e.lo; }
+  });
 }
 
 /** Link bar for side-by-side holders: two T heads that drop into facing T-slots. Printed flat. */
