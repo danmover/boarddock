@@ -27,6 +27,7 @@ export interface SimResult { paths: number[][][]; touching: [string, string][]; 
 
 const STEP = 2.5; // bead spacing
 const GAP = 0.25; // clearance kept between two cables
+const BRUSH = 0.8; // a cable may brush a box by this much (as the router allows): boxes are the parts' bounds, not their shape
 const SLACK = 0.03; // cables are a few per cent longer than the shortest way: they lie, not stretch
 const SAG = 0.8; // how far weight pulls a free bead down each round (mm)
 const BEND = 3; // tightest bend, in cable diameters
@@ -63,7 +64,7 @@ export function settleCables(cables: SimCable[], obs: SimObstacle[], rounds = 60
   const arc = beads.map((b) => { const s = [0]; for (let i = 1; i < b.length; i++) s.push(s[i - 1] + len(sub(b[i], b[i - 1]))); return s; });
   const held = cables.map((c, k) => { const s = arc[k], L = s[s.length - 1]; return s.map((x) => c.fixed || x <= c.pin[0] || L - x <= c.pin[1]); });
   // a comb holds the bead in its slot, and the one each side
-  cables.forEach((C, k) => { for (const g of C.grip ?? []) { let bi = -1, bd = 3; beads[k].forEach((q, i) => { const dd = len(sub(q, g)); if (dd < bd) { bd = dd; bi = i; } }); if (bi >= 0) for (const j of [bi - 1, bi, bi + 1]) if (j >= 0 && j < beads[k].length) held[k][j] = true; } });
+  cables.forEach((C, k) => { for (const g of C.grip ?? []) { let bi = -1, bd = 1.3; beads[k].forEach((q, i) => { const dd = len(sub(q, g)); if (dd < bd) { bd = dd; bi = i; } }); if (bi >= 0) for (const j of [bi - 1, bi, bi + 1]) if (j >= 0 && j < beads[k].length) held[k][j] = true; } });
   // rest lengths: the free stretch a few per cent longer than laid (the held ends are exactly as laid, so their share
   // of the slack doesn't all bunch up in the middle)
   const rest = beads.map((b, c) => b.map((_, i) => (i ? len(sub(b[i], b[i - 1])) * (cables[c].fixed || held[c][i] || held[c][i - 1] ? 1 : 1 + SLACK) : 0)));
@@ -93,7 +94,7 @@ export function settleCables(cables: SimCable[], obs: SimObstacle[], rounds = 60
     return !!o.module && !!C.mods?.includes(o.module) && inBox(plan[c][i], o.box, C.r - 0.5);
   };
   const pushOut = (c: number, i: number) => {
-    const q = beads[c][i], r = cables[c].r;
+    const q = beads[c][i], r = Math.max(0.3, cables[c].r - BRUSH);
     const l = ogrid.get(okey(Math.floor(q[0] / OC), Math.floor(q[1] / OC), Math.floor(q[2] / OC)));
     if (!l) return false;
     let moved = false;
@@ -102,12 +103,17 @@ export function settleCables(cables: SimCable[], obs: SimObstacle[], rounds = 60
       if (q[0] <= b[0] - r || q[0] >= b[3] + r || q[1] <= b[1] - r || q[1] >= b[4] + r || q[2] <= b[2] - r || q[2] >= b[5] + r) continue;
       if (ownOk(c, i, o)) continue;
       // back out on the side it was laid (so it never pops through a thin board to the far side), by the shortest
-      // way on that side; if it was laid inside (its route was already through it), the nearest face, never down
+      // way on that side
       const pen = [q[0] - (b[0] - r), b[3] + r - q[0], q[1] - (b[1] - r), b[4] + r - q[1], q[2] - (b[2] - r), b[5] + r - q[2]];
       const P = plan[c][i], was = [P[0] <= b[0] - r, P[0] >= b[3] + r, P[1] <= b[1] - r, P[1] >= b[4] + r, P[2] <= b[2] - r, P[2] >= b[5] + r];
-      const sides = was.some(Boolean);
+      // laid inside it already (the route couldn't avoid it): out across its own way, sideways or up, never along
+      // it (that would drag the cable lengthwise and stretch it) and never down
+      const inside = !was.some(Boolean), t = inside ? tangent(c, i) : null;
       let best = -1, bv = Infinity;
-      for (let f = 0; f < 6; f++) if ((sides ? was[f] : f !== 4) && pen[f] < bv) { bv = pen[f]; best = f; }
+      for (let f = 0; f < 6; f++) {
+        const ok = inside ? f !== 4 && Math.abs(t![f >> 1]) < 0.7 : was[f];
+        if (ok && pen[f] < bv) { bv = pen[f]; best = f; }
+      }
       if (best < 0) continue;
       const ax = best >> 1, sg = best & 1 ? 1 : -1;
       q[ax] += sg * (bv + 0.05);
@@ -257,7 +263,7 @@ export function settleCables(cables: SimCable[], obs: SimObstacle[], rounds = 60
     beads.forEach((b, c) => b.forEach((q, i) => { const k = ckey(q); const l = grid.get(k); if (l) l.push([c, i]); else grid.set(k, [[c, i]]); }));
     const clear = (c: number, i: number, q: number[]) => {
       const r = cables[c].r;
-      for (const n of ogrid.get(okey(Math.floor(q[0] / OC), Math.floor(q[1] / OC), Math.floor(q[2] / OC))) ?? []) if (inBox(q, obs[n].box, r - 0.1) && !ownOk(c, i, obs[n])) return false;
+      for (const n of ogrid.get(okey(Math.floor(q[0] / OC), Math.floor(q[1] / OC), Math.floor(q[2] / OC))) ?? []) if (inBox(q, obs[n].box, Math.max(0.3, r - BRUSH) - 0.1) && !ownOk(c, i, obs[n])) return false;
       if (q[2] < floor[c] - 1e-6) return false;
       const gi = Math.floor(q[0] / CC), gj = Math.floor(q[1] / CC), gk = Math.floor(q[2] / CC);
       for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) for (let dk = -1; dk <= 1; dk++) for (const [c2, i2] of grid.get(`${gi + di},${gj + dj},${gk + dk}`) ?? []) {
@@ -291,7 +297,7 @@ export function settleCables(cables: SimCable[], obs: SimObstacle[], rounds = 60
     }
     const l = ogrid.get(okey(Math.floor(q[0] / OC), Math.floor(q[1] / OC), Math.floor(q[2] / OC)));
     for (const n of l ?? []) {
-      const bx = obs[n].box, r = cables[c].r - 0.5;
+      const bx = obs[n].box, r = Math.max(0.3, cables[c].r - BRUSH) - 0.05;
       if (q[0] > bx[0] - r && q[0] < bx[3] + r && q[1] > bx[1] - r && q[1] < bx[4] + r && q[2] > bx[2] - r && q[2] < bx[5] + r && !ownOk(c, i, obs[n])) inside.add(cables[c].id);
     }
   }));
