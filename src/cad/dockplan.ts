@@ -297,13 +297,19 @@ export function tongueStress(depth: number, lie?: 'flat' | 'up'): number {
 }
 
 /**
- * Score taken off an orientation for its tongue: near the plastic's yield (90% and up) it is all but ruled out, so the
- * board docks by another edge even if a plug or two then points along the rail; over the Check step's limit (80%) it
- * costs a plug's worth; below that a little for a long lever, so the shorter one wins when the plugs allow.
+ * Score taken off an orientation for its tongue: over the Check step's limit (80% of the plastic's yield, where Check
+ * fails it) it is all but ruled out, so the board docks by another edge even if a plug or two then points along the
+ * rail; below that a little for a long lever, so the shorter one wins when the plugs allow.
  */
 function leverCost(m: Module, depth: number, lie?: 'flat' | 'up'): number {
   const y = (MATERIALS[m.holder.material] ?? MATERIALS.PETG).yield, sig = tongueStress(depth, lie);
-  return (sig >= 0.9 * y ? 14 : sig >= 0.8 * y ? 3 : 0) + 0.02 * Math.max(0, sig - 0.4 * y);
+  return (sig >= 0.9 * y ? 16 : sig >= 0.8 * y ? 14 : 0) + 0.02 * Math.max(0, sig - 0.4 * y);
+}
+
+/** Whether a way of docking keeps the tongue under the Check step's limit. */
+export function tongueOk(m: Module, o: Pick<Orientation, 'edge' | 'lie'>): boolean {
+  const y = (MATERIALS[m.holder.material] ?? MATERIALS.PETG).yield, sz = holderSize(m);
+  return tongueStress(o.edge === 'bottom' || o.edge === 'top' ? sz.y : sz.x, o.lie) < 0.8 * y;
 }
 
 /**
@@ -352,8 +358,10 @@ export function bestDock(m: Module, railDir: 'h' | 'v', slot = 0, turns: Turn[] 
 export function bestSeat(m: Module, railDir: 'h' | 'v', want: 'up' | 'flat' | 'auto' | undefined, slot = 0, turns: Turn[] = TURNS, edges: EdgeName[] = EDGES): Orientation {
   if (want === 'flat') return bestDock(m, railDir, slot, turns, edges, 'flat');
   const up = bestDock(m, railDir, slot, turns, edges);
-  if (want !== 'auto') return up;
   const flat = bestDock(m, railDir, slot, turns, edges, 'flat');
+  // a board too big to stand on any edge without its tongue failing Check lies flat instead, when that holds it
+  if (!tongueOk(m, up) && tongueOk(m, flat)) return flat;
+  if (want !== 'auto') return up;
   // lying flat takes more rail: only when it keeps the plugs clearly easier to reach
   return flat.score > up.score + 0.5 ? flat : up;
 }

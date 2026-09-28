@@ -4,7 +4,7 @@
 // automatically keeps the rest where it is.
 import type { EdgeName } from '../model/types';
 import { edit, useApp, type SelItem } from '../state';
-import { setSlot, swapSlots, turnMounts } from './panelOps';
+import { makeRoom, setSlot, swapSlots, turnMounts } from './panelOps';
 import { Seg } from './controls';
 
 type Edge = EdgeName | 'auto';
@@ -50,8 +50,8 @@ export function MountQuick({ item }: { item: SelItem }) {
     <div className="mountq">
       {slot && dock && (
         <>
-          <Seg value={slot.lie ?? 'up'} options={[['up', 'Stands up'], ['flat', 'Lies flat']]} onChange={(v) => setSlot(mt.id, si, (x) => { if (v === 'flat') x.lie = 'flat'; else delete x.lie; x.edge = 'auto'; })} />
-          <select value={slot.edge} onChange={(e) => setSlot(mt.id, si, (x) => { x.edge = e.target.value as Edge; })} aria-label={slot.lie ? 'Board edge with the tab that plugs into the dock' : 'Board edge that plugs into the dock'} title={slot.lie ? 'The edge with the tab that plugs into the dock' : 'The edge that plugs into the dock'}>
+          <Seg value={slot.lie ?? 'up'} options={[['up', 'Stands up'], ['flat', 'Lies flat']]} onChange={(v) => { setSlot(mt.id, si, (x) => { if (v === 'flat') x.lie = 'flat'; else delete x.lie; x.edge = 'auto'; }); makeRoom(); }} />
+          <select value={slot.edge} onChange={(e) => { setSlot(mt.id, si, (x) => { x.edge = e.target.value as Edge; }); makeRoom(); }} aria-label={slot.lie ? 'Board edge with the tab that plugs into the dock' : 'Board edge that plugs into the dock'} title={slot.lie ? 'The edge with the tab that plugs into the dock' : 'The edge that plugs into the dock'}>
             {EDGES.map(([k, n]) => <option key={k} value={k}>{slot.lie ? `tab on its ${n}` : `${n} in the dock`}</option>)}
           </select>
         </>

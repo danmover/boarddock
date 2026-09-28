@@ -1,6 +1,6 @@
 // Panel edits (all undoable). The first manual edit turns the automatic layout into editable rails and docks
 // exactly where they are, so nothing jumps.
-import type { GenResult, PanelReport, Project, RailMount, Slot, Turn } from '../model/types';
+import type { EdgeName, GenResult, PanelReport, Project, RailMount, Slot, Turn } from '../model/types';
 import { round, uid } from '../geom/poly';
 import { appendDock, bestDock, seatBoard, dropEmptied, nearestFree, spreadOut, withRiders } from '../cad/dockplan';
 import { baseOf, refreshStandoffs } from '../model/holes';
@@ -277,6 +277,18 @@ export function setSlot(mountId: string, slot: number, fn: (s: Slot) => void) {
     const mod = mt.slots[slot].module;
     if (mod) for (const o of p.panel.mounts) o.slots.forEach((s, i) => { if (s.module === mod && !(o === mt && i === slot)) s.module = null; });
   });
+}
+
+/**
+ * After a board changes how it docks (another edge, standing or lying flat), docks along its rail slide on to clear it
+ * once it is built: lying flat it hangs off its ear along the rail or across it, further than it stood.
+ */
+export const makeRoom = () => settleOverlaps(undefined, (n) => `${n > 1 ? `${n} docks` : 'A dock'} slid along the rail to make room, as the board now reaches further. ⌘Z undoes it.`);
+
+/** Dock a board the way that keeps its tongue under Check's limit (shorterLever's pick), making room for it. */
+export function dockShorter(mountId: string, slot: number, fix: { edge: EdgeName; lie?: 'flat' }) {
+  setSlot(mountId, slot, (s) => { s.edge = fix.edge; if (fix.lie) s.lie = 'flat'; else delete s.lie; });
+  makeRoom();
 }
 
 export function autoArrange() {

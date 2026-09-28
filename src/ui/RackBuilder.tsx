@@ -10,7 +10,7 @@ import { isAccessory } from '../model/links';
 import { edit, isSel, select, setActive, store, toast, useApp } from '../state';
 import { Check, Chip, Num, Pick, Section, Seg } from './controls';
 import { accessCounts, MODULE_DRAG, PALETTE } from './PanelEditor';
-import { addDock, addRail, appendToRail, autoArrange, tidyUp, duplicateModule, newRailWith, placeMount, quickLayout, removeMounts, removeRails, seat, setKind, setLever, setRail, setSlot, setStackMode, stackOn, swapSlots, turnMounts, unseat } from './panelOps';
+import { addDock, addRail, appendToRail, autoArrange, dockShorter, makeRoom, tidyUp, duplicateModule, newRailWith, placeMount, quickLayout, removeMounts, removeRails, seat, setKind, setLever, setRail, setSlot, setStackMode, stackOn, swapSlots, turnMounts, unseat } from './panelOps';
 import { shorterLever, turnLabel } from '../cad/dockplan';
 import { mountLabels } from '../model/built';
 import { Icon, I } from './icons';
@@ -349,7 +349,7 @@ function Problems({ m, mountId, slot, railDir, turn }: { m: Module; mountId: str
   return (
     <div className="probs" onClick={(e) => e.stopPropagation()}>
       {bad.map((c, i) => <span key={i} className="prob" title={c.detail ?? ''}><Chip status="bad">✕</Chip> {c.name}{c.value ? `: ${c.value}` : ''}</span>)}
-      {fix && <button className="btn small soft" onClick={() => setSlot(mountId, slot, (x) => { x.edge = fix.edge; if (fix.lie) x.lie = 'flat'; else delete x.lie; })} title="A shorter lever onto the tongue, with no plug pointing into the table">{fix.lie ? `Lay it flat by its ${fix.edge} edge` : `Dock it by its ${fix.edge} edge`}</button>}
+      {fix && <button className="btn small soft" onClick={() => dockShorter(mountId, slot, fix)} title="A shorter lever onto the tongue, with no plug pointing into the table (docks along the rail slide on to make room)">{fix.lie ? `Lay it flat by its ${fix.edge} edge` : `Dock it by its ${fix.edge} edge`}</button>}
       {tongue && !fix && <small className="hint" style={{ margin: 0 }}>No other way of docking it keeps the lever short enough: hold it while you plug in, or turn the dock.</small>}
     </div>
   );
@@ -366,12 +366,12 @@ function Slot({ mountId, slot, label, m, edge, lie, col, acc, stackRows, dock, r
             <BoardChip m={m} color={col(m.id)} acc={acc}>
               {dock && (
                 <button className={`btn small ghost icon lie ${lie ? 'on' : ''}`} title={lie ? 'Lies flat on the dock (top face up, a tab on its edge in the socket): click to stand it up' : 'Stands up in the dock: click to lay it flat, top face up'} aria-pressed={!!lie}
-                  onClick={(e) => { e.stopPropagation(); setSlot(mountId, slot, (x) => { if (x.lie) delete x.lie; else x.lie = 'flat'; x.edge = 'auto'; }); }}>
+                  onClick={(e) => { e.stopPropagation(); setSlot(mountId, slot, (x) => { if (x.lie) delete x.lie; else x.lie = 'flat'; x.edge = 'auto'; }); makeRoom(); }}>
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">{lie ? <path d="M3 14h18M5 14v-3h14v3M11 14v5h2v-5" /> : <path d="M9 3h6v14H9zM11 17v4h2v-4" />}</svg>
                 </button>
               )}
               {dock && (
-                <select value={edge} title={lie ? 'Board edge with the tab that plugs into the dock' : 'Board edge that plugs into the dock'} onClick={(e) => e.stopPropagation()} onChange={(e) => setSlot(mountId, slot, (x) => { x.edge = e.target.value as EdgeName | 'auto'; })}>
+                <select value={edge} title={lie ? 'Board edge with the tab that plugs into the dock' : 'Board edge that plugs into the dock'} onClick={(e) => e.stopPropagation()} onChange={(e) => { setSlot(mountId, slot, (x) => { x.edge = e.target.value as EdgeName | 'auto'; }); makeRoom(); }}>
                   {EDGE_OPTS.map(([k, n]) => <option key={k} value={k}>{n}</option>)}
                 </select>
               )}
@@ -481,7 +481,7 @@ function DockInspector({ one, rep }: { one: PanelReport['mounts'][number]; rep: 
         return (
           <div key={slot} className="slot">
             <div className="slothead">{one.kind === 'flat' ? 'Board' : slot ? 'Back slot' : 'Front slot'} · {p.modules.find((m) => m.id === s.module)?.board.name} · {s.lie ? `lying flat, tab on its ${acc.edge} edge` : `${acc.edge} edge in`}</div>
-            {one.kind === 'dock' && <Seg value={s.lie ?? 'up'} options={[['up', 'Stands up'], ['flat', 'Lies flat']]} onChange={(v) => setSlot(one.id, slot, (x) => { if (v === 'flat') x.lie = 'flat'; else delete x.lie; x.edge = 'auto'; })} />}
+            {one.kind === 'dock' && <Seg value={s.lie ?? 'up'} options={[['up', 'Stands up'], ['flat', 'Lies flat']]} onChange={(v) => { setSlot(one.id, slot, (x) => { if (v === 'flat') x.lie = 'flat'; else delete x.lie; x.edge = 'auto'; }); makeRoom(); }} />}
             <AccessList list={acc.access} />
             <div className="btns" style={{ marginTop: 6 }}><button className="btn small ghost" onClick={() => duplicateModule(p.modules.findIndex((m) => m.id === s.module))}><Icon d={I.copy} /> Another like this</button></div>
           </div>

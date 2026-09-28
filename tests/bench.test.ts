@@ -83,6 +83,38 @@ describe('docking', () => {
     expect(['top', 'bottom']).toContain(fix.edge);
   });
 
+  it('never lays a rack out with a tongue over its limit when another way of docking holds it', async () => {
+    await initKernel();
+    // a Pi-sized board of your own with plugs on its long edges too: standing on its short edge its lever is ~91 mm
+    // (38 MPa, over Check's limit); lying flat by a long edge it holds, with nothing blocked
+    const b = T('rpi4'), eth = b.comps.find((c) => c.conn?.type === 'rj45')!;
+    b.name = 'My board';
+    for (const x of [20, 45, 65]) b.comps.push({ ...structuredClone(eth), id: `e${x}`, ref: `ETH${x}`, x, y: 56 - eth.l / 2 + 2.5, rot: 90, conn: { ...structuredClone(eth.conn!), angle: 90 } });
+    const p = rack(['uno', 'pico']);
+    p.modules.push(newModule(b));
+    const r = generatePanel(p);
+    expect(r.report.checks.filter((c) => /^Tongue root/.test(c.name) && c.status === 'bad')).toEqual([]);
+    expect(r.report.panel!.mounts.flatMap((m) => m.slots).find((s) => s.module === p.modules[2].id)?.lie).toBe('flat');
+    expect(r.report.panel!.collisions).toEqual([]);
+  }, 600000);
+
+  it('makes room along the rail when a board is laid flat to shorten its lever', async () => {
+    await initKernel();
+    const p = rack(['uno', 'rpi4', 'uno', 'pico', 'rpi4']);
+    const pr = generatePanel(p).report.panel!;
+    p.panel.rails = pr.rails.map((x) => ({ id: x.id, x: x.x, y: x.y, dir: x.dir, length: null }));
+    p.panel.mounts = pr.mounts.map((m) => ({ id: m.id, rail: m.rail, at: m.at, kind: m.kind, turn: m.turn, lever: m.lever, slots: m.slots.map((s) => ({ ...s })) }));
+    p.panel.auto = false;
+    // the first Pi, docked by its short edge and then laid flat by its long one (the fix a board with plugs on its
+    // other edges gets): lying flat, it hangs along the rail into the next dock
+    const pi = p.modules[1].id, mt = p.panel.mounts.find((m) => m.slots.some((s) => s.module === pi))!, k = mt.slots.findIndex((s) => s.module === pi);
+    mt.slots[k] = { module: pi, edge: 'bottom', lie: 'flat' };
+    const before = generatePanel(p).report.panel!;
+    expect(before.collisions.length).toBeGreaterThan(0);
+    expect(spreadOut(p, before, 2).length).toBeGreaterThan(0);
+    expect(generatePanel(p).report.panel!.collisions).toEqual([]);
+  }, 600000);
+
   it('gives probes taken off their stack a dock right beside their board', () => {
     const p = rack(['example_dual_swd', 'rpi4', 'usb_hub7', 'uno']);
     addProbes(p, p.modules[0].id);

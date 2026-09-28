@@ -252,7 +252,7 @@ The **Rails** view shows the rack from above: rails, table stands, docks, and ev
 
 Under **Boards in their docks**, a small table compares the choices you have tried on this rack: rails and their length, how far it stands out from the wall, and cable to buy. **Whichever suits each** says which boards it laid flat.
 
-Auto-arrange also keeps each holder's tongue (the part that plugs into the dock) well under the plastic's limit: a long board is docked by an edge that gives a shorter lever. Where a board still fails a check, the Rails tree shows it under the board, and for a tongue over its limit a button docks it by another edge (or lays it flat) when that fixes it.
+Auto-arrange also keeps each holder's tongue (the part that plugs into the dock) under the limit Check holds it to: a long board is docked by an edge that gives a shorter lever, and a board that can't stand on any edge without failing it lies flat instead (even with the rack set to stand boards up). Where a board still fails a check, the Rails tree shows it under the board, and for a tongue over its limit a button docks it by another edge (or lays it flat) when that fixes it. Changing how a board docks (that button, another edge, standing or lying flat) slides the docks after it along the rail to make room, since a board lying flat reaches further.
 
 With Auto-arrange on, every change lays the rack out again, a new cable too. When a new cable adds a rail, moves a board to another rail or adds 30 cm or more of cable to buy, a toast says so and offers **Keep the old layout**.
 
