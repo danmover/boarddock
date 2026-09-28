@@ -191,7 +191,7 @@ function generateLoose(p: Project): GenResult {
     }
     steps.push({ seq: b0 + 2, text: mode === 'stack' && inStack.indexOf(i) > 0 ? `Press the ${nm} holder onto the corner towers of the one below.` : `Set out the ${nm} holder.` });
     if (o.parts.some((x) => x.tag?.kind === 'clip')) steps.push({ seq: b0 + 3, text: 'Press the DIN clip into the holder until both hooks click (any of four ways round).' });
-    steps.push({ seq: b0 + 4, text: mods[i].board.kind === 'box' ? `Set the ${nm} into its holder and strap it down with a hook-and-loop strap through the loops.` : `Snap the ${nm} into its holder: it clicks under the fingers or onto the pins.` });
+    steps.push({ seq: b0 + 4, text: mods[i].board.kind === 'box' ? `Set the ${nm} into its holder and strap it down with a hook-and-loop strap through the loops.` : `Snap the ${nm} into its holder: it clicks under the spring clips or onto the pins.` });
     if (o.ghosts.some((g) => g.tag?.kind === 'board' && g.tag.module !== mods[i].id)) steps.push({ seq: b0 + 5, text: `Bolt the board that sits on the ${nm} onto its standoffs.` });
     features.push(...o.features);
     frames[mods[i].id] = T[i];
@@ -302,10 +302,11 @@ function rivetPart(grip: number, qty: number): PartOut {
     let m = unionMF([along(3.2, 3.2, -1.3, 0), along(1.6, 1.6, -0.01, shank), along(1.95, 1.1, shank - 0.01, shank + 2.0)]);
     m = m.subtract(box(shank - 2.2, -0.42, -5, shank + 2.5, 0.42, 5)); // split tip, flexes sideways in the print plane
     m = m.subtract(box(-5, -5, -5, shank + 5, 5, -1.3)); // flat underside so it prints lying down
+    m = m.translate([0, 0, 1.3]); // ...on the bed, like every other part
     const mesh = toMesh(m);
     const bb = m.boundingBox();
     void poly;
-    return { id: 'rivet', name: 'Snap rivet (back to back)', qty, mesh, toAssembly: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -400, 1], volume: m.volume(), size: [bb.max[0] - bb.min[0], bb.max[1] - bb.min[1], bb.max[2] - bb.min[2]], color: '#9d8cff', tag: { kind: 'rivet' } };
+    return { id: 'rivet', name: 'Snap rivet (back to back)', qty, mesh, toAssembly: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -400 - 1.3, 1], volume: m.volume(), size: [bb.max[0] - bb.min[0], bb.max[1] - bb.min[1], bb.max[2] - bb.min[2]], color: '#9d8cff', tag: { kind: 'rivet' } };
   } finally {
     freeAll();
   }

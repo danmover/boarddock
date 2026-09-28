@@ -7,6 +7,7 @@ import { basis, dir, I4, inv, mul, rotZ, tr, type M4 } from '../geom/mat';
 import { DOCK_MIN_ZB, EAR, gripSpan, HD, headSpan, SOCKET_Z, SPINE_TOP, TONGUE } from './dockdims';
 import { MATERIALS } from '../model/library';
 import { computeLevels } from './levels';
+import { holdOf } from './grip';
 import { baseOf, ridersOf } from '../model/holes';
 import { isProbe, probesOf, targetOf } from '../model/probes';
 import { isAccessory } from '../model/links';
@@ -173,8 +174,8 @@ export function dockSite(b: Board, H: HolderSettings, edge: EdgeName, shift = 0)
   const ov = (a0: number, a1: number, b0: number, b1: number) => a0 < b1 && b0 < a1;
   const zbLow = computeLevels(b, H).zb;
   const spineW = HD.spineHx + 0.4;
-  // a board without snap-capable holes needs its side walls for the snap fingers: a spine beside it takes one
-  const fingerHeld = b.holes.filter((h) => (h.use === 'auto' || h.use === 'snap') && h.d >= 1.8).length < 2 && H.tabs !== 'off';
+  // a board without snap-capable holes needs its side edges for the spring clips: a spine beside it takes one
+  const fingerHeld = b.holes.filter((h) => (h.use === 'auto' || h.use === 'snap') && h.d >= 1.8).length < 2 && holdOf(H) !== 'pins';
   let best = { pen: Infinity, tc: tMid, conflicts: [] as string[], under: true, side: 0 };
   let bestWanted = { pen: Infinity, conflicts: [] as string[] };
   const wanted = H.release ?? 'centre';

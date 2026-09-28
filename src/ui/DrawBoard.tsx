@@ -215,7 +215,7 @@ function DrawPcb({ put }: { put: (b: Board) => void }) {
           {holes === 'corners' && <div className="row" style={{ marginTop: 6 }}><Num label="In from each edge" value={inset} onChange={setInset} step={0.5} /><Num label="Hole Ø" value={d} min={1} onChange={setD} step={0.1} /></div>}
           {holes === 'spacing' && <div className="row3" style={{ marginTop: 6 }}><Num label="Apart across" value={sx} min={1} onChange={(v) => { setSpacingSet(true); setSx(v); }} step={0.5} /><Num label="Apart up" value={sy} min={1} onChange={(v) => { setSpacingSet(true); setSy(v); }} step={0.5} /><Num label="Hole Ø" value={d} min={1} onChange={setD} step={0.1} /></div>}
           {holes === 'spacing' && !bad && <p className="hint" style={{ margin: '4px 0 0' }}>Many boards give their hole spacing (a Pi: 58 across × 49 up). Centred on the board; move any of them after.</p>}
-          {holes === 'none' && <p className="hint" style={{ margin: '4px 0 0' }}>No holes: the holder grips it by its edges with snap fingers.</p>}
+          {holes === 'none' && <p className="hint" style={{ margin: '4px 0 0' }}>No holes: the holder grips it by its edges with spring clips.</p>}
         </>}
         {bad && <div className="err" style={{ marginTop: 6 }}>{bad}</div>}
         <div className="db-photo">

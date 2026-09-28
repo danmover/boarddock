@@ -2,7 +2,7 @@
 // boards and holder styles, away from the geometry worker, so neither holds up rebuilding the rack after an edit.
 import wasmUrl from 'manifold-3d/manifold.wasm?url';
 import { initKernel, freeAll } from '../cad/kernel';
-import { layerCheck, type Expected } from '../cad/printcheck';
+import { layerCheck } from '../cad/printcheck';
 import { boardDetail } from '../cad/boardviz';
 import { generate } from '../cad/assembly';
 import { newProject } from '../model/library';
@@ -19,8 +19,8 @@ self.onmessage = async (e: MessageEvent) => {
     await ready;
     let result: unknown;
     if (type === 'layers') {
-      const { mesh, expect } = payload as { mesh: MeshData; expect: Expected[] };
-      result = layerCheck(mesh, expect);
+      const { mesh } = payload as { mesh: MeshData };
+      result = layerCheck(mesh);
     } else if (type === 'board') {
       const b = payload as Board;
       result = pics(boardDetail(b, 0, b.thickness, { kind: 'board' }, { seq: 0, dir: [0, 0, 1] }).filter((g) => g.opacity > 0.5));

@@ -7,7 +7,7 @@ import { labelForms } from '../src/cad/generate';
 import { TEMPLATES } from '../src/model/templates';
 import { newModule, newProject } from '../src/model/library';
 import { autoLinks } from '../src/model/links';
-import type { Feature, PartOut } from '../src/model/types';
+import type { PartOut } from '../src/model/types';
 
 const T = (id: string) => TEMPLATES.find((t) => t.id === id)!.make();
 const MOVING = /Rail shoe|Dock socket|DIN rail clip/;
@@ -15,24 +15,23 @@ const MOVING = /Rail shoe|Dock socket|DIN rail clip/;
 describe('printability, sliced', () => {
   it('every part of a mixed rack prints without supports, and nothing that moves prints closed', async () => {
     await initKernel();
-    const parts = new Map<string, { pt: PartOut; feats: Feature[] }>();
-    const add = (list: PartOut[], feats: Feature[] = []) => { for (const pt of list) { const k = `${pt.name}|${pt.size.map((v) => v.toFixed(0))}`; if (!parts.has(k)) parts.set(k, { pt, feats }); } };
+    const parts = new Map<string, { pt: PartOut }>();
+    const add = (list: PartOut[]) => { for (const pt of list) { const k = `${pt.name}|${pt.size.map((v) => v.toFixed(0))}`; if (!parts.has(k)) parts.set(k, { pt }); } };
     const p = newProject(T('rpi4'));
     for (const id of ['uno', 'pico', 'rpi_zero', 'nano', 'usb_hub7', 'usb_charger']) p.modules.push(newModule(T(id)));
     p.modules[1].holder.style = 'tray';
     p.links = autoLinks(p);
-    let g = generate(p); add(g.parts, g.report.features);
+    let g = generate(p); add(g.parts);
     const q = newProject(T('uno')); q.layout = 'loose'; q.mount.kind = 'din';
-    g = generate(q); add(g.parts, g.report.features);
+    g = generate(q); add(g.parts);
     add(testKit(0));
-    for (const { pt, feats } of parts.values()) {
-      const fingers = feats.filter((f) => f.kind === 'finger' && pt.tag?.kind === 'holder' && f.module === pt.tag.module).map((f) => ({ box: [f.box[0], f.box[1], f.box[3], f.box[4]] as [number, number, number, number], why: 'fingers' }));
-      const r = layerCheck(pt.mesh, fingers)!;
+    for (const { pt } of parts.values()) {
+      const r = layerCheck(pt.mesh)!;
       freeAll();
       expect(r, pt.name).not.toBeNull();
       expect(r.islands, `${pt.name} starts in mid-air`).toEqual([]);
       if (MOVING.test(pt.name)) expect(r.gaps, `${pt.name} has a slot that prints closed`).toBeNull();
-      expect(r.bridge?.span ?? 0, `${pt.name} bridge`).toBeLessThan(20);
+      expect(r.bridge?.span ?? 0, `${pt.name} bridge`).toBeLessThan(12);
       expect(r.cantilever?.reach ?? 0, `${pt.name} overhang`).toBeLessThan(2);
       expect(verdict(r, MOVING.test(pt.name)).status, pt.name).not.toBe('bad');
     }
@@ -73,9 +72,14 @@ describe('holder features', () => {
     expect(on.checks.find((c) => c.name === 'Label')?.value).toMatch(/^"/);
     // a short label of your own survives on a board held by pins
     expect(vol((p) => { p.modules[0].holder.label = 'NAS'; }).checks.find((c) => c.name === 'Label')?.value).toBe('"NAS"');
-    // fingers: Always adds what fits, Off removes them
-    const auto = vol(() => {}, 'uno'), always = vol((p) => { p.modules[0].holder.tabs = 'on'; }, 'uno'), none = vol((p) => { p.modules[0].holder.tabs = 'off'; }, 'uno');
-    expect(new Set([auto.v, always.v, none.v]).size).toBe(3);
+    // what holds the board: clips (auto, where they fit), snap pins only, or both
+    const auto = vol(() => {}, 'uno', 'loose'), pins = vol((p) => { p.modules[0].holder.hold = 'pins'; }, 'uno', 'loose'), both = vol((p) => { p.modules[0].holder.hold = 'both'; }, 'uno', 'loose');
+    expect(new Set([auto.v, pins.v, both.v]).size).toBe(3);
+    expect(auto.checks.some((c) => /^Spring clips \(2\)/.test(c.name))).toBe(true);
+    expect(pins.checks.some((c) => /^Spring clips/.test(c.name))).toBe(false);
+    expect(both.checks.some((c) => /^Snap pins/.test(c.name)) && both.checks.some((c) => /^Spring clips \(/.test(c.name))).toBe(true);
+    // an older project's "fingers off" still means pins
+    expect(vol((p) => { p.modules[0].holder.tabs = 'off'; }, 'uno', 'loose').v).toBe(pins.v);
     // the release button says where it went and why
     const side = vol((p) => { p.modules[0].holder.release = 'side'; }, 'rpi4');
     const rel = side.checks.find((c) => c.name === 'Release button')!;
@@ -87,6 +91,6 @@ describe('holder features', () => {
     await initKernel();
     const r = generate(newProject(T('nano')));
     expect(r.report.warnings.some((w) => /Nothing clips/.test(w))).toBe(false);
-    expect(r.report.checks.find((c) => /^Wall snap fingers \(/.test(c.name))?.name).toMatch(/\((2|3|4)\)/);
+    expect(r.report.checks.find((c) => /^Spring clips \(/.test(c.name))?.name).toMatch(/\((2|3|4)\)/);
   }, 120000);
 });

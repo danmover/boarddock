@@ -142,8 +142,10 @@ export interface HolderSettings {
   pattern: 'hex' | 'slots' | 'circles' | 'none';
   cell: number; // pattern pitch
   rib: number; // pattern rib width
-  tabs: 'auto' | 'on' | 'off'; // snap tabs in the wall that hold the board edge
-  tabLip: number;
+  tabs: 'auto' | 'on' | 'off'; // older projects: wall fingers (auto / always / off); read through holdOf() when hold is unset
+  tabLip: number; // (older projects; the spring clips size their own lip)
+  hold?: 'auto' | 'clips' | 'pins' | 'both'; // what holds the board in: spring clips at its edges, snap pins in its holes, or both; auto picks what fits
+  grip?: 'gentle' | 'firm'; // spring clip strength (unset: firm): gentle is a thinner leaf, under half the force
   notches: boolean; // finger notches to lift the board out
   label: string;
   chamfer: boolean;
@@ -371,7 +373,7 @@ export interface Ghost {
 
 /** A pickable feature fused into a holder (cradle, pin, finger...), as a box in the holder frame. */
 export interface Feature {
-  kind: 'cradle' | 'cap' | 'guard' | 'tie' | 'finger' | 'label' | 'pin' | 'seat' | 'dock' | 'tower' | 'stand' | 'notch' | 'rim';
+  kind: 'cradle' | 'cap' | 'guard' | 'tie' | 'spring' | 'label' | 'pin' | 'seat' | 'dock' | 'tower' | 'stand' | 'notch' | 'rim';
   module: string;
   refs?: string[]; // connector refs or hole ids
   box: [number, number, number, number, number, number];

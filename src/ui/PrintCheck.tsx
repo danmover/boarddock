@@ -24,9 +24,7 @@ export function PrintCheckSection() {
     (async () => {
       for (const [k, x] of parts) {
         if (!live) return;
-        const expect = (res?.report.features ?? []).filter((f) => f.kind === 'finger' && x.tag?.kind === 'holder' && f.module === x.tag.module)
-          .map((f) => ({ box: [f.box[0], f.box[1], f.box[3], f.box[4]] as [number, number, number, number], why: 'snap-finger undersides overhang their slot' }));
-        const r = await checkLayers(k, x.mesh, expect).catch(() => null);
+        const r = await checkLayers(k, x.mesh).catch(() => null);
         if (live) setDone((d) => ({ ...d, [k]: r }));
       }
     })();
@@ -36,7 +34,7 @@ export function PrintCheckSection() {
   const bad = parts.filter(([k, x]) => done[k] && verdict(done[k]!, MOVING.test(x.name)).status === 'bad').length;
   return (
     <Section title="Printability" right={<span className="chip">{left ? `slicing ${parts.length - left}/${parts.length}` : bad ? `${bad} need support` : 'no supports'}</span>}>
-      <p className="hint" style={{ marginTop: 0 }}>Each part is cut into 0.2 mm layers the way it lies on the bed, and every layer is checked against the one under it: nothing may start in mid-air (that would need support), bridges and overhangs are measured, and walls thinner than a line or slots too narrow to stay open are found.</p>
+      <p className="hint" style={{ marginTop: 0 }}>Each part is cut into 0.2 mm layers the way it lies on the bed, and every layer is checked against the one under it: nothing may start in mid-air (that would need support); overhangs (fine to 2 mm) and bridges (fine to 12 mm) are measured along the layer from the wall that holds them; roofs flatter than 45 degrees, parts on a tiny foot, walls thinner than a line and slots too narrow to stay open are found.</p>
       {parts.map(([k, x]) => {
         const r = done[k];
         const v = r ? verdict(r, MOVING.test(x.name)) : null;
