@@ -1152,3 +1152,9 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
   .ltile-qty { opacity: 1; }
   .ltile-qty .qbtn { min-width: 34px; min-height: 34px; }
 }
+
+/* the 3D selection panel's mounting row: stand or lie flat, the edge in the dock, turn, swap; a loose holder's DIN clip */
+.mountq { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+.mountq .seg { flex: none; }
+.mountq select { height: 28px; font-size: 12px; max-width: 190px; }
+.mountq .mq-lbl { font-size: 12px; font-weight: 600; color: var(--muted); }

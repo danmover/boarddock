@@ -398,6 +398,7 @@ A pin header (▸) opens into its pins, with their net names from your KiCad fil
 | Select several | Shift-click |
 | Remove the selection (a cradle or cap is switched off, a pin becomes an ignored hole, a dock, rail or cable is removed, a board leaves the project, table stands are switched off) | Delete, or **Remove** in the bar below the view; one ⌘Z brings it all back |
 | Jump to the settings of the selected thing | **Edit** in the bar |
+| Change how a board is mounted, right there | pick the board (or its dock): on a rack, **Stands up** or **Lies flat**, which edge goes in the dock (or carries the tab), turn the dock, swap its front and back boards; with loose holders, the DIN clip on or off, flat on the rail, across it or along it, and which way its release tab points |
 | Fly to a part | double-click it |
 | Watch it go together | the play button. It goes step by step, the way you would build it, with an instruction for each step: saddles on the table, rails in, end blocks on, spacers in, shoes clipped on, sockets in; then for each board, its release rod into the spine, the board into its holder, anything stacked on it, and the holder into its dock; then the cables (power first, mains last), the caps, and a last step: check every screw terminal, switch the powerboards off, plug them into the wall, then switch on. **‹ ›** step back and forward; **✕** shows it assembled. |
 | Pull it apart | the **Explode** slider |

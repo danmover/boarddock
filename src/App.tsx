@@ -6,6 +6,7 @@ import { Viewer3D } from './ui/Viewer3D';
 import { BoardEditor, type Tool } from './ui/BoardEditor';
 import { StartStage } from './ui/Start';
 import { PanelEditor } from './ui/PanelEditor';
+import { MountQuick } from './ui/MountQuick';
 import { BoardPanel, CheckPanel, ExportPanel, HolderPanel, ImportPanel, MountPanel, NewVersionButton, PlugsPanel } from './ui/panels';
 import { download, safeName } from './ui/controls';
 import { Mark } from './ui/art';
@@ -301,6 +302,7 @@ function SelPanel({ items }: { items: SelItem[] }) {
           <button className="btn small ghost icon" onClick={() => select([])} title="Clear (Esc)"><Icon d={I.x} /></button>
         </div>
       </div>
+      {one && <MountQuick item={one} />}
       {!one && (
         <div className="picks">
           {ds.map(({ it, d }) => (
