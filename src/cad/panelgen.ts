@@ -9,7 +9,7 @@ const CABLE_SEQ = 1e6, PLUG_SEQ = 1e6 + 90, CAP_SEQ = 1e6 + 100, TAG_SEQ = 1e6 +
 import { MATERIALS } from '../model/library';
 import { bbox, round } from '../geom/poly';
 import { basis, dir, I4, inv, mul, pt as ptM, rotZ, tr, type M4 } from '../geom/mat';
-import { filletPath, hangingCable, ribbonMesh, sphereMesh, tubeMesh } from './boardviz';
+import { filletPath, hangingCable, ribbonMesh, sphereMesh, stubCable, tubeMesh } from './boardviz';
 import { baseRef, cableNumbers, cablePurpose, cableToBuy, KIND_COLOR, KIND_NAME, plugRole, refText } from '../model/links';
 import { cableTag } from './cabletag';
 import { powerBudget, powerText } from '../model/power';
@@ -865,15 +865,29 @@ export function generatePanel(p: Project): GenResult {
     if (cables.length) checks.push({ group: 'Panel', name: 'Cables', value: `${cables.length}, ${round(cables.reduce((a, c) => a + c.length, 0) / 1000, 1)} m`, status: 'info', detail: cables.map((c) => `${KIND_NAME[c.kind]} ${c.a} to ${c.b}: ${round(c.length / 10, 0)} cm (${c.ribbon != null ? 'comes with the probe' : `buy ${c.buy} m`})`).join('; ') });
   }
 
-  // ---- cables that leave the rack (to a screen, a supply, the mains): out of the plug, a bend down, along the table ----
+  // ---- cables that leave the rack: a box's supply (a powerboard's own lead, a charger's mains lead, a hub's DC in)
+  // goes out of the plug, bends down and runs along the table until it is clear of the rack, towards the wall. A
+  // board's cradled plug with nothing connected (a headless Pi's micro-HDMI) gets only a short cut-off tail: where its
+  // cable would go (a screen, maybe) isn't known.
   const floorZ = stands ? -STAND.H : 0;
   const allEnds = [...ends.values()];
   const mid = allEnds.length ? [allEnds.reduce((a, e) => a + e.p[0], 0) / allEnds.length, allEnds.reduce((a, e) => a + e.p[1], 0) / allEnds.length] : [0, 0];
+  const foot = emptyBox();
+  // the rack's footprint: each part's own box, its eight corners placed (cheaper than every vertex of every copy)
+  if (hang.size) for (const pt of parts) {
+    const lb = emptyBox(); boxOf(pt.mesh.pos, I4, lb);
+    const corners = new Float32Array(24);
+    for (let c = 0; c < 8; c++) corners.set([lb[c & 1 ? 3 : 0], lb[c & 2 ? 4 : 1], lb[c & 4 ? 5 : 2]], c * 3);
+    for (const T of [pt.toAssembly, ...(pt.instances ?? [])]) boxOf(corners, T, foot);
+  }
+  const bounds = isFinite(foot[0]) ? [foot[0], foot[1], foot[3], foot[4]] : undefined;
   for (const k of hang) {
     const e = ends.get(k);
     if (!e) continue;
     const i = k.indexOf('/'), module = k.slice(0, i), ref = k.slice(i + 1);
-    ghosts.push({ name: `off-rack cable ${k}`, mesh: tubeMesh(hangingCable(e.p, e.d, e.cable, floorZ, mid), Math.max(1.1, e.cable / 2)), color: '#2b2e33', opacity: 1, tag: { kind: 'plug', module, refs: [baseRef(ref)] }, anim: { seq: PLUG_SEQ, dir: [0, 0, 1], dist: 0, grow: true }, mat: 'cable', smooth: true });
+    const lead = mods.get(module)?.m.board.kind === 'box';
+    const path = lead ? hangingCable(e.p, e.d, e.cable, floorZ, mid, bounds) : stubCable(e.p, e.d, e.cable);
+    ghosts.push({ name: `${lead ? 'off-rack cable' : 'cable tail'} ${k}`, mesh: tubeMesh(path, Math.max(1.1, e.cable / 2)), color: '#2b2e33', opacity: 1, tag: { kind: 'plug', module, refs: [baseRef(ref)] }, anim: { seq: PLUG_SEQ, dir: [0, 0, 1], dist: 0, grow: true }, mat: 'cable', smooth: true });
   }
 
   // ---- table stands: sleepers across the rails, with cable combs where the streets cross them ----

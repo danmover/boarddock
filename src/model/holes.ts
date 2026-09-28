@@ -160,6 +160,27 @@ export function stackMode(p: Project, m: Module): 'bolted' | 'towers' {
   return below && stackAlign(below.board, m.board).matched >= 2 ? 'bolted' : 'towers';
 }
 
+/**
+ * What bolts a board onto the one below it: a standoff on each hole the two boards share, a screw into each end of
+ * each standoff, and the screw size from those holes (M2.5 for a Pi's 2.7 mm holes, M3 for an Arduino's 3.2 mm
+ * ones). Null when the board isn't bolted on. `shared` is false when fewer than two holes line up (bolted by hand):
+ * the count is then a guess of four.
+ */
+export function stackHardware(p: Project, m: Module): { n: number; screws: number; size: string; gap: number; shared: boolean } | null {
+  if (!m.on || stackMode(p, m) !== 'bolted') return null;
+  const below = p.modules.find((x) => x.id === m.on);
+  if (!below) return null;
+  const a = stackAlign(below.board, m.board);
+  const L = below.board.holes.filter((h) => h.d >= 1.5), U = m.board.holes.filter((h) => h.d >= 1.5);
+  const hit = U.filter((u) => L.some((l) => Math.hypot(l.x - (u.x + a.dx), l.y - (u.y + a.dy)) < 0.5));
+  const shared = hit.length >= 2;
+  const ds = (shared ? hit : U).map((h) => h.d);
+  const d = ds.length ? Math.min(...ds) : 2.7;
+  const size = d < 2.4 ? 'M2' : d < 3.0 ? 'M2.5' : d < 3.6 ? 'M3' : 'M4';
+  const n = shared ? hit.length : 4;
+  return { n, screws: 2 * n, size, gap: m.onGap ?? 11, shared };
+}
+
 export interface StackLayer {
   mod: Module;
   dx: number; dy: number; // this layer's board frame in the base board's frame

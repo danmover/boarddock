@@ -147,6 +147,7 @@ export interface MountSettings {
   tabSide: 'down' | 'up'; // where the release tab points on the rail
   railT: number; // rail flange thickness (1.0 for TS35x7.5 steel)
   at: V2 | null; // flat mode: clip centre on the board; null = automatic
+  picked?: boolean; // loose holders: the DIN clip was switched on or off by hand (else a loose layout starts without one)
 }
 
 export interface StandSettings {

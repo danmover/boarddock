@@ -639,11 +639,12 @@ function plugAt(T: number[], p: PlugSize, tag: PickTag, anim: Anim, type: string
 }
 
 /**
- * A cable leaving a plug that nothing in the rack connects to (a screen, a supply, the mains): out of the boot,
- * a bend down, and along the table away from the rack. p, d: the boot's end and the plug's direction; floor: the
- * table's height.
+ * A cable leaving a plug that nothing in the rack connects to (the mains, a supply): out of the boot, a bend down,
+ * and along the table away from the rack. p, d: the boot's end and the plug's direction; floor: the table's height;
+ * bounds: the rack's footprint [x0, y0, x1, y1], so the lead runs on along the table until it is well clear of it
+ * (towards the wall socket or the supply) instead of stopping beside it.
  */
-export function hangingCable(p: number[], d: number[], cable: number, floor: number, centre?: number[]): number[][] {
+export function hangingCable(p: number[], d: number[], cable: number, floor: number, centre?: number[], bounds?: number[]): number[][] {
   const r = Math.max(1.1, cable / 2);
   const bend = Math.max(12, 6 * r);
   const h = Math.hypot(d[0], d[1]);
@@ -663,8 +664,43 @@ export function hangingCable(p: number[], d: number[], cable: number, floor: num
   const reach = Math.min(60, 8 + fall * 0.35);
   if (fall > 1) pts.push([last[0] + out[0] * reach, last[1] + out[1] * reach, z0]);
   const end = pts[pts.length - 1];
-  pts.push([end[0] + out[0] * 45, end[1] + out[1] * 45, z0]);
+  // on the table: on the way it was going, unless that runs back under the rack (a lead out of the end of a box in
+  // the middle of a row); then out by the nearest edge of the rack instead
+  const ways = [out, [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0]];
+  const exit = ways.map((w) => leadRun(end, w, bounds));
+  const k = exit.reduce((b, e, i) => (e < exit[b] - 20 ? i : b), 0), way = ways[k];
+  pts.push([end[0] + way[0] * exit[k], end[1] + way[1] * exit[k], z0]);
   return filletPath(pts, bend);
+}
+
+/** How far a lead runs along the table from `at` in direction `out`: 45 mm, or out past the rack's edge and 150 mm on. */
+export function leadRun(at: number[], out: number[], bounds?: number[]): number {
+  if (!bounds) return 45;
+  // distance along `out` to leave the footprint (0 if already outside it)
+  let t = 0;
+  for (let k = 0; k < 2; k++) {
+    const lo = bounds[k], hi = bounds[k + 2];
+    if (Math.abs(out[k]) < 1e-6) continue;
+    const edge = out[k] > 0 ? hi : lo;
+    t = Math.max(t, (edge - at[k]) / out[k]);
+  }
+  return Math.min(600, Math.max(45, t + 150));
+}
+
+/**
+ * A cable whose other end isn't drawn: a plug in a port with a cradle but nothing connected yet (a screen you may
+ * plug in), or any cable between loose holders, which BoardDock doesn't route. Out of the boot a short way, easing
+ * down under its own weight, and cut off with a flat end, so it reads as "a cable goes on from here" rather than a
+ * cable that ends in mid-air.
+ */
+export function stubCable(p: number[], d: number[], cable: number): number[][] {
+  const r = Math.max(1.1, cable / 2), L = Math.max(22, 6 * r);
+  const n = Math.hypot(d[0], d[1], d[2]) || 1, u = [d[0] / n, d[1] / n, d[2] / n];
+  // gravity across the cable: nothing for a plug pointing straight up or down, most for one pointing sideways
+  const g = [-u[2] * u[0], -u[2] * u[1], -1 + u[2] * u[2]], lg = Math.hypot(g[0], g[1], g[2]);
+  const sag = lg > 1e-3 ? L * 0.3 * lg : 0, gn = lg > 1e-3 ? g.map((x) => x / lg) : [0, 0, 0];
+  const at = (t: number, s: number) => [p[0] + u[0] * t + gn[0] * s, p[1] + u[1] * t + gn[1] * s, p[2] + u[2] * t + gn[2] * s];
+  return filletPath([p, at(L * 0.45, 0), at(L, sag)], Math.max(8, 4 * r));
 }
 
 /**

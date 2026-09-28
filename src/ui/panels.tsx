@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { zipSync, strToU8 } from 'fflate';
 import type { Board, BoxFace, BoxSpec, Comp, Hole, HoleRole, PartOut, Project, V2 } from '../model/types';
-import { applyHoleRoles, boltedOn, detectHoleRoles, ROLE_INFO } from '../model/holes';
+import { applyHoleRoles, boltedOn, detectHoleRoles, ROLE_INFO, stackHardware } from '../model/holes';
 import { baseRef, refText, cableNumbers, cablePurpose, shortName, compatible, KIND_COLOR, linkKind, linkOf, plugName, plugRole, plugsOf, portBudget, sameRef } from '../model/links';
 import { applyBox, BOX_PORT_TYPES, BOX_PRESETS, BOX_ROLES, boxProblems, FACE_NAME, inferBox, layoutPorts, makeBox, tightFaces } from '../model/boxes';
 import { addJLinks, addLinks, addSerialAdapters, addUartCables, removeLinks, setLink } from './linkOps';
 import { adapterFor, debugHeaders, isDebugPort, isProbe, isUartPort, markDebug, uartHeaders, uartPins, type DebugKind } from '../model/probes';
 import { Icon, I } from './icons';
-import { CONNECTORS, DEFAULT_FEATURES, HOLDER_PRESETS, MATERIALS, PRINTERS, connById, connSetup } from '../model/library';
+import { CONNECTORS, DEFAULT_FEATURES, HOLDER_PRESETS, MATERIALS, PRINTERS, connById, connSetup, headlessCradles, makeHeadless, setLayout } from '../model/library';
 import { printerByName, printSettings } from '../model/printers';
 import { TEMPLATES } from '../model/templates';
 import { ACCEPT } from '../import';
@@ -671,9 +671,25 @@ export function PlugsPanel() {
           ))}
           {!conns.length && <p className="hint">No connectors found. Add them in the board editor (Connector tool, click an edge), or select a part and choose "Treat as connector".</p>}
         </div>
+        <Headless />
       </Section>
       {chosen.length > 0 && <ConnEditor list={chosen} />}
       <CablesSection />
+    </div>
+  );
+}
+
+/** Running the boards headless (no screen): offer to drop the cradles of unused HDMI and audio ports, on every board. */
+function Headless() {
+  const p = useApp((s) => s.project)!;
+  const drop = headlessCradles(p);
+  if (!drop.some((d) => d.module === activeModule(p).id)) return null;
+  const boards = [...new Set(drop.map((d) => d.module))].map((id) => shortName(p.modules.find((m) => m.id === id)!.board.name));
+  const go = () => { let n = 0; edit((q) => { n = makeHeadless(q); }); toast(`Dropped ${n} HDMI and audio cradle${n > 1 ? 's' : ''} (and their caps) on ${boards.length > 3 ? `${boards.length} boards` : boards.join(', ')}. ⌘Z brings them back.`); };
+  return (
+    <div className="btns" style={{ marginTop: 8, alignItems: 'center' }}>
+      <span className="hint grow" style={{ margin: 0 }}>Running {boards.length > 1 ? 'them' : 'it'} headless (no screen)? The HDMI and audio cradles only help with a cable in them.</span>
+      <button className="btn small" title={`Drop the cradles of the HDMI and audio ports with nothing connected, on ${boards.join(', ')}`} onClick={go}>Go headless</button>
     </div>
   );
 }
@@ -1025,7 +1041,7 @@ export function MountPanel() {
   const M = p.mount, S = p.stand;
   const setM = (fn: (m: Project['mount']) => void) => edit((q) => fn(q.mount));
   const setS = (fn: (s: Project['stand']) => void) => edit((q) => fn(q.stand));
-  const pick = <Seg value={p.layout} options={[['panel', 'On DIN rails'], ['loose', 'Loose holders']]} onChange={(v) => { edit((q) => { q.layout = v; }); store.set({ view: 'assembly' }); }} />;
+  const pick = <Seg value={p.layout} options={[['panel', 'On DIN rails'], ['loose', 'Loose holders']]} onChange={(v) => { edit((q) => { setLayout(q, v); }); store.set({ view: 'assembly' }); }} />;
   if (p.layout === 'panel') return (
     <div>
       <div style={{ marginBottom: 10 }}>{pick}</div>
@@ -1037,7 +1053,7 @@ export function MountPanel() {
       <div style={{ marginBottom: 10 }}>{pick}</div>
       <p className="lede">Holders without rail docks: stack them, set them side by side or back to back, clip one flat onto a DIN rail, or give it a stand socket.</p>
       <LayoutSection />
-      <Section title="DIN rail clip" right={<Check label="" value={M.kind === 'din'} onChange={(v) => setM((m) => { m.kind = v ? 'din' : 'none'; })} />}>
+      <Section title="DIN rail clip" right={<Check label="" value={M.kind === 'din'} onChange={(v) => setM((m) => { m.kind = v ? 'din' : 'none'; m.picked = true; })} />}>
         {M.kind === 'din' ? (
           <>
             <p className="hint" style={{ marginTop: 0 }}><b>To remove: pull the tab towards you.</b> The lower jaw swings off the rail and the holder tilts free in the same motion. Nothing to push sideways, no screwdriver, and it works with neighbours packed tight. The clip snaps into the holder in four orientations.</p>
@@ -1306,7 +1322,7 @@ export function ExportPanel() {
           <button className="btn ghost" onClick={() => store.set({ view: 'print' })}>Show plates in 3D</button>
         </div>
       </Section>
-      <ShoppingList lines={shopping(p, res, onlyNew ? d : null, tot, scope === 'pick' ? pickSet : undefined)} />
+      <ShoppingList p={p} lines={shopping(p, res, onlyNew ? d : null, tot, scope === 'pick' ? pickSet : undefined)} />
       {!p.built && <BuildSection d={d} />}
       {p.layout === 'panel' && <TestKitSection />}
       <Section title="Estimate">
@@ -1411,11 +1427,19 @@ type Res = NonNullable<ReturnType<typeof store.get>['result']>;
 /** Everything to print, cut and buy (or only what's new since the rack was built). */
 function shopping(p: Project, res: Res, d: Delta | null, tot: { g: number; m: number }, pick?: Set<string>): { head: string; items: string[] }[] {
   const out: { head: string; items: string[] }[] = [];
+  // a bolted board: a standoff on each hole it shares with the board below, a screw in each end, sized from the holes
+  const bolts = (m: Project['modules'][number]) => {
+    const h = stackHardware(p, m);
+    if (!h) return null;
+    const below = p.modules.find((x) => x.id === m.on)?.board.name ?? 'its board';
+    return `${h.n} × ${h.size} standoff, ${h.gap} mm, and ${h.screws} × ${h.size} screw (${m.board.name} on ${below}: ${h.shared ? `the ${h.n} holes they share` : 'no holes line up, so check where yours go'})`;
+  };
   if (pick) {
     const other: string[] = [];
     for (const m of p.modules.filter((x) => pick.has(x.id))) {
       if (m.board.kind === 'box' && !isProbe(m)) other.push(`12 mm hook-and-loop strap for the ${m.board.name}`);
-      if (m.on && pick.has(m.on) && (m.onMode ?? 'bolted') === 'bolted') other.push(`4 M2.5 standoffs, ${m.onGap ?? 11} mm, and 8 M2.5 screws (${m.board.name})`);
+      const b = m.on && pick.has(m.on) ? bolts(m) : null;
+      if (b) other.push(b);
     }
     if (other.length) out.push({ head: 'Hardware', items: other });
     out.push({ head: 'Filament', items: [`about ${tot.g.toFixed(0)} g of ${activeModule(p).holder.material} (roughly ${fmtMin(tot.m)} of printing)`] });
@@ -1429,6 +1453,8 @@ function shopping(p: Project, res: Res, d: Delta | null, tot: { g: number; m: nu
   ] });
   const rails = d ? d.rails.map((r) => r.length) : (res.report.panel?.rails ?? []).map((r) => r.length);
   if (rails.length) out.push({ head: 'Rails', items: count(rails.map((l) => `TS35 × 7.5 top-hat rail, cut to ${Math.round(l)} mm`)) });
+  // loose holders on their DIN clips go on a rail you have (or cut to suit): BoardDock doesn't lay that rail out
+  else if (p.layout === 'loose' && p.mount.kind === 'din' && !d) out.push({ head: 'Rails', items: ['a TS35 DIN rail (the 35 mm top-hat rail), long enough for the clipped holders'] });
   // a probe's ribbon comes with it: not bought, but it may need an adapter
   const cables = (d ? d.cables : res.report.cables ?? []).filter((c) => c.ribbon == null);
   const typeOf = (id: string, end: 'a' | 'b') => { const l = (p.links ?? []).find((x) => x.id === id); const r = l?.[end]; return plugName(p.modules.find((m) => m.id === r?.module)?.board.comps.find((c) => c.ref === baseRef(r?.ref ?? ''))?.conn?.type ?? ''); };
@@ -1449,7 +1475,7 @@ function shopping(p: Project, res: Res, d: Delta | null, tot: { g: number; m: nu
     const lo = Math.min(...straps.map((x) => x.per)), hi = Math.max(...straps.map((x) => x.per)), all = straps.reduce((a, x) => a + 2 * x.per, 0);
     other.push(`${2 * straps.length} × 12 mm hook-and-loop strap, ${lo === hi ? `about ${lo} cm` : `${lo} to ${hi} cm`} each (${(all / 100).toFixed(1)} m in all, or a roll to cut): 2 for each of ${straps.length > 3 ? `the ${straps.length} boxes` : straps.map((x) => x.name).join(', ')}`);
   }
-  for (const m of mods) if (m.on && stackBase(p, m) !== m && (m.onMode ?? 'bolted') === 'bolted') other.push(`4 M2.5 standoffs, ${m.onGap ?? 11} mm, and 8 M2.5 screws (${m.board.name} on ${p.modules.find((x) => x.id === m.on)?.board.name ?? 'its board'})`);
+  for (const m of mods) { const b = m.on && stackBase(p, m) !== m ? bolts(m) : null; if (b) other.push(b); }
   if (other.length) out.push({ head: 'Hardware', items: other });
   const adapters = new Map<string, string[]>();
   for (const l of p.links ?? []) {
@@ -1466,7 +1492,9 @@ function shopping(p: Project, res: Res, d: Delta | null, tot: { g: number; m: nu
   return out;
 }
 
-function ShoppingList({ lines }: { lines: { head: string; items: string[] }[] }) {
+function ShoppingList({ p, lines }: { p: Project; lines: { head: string; items: string[] }[] }) {
+  const rail = lines.some((g) => g.head === 'Rails');
+  const loose = p.layout === 'loose', nLinks = (p.links ?? []).length;
   return (
     <Section title="Shopping list">
       {lines.map((g) => (
@@ -1475,7 +1503,8 @@ function ShoppingList({ lines }: { lines: { head: string; items: string[] }[] })
           <ul className="fmt" style={{ marginTop: 2 }}>{g.items.map((x) => <li key={x}>{x}</li>)}</ul>
         </div>
       ))}
-      <p className="hint">No screws hold any printed part: the list above is all you need besides a printer and a hacksaw for the rail.</p>
+      {loose && nLinks > 0 && <p className="hint">Loose holders' cables aren't routed or sized, so there are no cables here: lay the boards out on your bench and measure the {nLinks === 1 ? 'one' : nLinks} you need before you buy {nLinks === 1 ? 'it' : 'them'}. On DIN rails BoardDock routes and sizes every cable.</p>}
+      <p className="hint">No screws hold any printed part: the list above is all you need besides a printer{rail ? ' and a hacksaw for the rail' : ''}.</p>
     </Section>
   );
 }
@@ -1503,6 +1532,7 @@ function printNotes(p: Project, res: Res, nPlates: number, tot: { g: number; m: 
       ...(res.report.warnings.length ? ['', 'Warnings:', ...res.report.warnings.map((w) => `  - ${w}`)] : []),
     ].join('\n');
   }
+  const clip = p.mount.kind === 'din';
   const lines = [
     `BoardDock export: ${p.modules.map((m) => m.board.name).join(' + ')}`,
     `${nPlates} plate(s), about ${tot.g.toFixed(0)} g of ${activeModule(p).holder.material}, about ${fmtMin(tot.m)}.`,
@@ -1513,12 +1543,15 @@ function printNotes(p: Project, res: Res, nPlates: number, tot: { g: number; m: 
     ...res.parts.map((x) => `  - ${x.name} x${x.qty}: ${(x.volume / 1000).toFixed(2)} cm3, ${x.size.map((v) => v.toFixed(0)).join(' x ')} mm`),
     '',
     'Assembly:',
-    '  1. Press the DIN clip into the holder until both hooks click (any of 4 orientations).',
-    '  2. Drop the board in: it snaps under the wall fingers (or onto the snap pins).',
-    ...(p.modules.length > 1 ? [p.arrange.mode === 'stack' ? '     Stack: press each layer onto the corner pegs of the layer below.' : p.arrange.mode === 'side' ? '     Side by side: drop a link bar into each pair of facing slots.' : '     Back to back: push the snap rivets through both bases.'] : []),
-    '  3. Hook the clip over the top of the rail and push the bottom in until it clicks.',
-    '  4. To remove: pull the tab towards you; the holder tilts off.',
-    '  5. Plugs: lay the plug in its cradle, slide it home, press the cap on.',
+    ...[
+      ...(clip ? ['Press the DIN clip into the holder until both hooks click (any of 4 orientations).'] : []),
+      'Drop the board in: it snaps under the wall fingers (or onto the snap pins).',
+      ...(p.modules.length > 1 ? [p.arrange.mode === 'stack' ? 'Stack: press each layer onto the corner pegs of the layer below.' : p.arrange.mode === 'side' ? 'Side by side: drop a link bar into each pair of facing slots.' : 'Back to back: push the snap rivets through both bases.'] : []),
+      ...(clip ? ['Hook the clip over the top of the rail and push the bottom in until it clicks.', 'To remove: pull the tab towards you; the holder tilts off.'] : []),
+      ...(p.stand.enabled ? ['Slide the holder onto its stand post.'] : []),
+      'Plugs: lay the plug in its cradle, slide it home, press the cap on.',
+      ...((p.links ?? []).length ? ['Cables: loose holders\' cables are not routed or sized. Lay the boards out and measure each one before you buy it.'] : []),
+    ].map((x, i) => `  ${i + 1}. ${x}`),
     '',
     'Checks:',
     ...res.report.checks.map((c) => `  [${c.status}] ${c.group} / ${c.name}: ${c.value}${c.detail ? ` (${c.detail})` : ''}`),
@@ -1590,18 +1623,18 @@ export function LayoutSection() {
         <>
           <div style={{ marginTop: 10 }}><Seg value={A.mode} options={[['stack', 'Stacked'], ['side', 'Side by side'], ['back', 'Back to back']]} onChange={(v) => setA((a) => { a.mode = v; })} /></div>
           {A.mode === 'stack' && <>
-            <p className="hint">Board 1 is at the bottom and carries the mount. Each holder gets four corner towers; the next layer presses onto their pegs. Towers clear the tallest part plus the gap.</p>
+            <p className="hint">Board 1 is at the bottom{p.mount.kind === 'din' ? ' and carries the DIN clip' : p.stand.enabled ? ' and carries the stand socket' : ''}. Each holder gets four corner towers; the next layer presses onto their pegs. Towers clear the tallest part plus the gap.{p.modules.some((m) => m.board.kind === 'box') ? ' Boxes (hubs, chargers, powerboards) stand beside the stack, never in it, so nothing covers their ports and outlets.' : ''}</p>
             <div className="row" style={{ marginTop: 6 }}><Num label="Gap above tallest part" value={A.stackGap} min={0} max={40} onChange={(v) => setA((a) => { a.stackGap = v; })} /></div>
           </>}
           {A.mode === 'side' && <>
-            <p className="hint">Holders sit next to each other. On a DIN rail each gets its own clip; printed link bars lock neighbours together.</p>
+            <p className="hint">Holders sit next to each other{p.mount.kind === 'din' ? ', each on its own DIN clip' : ''}; printed link bars lock neighbours together.</p>
             <div className="row" style={{ marginTop: 6 }}>
               {p.mount.kind === 'din' ? <div className="field"><span>Row along</span><div className="static">the rail</div></div> : <Pick label="Row along" value={A.sideAxis} options={[['x', 'Board X'], ['y', 'Board Y']]} onChange={(v) => setA((a) => { a.sideAxis = v; })} />}
               <Num label="Extra gap" value={A.sideGap} min={0} max={20} onChange={(v) => setA((a) => { a.sideGap = v; })} />
             </div>
             <div style={{ marginTop: 6 }}><Check label="Link bars between neighbours" value={A.links} onChange={(v) => setA((a) => { a.links = v; })} /></div>
           </>}
-          {A.mode === 'back' && <p className="hint">Boards 1 and 2 base to base, components facing out on both sides, held by printed snap rivets. Use the DIN clip "standing off the rail" so it sits on an edge.</p>}
+          {A.mode === 'back' && <p className="hint">Boards 1 and 2 base to base, components facing out on both sides, held by printed snap rivets.{p.mount.kind === 'din' ? ' Use the DIN clip "standing off the rail" so it sits on an edge.' : ''}</p>}
         </>
       ) : <p className="hint">Add more boards to stack them, put them side by side, or mount two back to back.</p>}
     </Section>

@@ -245,4 +245,34 @@ export function migrate(p: any): Project {
   };
 }
 
+/**
+ * Switch between DIN rail docks and loose holders. Loose holders start without the DIN clip (they are loose because
+ * there is no rail), unless it was switched on or off by hand before.
+ */
+export function setLayout(p: Project, layout: Project['layout']) {
+  p.layout = layout;
+  if (layout === 'loose' && !p.mount.picked) p.mount.kind = 'none';
+}
+
+/** Ports that only matter with a screen or speakers plugged in: what a headless board (a Pi run over the network) can do without. */
+const SCREEN_PORTS = ['hdmi_micro', 'hdmi_mini', 'hdmi_a', 'audio35'];
+
+/** Screen and audio ports that have a cradle but no cable, on every board (not boxes), as module id and ref. */
+export function headlessCradles(p: Project): { module: string; ref: string }[] {
+  const cabled = new Set((p.links ?? []).flatMap((l) => [l.a, l.b].map((e) => `${e.module}/${e.ref.replace(/:2$/, '')}`)));
+  return p.modules.flatMap((m) => (m.board.kind === 'box' ? [] : m.board.comps
+    .filter((c) => c.conn && !c.hidden && c.conn.cradle && SCREEN_PORTS.includes(c.conn.type) && !cabled.has(`${m.id}/${c.ref}`))
+    .map((c) => ({ module: m.id, ref: c.ref }))));
+}
+
+/** Run the boards headless: drop the cradles (and so the caps) of their unused screen and audio ports. */
+export function makeHeadless(p: Project): number {
+  const drop = headlessCradles(p);
+  for (const d of drop) {
+    const c = p.modules.find((m) => m.id === d.module)?.board.comps.find((x) => x.ref === d.ref);
+    if (c?.conn) { c.conn.cradle = false; c.conn.cap = false; }
+  }
+  return drop.length;
+}
+
 export const activeModule = (p: Project): Module => p.modules[Math.min(p.active, p.modules.length - 1)];
