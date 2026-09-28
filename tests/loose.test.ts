@@ -7,6 +7,7 @@ import { headlessCradles, makeHeadless, newModule, newProject, setLayout } from 
 import { stackHardware } from '../src/model/holes';
 import { autoLinks, numberLinks } from '../src/model/links';
 import { badgeText } from '../src/model/cablebadge';
+import { buyText } from '../src/model/cablebuy';
 import { hangingCable, leadRun, stubCable } from '../src/cad/boardviz';
 import { generate, stackOrder } from '../src/cad/assembly';
 import { initKernel } from '../src/cad/kernel';
@@ -167,5 +168,14 @@ describe('plugs and leads in 3D', () => {
     expect(badgeText('Power: Powerboard, 4 outlets + USB → Pi 5 2')).toBe('Power → Pi 5 2');
     expect(badgeText('Hub uplink: Pi 4B → USB hub')).toBe('Hub uplink → USB hub');
     expect(badgeText('Mains')).toBe('Mains');
+  });
+});
+
+describe('cables to buy', () => {
+  it('names hook-up wire, pigtails and mains leads plainly', () => {
+    expect(buyText('wire', 0.5, 'wires', 'wires')).toMatch(/^red and black hook-up wire, 0\.5 to 0\.75 mm² .*0\.5 m of each, a ferrule/);
+    expect(buyText('power', 1, 'DC barrel', 'wires')).toMatch(/^DC barrel plug to bare wire lead/);
+    expect(buyText('mains', 1, 'mains (C7)', 'UK outlet')).toMatch(/C7\) to UK plug, 1 m or longer/);
+    expect(buyText('usb', 0.3, 'USB-A', 'USB-C')).toBe('0.3 m USB-A to USB-C cable');
   });
 });

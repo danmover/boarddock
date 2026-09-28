@@ -27,6 +27,7 @@ import { baseOf as stackBase, ridersOf } from '../model/holes';
 import { DockFeaSection } from './DockFea';
 import { powerBudget, powerText } from '../model/power';
 import { saveBoard } from '../model/myboards';
+import { buyText } from '../model/cablebuy';
 import { boardSig, useKeptPicture } from './pics';
 import { paletteFor } from '../model/palette';
 import { PartPic } from './Toolbox';
@@ -1463,7 +1464,7 @@ function shopping(p: Project, res: Res, d: Delta | null, tot: { g: number; m: nu
     for (const c of cables) {
       // jumper wires are bought by the wire: one per pin they join
       if (c.kind === 'jumper') { const n = (p.links ?? []).find((x) => x.id === c.id)?.wires?.length ?? 3; const k = `female–female jumper wires (Dupont), ${Math.round(c.buy * 100)} cm`; g.set(k, [...(g.get(k) ?? []), ...Array(n).fill(c.no ?? 0)]); continue; }
-      const k = c.kind === 'mains' ? `mains lead, figure-8 (C7) to ${/UK|US|EU/.exec(`${typeOf(c.id, 'a')} ${typeOf(c.id, 'b')}`)?.[0] ?? 'AU'} plug, ${c.buy} m or longer (most chargers come with one)` : c.kind === 'uart' ? `USB to TTL serial cable, 3.3 V, with loose jumper ends (PL2303 or CP2102 type, like Adafruit 954), ${c.buy} m or longer` : `${c.buy} m ${typeOf(c.id, 'a')} to ${typeOf(c.id, 'b')} cable`; g.set(k, [...(g.get(k) ?? []), c.no ?? 0]); }
+      const k = buyText(c.kind, c.buy, typeOf(c.id, 'a'), typeOf(c.id, 'b')); g.set(k, [...(g.get(k) ?? []), c.no ?? 0]); }
     out.push({ head: 'Cables', items: [...g.entries()].map(([k, ns]) => { const u = [...new Set(ns)].sort((a, b) => a - b); return `${ns.length} × ${k} (number${u.length > 1 ? 's' : ''} ${u.join(', ')})`; }) });
   }
   const newIds = new Set(p.built ? p.modules.filter((m) => !p.built!.boards.includes(m.id)).map((m) => m.id) : p.modules.map((m) => m.id));
