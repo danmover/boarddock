@@ -142,6 +142,17 @@ export function frame(o: V2, d: V2): any {
   return [d[0], d[1], 0, 0, -d[1], d[0], 0, 0, 0, 0, 1, 0, o[0], o[1], 0, 1];
 }
 
+/** A closed mesh (at T, column-major, when given) as a solid, freed with the rest; null when it isn't closed. */
+export function fromMesh(m: MeshData, T?: number[]): MF | null {
+  try {
+    const W = K() as any;
+    const mesh = new W.Mesh({ numProp: 3, vertProperties: new Float32Array(m.pos), triVerts: new Uint32Array(m.idx) });
+    mesh.merge();
+    const s = track(new W.Manifold(mesh)) as MF;
+    return T ? s.transform(T as any) : s;
+  } catch { return null; }
+}
+
 export function toMesh(m: MF): MeshData {
   const mesh = m.getMesh();
   const np = mesh.numProp;

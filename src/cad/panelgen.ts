@@ -22,12 +22,12 @@ import { cableTag, TAG } from './cabletag';
 import { mainsBudget, mainsText, powerBudget, powerText } from '../model/power';
 import { buildModule, builtLevels, transformMesh, type ArrangeHooks, type ModuleOut } from './generate';
 import { baseOf, ridersOf, stackLayers, type StackLayer } from '../model/holes';
-import { box, freeAll, toMesh, unionMF, type MF } from './kernel';
+import { box, freeAll, fromMesh, toMesh, unionMF, type MF } from './kernel';
 import { END_POSE, LEN_X, rail as railSolid, shoe, shoeBody, shoeLever, SHOE_LEVER, socket, SOCKET_Z } from './dock';
 import { EAR } from './dockdims';
 import { autoAssign, bestDock, classify, clipToRail, dockSite, EDGES, edgeNormal, plugDirs, railMatrix, slotMatrix, withRiders } from './dockplan';
 import { capStress, pieceMesh, planStands, railI, standBoxes, STAND, type StandLane } from './railstand';
-import { assemble, bendRadius, bestRoute, escapes, hits, lead, ribbonRoute, segInBox, slope, type Box, type CableEnd, type Choice, type Obstacle, type RibbonEnd, type Route } from './cableroute';
+import { assemble, bendRadius, bestRoute, escapes, hits, lead, ribbonRoute, segInBox, slope, type Box, type CableEnd, type Choice, type Hit, type Obstacle, type RibbonEnd, type Route } from './cableroute';
 import { settleCables } from './cablesim';
 import { isDebugPort, isProbe, isUartPort, jumperToBuy, jumperWiring, ribbonOf, uartWiring } from '../model/probes';
 
@@ -660,13 +660,13 @@ export function generatePanel(p: Project): GenResult {
       [pt.toAssembly, ...(pt.instances ?? [])].forEach((T, i) => {
         const b = emptyBox(); boxOf(pt.mesh.pos, T, b);
         const t = i ? pt.tags?.[i - 1] ?? pt.tag : pt.tag;
-        obs.push({ box: uvBox(b), label: labelOf(t, pt.name), module: t?.module });
+        obs.push({ box: uvBox(b), label: labelOf(t, pt.name), module: t?.module, src: { mesh: pt.displayMesh ?? pt.mesh, T } });
       });
     }
     for (const g of ghosts) {
       if (g.tag?.kind === 'cable') continue;
       const b = emptyBox(); boxOf(g.mesh.pos, I4, b);
-      obs.push({ box: uvBox(b), label: labelOf(g.tag, g.name), module: g.tag?.module, plug: g.tag?.kind === 'plug' ? `${g.tag.module}/${g.tag.refs?.[0]}` : undefined });
+      obs.push({ box: uvBox(b), label: labelOf(g.tag, g.name), module: g.tag?.module, plug: g.tag?.kind === 'plug' ? `${g.tag.module}/${g.tag.refs?.[0]}` : undefined, src: { mesh: g.mesh, T: I4 } });
     }
     const pre = stands ? planStands(standRails, streets, []) : null;
     if (pre) for (const sb of standBoxes(pre)) obs.push({ ...sb, stand: true });
@@ -754,6 +754,12 @@ export function generatePanel(p: Project): GenResult {
       return { L: S[S.length - 1], at, part: (s0: number, s1: number) => [at(s0), ...P.filter((_, i) => S[i] > s0 && S[i] < s1), at(s1)] };
     };
     const tagMeshes = new Map<string, { mesh: MeshData; volume: number; size: [number, number, number] }>();
+    const confirmHits = (hs: Hit[], pts: number[][], r: number) => {
+      if (!hs.some((h) => h.ob.src) || pts.length < 2) return hs;
+      const tube = fromMesh(tubeMesh(pts, Math.max(0.3, r - 0.3), 12));
+      if (!tube) return hs;
+      return hs.filter((h) => { const o = h.ob.src && fromMesh(h.ob.src.mesh, h.ob.src.T); return !o || tube.intersect(o).volume() > 0.2; });
+    };
     // every cable's planned way, with its bends as a cable takes them (arcs of about four diameters, no kinks)
     const bendR = (q: (typeof routes)[number]) => (q.l.kind === 'debug' ? 7 : q.l.kind === 'jumper' ? 6 : bendRadius(q.d / 2));
     const lay = () => routes.map((q) => {
@@ -831,8 +837,11 @@ export function generatePanel(p: Project): GenResult {
     });
     for (const [qi, q] of routes.entries()) {
       const { l, d, free } = q;
-      const { hit } = planned[qi];
       const path = sim.paths[qi].map(xy);
+      // what the router found the route running into, by bounding boxes, confirmed against the parts themselves: the
+      // cable as it settled (0.3 mm thinner: it may brush) intersected with each one's real shape. What doesn't
+      // really touch is no clash (a warning that turns out to be a close shave only worries people)
+      const hit = confirmHits(planned[qi].hit, path, d / 2);
       let len = 0;
       for (let i = 1; i < path.length; i++) len += Math.hypot(path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1], path[i][2] - path[i - 1][2]);
       const kind = l.kind ?? 'usb';
@@ -979,7 +988,7 @@ export function generatePanel(p: Project): GenResult {
       }
     }
     const clashing = cables.filter((c) => c.clash);
-    for (const c of clashing) warnings.push(`The ${c.a} to ${c.b} cable runs into ${c.clash}. Move or turn one of the boards, or connect it to another plug (routes are checked against bounding boxes, so this may be a close shave rather than a real clash).`);
+    for (const c of clashing) warnings.push(`The ${c.a} to ${c.b} cable runs into ${c.clash}. Move or turn one of the boards, or connect it to another plug.`);
     if (cables.length) checks.push({ group: 'Panel', name: 'Cable routes', value: clashing.length ? `${clashing.length} of ${cables.length} touch something` : `all ${cables.length} clear`, status: clashing.length ? 'warn' : 'ok', detail: clashing.length ? clashing.map((c) => `${c.a} to ${c.b}: ${c.clash}`).join('; ') : 'no clash found in the model: every route misses the holders, boards, plugs, docks, rails and stands, checked with their bounding boxes (a rough check: route the real cables with care)' });
     const long = cables.filter((c) => c.length > 1200);
     if (long.length) warnings.push(`${long.map((c) => `${c.a} to ${c.b}`).join(', ')}: over 1.2 m of ${long.length > 1 ? 'cable each' : 'cable'}. Put the two boards closer (Auto-arrange keeps connected boards together).`);

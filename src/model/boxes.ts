@@ -37,7 +37,7 @@ const dp = (ref: string, pkg: string, x: number, y: number, w: number, l: number
 export const BOX_PRESETS: Record<string, { name: string; color: string; spec: () => BoxSpec; note?: string; parts?: () => Comp[] }> = {
   hub4: { name: 'USB hub', color: '#2b2f36', spec: () => ({ l: 100, w: 30, h: 22, groups: [g('usb_a', 4, 'front', 'hub-down'), g('usb_micro_b', 1, 'left', 'hub-up')] }) },
   hub7: { name: 'Powered USB hub', color: '#2b2f36', spec: () => ({ l: 160, w: 48, h: 24, groups: [g('usb_a', 7, 'top', 'hub-down'), g('usb_c', 1, 'left', 'hub-up'), g('barrel', 1, 'right', 'other')] }) },
-  hubc: { name: 'USB-C hub', color: '#3a3f47', spec: () => ({ l: 110, w: 32, h: 14, groups: [g('usb_a', 3, 'front', 'hub-down'), g('usb_c', 1, 'front', 'hub-down'), g('usb_c', 1, 'left', 'hub-up'), g('rj45', 1, 'right', 'net')] }) },
+  hubc: { name: 'USB-C hub', color: '#3a3f47', spec: () => ({ l: 110, w: 32, h: 16, groups: [g('usb_a', 3, 'front', 'hub-down'), g('usb_c', 1, 'front', 'hub-down'), g('usb_c', 1, 'left', 'hub-up'), g('rj45', 1, 'right', 'net')] }) },
   charger4: { name: 'USB charger', color: '#e9e7e2', spec: () => ({ l: 90, w: 60, h: 28, groups: [g('usb_a', 4, 'back', 'power-out'), g('iec_c7', 1, 'front', 'mains-in')] }) },
   charger6: { name: 'USB charger (A + C)', color: '#e9e7e2', spec: () => ({ l: 110, w: 70, h: 30, groups: [g('usb_a', 4, 'back', 'power-out'), g('usb_c', 2, 'back', 'power-out'), g('iec_c7', 1, 'front', 'mains-in')] }) },
   // a desktop network switch: its Ethernet ports along the front, its power in at the back

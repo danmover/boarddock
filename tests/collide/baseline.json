@@ -126,19 +126,20 @@
      5.7,
      0.4
     ],
+    "cable-plug": [
+     0,
+     0.31
+    ],
     "cable-cable": [
-     8.5,
-     0.94
+     40.7,
+     2.9
     ],
     "cable-stand/rail": [
-     10,
-     0.61
+     17.3,
+     0.62
     ]
    },
-   "issues": [
-    "fails Check: USB-C hub · Board: Box ports",
-    "warns: The USB-C hub UP to Raspberry Pi 4B USB3 lower cable runs into the Powered USB hub DC plug."
-   ]
+   "issues": []
   },
   "built, then boards added": {
    "cats": {
@@ -184,17 +185,15 @@
      0.72
     ],
     "cable-cable": [
-     0.8,
-     0.33
+     1.5,
+     0.64
     ],
     "cable-stand/rail": [
      18,
      1.03
     ]
    },
-   "issues": [
-    "fails Check: USB-C hub · Board: Box ports"
-   ]
+   "issues": []
   },
   "dc_pack_12v DIN flat clip": {
    "cats": {},
@@ -536,9 +535,7 @@
      0.05
     ]
    },
-   "issues": [
-    "warns: The USB hub UP to Raspberry Pi 5 USB3 lower cable runs into the ESP32 DevKitC holder."
-   ]
+   "issues": []
   },
   "pairs by Auto-arrange": {
    "cats": {
@@ -888,9 +885,7 @@
      1
     ]
    },
-   "issues": [
-    "warns: The USB-serial adapter USB to Powered USB hub P5 cable runs into the USB charger holder."
-   ]
+   "issues": []
   },
   "rows of rails": {
    "cats": {
@@ -919,9 +914,7 @@
      0.77
     ]
    },
-   "issues": [
-    "warns: The USB-serial adapter USB to Powered USB hub P5 cable runs into the USB charger holder."
-   ]
+   "issues": []
   },
   "rpi4 DIN flat clip": {
    "cats": {
@@ -1148,15 +1141,11 @@
   },
   "usb_hubc lying flat": {
    "cats": {},
-   "issues": [
-    "fails Check: USB-C hub · Board: Box ports"
-   ]
+   "issues": []
   },
   "usb_hubc standing": {
    "cats": {},
-   "issues": [
-    "fails Check: USB-C hub · Board: Box ports"
-   ]
+   "issues": []
   },
   "whichever suits each": {
    "cats": {

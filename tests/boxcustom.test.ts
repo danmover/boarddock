@@ -52,7 +52,8 @@ describe('custom boxes: layout', () => {
         expect(c.conn!.plug).toEqual(connById(c.conn!.type).plug);
       }
       // (the USB-C hub's Ethernet socket was always too tall for its 14 mm: said the same way)
-      expect(boxProblems(s), k).toEqual(k === 'hubc' ? ['Right end: a RJ45 / Ethernet is taller than the box.'] : []);
+      // (the USB-C hub was 14 mm tall, under its 13.5 mm Ethernet jack and the 1 mm the check wants: now 16 mm)
+      expect(boxProblems(s), k).toEqual([]);
       expect(boxOutline(s)).toEqual(roundedRectLoop(s.l, s.w, Math.min(4, s.w / 6), 6).map(([x, y]) => [x + s.l / 2, y + s.w / 2]));
     }
     // an old project's box, as JSON: no refs, no placement fields
