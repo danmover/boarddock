@@ -42,6 +42,7 @@ export interface ConnSetup {
   cap: boolean; // snap-on cap that locks the plug into the cradle (separate small part)
   guard: boolean; // collar around the opening that shields the receptacle
   tie: boolean; // zip-tie anchor for the cable
+  use?: 'auto' | 'yes' | 'no'; // will a plug be in it: auto (a cable in the app, or how the board is powered), yes (you plug it in yourself), no (it stays empty); only ports in use get cradles, caps, collars and ties
   roll?: number; // edge entry: the socket turned about the plug's axis, degrees clockwise looking at it (90: on its side, 180: upside down); plug w and h above are already as it sits (w across, h up)
 }
 

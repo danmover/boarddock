@@ -1168,3 +1168,6 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 }
 /* narrow screens: the steps are numbered dots, but the one you're on keeps its name beside it */
 @media (max-width: 1180px) { .stepper button.on span.l { display: inline; font-size: 12px; } .stepper button.on { padding-right: 8px; } }
+/* Plugs: whether a port will have a plug in it (tap to change) */
+.usechip { border: 1px solid var(--line-2); background: transparent; color: var(--subtle); border-radius: 99px; padding: 1px 8px; font-size: 11px; cursor: pointer; white-space: nowrap; }
+.usechip.on { border-color: var(--accent-line); color: var(--accent); background: var(--accent-soft); }

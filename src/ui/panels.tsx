@@ -7,8 +7,9 @@ import { cableLines } from '../model/cablelist';
 import { addAccessory, addJLinks, addLinks, addSerialAdapters, addUartCables, plugPlaces, rebalancePower, removeLinks, setLink } from './linkOps';
 import { adapterFor, debugHeaders, isDebugPort, isProbe, isUartPort, markDebug, uartHeaders, uartPins, type DebugKind } from '../model/probes';
 import { Icon, I } from './icons';
-import { CONNECTORS, DEFAULT_FEATURES, HOLDER_PRESETS, MATERIALS, PRINTERS, connById, connSetup, headlessCradles, makeHeadless, setLayout } from '../model/library';
+import { CONNECTORS, DEFAULT_FEATURES, HOLDER_PRESETS, MATERIALS, PRINTERS, connById, connSetup, setLayout } from '../model/library';
 import { holdOf } from '../cad/grip';
+import { inUse, portUses, USE_TEXT } from '../model/portuse';
 import { printerByName, printSettings } from '../model/printers';
 import { TEMPLATES } from '../model/templates';
 import { ACCEPT } from '../import';
@@ -604,21 +605,27 @@ export function PlugsPanel() {
   const sel = useApp((s) => s.sel);
   const conns = activeModule(p).board.comps.filter((c) => c.conn && !c.hidden);
   const chosen = conns.filter((c) => isSel(sel, c.id));
+  const uses = portUses(p, activeModule(p));
   return (
     <div>
       <ModulePicker />
-      <p className="lede">Every connector gets an opening sized for its plug. Edge plugs can sit in a <b>cradle</b> with a snap-on <b>cap</b>. Tick several to set them together, or click a cradle in the 3D view.</p>
+      <p className="lede">Every connector gets an opening sized for its plug. The ones with a plug in them get a <b>cradle</b> with a snap-on <b>cap</b> (edge plugs) and a zip-tie anchor on the side the cable is pulled to; the rest are left bare, so nothing is printed that does no good. Tick several to set them together, or click a cradle in the 3D view.</p>
       <Section title={`Connectors · ${conns.length}`} right={<span className="btns"><AllBox items={conns.map((c) => ({ kind: 'comp' as const, id: c.id }))} /><button className="btn small" onClick={() => store.set({ view: 'editor' })}>+ Add</button></span>}>
         <div className="list">
-          {conns.map((c) => (
-            <SelRow key={c.id} it={{ kind: 'comp', id: c.id }}>
-              <span className="grow"><b>{c.ref}</b> <small>{connById(c.conn!.type).name}</small></span>
-              {c.conn!.entry === 'edge' ? <Chip>{c.conn!.cradle ? (c.conn!.cap ? 'cradle + cap' : 'cradle') : c.conn!.guard ? 'guard' : 'opening'}</Chip> : <Chip>from above</Chip>}
-            </SelRow>
-          ))}
+          {conns.map((c) => {
+            const why = uses.get(c.ref), on = inUse(why);
+            const cycle = () => edit((q) => { const x = q.modules[q.active].board.comps.find((y) => y.id === c.id); if (!x?.conn) return; const u = x.conn.use ?? 'auto'; if (u === 'auto') x.conn.use = on ? 'no' : 'yes'; else delete x.conn.use; });
+            return (
+              <SelRow key={c.id} it={{ kind: 'comp', id: c.id }}>
+                <span className="grow"><b>{c.ref}</b> <small>{connById(c.conn!.type).name}</small></span>
+                <button className={`usechip ${on ? 'on' : ''}`} title={`${on ? 'In use' : 'Empty'}: ${USE_TEXT[why ?? 'unused']}. Click to say ${(c.conn!.use ?? 'auto') !== 'auto' ? 'automatic again' : on ? 'it stays empty' : "you'll plug it in"}.`} onClick={(e) => { e.stopPropagation(); cycle(); }}>{on ? (why === 'cable' ? 'cable' : why === 'yours' ? 'you plug in' : why === 'supply' ? 'supply' : 'power') : 'empty'}</button>
+                {!on ? <Chip>bare</Chip> : c.conn!.entry === 'edge' ? <Chip>{c.conn!.cradle ? (c.conn!.cap ? 'cradle + cap' : 'cradle') : c.conn!.guard ? 'guard' : 'opening'}</Chip> : <Chip>from above</Chip>}
+              </SelRow>
+            );
+          })}
           {!conns.length && <p className="hint">No connectors found. Add them in the board editor (Connector tool, click an edge), or select a part and choose "Treat as connector".</p>}
         </div>
-        <Headless />
+        <p className="hint" style={{ marginTop: 8 }}>Tap a port's <i>empty</i> or <i>cable</i> tag to say whether you'll plug something into it yourself.</p>
       </Section>
       {chosen.length > 0 && <ConnEditor list={chosen} />}
       <CablesSection />
@@ -626,20 +633,6 @@ export function PlugsPanel() {
   );
 }
 
-/** Running the boards headless (no screen): offer to drop the cradles of unused HDMI and audio ports, on every board. */
-function Headless() {
-  const p = useApp((s) => s.project)!;
-  const drop = headlessCradles(p);
-  if (!drop.some((d) => d.module === activeModule(p).id)) return null;
-  const boards = [...new Set(drop.map((d) => d.module))].map((id) => shortName(p.modules.find((m) => m.id === id)!.board.name));
-  const go = () => { let n = 0; edit((q) => { n = makeHeadless(q); }); toast(`Dropped ${n} HDMI and audio cradle${n > 1 ? 's' : ''} (and their caps) on ${boards.length > 3 ? `${boards.length} boards` : boards.join(', ')}. ⌘Z brings them back.`); };
-  return (
-    <div className="btns" style={{ marginTop: 8, alignItems: 'center' }}>
-      <span className="hint grow" style={{ margin: 0 }}>Running {boards.length > 1 ? 'them' : 'it'} headless (no screen)? The HDMI and audio cradles only help with a cable in them.</span>
-      <button className="btn small" title={`Drop the cradles of the HDMI and audio ports with nothing connected, on ${boards.join(', ')}`} onClick={go}>Go headless</button>
-    </div>
-  );
-}
 
 /** Every cable in the project: what goes where, how long, what to buy. */
 const NO_CABLES: NonNullable<NonNullable<ReturnType<typeof store.get>['result']>['report']['cables']> = [];
@@ -879,6 +872,10 @@ function ConnEditor({ list }: { list: Comp[] }) {
           <Num label="Body length" value={mixed(common(cs, (c) => c.plug.len))} min={2} onChange={(v) => set((x) => { x.conn!.plug.len = v; })} />
           <Num label="Cable Ø" value={mixed(common(cs, (c) => c.plug.cable))} min={0} onChange={(v) => set((x) => { x.conn!.plug.cable = v; })} />
         </div>
+      </Section>
+      <Section title="Will a plug be in it?">
+        <Seg value={common(cs, (c) => c.use ?? 'auto') ?? ('' as 'auto')} options={[['auto', 'Automatic'], ['yes', 'Yes, I plug it in'], ['no', 'No, it stays empty']]} onChange={(v) => set((x) => { if (v === 'auto') delete x.conn!.use; else x.conn!.use = v; })} />
+        <p className="hint">Only ports with a plug in them get a cradle, cap, collar or zip-tie anchor: nothing is printed for a port you never use (its opening in the wall is still there). Automatic counts a port as used when a cable to it is in the app, or it is how the board gets power. Say Yes for what you'll plug in yourself: a screen, a keyboard, a supply off the rack.</p>
       </Section>
       <Section title="Protection">
         <Check label="Cradle: carries the plug body outside the wall" value={flag('cradle')} onChange={(v) => set((x) => { if (x.conn!.entry === 'edge') x.conn!.cradle = v; })} />

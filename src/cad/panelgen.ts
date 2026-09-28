@@ -15,6 +15,7 @@ import { bbox, round } from '../geom/poly';
 import { basis, dir, I4, inv, mul, pt as ptM, rotZ, tr, type M4 } from '../geom/mat';
 import { filletPath, leadStub, moveFx, powerFx, ribbonMesh, sphereMesh, tubeMesh } from './boardviz';
 import { poweredBoards } from '../model/lights';
+import { inUse, portUses, type UseWhy } from '../model/portuse';
 import { baseRef, cableFlow, cableNumbers, cablePurpose, cableToBuy, findModule, KIND_COLOR, KIND_NAME, offRackModule, offRackTo, plugRole, plugsOf, refText, shortName } from '../model/links';
 import { isPlugPack } from '../model/powerdata';
 import { cableTag } from './cabletag';
@@ -485,11 +486,13 @@ export function generatePanel(p: Project): GenResult {
   // plugs whose cable leaves the rack: one cabled to your computer or to a plug pack in an outlet, a board's cradled
   // plug with nothing in the rack on the other end, a box's supply
   const toOff = new Set((p.links ?? []).flatMap((l) => [[l.a, l.b], [l.b, l.a]]).filter(([, o]) => offRackModule(findModule(p, o.module))).map(([me]) => `${me.module}/${baseRef(me.ref)}`));
+  const uses = new Map<string, Map<string, UseWhy>>();
   const offRack = (module: string, ref: string) => {
     const m = mods.get(module)?.m, c = m?.board.comps.find((x) => x.ref === ref);
     if (!m || !c?.conn) return false;
     if (toOff.has(`${module}/${ref}`)) return true;
-    return m.board.kind === 'box' ? ['other', 'mains-in'].includes(plugRole(m, c)) : !!c.conn.cradle;
+    // a port in use with no cable in the app: you plug it in yourself (a screen, a supply), or it's how the board is powered
+    return inUse((uses.get(module) ?? uses.set(module, portUses(p, m)).get(module)!).get(baseRef(ref)));
   };
   // a mains plug whose lead goes to the wall: it goes in last of all, in the last step
   const toWall = (module: string, ref: string) => { const m = mods.get(module)?.m, c = m?.board.comps.find((x) => x.ref === baseRef(ref)); return !!m && !!c && plugRole(m, c) === 'mains-in' && !linked.has(`${module}/${ref}`); };

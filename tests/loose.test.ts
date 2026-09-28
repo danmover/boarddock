@@ -136,7 +136,13 @@ describe('plugs and leads in 3D', () => {
     p.links = numberLinks(autoLinks(p));
     const r0 = generate(p);
     const pi = p.modules[0].id;
-    const leads = r0.ghosts.filter((g) => g.name.startsWith('off-rack cable'));
+    // nothing in the Pi's HDMI and audio ports by default: no leads there, and no cradles printed for them
+    const leadsOf = (r: typeof r0) => r.ghosts.filter((g) => g.name.startsWith('off-rack cable'));
+    expect(leadsOf(r0).filter((g) => g.tag?.module === pi && g.tag.refs?.[0] !== 'J_PWR')).toEqual([]);
+    // say a screen and speakers go in them: then they are
+    for (const c of p.modules[0].board.comps) if (/HDMI|AUDIO/.test(c.ref) && c.conn) c.conn.use = 'yes';
+    const r1 = generate(p);
+    const leads = leadsOf(r1);
     const pis = leads.filter((g) => g.tag?.module === pi);
     // (its power socket too, if the charger here is too weak for it: that lead goes to a supply off the rack)
     const av = pis.filter((g) => g.tag?.refs?.[0] !== 'J_PWR');
@@ -150,8 +156,8 @@ describe('plugs and leads in 3D', () => {
     expect(headlessCradles(p).map((d) => d.ref).sort()).toEqual(['AUDIO', 'HDMI0', 'HDMI1']);
     expect(makeHeadless(p)).toBe(3);
     expect(p.modules[0].board.comps.filter((c) => c.conn?.cradle || (c.conn?.cap && /HDMI|AUDIO/.test(c.ref))).map((c) => c.ref)).toEqual(['J_PWR']);
-    const r1 = generate(p);
-    expect(r1.ghosts.some((g) => g.tag?.kind === 'plug' && g.tag.module === pi && /HDMI/.test(g.tag.refs?.[0] ?? ''))).toBe(false);
+    const r2 = generate(p);
+    expect(r2.ghosts.some((g) => g.tag?.kind === 'plug' && g.tag.module === pi && /HDMI/.test(g.tag.refs?.[0] ?? ''))).toBe(false);
   }, 300_000);
 
   it('cable badges put where the cable goes first', () => {

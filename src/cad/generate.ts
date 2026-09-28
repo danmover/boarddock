@@ -7,6 +7,7 @@ import { DEBUG_TYPES, isDebugPort, isUartPort } from '../model/links';
 import { headerPins, UART_WIRES, uartPins } from '../model/probes';
 import { baseRef, isAccessory } from '../model/links';
 import { DEFAULT_FEATURES, MATERIALS } from '../model/library';
+import { usedRefs } from '../model/portuse';
 import { bbox, centroid, compRect, extentAlong, inside, rad, rayExit, round, segDist } from '../geom/poly';
 import type { CS, MF } from './kernel';
 import { box, circle2, csLoops, cyl, ext, extCh, freeAll, K, orientedBox, poly, rect2, roundCS, sweepTZ, toMesh, unionCS, unionMF } from './kernel';
@@ -36,6 +37,7 @@ export interface Job {
   bolted?: { b: Board; dx: number; dy: number; dz: number; mid: string }[]; // boards screwed on top on standoffs (shown, no holder of their own)
   mount?: MountSettings; // overrides p.mount (panel flat clips)
   dock?: { edge: EdgeName; fit?: number; shift?: number; lie?: 'flat' }; // holder plugs into a rail dock with this board edge (shift: its tongue that far off the middle; lie: flat, by an ear on that edge)
+  used?: string[]; // the plugs that will have something in them (set by buildModule from the project): only they get cradles, caps, collars and ties
 }
 
 interface Ctx {
@@ -154,7 +156,9 @@ const CACHE_MAX = 48;
 
 export function buildModule(job: Job): ModuleOut {
   const { p } = job;
-  const key = JSON.stringify([job.mi, p.modules[job.mi]?.id, job.b, job.H, job.din, job.stand, job.hooks, job.name, job.level ?? 0, job.mount ?? null, job.dock ?? null, job.bolted ?? null,
+  const mod = p.modules[job.mi];
+  if (mod && mod.board === job.b) job = { ...job, used: usedRefs(p, mod) };
+  const key = JSON.stringify([job.used ?? null, job.mi, p.modules[job.mi]?.id, job.b, job.H, job.din, job.stand, job.hooks, job.name, job.level ?? 0, job.mount ?? null, job.dock ?? null, job.bolted ?? null,
     job.din ? p.mount : null, job.stand ? p.stand : null, p.printer.bed]);
   const hit = cache.get(key);
   if (hit) { cache.delete(key); cache.set(key, hit); return hit; }
@@ -401,11 +405,13 @@ function connectors(C: Ctx) {
   const H = C.H;
   const F = { ...DEFAULT_FEATURES, ...(H.feat ?? {}) };
   const specs: CradleSpec[] = [];
+  // (a plug nobody will use gets no protection: its opening in the wall is still there)
+  const used = (c: Comp) => !C.job.used || C.job.used.includes(c.ref);
   for (const c of b.comps) {
     const cn = c.conn;
     if (!cn || c.hidden) continue;
     if (cn.entry === 'top') {
-      if (cn.tie && F.ties) tieAnchor(C, [c.x, c.y], null, c.ref);
+      if (cn.tie && F.ties && used(c)) tieAnchor(C, [c.x, c.y], null, c.ref);
       const zTop = (c.side === 'top' ? zt + c.h : zb - c.h) + cn.plug.len + 0.6;
       // a port in the top of a box gets its plug drawn standing in it, a debug header its probe's IDC socket (along
       // the header's long side)
@@ -454,6 +460,7 @@ function connectors(C: Ctx) {
       const off = c.side === 'top' ? 3.9 : -3.9;
       C.plugs.push({ module: C.mid, ref: c.ref, p: [pe[0], pe[1], zAx - off], d: [d[0], d[1], 0], cable: cn.plug.cable, open }, { module: C.mid, ref: `${c.ref}:2`, p: [pe[0], pe[1], zAx + off], d: [d[0], d[1], 0], cable: cn.plug.cable, open });
     } else C.plugs.push({ module: C.mid, ref: c.ref, p: [pe[0], pe[1], zAx], d: [d[0], d[1], 0], cable: cn.plug.cable, w: side ? [0, 0, 1] : [-d[1], d[0], 0], open });
+    if (!used(c)) continue;
     if (cn.cradle && F.cradles && ph > 0.5) {
       specs.push({ ref: c.ref, mouth, d, sEdge, toOut, zAx, pw, ph, pl, cap: cn.cap && F.caps, angle: cn.angle });
     } else if (cn.guard && F.guards) {
@@ -612,6 +619,19 @@ function strapLoops(C: Ctx) {
   C.checks.push({ group: 'Holder', name: 'Strap loops', value: '4', status: 'info', detail: 'thread a 12 mm hook-and-loop strap (or two zip ties) over the box through the loops on each long side' });
 }
 
+/**
+ * Which way (board frame) the cables leaving this holder are pulled: in a rack, down to the rails, that is towards the
+ * edge the board docks by (standing up), or towards the edge that faces the rail on a loose holder's clip; none when
+ * the board lies flat (they drop straight off it).
+ */
+function pullDir(C: Ctx): V2 | null {
+  const E: Record<EdgeName, V2> = { bottom: [0, -1], top: [0, 1], left: [-1, 0], right: [1, 0] };
+  if (C.job.dock) return C.job.dock.lie ? null : E[C.job.dock.edge];
+  const M = C.job.mount ?? C.p.mount;
+  if (C.job.din && M.kind === 'din' && M.mode !== 'flat') return E[M.edge];
+  return null;
+}
+
 function tieAnchor(C: Ctx, at: V2, edgeConn: { d: V2; half: number; sEdge: number } | null, ref: string) {
   // find the nearest wall point and its outward normal
   const b = C.b, H = C.H;
@@ -622,6 +642,9 @@ function tieAnchor(C: Ctx, at: V2, edgeConn: { d: V2; half: number; sEdge: numbe
     // that overhangs the edge would leave it floating clear of the rim), on the side with more room
     const e = add(at, edgeConn.d, edgeConn.sEdge);
     const cand = [add(e, t, edgeConn.half + 4), add(e, t, -(edgeConn.half + 4))];
+    // on the side the cable will be pulled to (towards the rails it runs down to), where the tie takes the strain
+    const pull = pullDir(C);
+    if (pull) cand.sort((u, v) => ((v[0] - e[0]) * pull[0] + (v[1] - e[1]) * pull[1]) - ((u[0] - e[0]) * pull[0] + (u[1] - e[1]) * pull[1]));
     q = cand.find((pt) => !C.blocked.some((bl) => inside(pt, bl.poly))) ?? cand[0];
     n = edgeConn.d;
   } else {

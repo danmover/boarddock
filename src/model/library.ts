@@ -272,7 +272,7 @@ export function makeHeadless(p: Project): number {
   const drop = headlessCradles(p);
   for (const d of drop) {
     const c = p.modules.find((m) => m.id === d.module)?.board.comps.find((x) => x.ref === d.ref);
-    if (c?.conn) { c.conn.cradle = false; c.conn.cap = false; }
+    if (c?.conn) { c.conn.cradle = false; c.conn.cap = false; c.conn.use = 'no'; } // no screen: they stay empty
   }
   return drop.length;
 }

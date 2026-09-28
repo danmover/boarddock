@@ -7,6 +7,7 @@ import { box, cyl, freeAll, poly, rect2, toMesh, unionMF } from './kernel';
 import { generatePanel, moveAnim } from './panelgen';
 import { leadStub, moveFx, powerFx } from './boardviz';
 import { poweredBoards } from '../model/lights';
+import { inUse, portUses } from '../model/portuse';
 import { offRackTo, plugRole } from '../model/links';
 import { dir as dirM, pt as ptM } from '../geom/mat';
 import { printability } from './export';
@@ -178,7 +179,8 @@ function generateLoose(p: Project): GenResult {
     // lead hangs to the table and runs off towards the wall.
     const used = (ref: string) => (p.links ?? []).some((l) => [l.a, l.b].some((e) => e.module === mods[i].id && e.ref === ref));
     const supply = (c: Comp) => mods[i].board.kind === 'box' && ['other', 'mains-in'].includes(plugRole(mods[i], c));
-    const wanted = (ref: string) => { const c = mods[i].board.comps.find((x) => x.ref === ref.replace(/:2$/, '')); return !!c?.conn && (used(ref) || (mods[i].board.kind === 'box' ? supply(c) : !!c.conn.cradle)); };
+    const uses = portUses(p, mods[i]);
+    const wanted = (ref: string) => { const c = mods[i].board.comps.find((x) => x.ref === ref.replace(/:2$/, '')); return !!c?.conn && (used(ref) || inUse(uses.get(c.ref))); };
     let powered: Set<string> | undefined;
     for (const g of o.ghosts) {
       if (g.tag?.kind === 'plug') { const r = g.tag.refs?.[0] ?? ''; if (!wanted(/upper/.test(g.name) ? `${r}:2` : r) && !(!/upper|lower/.test(g.name) && wanted(`${r}:2`))) continue; }
