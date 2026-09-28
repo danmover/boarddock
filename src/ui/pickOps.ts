@@ -8,7 +8,7 @@ import { dropModule, edit, select, store, toast, type SelItem } from '../state';
 import { materialise } from './panelOps';
 
 export const FEATURE_NAME: Record<NonNullable<SelItem['fkind']>, string> = {
-  cradle: 'plug cradle', cap: 'plug cap', guard: 'receptacle guard', tie: 'cable-tie anchor', finger: 'snap finger', label: 'label',
+  cradle: 'plug cradle', cap: 'plug cap', guard: 'receptacle guard', tie: 'cable-tie anchor', spring: 'spring clip', label: 'label',
   pin: 'pin', seat: 'edge seat', dock: 'dock tongue', tower: 'stack tower', stand: 'stand socket', notch: 'finger notch', rim: 'rim',
   plug: 'plug', clip: 'DIN clip',
 };
@@ -60,7 +60,7 @@ export function describe(p: Project, it: SelItem): { title: string; sub: string;
       const m = mod(it.module);
       const name = FEATURE_NAME[it.fkind ?? 'rim'];
       const refs = it.fkind === 'pin' ? (it.refs ?? []).map((id) => `hole ${(m?.board.holes.findIndex((h) => h.id === id) ?? -1) + 1}`).join(', ') : (it.refs ?? []).join(' + ');
-      const all: Partial<Record<string, string>> = { finger: 'Remove all snap fingers', notch: 'Remove the finger notches', label: 'Remove the label', stand: 'Remove the stand', clip: 'Remove the DIN clip' };
+      const all: Partial<Record<string, string>> = { spring: 'Hold it with snap pins instead', notch: 'Remove the finger notches', label: 'Remove the label', stand: 'Remove the stand', clip: 'Remove the DIN clip' };
       const removable = it.fkind === 'seat' || it.fkind === 'rim' ? null : it.fkind === 'dock' ? 'Take off the panel' : it.fkind === 'tower' ? 'Unstack' : it.fkind === 'plug' ? 'Ignore this connector' : it.fkind === 'pin' ? 'Remove this pin (hole left free)' : all[it.fkind ?? ''] ?? `Remove this ${name}`;
       return { title: `${refs ? refs + ' ' : ''}${name}`, sub: `${m?.board.name ?? ''}${p.modules.length > 1 ? ` · board ${idx(it.module) + 1}` : ''}`, color: it.fkind === 'cap' ? '#f2c94c' : it.fkind === 'plug' ? 'var(--copper)' : 'var(--accent)', removable };
     }
@@ -107,7 +107,7 @@ export function removeItems(items: SelItem[]) {
           case 'tie': for (const c of comps(it.refs)) if (c.conn) c.conn.tie = false; break;
           case 'plug': for (const c of comps(it.refs)) c.hidden = true; break;
           case 'pin': for (const h of m.board.holes) if (it.refs?.includes(h.id)) { h.role = 'free'; h.why = 'switched off in the 3D view'; } break;
-          case 'finger': H.tabs = 'off'; break;
+          case 'spring': H.hold = 'pins'; break;
           case 'label': H.label = ''; break;
           case 'notch': H.notches = false; break;
           case 'stand': p.stand.enabled = false; break;

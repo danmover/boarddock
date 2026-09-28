@@ -176,7 +176,7 @@ function generateLoose(p: Project): GenResult {
     }
     steps.push({ seq: b0 + 2, text: mode === 'stack' && i > 0 ? `Press the ${nm} holder onto the corner towers of the one below.` : `Set out the ${nm} holder.` });
     if (o.parts.some((x) => x.tag?.kind === 'clip')) steps.push({ seq: b0 + 3, text: 'Press the DIN clip into the holder until both hooks click (any of four ways round).' });
-    steps.push({ seq: b0 + 4, text: `Snap the ${nm} into its holder: it clicks under the fingers or onto the pins.` });
+    steps.push({ seq: b0 + 4, text: `Snap the ${nm} into its holder: it clicks under the spring clips or onto the pins.` });
     if (o.ghosts.some((g) => g.tag?.kind === 'board' && g.tag.module !== mods[i].id)) steps.push({ seq: b0 + 5, text: `Bolt the board that sits on the ${nm} onto its standoffs.` });
     features.push(...o.features);
     frames[mods[i].id] = T[i];

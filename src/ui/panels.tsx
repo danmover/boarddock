@@ -8,6 +8,7 @@ import { addJLinks, addLinks, addSerialAdapters, addUartCables, removeLinks, set
 import { adapterFor, debugHeaders, isDebugPort, isProbe, isUartPort, markDebug, uartHeaders, uartPins, type DebugKind } from '../model/probes';
 import { Icon, I } from './icons';
 import { CONNECTORS, DEFAULT_FEATURES, HOLDER_PRESETS, MATERIALS, PRINTERS, connById, connSetup } from '../model/library';
+import { holdOf } from '../cad/grip';
 import { printerByName, printSettings } from '../model/printers';
 import { TEMPLATES } from '../model/templates';
 import { ACCEPT } from '../import';
@@ -190,7 +191,7 @@ function CopyHolder() {
   const copy = (ids: string[], what: string) => {
     edit((q) => {
       for (const m of q.modules) if (ids.includes(m.id) && m.id !== me.id) {
-        Object.assign(m.holder, structuredClone({ style: H.style, wall: H.wall, base: H.base, gap: H.gap, pattern: H.pattern, cell: H.cell, rib: H.rib, wallAbove: H.wallAbove, chamfer: H.chamfer, material: H.material, feat: H.feat, tabs: H.tabs, tabLip: H.tabLip, notches: H.notches, release: H.release }));
+        Object.assign(m.holder, structuredClone({ style: H.style, wall: H.wall, base: H.base, gap: H.gap, pattern: H.pattern, cell: H.cell, rib: H.rib, wallAbove: H.wallAbove, chamfer: H.chamfer, material: H.material, feat: H.feat, tabs: H.tabs, tabLip: H.tabLip, hold: H.hold, grip: H.grip, notches: H.notches, release: H.release }));
         if (H.color) m.holder.color = H.color; else delete m.holder.color;
       }
     });
@@ -870,7 +871,7 @@ export function HolderPanel() {
 
 /**
  * Every holder feature in one place, each with what this holder actually got: a switch that can't do anything here
- * (no free wall for a label, plugs where fingers would go) says why instead of silently changing nothing.
+ * (no free wall for a label, plugs where clips would go) says why instead of silently changing nothing.
  */
 function HolderFeatures() {
   const p = useApp((s) => s.project)!;
@@ -888,7 +889,10 @@ function HolderFeatures() {
   const caps = (res?.parts ?? []).filter((x) => x.tag?.module === m.id && x.tag?.kind === 'cap').reduce((a, x) => a + x.qty, 0);
   const conns = m.board.comps.filter((c) => c.conn && !c.hidden).length;
   const st = (on: boolean, n: number, what: string, none: string) => (!res || building ? '…' : !on ? 'off' : n ? `${n} ${what}${n > 1 ? 's' : ''}` : none);
-  const fingers = check(/^Wall snap fingers/), pins = check(/^Snap pins/), lab = check(/^Label$/);
+  const clipsC = check(/^Spring clips/), pins = check(/^Snap pins/), lab = check(/^Label$/);
+  const hold = holdOf(H);
+  const nClips = clipsC ? +(/\((\d+)\)/.exec(clipsC.name)?.[1] ?? 0) : 0, nPins = pins ? +(/\((\d+),/.exec(pins.name)?.[1] ?? 0) : 0;
+  const heldBy = [nClips ? `${nClips} spring clips` : '', nPins ? `${nPins} snap pins` : ''].filter(Boolean).join(' + ') || 'nothing yet';
   const Row = ({ title, status, why, children }: { title: string; status: string; why?: string; children: ReactNode }) => (
     <div className="featrow">
       <div className="featrow-l"><b>{title}</b><small title={why}>{status}{why ? <em> · {why}</em> : null}</small></div>
@@ -904,10 +908,13 @@ function HolderFeatures() {
           <Row title="Snap-on plug caps" status={F.cradles ? st(F.caps, caps, 'cap', 'none needed') : 'need the cradles'} why={!F.cradles ? 'caps clip onto the cradles' : undefined}>{toggle(F.caps && F.cradles, (v) => setF('caps', v), !F.cradles)}</Row>
           <Row title="Receptacle guards" status={st(F.guards, count('guard'), 'guard', 'none needed')}>{toggle(F.guards, (v) => setF('guards', v))}</Row>
           <Row title="Cable-tie anchors" status={st(F.ties, count('tie'), 'anchor', 'none needed')}>{toggle(F.ties, (v) => setF('ties', v))}</Row>
-          <Row title="Wall snap fingers" status={!res || building ? '…' : H.tabs === 'off' ? 'off' : fingers ? (fingers.value.includes('strain') ? `${count('finger')} finger${count('finger') === 1 ? '' : 's'}` : fingers.value) : 'not needed'} why={fingers && !fingers.value.includes('strain') ? (pins ? 'snap pins in the holes hold it' : fingers.detail) : undefined}>
-            <Seg value={H.tabs} options={[['auto', 'Auto'], ['on', 'Always'], ['off', 'Off']]} onChange={(v) => set((h) => { h.tabs = v; })} />
+          <Row title="Hold the board with" status={!res || building ? '…' : heldBy} why={clipsC && !nClips ? clipsC.detail : undefined}>
+            <Seg value={hold} options={[['auto', 'Auto'], ['clips', 'Clips'], ['pins', 'Pins'], ['both', 'Both']]} onChange={(v) => set((h) => { h.hold = v; })} />
           </Row>
-          {H.tabs !== 'off' && <div className="featsub"><Num label="Finger lip" value={H.tabLip} min={0.3} max={1.2} step={0.05} onChange={(v) => set((h) => { h.tabLip = v; })} /><p className="hint">Fingers are cut into the wall and bend sideways, within the print layers. Auto: fingers where there is room, snap pins in the mounting holes otherwise.</p></div>}
+          <div className="featsub">
+            {hold !== 'pins' && <div className="featrow"><div className="featrow-l"><b>Clip strength</b><small>{clipsC && nClips ? `${clipsC.value}; ${check(/^Press-in force$/)?.value ?? ''} to press in` : '…'}</small></div><div className="featrow-r"><Seg value={H.grip ?? 'firm'} options={[['firm', 'Firm'], ['gentle', 'Gentle']]} onChange={(v) => set((h) => { h.grip = v; })} /></div></div>}
+            <p className="hint">Spring clips stand up round the board's edges and bend sideways, within the print layers; once the board is in they carry no load. Snap pins grip it by its mounting holes. Auto uses clips where two fit facing each other, snap pins where they don't.</p>
+          </div>
           {!frame && <Row title="Finger notches" status={st(H.notches, count('notch'), 'notch', 'no free wall')}>{toggle(H.notches, (v) => set((h) => { h.notches = v; }))}</Row>}
           <Row title="Engraved label" status={!res || building ? '…' : !H.label.trim() ? 'off' : lab ? lab.value : '…'} why={lab && lab.value === 'left off' ? lab.detail : lab?.detail?.includes('did not fit') ? 'the full name did not fit' : undefined}>
             {toggle(!!H.label.trim(), (v) => set((h) => { h.label = v ? m.board.name.slice(0, 40) : ''; }))}
@@ -916,7 +923,7 @@ function HolderFeatures() {
           <p className="hint">Switching a kind of feature off here keeps each plug's own choice in the Plugs step for when you switch it back on.{frame ? ' Frame holders are open underneath: push the board out from below, no notches needed.' : ''}</p>
         </>
       )}
-      {box && <p className="hint" style={{ marginTop: 0 }}>A box sits in low guards and is strapped down, so it has no fingers, notches or label. Set its ports under Board › Box.</p>}
+      {box && <p className="hint" style={{ marginTop: 0 }}>A box sits in low guards and is strapped down, so it has no clips, notches or label. Set its ports under Board › Box.</p>}
     </Section>
   );
 }
@@ -1416,7 +1423,7 @@ function printNotes(p: Project, res: Res, nPlates: number, tot: { g: number; m: 
     '',
     'Assembly:',
     '  1. Press the DIN clip into the holder until both hooks click (any of 4 orientations).',
-    '  2. Drop the board in: it snaps under the wall fingers (or onto the snap pins).',
+    '  2. Press the board in: it clicks under the spring clips (or onto the snap pins).',
     ...(p.modules.length > 1 ? [p.arrange.mode === 'stack' ? '     Stack: press each layer onto the corner pegs of the layer below.' : p.arrange.mode === 'side' ? '     Side by side: drop a link bar into each pair of facing slots.' : '     Back to back: push the snap rivets through both bases.'] : []),
     '  3. Hook the clip over the top of the rail and push the bottom in until it clicks.',
     '  4. To remove: pull the tab towards you; the holder tilts off.',
@@ -1542,7 +1549,7 @@ function CleanUp() {
         <button className="btn small ghost" disabled={!m.original} onClick={() => each((x) => { if (x.original) x.board = structuredClone(x.original); })}>↺ Revert to the import</button>
       </div>
       {p.modules.length > 1 && <div style={{ marginTop: 8 }}><Check label="Apply to every board" value={all} onChange={setAll} /></div>}
-      <p className="hint">Small parts only matter under the board or near the walls; hiding them frees room for snap fingers and labels. Everything here can be undone (⌘Z).</p>
+      <p className="hint">Small parts only matter under the board or near the walls; hiding them frees room for spring clips and labels. Everything here can be undone (⌘Z).</p>
     </Section>
   );
 }
@@ -1632,24 +1639,24 @@ function HoleWizard() {
   );
 }
 
-/** A board with no holes: what holds it, from the build (the snap fingers in its walls), and what to do if nothing does. */
+/** A board with no holes: what holds it, from the build (the spring clips at its edges), and what to do if nothing does. */
 function NoHoles() {
   const p = useApp((s) => s.project)!;
   const res = useApp((s) => s.result);
   const id = activeModule(p).id;
-  const fingers = res?.report.checks.find((c) => c.module === id && /^Wall snap fingers \(\d+\)/.test(c.name));
+  const clipsC = res?.report.checks.find((c) => c.module === id && /^Spring clips \(\d+\)/.test(c.name));
   // warnings name their boards ("Pico, Pico 2 and Nano: Nothing clips…") or none when there is one board
   const loose = res?.report.warnings.some((w) => {
     const i = w.indexOf('Nothing clips this board in');
     if (i < 0) return false;
     return i === 0 ? p.modules.length === 1 : w.slice(0, i - 2).split(/, | and /).includes(activeModule(p).board.name);
   });
-  const n = fingers ? +(/\((\d+)\)/.exec(fingers.name)?.[1] ?? 0) : 0;
+  const n = clipsC ? +(/\((\d+)\)/.exec(clipsC.name)?.[1] ?? 0) : 0;
   return (
     <>
-      <p className="hint" style={{ marginTop: 0 }}>No holes: the board sits on seats along its edges and snap fingers in the wall hold it down.{fingers ? ` Here ${n} finger${n === 1 ? '' : 's'} hold it (${fingers.value} when it clicks in; Check has the details).` : ''}</p>
-      {loose && <div className="warns"><div>Nothing holds this board in yet: plugs{p.layout === 'panel' ? ', the dock' : ''} and the label take its free edges. Turn off a plug cradle or the label (Plugs, Holder), or set the snap fingers to Always (Holder) to try short fingers between the plugs.</div></div>}
-      {!loose && n === 2 && <p className="hint">Two fingers hold it: press it down until both click. Setting the snap fingers to Always (Holder) adds short ones between the plugs where they fit.</p>}
+      <p className="hint" style={{ marginTop: 0 }}>No holes: the board sits on seats along its edges and spring clips at its edges hold it down.{clipsC ? ` Here ${n} clip${n === 1 ? '' : 's'} hold it (${clipsC.value}; Check has the details).` : ''}</p>
+      {loose && <div className="warns"><div>Nothing holds this board in yet: plugs{p.layout === 'panel' ? ', the dock' : ''} and the label take its free edges. Turn off a plug cradle or the label (Plugs, Holder) to free an edge for the clips.</div></div>}
+      {!loose && n >= 2 && <p className="hint">Press it down until the clips click over its edge. To take it out, pull a clip's ear back with a fingernail and lift that side.</p>}
     </>
   );
 }

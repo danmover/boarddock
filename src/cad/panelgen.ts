@@ -220,7 +220,7 @@ export function generatePanel(p: Project): GenResult {
           // with the release button left at its default, a button beside the board frees the far edge for fingers
           if (!found && !lie && m.holder.release == null) for (const e of [edge, ...others.map((c) => c.e)]) {
             const o = build(e, { ...m.holder, release: 'side' });
-            if (!loose(o)) { edge = e; out = { ...o, checks: o.checks.map((c) => (c.name === 'Release button' ? { ...c, detail: 'beside the board, so the far edge is free for the snap fingers that hold it (it has no holes for pins)' } : c)) }; break; }
+            if (!loose(o)) { edge = e; out = { ...o, checks: o.checks.map((c) => (c.name === 'Release button' ? { ...c, detail: 'beside the board, so the far edge is free for the spring clips that hold it (it has no holes for pins)' } : c)) }; break; }
           }
         }
         const M = mt.kind === 'dock' ? slotMatrix(mt.turn, slot, out.dockM!) : mul(clipToRail(p.mount.clipWidth), inv(out.clipT ?? I4));
@@ -512,7 +512,7 @@ export function generatePanel(p: Project): GenResult {
         const IN: Motion = { seq: b0 + 4, dir: [0, 0, 1], dist: 70, style: 'snap' };
         const nm = s.mod.board.name, box = s.mod.board.kind === 'box';
         if (hasRod) steps.push({ seq: b0 + 1, text: `Slide the release rod into the spine of the ${nm} holder.` });
-        steps.push({ seq: b0 + 2, text: isProbe(s.mod) ? `Slide the ${nm} down into its slot, plugs out.` : box ? `Set the ${nm} into its holder and strap it down with a hook-and-loop strap through the loops.` : `Snap the ${nm} into its holder: it clicks under the fingers or onto the pins.` });
+        steps.push({ seq: b0 + 2, text: isProbe(s.mod) ? `Slide the ${nm} down into its slot, plugs out.` : box ? `Set the ${nm} into its holder and strap it down with a hook-and-loop strap through the loops.` : `Snap the ${nm} into its holder: it clicks under the spring clips or onto the pins.` });
         if (stacked) steps.push({ seq: b0 + 3, text: [...s.riders].map((x) => (layers.some((L) => L.mod === x) ? (isProbe(x) ? `Press the next slot onto the corner towers and slide the ${x.board.name} down into it.` : `Press the ${x.board.name} holder onto the corner towers.`) : `Bolt the ${x.board.name} onto the ${nm} on its standoffs.`)).join(' ') });
         steps.push({ seq: b0 + 4, text: q.mt.kind === 'dock' ? `Push the ${nm} holder straight into its dock until the latch clicks.` : layers[0].out.parts.some((pt) => pt.id.endsWith('_clip2')) ? `Press both halves of the ${nm} holder onto their rail clips, end to end.` : `Press the ${nm} holder onto its rail clip.` });
         const dn = edgeNormal(s.edge);
