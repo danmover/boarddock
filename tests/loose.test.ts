@@ -161,6 +161,26 @@ describe('plugs and leads in 3D', () => {
     expect(r2.ghosts.some((g) => g.tag?.kind === 'plug' && g.tag.module === pi && /HDMI/.test(g.tag.refs?.[0] ?? ''))).toBe(false);
   }, 300_000);
 
+  it('draws no lead from the empty socket of a stacked pair', async () => {
+    await initKernel();
+    // an Uno on the lower USB2 socket of a Pi 4, nothing in the upper one: the pair counted as in use as a whole, so
+    // the empty upper socket got a plug and a lead "to a computer", through the Uno's cable beside it
+    const p = newProject(T('rpi4'));
+    const uno = newModule(T('uno'));
+    p.modules.push(uno);
+    const pi = p.modules[0];
+    p.links = numberLinks([{ id: 'l1', a: { module: uno.id, ref: 'USB' }, b: { module: pi.id, ref: 'USB2' }, kind: 'usb' }]);
+    const r = generate(p);
+    const plugs = r.ghosts.filter((g) => g.tag?.kind === 'plug' && g.tag.module === pi.id && g.tag.refs?.[0] === 'USB2');
+    expect(plugs.some((g) => /lower/.test(g.name))).toBe(true);
+    expect(plugs.filter((g) => /upper/.test(g.name))).toEqual([]);
+    expect(r.ghosts.filter((g) => /^off-rack cable/.test(g.name) && /USB2/.test(g.name)).map((g) => g.name)).toEqual([]);
+    // the same socket cabled off the rack (to your computer) still gets its lead
+    p.links = numberLinks([...p.links, { id: 'l2', a: { module: pi.id, ref: 'USB2:2' }, b: { module: '@pc', ref: 'USB' }, kind: 'usb' }]);
+    const r2 = generate(p);
+    expect(r2.ghosts.filter((g) => /^off-rack cable/.test(g.name) && /USB2:2/.test(g.name)).length).toBe(1);
+  }, 120_000);
+
   it('cable badges put where the cable goes first', () => {
     expect(badgeText('Power: Powerboard, 4 outlets + USB → Pi 5')).toBe('Power → Pi 5');
     expect(badgeText('Power: Powerboard, 4 outlets + USB → Pi 5 2')).toBe('Power → Pi 5 2');

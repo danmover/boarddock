@@ -485,7 +485,9 @@ export function generatePanel(p: Project): GenResult {
   const linked = new Set(live.flatMap((l) => [`${l.a.module}/${l.a.ref}`, `${l.b.module}/${l.b.ref}`]));
   // plugs whose cable leaves the rack: one cabled to your computer or to a plug pack in an outlet, a board's cradled
   // plug with nothing in the rack on the other end, a box's supply
-  const toOff = new Set((p.links ?? []).flatMap((l) => [[l.a, l.b], [l.b, l.a]]).filter(([, o]) => offRackModule(findModule(p, o.module))).map(([me]) => `${me.module}/${baseRef(me.ref)}`));
+  const offLinks = (p.links ?? []).flatMap((l) => [[l.a, l.b], [l.b, l.a]]).filter(([, o]) => offRackModule(findModule(p, o.module))).map(([me]) => me);
+  const toOff = new Set(offLinks.map((me) => `${me.module}/${baseRef(me.ref)}`));
+  const toOffExact = new Set(offLinks.map((me) => `${me.module}/${me.ref}`)); // (the upper of a pair of sockets keeps its :2)
   const uses = new Map<string, Map<string, UseWhy>>();
   const offRack = (module: string, ref: string) => {
     const m = mods.get(module)?.m, c = m?.board.comps.find((x) => x.ref === ref);
@@ -561,9 +563,15 @@ export function generatePanel(p: Project): GenResult {
               // a plug where a cable goes: in the rack (the routed cable leaves it), or off it where the board has a
               // cradle for one (a screen, a supply) or a box takes its supply (mains, DC in). A free port stays empty.
               const k2 = /upper/.test(g.name) ? `${key}:2` : key;
-              const shown = linked.has(k2) || (!/upper|lower/.test(g.name) && linked.has(`${key}:2`)) || offRack(g.tag.module!, g.tag.refs?.[0] ?? '');
+              // one of a stacked pair of sockets (a Pi's USB-A) is a plug of its own: shown when it has a cable on the
+              // rack or one to something off it; a pair in use with neither cabled (you plug it in yourself) shows the
+              // lower one. (The whole pair counting as in use drew a lead "to a computer" from an empty socket.)
+              const pair = /upper|lower/.test(g.name), mate = /upper/.test(g.name) ? key : `${key}:2`;
+              const shown = pair
+                ? linked.has(k2) || toOffExact.has(k2) || (!/upper/.test(g.name) && !linked.has(mate) && !toOffExact.has(mate) && offRack(g.tag.module!, g.tag.refs?.[0] ?? ''))
+                : linked.has(k2) || linked.has(`${key}:2`) || offRack(g.tag.module!, g.tag.refs?.[0] ?? '');
               if (!shown) continue;
-              if (!linked.has(k2) && !linked.has(`${key}:2`)) hang.add(k2);
+              if (pair ? !linked.has(k2) : !linked.has(k2) && !linked.has(`${key}:2`)) hang.add(k2);
             }
             const own = moveAnim(g.anim, L.T);
             let a: Anim | undefined = own;
