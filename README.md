@@ -543,7 +543,7 @@ Choose **Loose holders** in the Panel step for holders without a rail dock:
 - **side by side** with printed link bars;
 - **back to back** with snap rivets.
 
-Each holder can also have a flat pull-tab DIN clip or a **stand socket** (round, square, hex or D-shaped post, or a 1/4"-20 tripod nut trap). Loose holders start without the DIN clip (tick **DIN rail clip** if you have a rail), and the shopping list and assembly notes only mention a rail when there is one.
+Each holder can also have a flat pull-tab DIN clip or a **stand socket** (round, square, hex or D-shaped post, or a 1/4"-20 tripod nut trap). A box on the clip stands 2.3 mm up in its holder, clear of the clip's snap hooks, which come up through the base. Loose holders start without the DIN clip (tick **DIN rail clip** if you have a rail), and the shopping list and assembly notes only mention a rail when there is one.
 
 - A stack never covers a box: hubs, chargers and powerboards stand beside it on the table, so their ports and outlets stay free.
 - A board bolted onto another (a HAT on a Pi, a shield on an Arduino) gets a standoff on each hole the two share and a screw in each end, sized from those holes (M2.5 for a Pi, M3 for an Arduino); the Rails step says how many next to the board.

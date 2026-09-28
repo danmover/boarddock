@@ -25,3 +25,22 @@ describe('DIN clip', () => {
     freeAll();
   });
 });
+
+describe('DIN clip under a box', () => {
+  it('stands a box on a flat clip clear of the snap hooks that come up through its base', async () => {
+    const { generate } = await import('../src/cad/assembly');
+    const { newProject, setLayout } = await import('../src/model/library');
+    const { makeBox } = await import('../src/model/boxes');
+    const { measure } = await import('./collide/measure');
+    await initKernel();
+    // the hooks reach 1.9 mm above the base they grip; a box used to sit 1.2 mm up, so each went 0.7 mm into it
+    for (const k of ['hub7', 'charger4', 'ftdi'] as const) {
+      const p = newProject(makeBox(k));
+      setLayout(p, 'loose');
+      p.mount = { ...p.mount, kind: 'din', mode: 'flat', picked: true };
+      const r = generate(p);
+      expect(r.parts.some((x) => x.tag?.kind === 'clip'), k).toBe(true);
+      expect(measure(p, r).cats['holder-board'].vol, k).toBeLessThan(0.5); // (was about 23 mm³, two hooks)
+    }
+  }, 120_000);
+});

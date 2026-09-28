@@ -205,9 +205,18 @@ function wiredPins(C: Ctx, c: Comp): { pin: Pin; colour: string }[] {
   return u ? UART_WIRES.map((wd) => ({ pin: u[wd.key], colour: wd.colour })) : [];
 }
 
-/** Boxes (hubs, chargers, probes) sit in low guards: no spring clips, notches or label. Hubs and chargers are strapped down. */
-const holderFor = (H: HolderSettings, b: Board): HolderSettings =>
-  isAccessory(b) ? { ...H, tabs: 'off', hold: 'pins', notches: false, label: '', wallAbove: Math.min(H.wallAbove, -(b.thickness - 8)), standoff: H.standoff ?? 1.2, minStandoff: 1.2 } : H;
+/**
+ * Boxes (hubs, chargers, probes) sit in low guards: no spring clips, notches or label. Hubs and chargers are strapped
+ * down. A box on a flat DIN clip stands clear of the clip's snap hooks, which reach up through the holder's base.
+ */
+const holderFor = (H: HolderSettings, b: Board, clipped = false): HolderSettings => {
+  if (!isAccessory(b)) return H;
+  const low = clipped ? CLIP_HOOK_RISE + 0.4 : 1.2;
+  return { ...H, tabs: 'off', hold: 'pins', notches: false, label: '', wallAbove: Math.min(H.wallAbove, -(b.thickness - 8)), standoff: Math.max(H.standoff ?? 1.2, low), minStandoff: low };
+};
+
+/** How far a flat DIN clip's snap hooks reach up past the top of the plate they grip (the holder's base). */
+const CLIP_HOOK_RISE = clipSlots(20).lipTop - clipSlots(20).plateT;
 
 /** A holder's heights as it is really built: box settings applied, and raised over the dock's spine when docked. */
 export function builtLevels(b: Board, H0: HolderSettings, dockEdge?: EdgeName | null) {
@@ -217,7 +226,8 @@ export function builtLevels(b: Board, H0: HolderSettings, dockEdge?: EdgeName | 
 
 function build(job: Job): ModuleOut {
   const { p, b } = job;
-  const H = holderFor(job.H, b);
+  const M0 = job.mount ?? p.mount;
+  const H = holderFor(job.H, b, !!job.din && M0.kind === 'din' && M0.mode === 'flat');
   const warnings: string[] = [...b.notes];
   const checks: Check[] = [];
   const mat = MATERIALS[H.material];
