@@ -1158,3 +1158,11 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 .mountq .seg { flex: none; }
 .mountq select { height: 28px; font-size: 12px; max-width: 190px; }
 .mountq .mq-lbl { font-size: 12px; font-weight: 600; color: var(--muted); }
+/* phones: the picked thing's name on its own line, its actions under it */
+@media (max-width: 600px) {
+  .selpanel .top { flex-wrap: wrap; }
+  .selpanel .top b { flex: 1 1 auto; }
+  .selpanel .top .grow { flex-basis: 100%; order: 3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .selpanel .top .acts { flex-basis: 100%; order: 4; }
+  .mountq { margin-top: 4px; padding-top: 6px; }
+}
