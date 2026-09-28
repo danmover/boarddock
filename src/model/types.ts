@@ -42,6 +42,7 @@ export interface ConnSetup {
   cap: boolean; // snap-on cap that locks the plug into the cradle (separate small part)
   guard: boolean; // collar around the opening that shields the receptacle
   tie: boolean; // zip-tie anchor for the cable
+  roll?: number; // edge entry: the socket turned about the plug's axis, degrees clockwise looking at it (90: on its side, 180: upside down); plug w and h above are already as it sits (w across, h up)
 }
 
 export interface Comp {
@@ -71,11 +72,29 @@ export interface Pin { n: string; x: number; y: number; net?: string }
 /** Where a box's ports sit: its long faces (front: y = 0, back: y = width), its ends (left: x = 0, right: x = length), or its top. */
 export type BoxFace = 'front' | 'back' | 'left' | 'right' | 'top';
 /** A row of identical ports on one face of a box. */
-export interface BoxPortGroup { id: string; type: string; count: number; face: BoxFace; role: string; refs?: string[]; near?: 'front' | 'back'; pins?: string[]; rot?: number; switched?: boolean } // refs: the group's port names, kept as ports are added or removed; near: a top row's place by that long edge (else across the middle); pins: a pin header's pin names, pin 1 first; rot: a top row's ports turned (angled outlets); switched: a switch by each outlet
+export interface BoxPortGroup {
+  id: string; type: string; count: number; face: BoxFace; role: string;
+  refs?: string[]; // the group's port names, kept as ports are added or removed
+  near?: 'front' | 'back'; // a top row's place by that long edge (else across the middle)
+  pins?: string[]; // a pin header's pin names, pin 1 first
+  rot?: number; // a top row's ports turned, degrees (angled outlets; 0: their width along the box)
+  switched?: boolean; // a switch by each outlet
+  // where the row is (all unset: laid out by itself, centred with the face's other rows, as always):
+  from?: 'start' | 'end'; // measured from this end of the face (start: the left end of the front, back and top, the front end of the left and right)
+  edge?: number; // with from: mm from that end to the near side of the nearest port
+  pitch?: number; // mm from one port's centre to the next's (unset: 5 mm between them, less when tight)
+  at?: number[]; // each port's centre, mm from the start of the face (dragged in the editor, or typed one by one); overrides the above for the ports it has
+  off?: number[]; // a top row: each port's centre, mm from the front edge (dragged); overrides across and near
+  up?: number; // a side face: the ports' centre, mm up from the bottom of the box (unset: halfway up)
+  across?: number; // a top row: its centre, mm from the front edge (unset: by near)
+  turn?: 0 | 90 | 180 | 270; // a side face: the socket turned, clockwise looking at it: 90 or 270 on its side (upright), 180 upside down
+}
 export interface BoxSpec {
   l: number; w: number; h: number; groups: BoxPortGroup[];
   supply?: number; // A at 5 V the whole box can give (charger, powered hub); unset: a typical figure
   ribbon?: number; // a debug probe (J-Link): length of the ribbon it comes with, mm
+  corner?: number; // its corners seen from above: radius (or chamfer size), mm; unset: min(4, width / 6)
+  chamfer?: boolean; // corners cut straight across instead of rounded
 }
 
 export interface Board {

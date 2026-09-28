@@ -28,7 +28,7 @@ Everything is checked with FEA and packed onto as few print plates as possible.
   - Docks that turn four ways and take two boards back to back.
   - Stacks of boards on one dock.
   - One rail, rows or columns, laid out automatically, with boards that are cabled together kept next to each other. Then drag boards between slots, rails and stacks in the rack tree, or in the Rails view.
-  - Boxes such as USB hubs, USB chargers and power boards, on their own rail. You set how many ports they have, of what type, on which face (top included) and what each one is for.
+  - Boxes such as USB hubs, USB chargers and power boards, on their own rail. You set how many ports they have, of what type, on which face (top included), what each one is for, and exactly where each one is and which way up (a USB-A on its side, upside down), so a box can match yours to the millimetre. Or build one from scratch.
   - **Table stands:** printed sleepers across the rails, with cable combs.
 - **Cables:** Auto-connect works out which plug goes where (power, USB host, hub and device ports) and says when you are short of hub or charger ports. You can connect plugs by hand in the Wiring view. Every cable is routed clear of the holders, boards, docks, rails and stands, and sized to a standard length you can buy.
 - **3D view:**
@@ -163,8 +163,9 @@ The Board step is a 2D editor for any board: one read from a file, one from the 
 - **Photo:** put a photo of the real board under the drawing, scale it from two points and the distance between them, line it up by a point on it, and trace the parts over it.
 - Hover anything for what it is: its size, height, side, position, which way its plug goes in, what a hole is for, and how far it is from the left and bottom edges.
 - The sidebar has the board as a card (its 3D picture, size, thickness, holes and plugs; **In 3D**, **Save to My boards**, **New version…**) and tabs: **Parts** (by what matters: plugs, tall parts, parts underneath, each with its picture), **Holes** (and **Add four holes** by spacing), **Headers**, **Board** (what it is: a board, or a debug probe or USB-serial adapter you drew yourself; those slide into the slot behind the board they serve, like the built-in J-Link and FT232RL), and **Box** for a box.
-- **Draw your own** (on Start, or in **+ Board**): a rectangle, a rounded one or a round board; its size, corners and thickness; holes at the corners (so far in from each edge) or by their spacing (a Pi's are 58 × 49 mm apart), checked to fit; and a photo to trace over. It opens in the editor for its plugs and parts.
-- **Save to My boards** keeps the board in this browser; the library's **My boards** shelf lists them for any rack.
+- **Draw your own** (on Start, or in **+ Board**): a rectangle, a rounded one or a round board; its size, corners and thickness; holes at the corners (so far in from each edge) or by their spacing (a Pi's are 58 × 49 mm apart), checked to fit; and a photo to trace over. It opens in the editor for its plugs and parts. Pick **A box** instead to build a hub, charger, power supply, debug probe or USB-serial adapter of your own (see [Build your own box](#build-your-own-box)).
+- **Save to My boards** keeps the board (or box) in this browser; the library's **My boards** shelf lists them for any rack.
+- **On a box**, what you do in the editor sticks: drag a port (or nudge it, or type a dimension to it) and it stays exactly there, on its side; drag a side port over to another side and it moves onto that side; delete one and it leaves its row; put a plug on it from the toolbox and it becomes a port of the box. A dimension between two edges sets the box's length or width.
 ## Hole wizard
 
 Not every hole is for mounting. The wizard sorts them when a board comes in, and you can change any hole or group:
@@ -246,12 +247,23 @@ The inspector sets:
 ## Hubs, chargers and other boxes
 
 A box is a size and rows of ports (Board step, **Box**). Pick a preset (USB hub, powered 7-port hub, USB-C hub with Ethernet, USB charger, USB charger with USB-C) or set your own:
-- length, width and height;
-- any number of rows of ports: how many, which type (USB-A, USB-C, micro-USB, USB-B, DC barrel, mains, RJ45, HDMI, audio, screw terminals), on which face (front, back, either end or the top), and what they are for (hub port, upstream, power out, power in, and so on).
+- length, width and height; its **corners** seen from above (square, rounded by a radius up to fully round ends, or cut off straight); its **colour** in the 3D view;
+- any number of rows of ports, each on its own card: how many, which type (USB-A, USB-C, micro-USB, USB-B, DC barrel, mains, RJ45, HDMI, audio, screw terminals), on which face (front, back, either end or the top), and what they are for (hub port, upstream, power out, power in, and so on).
 
 ![Box editor with a 7-port powered hub](docs/images/box.png)
 
-Ports are spaced evenly along their face, and a preview shows where they are. Every port knows its role, so Auto-connect never has to guess whether a USB-A socket on a box takes a device or gives power. Ports on the top get plugs standing in them, and the strap loops move to miss them. If ports don't fit their face, the editor says so. Fewer ports keep the first ports' names, so cables to them stay; cables to ports you remove go.
+By default a row's ports are spaced evenly and centred on their face, as before. Under **Where they are** on each card you can make it match your box exactly:
+- **Along the face:** centred with the other rows, measured **from the left or right end** (from the front or back on an end face: from the end of the box to the near side of the nearest port, what your calipers read), or **each port where you put it** (for a hub with uneven spacing: type each port's centre, or drag it in the editor). Switching between these never moves the ports; the new way starts from where they are.
+- **Spacing:** from one port's centre to the next.
+- **Height up the side:** where the middle of the ports is, from the bottom of the box (halfway up unless you set it).
+- **Which way up:** flat, upside down, or on its side (upright) turned either way. The wording names what you can see in the socket: a USB-A's tongue, an RJ45's latch, a micro-USB's or HDMI's wide side. An upright USB-A takes its height along the face, and the holder's opening, the plug drawn in it, its cable and the box's own 3D picture all turn with it. Round sockets (DC barrel, audio) have nothing to turn.
+- **On top:** across the middle, by the front or back edge, or so many mm from the front; and turned by any angle (0: along the box, 90: across it; 45 lets plug packs sit side by side).
+
+A live sketch above the cards shows the box from above, each port with an arrow the way its plug goes in (a dot for one on top), and each side with ports as you see it standing in front of it, every socket drawn the way up it is. Hover a card to light its ports up. Every port knows its role, so Auto-connect never has to guess whether a USB-A socket on a box takes a device or gives power. Ports on the top get plugs standing in them, and the strap loops move to miss them. The editor says when ports don't fit their face, run past its end, overlap, or sit higher or lower than the box. Fewer ports keep the first ports' names, so cables to them stay; cables to ports you remove go. Older racks' boxes lay out exactly as they did.
+
+### Build your own box
+
+On Start, **Draw your own › A box** builds one from scratch: pick what it is (a USB hub, a USB charger, a power supply, a debug probe or a USB-serial adapter), its name, size and colour, with the sketch updating as you type. It starts with a typical port or two for its kind (a hub: four USB-A and a USB-C upstream); change them and add rows under **Box**, then drag each port in the editor to where it is on yours (a photo of it under the drawing helps). **Save to My boards** keeps it for any rack. None of the holders for these has been printed yet: check the fit of a test print against your box.
 
 The Plugs step counts what still needs a port: USB devices against free hub and computer ports, and boards that need power against free charger ports. When you are short, it offers to add a hub or a charger. A stacked pair of USB-A sockets, like on a Raspberry Pi, counts as two ports ("USB2 lower" and "USB2 upper"). Boards with screw terminals or jumper headers and nothing connected (a relay board, a power distribution board) are listed too: Auto-connect leaves wiring to you.
 
@@ -598,13 +610,14 @@ The board tiles on Start and in **Add a board** are pictures shipped in `public/
 - `src/model/links.ts`: plug roles, Auto-connect, the port budget and cable sizes.
 - `src/model/power.ts`, `powerdata.ts`: the power budget and its estimates.
 - `src/model/built.ts`: what was built, and what changed since.
-- `src/model/boxes.ts`: boxes (hubs, chargers) from a size and rows of ports.
+- `src/model/boxes.ts`: boxes (hubs, chargers) from a size and rows of ports: their layout, placement and turn, boxes built from scratch, and what the editor does to a box written back into it.
 - `src/model/built.ts`: what was built, and what is new since.
 - `src/ui/`: React UI.
   - `Viewer3D.tsx`: the 3D view, with picking, animation and explode.
   - `pickOps.ts`: what a selection is and how it is removed.
   - `RackBuilder.tsx`: the rails step.
   - `BoardEditor.tsx`, `PanelEditor.tsx` and `WiringView.tsx`: the 2D board editor, the Rails view and the Wiring view.
+  - `BoxEditor.tsx`: the Box tab, the box sketch and Build your own box.
 - `src/worker/`: geometry and FEA run in web workers.
 - `src/model/printers.ts`: printers (from OrcaSlicer's machine profiles), filament settings (from its generic filament profiles) and the print settings list.
 - `src/slice/`: in-app slicing with Kiri:Moto: printer start code and settings (`profiles.ts`), running the engine, reading the G-code back and the Bambu `.gcode.3mf` (`kiri.ts`).

@@ -71,7 +71,7 @@ export function StartStage() {
           <button className={`sact ${draw ? 'on' : ''}`} onClick={() => setDraw((x) => !x)} aria-expanded={draw}>
             <span className="sact-ic"><Icon d={I.pencil} /></span>
             <b>Draw your own</b>
-            <small>Shape, size and holes, a photo of it if you like; then its parts from the toolbox</small>
+            <small>A board (shape, size and holes, a photo of it if you like), or a box such as a USB hub, with its ports</small>
           </button>
           <button className="sact" onClick={() => proj.current?.click()}>
             <span className="sact-ic"><Icon d={I.folder} /></span>
@@ -82,7 +82,7 @@ export function StartStage() {
         </div>
         {busy && <div className="progress" style={{ margin: '4px 0 10px' }}><div /></div>}
         {err && <div className="err" style={{ margin: '0 0 10px' }}>{err}</div>}
-        {draw && <div className="start-draw"><div className="start-draw-head"><b>Draw your own board</b><button className="btn small ghost icon" onClick={() => setDraw(false)} aria-label="Close">×</button></div><DrawBoard put={(b) => add([b])} /></div>}
+        {draw && <div className="start-draw"><div className="start-draw-head"><b>Draw your own board or box</b><button className="btn small ghost icon" onClick={() => setDraw(false)} aria-label="Close">×</button></div><DrawBoard put={(b) => add([b])} /></div>}
 
         <Library onAdd={add} />
 

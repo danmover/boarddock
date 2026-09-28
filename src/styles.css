@@ -585,7 +585,41 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 /* box editor */
 .boxpreview { display: block; margin: 10px 0 4px; }
 .boxgroups { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
-.boxgroup { border: 1px solid var(--line); border-radius: var(--r); padding: 8px; display: flex; flex-direction: column; gap: 6px; background: var(--surface); }
+.boxgroup { border: 1px solid var(--line); border-radius: var(--r); padding: 8px; display: flex; flex-direction: column; gap: 6px; background: var(--surface); transition: border-color 0.12s; }
+.boxgroup.focus { border-color: var(--accent-line); }
+.bg-head { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.bg-head b { font-size: 12px; white-space: nowrap; }
+.bg-head small { flex: 1; min-width: 0; color: var(--subtle); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bg-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.bg-more { align-self: flex-start; border: 0; background: none; padding: 2px 0; color: var(--accent-2); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.bg-more:hover { color: var(--fg); }
+.bg-where { border-top: 1px dashed var(--line-2); padding-top: 8px; display: flex; flex-direction: column; }
+.bg-each { display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 6px 8px; margin-top: 6px; }
+.boxpresets summary { cursor: pointer; font-size: 12px; color: var(--muted); font-weight: 600; }
+.boxshape { display: grid; grid-template-columns: 1fr 90px; gap: 9px 10px; align-items: end; margin-top: 8px; }
+.swatches { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.swatch { width: 24px; height: 24px; border-radius: 7px; border: 1px solid var(--line-2); cursor: pointer; padding: 0; position: relative; overflow: hidden; }
+.swatch.on { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+.swatch.own { background: conic-gradient(var(--bad), var(--warn), var(--good), var(--info), var(--accent), var(--bad)); }
+.swatch.own input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; border: 0; padding: 0; }
+.boxsketch { margin: 10px 0 4px; }
+.boxsketch .boxpreview { margin: 0; }
+.bs-box { fill: var(--surface-3); stroke: var(--line-2); stroke-width: 1; }
+.bs-lab { font-size: 9px; fill: var(--subtle); }
+.bs-port { cursor: pointer; }
+.bs-port.lit rect, .bs-port.lit path { stroke: var(--accent); stroke-width: 1.4px; vector-effect: non-scaling-stroke; }
+.bs-in { fill: var(--bg); }
+.bs-mouth { fill: var(--bg); stroke: currentColor; stroke-width: 1.2px; vector-effect: non-scaling-stroke; }
+.bs-feat { fill: currentColor; opacity: 0.85; }
+.bs-featline { stroke: currentColor; stroke-width: 1.4px; vector-effect: non-scaling-stroke; fill: none; }
+.bs-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: var(--muted); margin-top: 4px; }
+.bs-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: 0; }
+.db-what { margin-bottom: 12px; max-width: 460px; }
+.drawbox { display: grid; grid-template-columns: minmax(280px, 1fr) minmax(220px, 0.9fr); gap: 18px; align-items: start; }
+.db-kinds { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.db-kinds button { border: 1px solid var(--line); border-radius: 9px; background: var(--surface-2); color: var(--muted); font: inherit; font-size: 12px; font-weight: 600; padding: 6px 10px; cursor: pointer; }
+.db-kinds button.on { border-color: var(--accent); color: var(--fg); background: var(--accent-soft); }
+.db-preview.boxsk { padding: 10px; max-height: none; }
 .rackcard { border-color: var(--accent-line); }
 .rackcard-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .picklist { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
@@ -916,7 +950,7 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
   .start-hero { grid-template-columns: 1fr; }
   .start-hero svg { display: none; }
   .start-acts, .start-acts.two { grid-template-columns: 1fr; }
-  .drawboard { grid-template-columns: 1fr; }
+  .drawboard, .drawbox { grid-template-columns: 1fr; }
 }
 
 .editor .netlbl { fill: var(--silk); font-family: var(--mono); font-weight: 600; opacity: 0.85; }

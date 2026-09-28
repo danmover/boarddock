@@ -3,6 +3,7 @@
 // board set its width or height. Pure: they read and change a Board.
 import type { Board, Comp, Dim, Feat, V2 } from './types';
 import { bbox, compRect } from '../geom/poly';
+import { boxFromEdits } from './boxes';
 
 const compBox = (c: Comp) => { const r = compRect(c); return { x0: Math.min(...r.map((q) => q[0])), x1: Math.max(...r.map((q) => q[0])), y0: Math.min(...r.map((q) => q[1])), y1: Math.max(...r.map((q) => q[1])) }; };
 
@@ -55,6 +56,13 @@ export function measure(b: Board, d: Dim): number | null {
 /** Make a dimension read `value`: move what it measures to (the second feature, or the first if the second is the
  * board's edge); two edges of the board stretch the board. Mutates the board; false if nothing can move. */
 export function setDim(b: Board, d: Dim, value: number): boolean {
+  const ok = applyDim(b, d, value);
+  // a box's port (or its size) set with a dimension is written into the box, so the next layout keeps it
+  if (ok) boxFromEdits(b);
+  return ok;
+}
+
+function applyDim(b: Board, d: Dim, value: number): boolean {
   const pa = featAt(b, d.a), pc = featAt(b, d.b);
   const va = pa?.[d.axis], vc = pc?.[d.axis];
   if (va == null || vc == null || !(value >= 0)) return false;
