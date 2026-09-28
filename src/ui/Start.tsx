@@ -5,7 +5,7 @@ import { useRef, useState } from 'react';
 import type { Board } from '../model/types';
 import { ACCEPT } from '../import';
 import { activeModule, putBoards, store, toast, useApp } from '../state';
-import { openFiles } from './importFlow';
+import { droppedFiles, openFiles } from './importFlow';
 import { addBoards } from './AddBoard';
 import { Library } from './Library';
 import { DrawBoard } from './DrawBoard';
@@ -62,10 +62,10 @@ export function StartStage() {
 
         <div className="start-acts">
           <div role="button" tabIndex={0} className={`sact drop ${over ? 'over' : ''}`} onClick={() => files.current?.click()} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); files.current?.click(); } }}
-            onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setOver(true); }} onDragLeave={() => setOver(false)} onDrop={(e) => { e.preventDefault(); e.stopPropagation(); setOver(false); open(e.dataTransfer.files); }}>
+            onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setOver(true); }} onDragLeave={() => setOver(false)} onDrop={(e) => { e.preventDefault(); e.stopPropagation(); setOver(false); const fl = Array.from(e.dataTransfer.files); droppedFiles(e.dataTransfer).then(open, () => open(fl)); }}>
             <span className="sact-ic"><Icon d={I.download} /></span>
             <b>{busy ? 'Reading…' : 'Drop your board’s files'}</b>
-            <small>KiCad · STEP · IDF · Eagle · Gerber + drill + pick & place (a zip is fine) · DXF</small>
+            <small>KiCad · STEP · IPC-2581 · ODB++ · GenCAD · IDF · Eagle · Gerber + drill + pick & place (a zip or folder is fine) · DXF</small>
             <input ref={files} type="file" multiple accept={ACCEPT} hidden onChange={(e) => e.target.files && open(e.target.files)} />
           </div>
           <button className={`sact ${draw ? 'on' : ''}`} onClick={() => setDraw((x) => !x)} aria-expanded={draw}>
@@ -90,10 +90,13 @@ export function StartStage() {
           <summary>Exporting from your design tool</summary>
           <ul className="fmt">
             <li><b>KiCad</b>: drop the <code>.kicad_pcb</code>. Outline, holes, courtyards, 3D model names and the nets on header pins are read.</li>
-            <li><b>Altium Designer</b>: File › Export › <b>STEP 3D</b> (best: real part heights). Or zip the fab outputs: Gerbers with the outline layer, NC Drill, Pick and Place.</li>
+            <li><b>Altium Designer</b>: File › Export › <b>STEP 3D</b> (best: real part heights). Or File › Fabrication Outputs › IPC-2581 or ODB++, or zip the fab outputs: Gerbers with the outline layer, NC Drill, Pick and Place.</li>
             <li><b>Eagle / Fusion Electronics</b>: drop the <code>.brd</code>, or export STEP.</li>
             <li><b>EasyEDA / JLCPCB</b>: Export › Gerber zip and Export › Pick and Place (CPL): drop both. Or Export › 3D › STEP.</li>
-            <li><b>OrCAD, Allegro, PADS, DipTrace, Proteus</b>: export IDF (<code>.emn</code> + <code>.emp</code>) or STEP, or Gerber + drill + centroid.</li>
+            <li><b>Allegro, OrCAD PCB Editor, PADS, Xpedition</b>: export <b>IPC-2581</b> (an <code>.xml</code>; in Allegro File › Export › IPC 2581), <b>ODB++</b> (the <code>.tgz</code>, a zip, or the job folder) or <b>GenCAD</b> (<code>.cad</code>). These give the outline, holes, and every part with its package size. IDF (<code>.emn</code> + <code>.emp</code>) and STEP work too.</li>
+            <li><b>An Allegro <code>.brd</code></b> cannot be read (its format is not published). Free way round: KiCad 10 or newer imports it (File › Import › Non-KiCad Board File); save and drop the <code>.kicad_pcb</code> here. Or ask the board’s designer for one of the files above.</li>
+            <li><b>DipTrace, Proteus and others</b>: IDF, STEP, IPC-2581 or ODB++ if offered, else Gerber + drill + centroid.</li>
+            <li><b>A zip of everything</b> is fine: BoardDock reads the file that tells it most and says which one it used.</li>
           </ul>
           <p className="hint">Files never leave your computer: everything runs here.</p>
         </details>

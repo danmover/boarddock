@@ -15,7 +15,7 @@ Everything is checked with FEA and packed onto as few print plates as possible.
 
 ![A panel of boards on a DIN rail](docs/images/hero.png)
 
-- **Imports:** KiCad, Altium (via STEP or Gerber), Eagle, IDF, DXF and Gerber + drill + pick-and-place.
+- **Imports:** KiCad, Altium (via STEP or Gerber), Eagle, IDF, DXF, Gerber + drill + pick-and-place, and the neutral formats Allegro, OrCAD, PADS and Xpedition export: IPC-2581, ODB++ and GenCAD.
   - You can also draw a board by hand or start from a template.
 - **Hole wizard:** sorts every hole into mounting holes (they get pins), connector pegs, part leads and stacking standoffs (kept clear, with room underneath). You can change any of them.
 - **Fits holders automatically:**
@@ -419,12 +419,19 @@ Plates, the estimate and the download (with the same list in its README) follow 
 | **Fusion 360 / Eagle** | the `.brd` file, or STEP | outline, holes, packages |
 | **EasyEDA / JLCPCB** | Gerber zip + CPL (pick and place) | outline, holes, parts |
 | **Any EDA tool** | IDF 3.0 (`.emn` + `.emp`) | outline, cut-outs, holes, part outlines and heights |
+| **Allegro, OrCAD, PADS, Xpedition, Altium, Zuken and others** | IPC-2581 (`.xml` or `.cvg`) | outline and cut-outs, board thickness, holes (plated or not; vias left out), parts with their place, side, turn, package size and height, header pins with their nets |
+| | ODB++ (a `.tgz` or `.zip`, or the job folder dropped as it is) | outline and cut-outs, holes from the drill layers, parts from the top and bottom component layers with package sizes from `eda/data`, header pins with their nets; inch or mm |
+| | GenCAD 1.4 (`.cad`) | outline and cut-outs, board thickness, mounting holes (mounting-hole parts and `$MECH`), parts from their shapes, heights, header pins with their nets |
 | **Mechanical drawing** | DXF | outline and round holes |
 | **No files** | draw it, or start from a template (Raspberry Pi 4 / Zero / Pico, Arduino Uno / Nano, perfboard) | |
 
 Connectors are recognised by footprint name: USB-C, micro and mini USB, USB-A and B, HDMI, RJ45, barrel jacks, 3.5 mm audio, microSD, SMA, Qwiic, terminal blocks, JST and pin headers. Each one gets a plug size you can change.
 
 Altium `.PcbDoc` files use a proprietary binary format. Export STEP or fabrication files instead; BoardDock explains this if you drop one in.
+
+**Cadence Allegro / OrCAD PCB Editor `.brd` files** are binary and their format is not published, so BoardDock does not read them (a reader it cannot check against real boards could get the outline or holes wrong, and the holder would not fit). It recognises them and tells you the free ways out: open the board in KiCad 10 or newer (*File → Import → Non-KiCad Board File*, which reads Allegro releases 16 to 23) and drop the saved `.kicad_pcb`; or ask the board's designer for IPC-2581, ODB++, GenCAD, IDF, STEP or Gerbers with drill and pick-and-place; or ask the board maker for the files from the order. We have not tested the KiCad route ourselves.
+
+**Zips, tgz and folders.** Archives can hold folders, and archives inside archives (a zip with the ODB++ `.tgz` in it). When one archive or folder holds the same board in several formats, BoardDock reads the one that tells it most, in this order: KiCad, STEP, IPC-2581, ODB++, IDF, Eagle, binary `.brd`, GenCAD, Gerber + drill + pick-and-place, DXF. If that file cannot be read it tries the next, and the board's notes say which file was used, which ones failed and why, and which were not needed. An archive with several board files of the same kind (three `.kicad_pcb` files) still comes in as several boards.
 
 ## Loose holders
 
@@ -537,7 +544,7 @@ The board tiles on Start and in **Add a board** are pictures shipped in `public/
 
 **Project layout:**
 
-- `src/import/`: KiCad, Gerber, Excellon, pick-and-place, IDF, Eagle, DXF and STEP importers.
+- `src/import/`: KiCad, Gerber, Excellon, pick-and-place, IDF, Eagle, DXF, STEP, IPC-2581, ODB++ and GenCAD importers, Allegro detection, and archives (zip, tar, gzip, Unix compress).
 - `src/cad/`: geometry.
   - `generate.ts`: the holder around one board.
   - `dock.ts`: rail shoe, socket, tongue, spine and rod.

@@ -6,6 +6,37 @@ import { bedNote, placementNote } from './panelOps';
 
 let inFlight = false;
 
+// where each file of a dropped folder sat inside it (an ODB++ job is a folder tree: steps/pcb/profile, ...)
+const relPaths = new WeakMap<File, string>();
+const readAll = (files: File[]) => Promise.all(files.map(async (f) => ({ name: f.name, path: relPaths.get(f) || f.webkitRelativePath || undefined, bytes: new Uint8Array(await f.arrayBuffer()) })));
+
+/**
+ * The files of a drop, with the files inside any dropped folder (and their paths in it). Browsers give a dropped
+ * folder as one empty entry otherwise. Falls back to the plain file list where folder entries are not offered.
+ */
+export async function droppedFiles(dt: DataTransfer): Promise<File[]> {
+  const entries = Array.from(dt.items ?? []).map((it) => (it.kind === 'file' ? it.webkitGetAsEntry?.() : null));
+  if (!entries.some((e) => e?.isDirectory)) return Array.from(dt.files);
+  const out: File[] = [];
+  const walk = async (e: FileSystemEntry): Promise<void> => {
+    if (e.isFile) {
+      const f = await new Promise<File>((ok, no) => (e as FileSystemFileEntry).file(ok, no));
+      relPaths.set(f, e.fullPath.replace(/^\//, ''));
+      out.push(f);
+    } else if (e.isDirectory) {
+      const reader = (e as FileSystemDirectoryEntry).createReader();
+      // readEntries hands them over in batches until it returns none
+      for (;;) {
+        const batch = await new Promise<FileSystemEntry[]>((ok, no) => reader.readEntries(ok, no));
+        if (!batch.length) break;
+        for (const k of batch) await walk(k);
+      }
+    }
+  };
+  for (const e of entries) if (e) await walk(e);
+  return out;
+}
+
 /** A BoardDock project file: *.boarddock.json, or any JSON with boards in it. */
 async function asProject(f: File): Promise<unknown | null> {
   if (!/\.json$/i.test(f.name)) return null;
@@ -44,7 +75,7 @@ async function openNow(files: File[], opts: { stay?: boolean }): Promise<void> {
     toast(`Opened ${f.name.replace(/\.boarddock\.json$|\.json$/i, '')}.${rest ? ` The other ${rest} file${rest > 1 ? 's were' : ' was'} not imported: drop ${rest > 1 ? 'them' : 'it'} again to add ${rest > 1 ? 'them' : 'it'} to this rack.` : ''}${had ? ' ⌘Z goes back to the rack you had open.' : ''}`);
     return;
   }
-  const { boards, errors } = await importMany(await Promise.all(files.map(async (f) => ({ name: f.name, bytes: new Uint8Array(await f.arrayBuffer()) }))));
+  const { boards, errors } = await importMany(await readAll(files));
   if (!boards.length) throw new Error(errors[0] ?? 'Nothing to import.');
   const s = store.get();
   const had = s.project?.modules.length ?? 0;
@@ -68,7 +99,7 @@ export async function openRevision(fl: FileList | File[], moduleId: string): Pro
   if (!files.length || inFlight) return;
   inFlight = true;
   try {
-    const { boards, errors } = await importMany(await Promise.all(files.map(async (f) => ({ name: f.name, bytes: new Uint8Array(await f.arrayBuffer()) }))));
+    const { boards, errors } = await importMany(await readAll(files));
     if (!boards.length) throw new Error(errors[0] ?? 'No board in those files.');
     const r = reviseBoard(moduleId, boards[0]);
     if (!r) throw new Error('That board is no longer in the project.');
