@@ -247,14 +247,15 @@ export function addBoard(b: Board) {
 /**
  * Put imported boards into the project in one undoable step: added (the default once there is a project), or with
  * `replace` the first one takes the place of the board being edited and the rest are added. The first new board
- * becomes the one being edited.
+ * becomes the one being edited (a new rack, or a replace, opens on its first board and adds the rest behind it).
+ * `keepActive`: the boards are added after the one being edited, which stays so.
  */
-export function putBoards(bs: Board[], replace: boolean, opts: { stay?: boolean } = {}) {
+export function putBoards(bs: Board[], replace: boolean, opts: { stay?: boolean; keepActive?: boolean } = {}) {
   if (!bs.length) return;
   const cur = state.project;
   if (!cur || replace) {
     setBoard(bs[0]);
-    if (bs.length > 1) { const past = state.past; putBoards(bs.slice(1), false); store.set({ past }); }
+    if (bs.length > 1) { const past = state.past; putBoards(bs.slice(1), false, { keepActive: true }); store.set({ past }); }
     store.set({ replaceMode: false });
     return;
   }
@@ -268,7 +269,7 @@ export function putBoards(bs: Board[], replace: boolean, opts: { stay?: boolean 
     // on a rack laid out by hand or built: a free slot of a dock already there, else a new dock at the end
     if (p.layout === 'panel' && !p.panel.auto) seatBoard(p, p.modules[p.modules.length - 1].id);
   }
-  p.active = first;
+  if (!opts.keepActive) p.active = first;
   store.set({ project: p, past: [...state.past, cur], future: [], sel: [], replaceMode: false, ...(opts.stay ? {} : { step: 'board' as const, view: 'editor' as const }) });
   persist(p);
 }
