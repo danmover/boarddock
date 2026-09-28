@@ -69,6 +69,9 @@ function icPads(c: Comp): { x: number; y: number; w: number; h: number }[] {
   return out;
 }
 
+/** A phone-sized window (the toolbox closes itself there so the board stays tappable). */
+const phone = () => !!window.matchMedia?.('(max-width: 600px)').matches;
+
 export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) => void }) {
   const project = useApp((s) => s.project)!;
   const sel = useApp((s) => s.sel);
@@ -84,7 +87,8 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
   const [marquee, setMarquee] = useState<{ a: V2; b: V2 } | null>(null);
   const [space, setSpace] = useState(false);
   const [item, setItem] = useState<string | null>(null); // the toolbox part being placed
-  const [tbx, setTbx] = useState(() => { try { return localStorage.getItem(TBX_KEY) !== '0'; } catch { return true; } });
+  // on a phone the toolbox would cover the board: it starts closed there
+  const [tbx, setTbx] = useState(() => { if (phone()) return false; try { return localStorage.getItem(TBX_KEY) !== '0'; } catch { return true; } });
   const [showCu, setShowCu] = useState(() => { try { return localStorage.getItem(CU_KEY) !== '0'; } catch { return true; } });
   const [dimA, setDimA] = useState<Feat | null>(null);
   const [editDim, setEditDim] = useState<{ id: string; v: string } | null>(null);
@@ -130,7 +134,7 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
     editMod((m) => { if (made.comp) m.board.comps.push(made.comp); if (made.hole) m.board.holes.push(made.hole); });
     if (made.comp) select([{ kind: 'comp', id: made.comp.id }]); else if (made.hole) select([{ kind: 'hole', id: made.hole.id }]);
   };
-  const arm = (id: string | null) => { setItem(id); setTool(id ? 'place' : 'select'); };
+  const arm = (id: string | null) => { setItem(id); setTool(id ? 'place' : 'select'); if (id && phone()) setTbx(false); };
 
   const onDown = (e: React.PointerEvent) => {
     const w = toWorld(e);
@@ -692,6 +696,7 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
           {(['mount', 'standoff', 'plug', 'lead', 'free'] as const).filter((r) => b.holes.some((h) => (h.role ?? 'mount') === r)).map((r) => <span key={r}><i style={{ background: ROLE_INFO[r].color }} />{ROLE_INFO[r].name}</span>)}
         </div>
       )}
+      {tool === 'place' && armedItem && phone() && <div className="placebar floating">Tap the board to place the {armedItem.label} <button className="btn small" onClick={() => arm(null)}>Cancel</button></div>}
       <div className="hud floating mono">
         <span>{tool === 'place' ? `place ${armedItem?.label ?? 'it'}: click ${armedItem?.edge ? 'near the edge it goes on' : 'where it goes'} · Shift keeps placing · Esc stops`
           : tool === 'measure' ? (dimA ? 'now the second: a hole, a part (its centre or a side) or an edge' : 'measure: click the first thing, an edge of the board, a hole, or a part (its centre or a side)')

@@ -347,6 +347,7 @@ canvas.heat { width: 100%; max-height: 420px; object-fit: contain; border-radius
 .selbar b { font-size: 12px; color: var(--accent); margin: 0 6px 0 4px; }
 .editor .hud { position: absolute; bottom: 12px; left: 12px; right: 12px; font-size: 11.3px; color: var(--muted); padding: 6px 11px; display: flex; justify-content: space-between; gap: 12px; }
 .editor .hud .xy { color: var(--accent); }
+.editor .placebar { position: absolute; left: 50%; bottom: 52px; transform: translateX(-50%); z-index: 6; display: flex; align-items: center; gap: 10px; padding: 6px 8px 6px 12px; font-size: 12.5px; white-space: nowrap; max-width: calc(100% - 16px); }
 .editor .legend2 { position: absolute; bottom: 52px; left: 12px; padding: 6px 10px; display: flex; gap: 12px; flex-wrap: wrap; font-size: 11.5px; color: var(--muted); z-index: 5; }
 .editor .legend2 i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
 .empty-note { position: absolute; inset: 0; display: grid; place-items: center; color: var(--subtle); font-size: 13px; pointer-events: none; }
@@ -593,6 +594,9 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
   .stage:has(> .start) { overflow: visible; }
   .stage > .start { position: static; overflow: visible; }
   .nophone { display: none; }
+  /* the view tabs stay on one line (they scroll sideways), and the editors' toolbars sit below them, not on them */
+  .stage .tabs .seg { flex-wrap: nowrap; }
+  .stage .tabs .seg button { flex: none; }
   .howto-steps[open] summary { display: block; }
 }
 
@@ -988,3 +992,15 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 .bambucode .where ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 6px; }
 .bambucode code { font-size: 11px; word-break: break-all; }
 .bambupaste { display: grid; gap: 8px; margin-top: 8px; }
+
+/* phones: the editors' toolbars sit below the view tabs, not on them */
+@media (max-width: 860px) { .editor .toolbar, .board-editor .toolbar { top: 54px; } .editor.wiring .toolbar { top: 58px; } }
+
+/* fingers, not a mouse: bigger targets for the small buttons */
+@media (pointer: coarse) {
+  .bchip, .tbtn, .btn.small, .stepper button, .iconbtn { min-height: 40px; }
+  .bchip { height: auto; }
+  /* no hover on a touch screen: the tiles' + shows all the time */
+  .ltile-qty { opacity: 1; }
+  .ltile-qty .qbtn { min-width: 34px; min-height: 34px; }
+}
