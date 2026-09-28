@@ -20,7 +20,7 @@ Everything is checked with FEA and packed onto as few print plates as possible.
 - **Hole wizard:** sorts every hole into mounting holes (they get pins), connector pegs, part leads and stacking standoffs (kept clear, with room underneath). You can change any of them.
 - **Fits holders automatically:**
   - **Frame** style (default): a rim round the board, corner guards, edge seats, and ribs laid out as a minimum spanning tree to every pin. It uses 25–50% less plastic than a full tray. The **tray** style is still there.
-  - Snap pins in the mounting holes, or snap fingers on the edges.
+  - **Spring clips** at the board's edges that click over it and then carry no load, or snap pins in its mounting holes: Auto picks what fits.
   - Clearance for the board's underside, openings for every plug.
 - **Protects plugs:** each connector gets a cradle that carries the mating plug's body, so a knocked cable loads the holder, not the solder joints. A snap-on cap locks the plug in.
 - **Builds panels:**
@@ -33,12 +33,12 @@ Everything is checked with FEA and packed onto as few print plates as possible.
 - **Cables:** Auto-connect works out which plug goes where (power, USB host, hub and device ports) and says when you are short of hub or charger ports. You can connect plugs by hand in the Wiring view. Every cable is routed clear of the holders, boards, docks, rails and stands, and sized to a standard length you can buy.
 - **3D view:**
   - Boards show copper traces, vias, silkscreen, parts and plugs. The traces are real for KiCad files and decorative for other boards.
-  - Click anything (a board, a dock, a rail, a cable, a table stand, or one feature of a holder such as a cradle, cap, pin or finger) to see it and edit it.
+  - Click anything (a board, a dock, a rail, a cable, a table stand, or one feature of a holder such as a cradle, cap, pin or spring clip) to see it and edit it.
   - Shift-click to pick several, then Delete to remove them all in one undoable step.
   - Play the assembly step by step, or pull it apart with the explode slider.
 - **Checks:** hand calculations for every snap, plus 2D FEA of the dock's springs (the socket latch and the rail shoe hinge) for your material. A printability check finds every overhang and bridge; the print view can paint them.
 - **Easy to correct:**
-  - Switch cradles, caps, tie anchors, guards, fingers or labels off for a whole holder, or remove single ones in 3D.
+  - Switch cradles, caps, tie anchors, guards or labels off for a whole holder, choose clips or pins, or remove single features in 3D.
   - Hide small parts, ignore holes, strip plug protection, or revert to the import, for one board or all of them.
 - **Efficient:**
   - Only changed holders are rebuilt: moving or turning docks takes milliseconds.
@@ -126,7 +126,7 @@ Each slot also has its own **stands / lies flat** toggle in the Rails list and i
 - a rim runs round the board, under its edge and out to the holder's outline;
 - short corner guards locate the board, and **edge seats** carry it wherever no pin is close;
 - ribs, laid out as a minimum spanning tree, tie every pin to the rim or to the dock's spine;
-- plug cradles, caps, guards, tie anchors, snap fingers and the label each bring only the bit of wall they need.
+- plug cradles, caps, guards, tie anchors, spring clips and the label each bring only the bit of wall they need.
 
 **Tray** is the full base with a hex pattern and a wall all round: stiffer, and more plastic. The style cards show your own board's holder in each style, in 3D.
 
@@ -134,11 +134,34 @@ Each slot also has its own **stands / lies flat** toggle in the Rails list and i
 
 **Features** has one row per feature with what this holder actually got, so a switch never just silently does nothing:
 - plug cradles, caps, receptacle guards and cable-tie anchors, with how many (caps clip onto cradles, so they need them);
-- **wall snap fingers**, Auto / Always / Off. Auto uses fingers where the wall is free and snap pins in the mounting holes otherwise; Always also tries shorter fingers between the plugs. When none fit it says why (plugs, the dock or the label take the free edges; pins hold the board);
-- **engraved label**: the board's name by default. If it doesn't fit a free wall it is shortened to a form that still says which board it is ("Raspberry Pi 4B" becomes "Pi 4B", "Raspberry Pi Zero 2 W" becomes "Pi Zero", never just "2 W"). Your own words are never cut. It only gives way to snap fingers if that actually gives them room, and never on a board held by pins;
-- finger notches on trays (a frame is open underneath: push the board out from below).
+- **Hold the board with**: Auto / Clips / Pins / Both, and a **clip strength** (Firm or Gentle); see *How the board is held* below. It says what the board got ("2 spring clips", "4 snap pins") and, when clips don't fit, why;
+- **engraved label**: the board's name by default. If it doesn't fit a free wall it is shortened to a form that still says which board it is ("Raspberry Pi 4B" becomes "Pi 4B", "Raspberry Pi Zero 2 W" becomes "Pi Zero", never just "2 W"). Your own words are never cut. It only gives way to the spring clips if that actually gives them room, and never on a board held by pins;
+- finger notches on trays (a frame is open underneath: pull a clip back and push the board out from below).
 
 The **release button** section says where the button went: when a plug would be in the way of the place you asked for, it names the plug.
+
+### How the board is held
+
+![A spring clip seen from the board: the tapered leaf, its lip (ramp, ledge, 45° ends), the pull ear, and the anchor it grows from](docs/images/clips.png)
+
+**Spring clips** (the default wherever they fit). Each clip is a leaf standing straight up from the print bed at the board's edge, as tall as the holder there. It is joined to a short block of wall (its anchor) along its whole height, with a generous rounded root, and cut free of everything else by 0.6 mm slits, so it bends sideways, within the print layers, the strong way for a printed part.
+- **The leaf tapers** from about 1 mm at the root to 0.7 mm at the tip (thickness following the square root of the distance from the load), so the bending strain is spread along it instead of piling up at the root: about 40% less peak strain than a straight leaf pushed as far.
+- **The lip** at its tip has a 35° entry ramp, so the board's edge pushes the clip aside easily; a flat ledge over the board's edge that holds it down; and a small ear on top to hook with a fingernail.
+- **Nothing loads it once the board is in.** The ledge sits on the first layer line above the board (0.15 to 0.35 mm clear of it), and the leaf stands 0.1 mm further out than the guards, so the board never leans on it. A clip only strains while the board goes past, so it can't creep or take a set.
+- **Sized for a feel, inside the limit.** Each clip is made as thick as gives about 3.5 N of push-back (**Firm**) or 1.6 N (**Gentle**), but never more than 55% of the material's strain limit in the worst case (the board pressed hard against that side as it goes in). For PETG that is about 1.1% strain at most against a 2% limit; a 14 mm clip on a 60 × 40 mm board works at 0.7%. A taller holder (a docked board stands higher) gets a thinner leaf for the same feel.
+- **Anti-rattle springs:** thinner leaves (0.8 to 0.6 mm, 14 to 16 mm long) whose lip has a 45° face resting on the board's top edge. Pushed 0.3 mm aside, they press the board across against the guards opposite and down onto its seats with about 0.2 N each (as much again down as across), at 0.12 to 0.17% strain (under 0.25% with a board 0.15 mm oversize). That is low enough that creep only slowly eases the push; it never lets go. One goes across the clips and one along them, where the edges have room.
+- **Where they go:** a clip takes a straight (or gently curved) stretch of edge about 17 mm long (3 mm anchor, 14 mm leaf) clear of plugs, the dock, the label and parts at the edge. Clips come in pairs facing each other across the board, placed so the line between them splits the board (it can't tip out about that line); a big board gets a second pair. Round and L-shaped boards get them too. Where plugs crowd the edges, **short clips** (10 mm, thinner, a shorter lip) go in the gaps; where even those don't fit, snap pins hold it; and if neither can, the Check step says **"Nothing clips this board in"** and what to change.
+- **Taking it out:** pull one clip's ear back with a fingernail and lift that side; the other side then slides out from under its clip.
+- **Printing:** every leaf stands on the bed, so the only overhang in a clip is its ledge, about 0.9 mm out from the leaf, printed flat (the Check step measures it). Nothing else in a clip leans or bridges.
+
+**Snap pins** in the mounting holes are the other way: split pins with a barb, their split ending in a round (not a sharp corner) so the legs' strain doesn't pile up at its root. They bend across the layers, so their strain is judged 30% more strictly.
+
+**Hold the board with** (Holder › Features):
+- **Auto** (the default, and what a pile of imported boards gets): clips where two fit facing each other, short clips between plugs next, snap pins last. Across the library that gives clips on the Pico, Nano, ESP32, perfboard and the blank board (and the examples, except where a dock takes the edge they need); short clips on the Uno and Mega (snap pins when they stand in a dock, where the dock takes an edge); snap pins on the Raspberry Pis, whose edges are all plugs and headers.
+- **Clips**: clips only (snap pins only if no clip fits); **Pins**: snap pins only; **Both**: clips and snap pins.
+- **Clip strength**: Firm (about 3.5 N a clip) or Gentle (about 1.6 N).
+
+The Check step lists, for each board: the clips' strain going in and its margin under the material's limit, the strain at rest (0 for the clips, the anti-rattle springs' preload), a rough force to press the board in (a 60 × 40 board with two clips and a spring: about 8 N), and that they print with no supports. The forces are beam sums with a textbook modulus: a print will tell the real feel and the click. Projects saved with the old wall-finger setting keep working (fingers Off reads as Pins, Always as Clips).
 
 Plastic in a holder with no cradles or clip:
 
@@ -376,7 +399,7 @@ A pin header (▸) opens into its pins, with their net names from your KiCad fil
 | Action | How |
 |---|---|
 | See what something is | hover over it |
-| Select a board, dock, rail, cable, table stand, or one holder feature (cradle, cap, pin, finger, guard, tie anchor, label, stand socket) | click it |
+| Select a board, dock, rail, cable, table stand, or one holder feature (cradle, cap, pin, spring clip, guard, tie anchor, label, stand socket) | click it |
 | Select several | Shift-click |
 | Remove the selection (a cradle or cap is switched off, a pin becomes an ignored hole, a dock, rail or cable is removed, a board leaves the project, table stands are switched off) | Delete, or **Remove** in the bar below the view; one ⌘Z brings it all back |
 | Jump to the settings of the selected thing | **Edit** in the bar |
@@ -399,7 +422,7 @@ It uses studio lighting with ambient occlusion. Boards get:
 Plugs show their shells, tongues and pins. The view draws a frame only when something changes.
 
 
-**Steps** plays the assembly the way you would do it, each part moving the way it goes in: a rail shoe is hooked under the rail and swung down; a socket is pressed into its shoe; a board is tipped in under the snap fingers on its far side and pressed down on this one; a probe or adapter slides down its slot; a holder is pushed into its dock; snap-fits go a little past their seat and spring back (the click); plugs go in quickly, then their last few millimetres slowly; cables are drawn along their route as they are plugged in, and their numbers appear with them.
+**Steps** plays the assembly the way you would do it, each part moving the way it goes in: a rail shoe is hooked under the rail and swung down; a socket is pressed into its shoe; a board is tipped in under the spring clips on its far side and pressed down on this one; a probe or adapter slides down its slot; a holder is pushed into its dock; snap-fits go a little past their seat and spring back (the click); plugs go in quickly, then their last few millimetres slowly; cables are drawn along their route as they are plugged in, and their numbers appear with them.
 ## A new version of a board
 
 When a new revision of one of your boards comes out, select it (in 3D, or its chip in the Board step) and press **New version…**, or drop its files on that button. The new version takes the old one's place:
@@ -501,9 +524,22 @@ Each holder can also have a flat pull-tab DIN clip or a **stand socket** (round,
 
 ![Printability, sliced](docs/images/printcheck.png)
 
-The Check step slices every distinct part into 0.2 mm layers in the pose it prints in and compares each layer with the one under it, the way a slicer sees it (in a background worker, once per part shape):
-- **In mid-air:** anything with nothing under it would need support. No BoardDock part has any; the test suite checks every part of a mixed rack (holders in both styles, caps, rods, shoes, sockets, stands and combs, clips, cable tags, the test-fit kit).
-- **Bridges and overhangs:** how far each layer reaches past the one below, split into bridges (held at both ends) and one-sided overhangs. The longest bridge is the roof of a wide plug cradle (about 15 mm over a Pi 4's USB stack), which PETG bridges fine with the part fan on. Snap-finger undersides are one-sided overhangs by design: each finger floats over a 2 mm slot, so a first layer that droops can't weld the finger to the wall below.
+The Check step slices every distinct part into 0.2 mm layers in the pose it prints in and compares each layer with the one under it, the way a slicer sees it (in a background worker, once per part shape). Measured from each part's own bottom:
+- **In mid-air:** anything with nothing under it would need support: the part says **needs support**. A fleck thinner than one line (or a single layer under 0.5 mm²) is only a *speck*, which slicers leave out, and is noted, not failed.
+- **Overhangs and bridges:** how far each layer reaches past the one below, measured *inside the layer* from the wall that holds it (round a slot, never straight across air, and with no upper cap) and given as the real opening. Held from opposite sides it is a bridge; held from one side, an overhang. Overhangs: fine to 2 mm, a warning to 3 mm (or to 2 mm over more than 20 mm²), then **needs support**. Bridges: fine to 12 mm, a warning to 25 mm, then failed.
+- **Sloped roofs:** a roof flatter than 45° steps out only a little each layer, so it is followed layer after layer: a warning once it runs out more than 3 mm, a failure past 10 mm.
+- **A tiny foot:** a part taller than 5 mm whose first layer is under a tenth of its biggest one is failed (it would be knocked over).
+
+Across the library (every template standing, lying flat, loose, in a tray and on a DIN clip, plus stacks, side-by-side and back-to-back pairs, the rack parts and the test-fit kit: 209 distinct parts) nothing is in mid-air, the longest one-sided overhang is 1.6 mm, and the longest bridge is 9 mm, except one: a holder on a DIN clip standing off its edge (rack or inline) has two slots across its plate whose tops are 14.4 mm bridges (a warning; see Honest limits). The test suite checks a mixed rack, racks lying flat and back to back, and each fix below.
+
+What the audit of the earlier parts found, and what changed:
+- The wall snap fingers were 8 to 14 mm one-sided overhangs over a slot (hidden from the check as "by design"): replaced by the spring clips above (a 0.9 mm ledge).
+- Guard collars round a plug opening had flat roofs as wide as the opening (22.2 mm over a full-size HDMI, 17.2 mm over USB-A, 15 to 16 mm over a Pi 4's USB and Ethernet): they now have a 45° gable, so no flat roof is over 6 mm (the longest bridge on a Pi 4 with its cradles off is now 5.9 mm).
+- Square and hex stand sockets on their side had a 10.3 mm flat roof and 30° roof faces: both now have a 45° gable.
+- A tray's wall over a wide part hanging past the board's edge underneath was a 14.8 mm bridge: the window now goes up through the top of the wall.
+- The probe and adapter slots' lips were 1.9 mm flat ledges: now 0.8 mm flat, then 45°.
+- Snap rivets printed 1.3 mm below the bed, which dropped a whole back-to-back plate: they rest on it, and every plate puts each part on the bed whatever pose it comes in.
+- A thin sill left in a frame's wall under an overhanging plug, and a one-layer fleck by the fingers, are gone.
 - **Thin walls:** anything under 0.4 mm wide. A slicer without thin-wall detection leaves those out; in BoardDock parts they are only details of the engraved label and the button's chevrons.
 - **Narrow slots:** gaps under 0.3 mm print closed. That matters only where something moves: the rail shoe's lever (0.35 mm round its pin) and the socket's latch nose, which now has 0.45 mm round it in its window (it had 0.2 mm, which could have welded it to the socket wall).
 
@@ -553,15 +589,15 @@ PETG results (E = 2100 MPa, strain limit 2%):
   - Plates keep 4 mm clear round the edge of the bed, where the skirt goes; a plate with no room for one is sliced without it.
   - Kiri:Moto is not the slicer the settings were written for. It has no first-layer (elephant-foot) compensation, and its speeds are set conservatively.
 - **G-code, in your own slicer:** every plate is also a 3MF with all its parts placed. In the desktop app, **Open plate** hands it to OrcaSlicer, PrusaSlicer, Bambu Studio or Cura if one is installed. Your printer maker's slicer knows its quirks best.
-- **Supports: none.** Overhangs are 45° chamfers or short bridges, round holes on their side are teardrops, and all springs flex within their print layers. The Check step proves it layer by layer (see Printability, layer by layer). Leave supports off in any slicer.
+- **Supports: none.** Overhangs are 45° chamfers, gables or short bridges, round and square holes on their side have 45° tops, the spring clips stand on the bed (their lip ledge is about 0.9 mm), and all springs flex within their print layers. The Check step proves it layer by layer (see Printability, layer by layer). Leave supports off in any slicer.
 - **What the slicers do with it:**
   - *The tongue hole.* The socket prints standing on its end, so the tongue's pocket lies on its side with its opening facing sideways. Its roof is chamfered at 45° and the centre divider halves it, so the longest bridge in the socket is about 2.3 mm. The pocket leaves 0.2 mm all round the 14 × 4.5 mm tongue. If yours prints tight (a sagging roof, or elephant's foot), raise **Tongue fit** in the Rails step.
   - *Print-in-place parts.* The rail shoe's lever prints round its pin, 0.35 mm clear, and every slicer keeps the ring and the pin as separate loops. The socket's latch nose has 0.45 mm round it in its window. Don't lower the line width or raise the flow for these parts.
-  - *Bridges.* OrcaSlicer and PrusaSlicer spot bridges, slow down, and lay the lines across the gap with the fan up. Kiri:Moto (in the app) prints them as ordinary solid layers, so expect a little more sag on the widest cradle roofs. That is cosmetic: nothing rests on them.
+  - *Bridges.* OrcaSlicer and PrusaSlicer spot bridges, slow down, and lay the lines across the gap with the fan up. Kiri:Moto (in the app) prints them as ordinary solid layers, so expect a little more sag on the longest bridges (9 mm on a flat-lying holder, 14.4 mm in a DIN plate's slots). Elsewhere that is cosmetic; in the DIN plate see Honest limits.
   - *Thin walls.* With thin-wall detection off (the setting BoardDock asks for, so the 0.9 mm hinge stays two full lines), walls under about 0.4 mm are left out. In BoardDock parts that is only fine label detail.
 - **Plates:** each plate becomes one STL or 3MF file with every part already placed. The estimate shows grams and print time per part.
 - **First print:** the **test-fit kit** in Export: a shoe, a socket and a small tongue key with its release rod, about 21 g. Clip it on your rail, plug the key in, press its button. If the key is tight, raise **Tongue fit** in the Rails step by 0.05–0.1 mm.
-- **Check:** the Check step lists every part's overhangs and longest bridge. **Overhangs** on the print plates paints faces that would need support in red and bridges in amber. The generated parts need no supports; bridges are 5.4 mm at most.
+- **Check:** the Check step lists every part's overhangs and longest bridge. **Overhangs** on the print plates paints faces that would need support in red and bridges in amber. The generated parts need no supports; bridges are 9 mm at most, except the two 14.4 mm slot tops of a DIN plate standing off a holder's edge.
 
 ## Honest limits
 
@@ -579,9 +615,11 @@ PETG results (E = 2100 MPa, strain limit 2%):
 - The desktop app's **Open plate** looks for slicers in their usual install folders. It has not been tried with every slicer and operating system. If nothing opens, download the plate's 3MF and open it by hand.
 - The in-app G-code has not been run on a printer. The start code comes from Kiri:Moto's community profiles or BoardDock's plain templates, not from the printer makers. Check the start of the first print, or use your own slicer.
 - Slicing a full plate in the app takes much longer than a desktop slicer: seconds to a minute or more, depending on the plate and the computer.
-- A board whose holes all carry the standoffs of a HAT has no pins; it needs room on its edges for two snap fingers, and the Check step says so when there isn't any.
-- A small board with no holes for pins (an Arduino Nano) is held by two snap fingers, which need two free stretches of wall. When the first-choice dock edge leaves room for only one, the automatic layout docks it by another edge, and if the release button is at its default it goes beside the board to free the far edge. If you set the button to the middle yourself, the Check step says "Nothing clips this board in".
-- The printability check works on the parts' shapes, not on a real slicer's toolpaths. Kiri:Moto has no bridge detection, so the widest cradle roofs sag a little more there than in OrcaSlicer or PrusaSlicer.
+- A board whose holes all carry the standoffs of a HAT has no pins; it needs room on its edges for two spring clips facing each other, and the Check step says so when there isn't any.
+- A small board with no holes for pins (an Arduino Nano) is held by two spring clips, which need two free stretches of edge facing each other. When the first-choice dock edge leaves no room, the automatic layout docks it by another edge, and if the release button is at its default it goes beside the board to free the far edge. If you set the button to the middle yourself, the Check step says "Nothing clips this board in". A board under about 20 mm on every side, standing up in a dock, has no room left for clips (the dock takes one edge's ends): lay it flat, or give it pin holes.
+- The spring clips' numbers are beam sums with a textbook modulus for each material; printed plastic varies a lot. The feel of the click, how firmly a board is held, and whether a lip's 0.9 mm ledge droops enough to matter are for a print to tell. So is the anti-rattle springs' long-term push: at about 0.15% strain creep only eases it, but by how much in a warm cabinet over years is not known.
+- A DIN plate standing off a holder's edge (rack or inline) prints standing, so the tops of its two slots across it are 14.4 mm flat bridges. Along the rail, one clip hook catches on the edge beside a bridged top; if the clip goes on stiffly, trim the sag off with a knife or file. A plate printed on its face would avoid it, but would need a joint of its own.
+- The printability check works on the parts' shapes, not on a real slicer's toolpaths. Kiri:Moto has no bridge detection, so the longest bridges sag a little more there than in OrcaSlicer or PrusaSlicer.
 - Cable tags are sized from typical cable diameters (USB 4 mm, Ethernet 6 mm, HDMI 7 mm); a thicker or thinner cable may need the tag printed from a custom diameter.
 
 ## Development

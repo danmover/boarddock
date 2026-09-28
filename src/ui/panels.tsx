@@ -920,7 +920,7 @@ function HolderFeatures() {
             {toggle(!!H.label.trim(), (v) => set((h) => { h.label = v ? m.board.name.slice(0, 40) : ''; }))}
           </Row>
           {!!H.label.trim() && <div className="featsub"><Text label="Label text" value={H.label} placeholder="e.g. SENSOR HUB" onChange={(v) => set((h) => { h.label = v; })} /></div>}
-          <p className="hint">Switching a kind of feature off here keeps each plug's own choice in the Plugs step for when you switch it back on.{frame ? ' Frame holders are open underneath: push the board out from below, no notches needed.' : ''}</p>
+          <p className="hint">Switching a kind of feature off here keeps each plug's own choice in the Plugs step for when you switch it back on.{frame ? ' Frame holders are open underneath: pull a clip back and push the board out from below, no notches needed.' : ''}</p>
         </>
       )}
       {box && <p className="hint" style={{ marginTop: 0 }}>A box sits in low guards and is strapped down, so it has no clips, notches or label. Set its ports under Board › Box.</p>}

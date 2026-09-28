@@ -20,6 +20,7 @@ export const FACE = 0.1; // a clip's leaf stands this much further out than the 
 export const RAMP = 35; // entry ramp, degrees from the direction the board goes in
 export const MU = 0.3; // friction, PCB on printed plastic (rough)
 export const LAYER = 0.2;
+export const CLIP_ABOVE = 3.2; // the highest point of a spring clip (its pull ear) over the board's top face
 
 /** A leaf spring standing on the bed: length L (root to tip), thickness t0 at the root tapering to tMin, height h. */
 export interface Leaf { L: number; t0: number; tMin: number; h: number; lipLen: number }
