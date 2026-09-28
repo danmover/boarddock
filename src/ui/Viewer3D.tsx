@@ -149,11 +149,13 @@ const ease = (x: number) => 1 - Math.pow(1 - x, 3);
  */
 function printed<T extends THREE.MeshStandardMaterial>(m: T): T {
   m.onBeforeCompile = (sh) => {
-    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying float vPrintZ;').replace('#include <begin_vertex>', '#include <begin_vertex>\nvPrintZ = position.z;');
-    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying float vPrintZ;').replace('#include <color_fragment>', `#include <color_fragment>
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying float vPrintZ; varying float vSide;').replace('#include <begin_vertex>', '#include <begin_vertex>\nvPrintZ = position.z; vSide = 1.0 - abs(normalize(objectNormal).z);');
+    // only on the sides of a part (where layer lines show on a real print), faint, and gone well before they get
+    // small enough to shimmer or band
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying float vPrintZ; varying float vSide;').replace('#include <color_fragment>', `#include <color_fragment>
       float lz = vPrintZ / 0.2, fw = fwidth(lz), f = fract(lz);
-      float groove = 1.0 - smoothstep(0.0, 0.22 + fw, min(f, 1.0 - f));
-      diffuseColor.rgb *= 1.0 - 0.13 * groove * (1.0 - smoothstep(0.25, 0.7, fw));`);
+      float groove = 1.0 - smoothstep(0.0, 0.25, min(f, 1.0 - f));
+      diffuseColor.rgb *= 1.0 - 0.08 * groove * smoothstep(0.9, 0.98, vSide) * (1.0 - smoothstep(0.08, 0.2, fw));`);
   };
   m.customProgramCacheKey = () => 'printed-layers';
   return m;
