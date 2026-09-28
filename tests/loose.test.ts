@@ -129,6 +129,10 @@ describe('plugs and leads in 3D', () => {
     expect(b.hi[2] - 50).toBeLessThan(60);
     expect(Math.max(b.hi[0] - b.lo[0], b.hi[1] - b.lo[1])).toBeLessThan(6);
     expect(g.fx?.fade).toMatchObject({ label: 'to a screen', d: [0, 0, 1] });
+    // only as far as the way out is clear (a hub's supply lead ran into the next dock), and never under 6 mm
+    const short = boxOf(leadStub('y', [0, 0, 50], [0, 0, 1], 5, 'to a screen', { kind: 'plug' }, { seq: 0, dir: [0, 0, 1] }, 12));
+    expect(short.hi[2] - 50).toBeCloseTo(12, 1);
+    expect(boxOf(leadStub('z', [0, 0, 50], [0, 0, 1], 5, 'x', { kind: 'plug' }, { seq: 0, dir: [0, 0, 1] }, 1)).hi[2] - 50).toBeCloseTo(6, 1);
   });
 
   it("a headless Pi's HDMI cradles go, and in a rack its unused plugs get tails, not cables to the table", () => {

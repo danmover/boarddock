@@ -27,7 +27,7 @@ import { END_POSE, LEN_X, rail as railSolid, shoe, shoeBody, shoeLever, SHOE_LEV
 import { EAR } from './dockdims';
 import { autoAssign, bestDock, classify, clipToRail, dockSite, EDGES, edgeNormal, plugDirs, railMatrix, slotMatrix, withRiders } from './dockplan';
 import { capStress, pieceMesh, planStands, railI, standBoxes, STAND, type StandLane } from './railstand';
-import { assemble, bendRadius, bestRoute, escapes, hits, lead, ribbonRoute, slope, type Box, type CableEnd, type Choice, type Obstacle, type RibbonEnd, type Route } from './cableroute';
+import { assemble, bendRadius, bestRoute, escapes, hits, lead, ribbonRoute, segInBox, slope, type Box, type CableEnd, type Choice, type Obstacle, type RibbonEnd, type Route } from './cableroute';
 import { settleCables } from './cablesim';
 import { isDebugPort, isProbe, isUartPort, jumperToBuy, jumperWiring, ribbonOf, uartWiring } from '../model/probes';
 
@@ -1011,11 +1011,20 @@ export function generatePanel(p: Project): GenResult {
       detail: "BoardDock checks which mains plug goes into which outlet, never a powerboard into another, and adds up the load it knows about. It can't check your powerboard, its lead or earth, or the wall socket, and it doesn't model mains wiring through screw terminals or relays: that belongs in a proper enclosure, wired by someone qualified to. Plug the powerboards into the wall last, with their switches off." });
 
   // ---- cables that leave the rack (to a screen, a supply, the mains): out of the plug, a bend down, along the table ----
+  // (each drawn out of its plug only as far as it is clear of everything but its own board: a supply lead out of a
+  // hub's DC jack used to run into the next dock along the rail)
+  const solid = hang.size ? [
+    ...parts.flatMap((pt) => [pt.toAssembly, ...(pt.instances ?? [])].map((T, j) => { const b = emptyBox(); boxOf(pt.mesh.pos, T, b); return { b, module: (j ? pt.tags?.[j - 1] ?? pt.tag : pt.tag)?.module }; })),
+    ...ghosts.filter((g) => g.tag && g.tag.kind !== 'cable' && g.mat !== 'cable').map((g) => { const b = emptyBox(); boxOf(g.mesh.pos, I4, b); return { b, module: g.tag?.module }; }),
+  ] : [];
   for (const k of hang) {
     const e = ends.get(k);
     if (!e) continue;
     const i = k.indexOf('/'), module = k.slice(0, i), ref = k.slice(i + 1), m = mods.get(module)?.m, c = m?.board.comps.find((x) => x.ref === baseRef(ref));
-    ghosts.push(leadStub(`off-rack cable ${k}`, e.p, e.d, e.cable, m && c ? offRackTo(m, c) : 'off the rack', { kind: 'plug', module, refs: [baseRef(ref)] }, { seq: toWall(module, ref) ? WALL_SEQ : PLUG_SEQ, dir: [0, 0, 1], dist: 0, grow: true }));
+    const r = Math.max(1.1, e.cable / 2), far = e.p.map((v, j) => v + e.d[j] * 60);
+    let clear = 60;
+    for (const sd of solid) { if (sd.module === module) continue; const t = segInBox(e.p, far, sd.b, r); if (t) clear = Math.min(clear, t[0] * 60 - 1); }
+    ghosts.push(leadStub(`off-rack cable ${k}`, e.p, e.d, e.cable, m && c ? offRackTo(m, c) : 'off the rack', { kind: 'plug', module, refs: [baseRef(ref)] }, { seq: toWall(module, ref) ? WALL_SEQ : PLUG_SEQ, dir: [0, 0, 1], dist: 0, grow: true }, clear));
   }
 
 

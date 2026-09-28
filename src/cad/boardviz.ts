@@ -767,9 +767,11 @@ function plugAt(T: number[], p: PlugSize, tag: PickTag, anim: Anim, type: string
 /**
  * A lead that leaves the rack (to a screen, a supply, the wall), drawn as a short stretch out of its plug that fades
  * away, then a dotted line on the way it goes and where to: nothing to route, so no cable hangs about in the air.
+ * `clear`: how far out of the plug nothing is in the way.
  */
-export function leadStub(name: string, p: number[], d: number[], cable: number, label: string, tag: PickTag, anim: Anim): Ghost {
-  const r = Math.max(1.1, cable / 2), len = Math.max(30, 10 + 10 * r);
+export function leadStub(name: string, p: number[], d: number[], cable: number, label: string, tag: PickTag, anim: Anim, clear = Infinity): Ghost {
+  // (no longer than the way out of the plug is clear, and never under 6 mm, so a plug always shows its lead)
+  const r = Math.max(1.1, cable / 2), len = Math.max(6, Math.min(clear, Math.max(30, 10 + 10 * r)));
   return {
     name, mesh: tubeMesh([p, [p[0] + d[0] * len, p[1] + d[1] * len, p[2] + d[2] * len]], r, 16), color: '#2b2e33', opacity: 1, tag, anim, mat: 'cable', smooth: true,
     fx: { fade: { p, d, len, dash: 34, label, colour: '#8b95a3' } },
