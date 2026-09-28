@@ -96,6 +96,48 @@ ipcMain.handle('open-in-slicer', async (_e, name, file, bytes) => {
   }
 });
 
+// KiCad's command-line tool, for boards BoardDock can't read itself: KiCad 10 imports Cadence Allegro boards (release
+// 16 to 23) with its own reverse-engineered reader, and BoardDock reads the KiCad board it saves.
+function kicadCli() {
+  const pf = process.env.ProgramFiles || 'C:\\Program Files';
+  const found = [];
+  if (process.platform === 'darwin') found.push('/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli', '/Applications/KiCad.app/Contents/MacOS/kicad-cli');
+  else if (process.platform === 'win32') {
+    // C:\Program Files\KiCad\<version>\bin\kicad-cli.exe, newest first
+    try { for (const v of fs.readdirSync(path.join(pf, 'KiCad')).sort((a, b) => parseFloat(b) - parseFloat(a))) found.push(path.join(pf, 'KiCad', v, 'bin', 'kicad-cli.exe')); } catch { /* not installed */ }
+  } else found.push('/usr/bin/kicad-cli', '/usr/local/bin/kicad-cli', '/snap/bin/kicad-cli');
+  for (const dir of (process.env.PATH || '').split(path.delimiter)) if (dir) found.push(path.join(dir, process.platform === 'win32' ? 'kicad-cli.exe' : 'kicad-cli'));
+  return found.find((p) => { try { return fs.statSync(p).isFile(); } catch { return false; } }) ?? null;
+}
+
+ipcMain.handle('kicad-import', async (_e, name, bytes) => {
+  const cli = kicadCli();
+  if (!cli) return { error: 'no-kicad' };
+  if (!bytes || bytes.length > 300 * 1024 * 1024) return { error: 'the file is empty or too large' };
+  const dir = fs.mkdtempSync(path.join(app.getPath('temp'), 'boarddock-')), src = path.join(dir, 'board.brd'), out = path.join(dir, 'board.kicad_pcb');
+  try {
+    fs.writeFileSync(src, Buffer.from(bytes));
+    // KiCad picks the format from the file itself; older help texts don't list "allegro", so that is only a second try
+    const run = (args) => new Promise((resolve) => {
+      let err = '';
+      const child = spawn(cli, ['pcb', 'import', ...args, '--output', out, src], { stdio: ['ignore', 'ignore', 'pipe'] });
+      const timer = setTimeout(() => { child.kill(); resolve('KiCad took more than two minutes and was stopped'); }, 120000);
+      child.stderr.on('data', (d) => { err += d; });
+      child.once('error', (e) => { clearTimeout(timer); resolve(String(e && e.message ? e.message : e)); });
+      child.once('exit', (code) => { clearTimeout(timer); resolve(code === 0 ? '' : `KiCad could not import it (${err.trim().split('\n').slice(-2).join(' ') || `exit ${code}`})`); });
+    });
+    let res = await run([]);
+    if (res && !fs.existsSync(out)) res = (await run(['--format', 'allegro'])) && res;
+    if (res) return { error: res };
+    if (!fs.existsSync(out)) return { error: 'KiCad finished but saved no board' };
+    return { text: fs.readFileSync(out, 'utf8'), via: cli };
+  } catch (e) {
+    return { error: String(e && e.message ? e.message : e) };
+  } finally {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* left in temp */ }
+  }
+});
+
 app.whenReady().then(() => {
   protocol.handle('app', (req) => {
     const { pathname } = new URL(req.url);

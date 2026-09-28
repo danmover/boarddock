@@ -111,8 +111,36 @@ export function groupFiles(files: InFile[]): InFile[][] {
 }
 
 /** Import every board in a drop; files that fail are reported, the rest still come in. */
-export async function importMany(files: InFile[]): Promise<{ boards: Board[]; errors: string[] }> {
+/** Turns a board BoardDock can't read into one it can: the desktop app hands a Cadence Allegro board to KiCad 10. */
+export type Converter = (name: string, bytes: Uint8Array) => Promise<{ text: string } | { error: string }>;
+
+/**
+ * Allegro boards (loose or in an archive) swapped for the KiCad boards `convert` makes of them. An archive with one
+ * becomes a folder of its files, so it is still read as one board. What can't be converted is left out, with why.
+ */
+export async function convertForeign(files: InFile[], convert: Converter, errors: string[]): Promise<InFile[]> {
+  const isAllegro = (f: InFile) => /\.brd$/i.test(f.name) && isAllegroBrd(f.bytes);
+  const one = async (f: InFile): Promise<InFile | null> => {
+    if (!isAllegro(f)) return f;
+    const r = await convert(f.name, f.bytes);
+    if ('text' in r) return { ...f, name: f.name.replace(/\.brd$/i, '.kicad_pcb'), bytes: new TextEncoder().encode(r.text) };
+    errors.push(`${f.name}: ${r.error === 'no-kicad' ? `${allegroMessage(f.name, f.bytes)} (KiCad 10 isn't installed here yet.)` : `${r.error}. ${allegroMessage(f.name, f.bytes)}`}`);
+    return null;
+  };
+  const out: InFile[] = [];
+  for (const f of files) {
+    if (isArchiveName(f.name)) {
+      const inner = expandAll([f]);
+      if (!inner.some(isAllegro)) { out.push(f); continue; }
+      for (const x of inner) { const y = await one(x); if (y) out.push({ ...y, path: `${f.name}/${x.path ?? x.name}` }); }
+    } else { const y = await one(f); if (y) out.push(y); }
+  }
+  return out;
+}
+
+export async function importMany(files: InFile[], convert?: Converter): Promise<{ boards: Board[]; errors: string[] }> {
   const boards: Board[] = [], errors: string[] = [];
+  if (convert) files = await convertForeign(files, convert, errors);
   for (const g of groupFiles(files)) {
     try { boards.push(await importFiles(g)); } catch (e: any) { errors.push(`${g.map((f) => f.name).slice(0, 3).join(', ')}${g.length > 3 ? '…' : ''}: ${e?.message ?? e}`); }
   }

@@ -27,7 +27,7 @@ export function allegroVersion(b: Uint8Array): string {
 export function allegroMessage(fileName: string, b: Uint8Array): string {
   return [
     `${fileName} is a Cadence Allegro / OrCAD PCB Editor board (${allegroVersion(b)}). Its format is not published and BoardDock cannot read it. Any of these gets you a file it can:`,
-    '(1) KiCad 10 or newer (free) imports Allegro boards from release 16 to 23: open the PCB Editor, use File › Import › Non-KiCad Board File, choose this .brd, then drop the saved .kicad_pcb here. We have not tested this route ourselves, so check the outline and holes once it is in.',
+    '(1) KiCad 10 or newer (free, kicad.org) imports Allegro boards from release 16 to 23. With it installed, the BoardDock desktop app converts the board by itself when you drop it (zipped or not). Otherwise: KiCad’s PCB Editor, File › Import › Non-KiCad Board File, choose this .brd, then drop the saved .kicad_pcb here. Check the outline and holes once it is in.',
     '(2) Ask whoever designed the board for IPC-2581 (Allegro: File › Export › IPC 2581), ODB++, GenCAD, IDF (.emn + .emp), a STEP model, or Gerbers with the drill and pick-and-place files. Every one of those comes straight in.',
     '(3) If the board was made for you, the board maker or assembler usually has the Gerber, drill and pick-and-place files from the order.',
     "Cadence's free Allegro viewer opens the file to look at and measure, but we know of no format BoardDock reads that it can save.",

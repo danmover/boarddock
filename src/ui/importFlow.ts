@@ -1,6 +1,6 @@
 // One import path for the drop zone, the file picker and drag-and-drop anywhere in the window. Several files make
 // several boards (a Gerber set or an IDF pair stays one board); they join the project unless "replace" is ticked.
-import { importMany } from '../import';
+import { importMany, type Converter } from '../import';
 import { amend, lastReplace, loadProject, putBoards, reviseBoard, store, toast } from '../state';
 import { afterBuild, bedNote, placementNote, settleOverlaps } from './panelOps';
 
@@ -53,6 +53,16 @@ async function asProject(f: File): Promise<unknown | null> {
   return Array.isArray(raw?.modules) || raw?.board ? raw : /\.boarddock\.json$/i.test(f.name) ? raw : null;
 }
 
+/** In the desktop app, boards BoardDock can't read itself (Cadence Allegro) go through the user's own KiCad 10. */
+function desktopConvert(): Converter | undefined {
+  const desk = (window as { boarddockDesktop?: { kicadImport?: (n: string, b: Uint8Array) => Promise<{ text: string } | { error: string }> } }).boarddockDesktop;
+  if (!desk?.kicadImport) return undefined;
+  return async (name, bytes) => {
+    toast(`Reading ${name} through KiCad…`);
+    return desk.kicadImport!(name, bytes);
+  };
+}
+
 export async function openFiles(fl: FileList | File[], opts: { stay?: boolean } = {}): Promise<void> {
   const files = Array.from(fl);
   if (!files.length || inFlight) return;
@@ -78,7 +88,7 @@ async function openNow(files: File[], opts: { stay?: boolean }): Promise<void> {
     toast(`Opened ${f.name.replace(/\.boarddock\.json$|\.json$/i, '')}.${rest ? ` The other ${rest} file${rest > 1 ? 's were' : ' was'} not imported: drop ${rest > 1 ? 'them' : 'it'} again to add ${rest > 1 ? 'them' : 'it'} to this rack.` : ''}${had ? ' ⌘Z goes back to the rack you had open.' : ''}`);
     return;
   }
-  const { boards, errors } = await importMany(await readAll(files));
+  const { boards, errors } = await importMany(await readAll(files), desktopConvert());
   if (!boards.length) throw new Error(errors[0] ?? 'Nothing to import.');
   const s = store.get();
   const had = s.project?.modules.length ?? 0;
@@ -104,7 +114,7 @@ export async function openRevision(fl: FileList | File[], moduleId: string): Pro
   if (!files.length || inFlight) return;
   inFlight = true;
   try {
-    const { boards, errors } = await importMany(await readAll(files));
+    const { boards, errors } = await importMany(await readAll(files), desktopConvert());
     if (!boards.length) throw new Error(errors[0] ?? 'No board in those files.');
     // what Check says now, to tell afterwards what the new version broke
     const res0 = store.get().result;
