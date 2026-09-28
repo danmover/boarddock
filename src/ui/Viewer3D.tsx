@@ -306,7 +306,7 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
       if (c.onFrame?.(now)) c.dirty = true;
       if (c.fx?.tick(now)) c.dirty = true;
       if (c.intro) {
-        const k = (now - c.intro.t0) / 700;
+        const k = (now - c.intro.t0) / c.intro.ms;
         if (!Number.isFinite(c.anim?.t ?? Infinity)) for (const o of c.intro.objs as Obj[]) growTo(o.mesh, k);
         if (k >= 1) c.intro = null;
         c.dirty = true;
@@ -538,7 +538,8 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
       last = now;
       setPlay((p) => {
         if (!p.on) return p;
-        const t = p.t + dt * 1.1;
+        // steps where cables are drawn out go at half speed, so each can be seen running along its way
+        const t = p.t + dt * (c.growRanks?.has(Math.floor(p.t)) ? 0.5 : 1.1);
         if (p.until != null && t >= p.until) return { on: false, t: p.until, n: p.n };
         return t >= p.n + 0.001 ? { on: false, t: p.n, n: p.n } : { ...p, t };
       });
@@ -683,7 +684,7 @@ function prepare(c: any, result: GenResult | null, mode: 'assembly' | 'print', b
     // the cables of one step are drawn out one after another (the wires of one cable together)
     const byRank = new Map<number, string[]>();
     for (const o of objs) if (o.anim?.grow) { const k = o.tag?.refs?.[0] ?? o.mesh.uuid, l = byRank.get(o.rank) ?? byRank.set(o.rank, []).get(o.rank)!; if (!l.includes(k)) l.push(k); }
-    for (const o of objs) if (o.anim?.grow) { const l = byRank.get(o.rank)!, k = o.tag?.refs?.[0] ?? o.mesh.uuid; o.lag = l.length > 1 ? (0.45 * l.indexOf(k)) / (l.length - 1) : 0; }
+    for (const o of objs) if (o.anim?.grow) { const l = byRank.get(o.rank)!, k = o.tag?.refs?.[0] ?? o.mesh.uuid; o.lag = l.length > 1 ? (0.35 * l.indexOf(k)) / (l.length - 1) : 0; }
     next.ranks = seqs.length;
     next.phases = seqs;
     const cf = result.report.clipFrame;
@@ -768,7 +769,10 @@ function swapIn(c: any, next: Next, result: GenResult | null, mode: 'assembly' |
   const cables = next.objs.filter((o) => o.tag?.kind === 'cable');
   const fresh = was ? cables.filter((o) => o.anim?.grow && !was.has(o.tag!.refs?.[0] ?? '')) : [];
   c.cableIds = new Set(cables.map((o) => o.tag!.refs?.[0] ?? ''));
-  c.intro = fresh.length && fresh.length <= 12 ? { t0: performance.now(), objs: fresh } : null;
+  // a new cable takes longer the longer it is (about a quarter of a metre a second, 0.8 to 1.8 s)
+  const span = (o: Obj) => { const b = (o.mesh.geometry as THREE.BufferGeometry).boundingBox; return b ? b.max.distanceTo(b.min) : 200; };
+  c.intro = fresh.length && fresh.length <= 12 ? { t0: performance.now(), objs: fresh, ms: Math.max(800, Math.min(1800, (Math.max(...fresh.map(span)) / 250) * 1000)) } : null;
+  c.growRanks = new Set(next.objs.filter((o) => o.anim?.grow).map((o) => o.rank));
   for (const o of next.objs) world.add(o.mesh);
   for (const f of next.floor) c.floor.add(f);
   world.matrix.copy(next.worldMatrix);
@@ -877,7 +881,7 @@ function applyPose(c: any) {
     R.identity();
     if (Number.isFinite(t)) {
       if (t - o.show <= 0) shown = false;
-      if (grow) g = Math.max(0, Math.min(1, (t - o.rank - (o.lag ?? 0)) / 0.55)); // each cable of a step in turn, drawn out along its way
+      if (grow) g = Math.max(0, Math.min(1, (t - o.rank - (o.lag ?? 0)) / (0.95 - (o.lag ?? 0)))); // each cable of a step in turn, drawn out along its way over the rest of the step
       else for (const m of o.moves) {
         const dist = m.dist ?? D, k = remaining(m.style, t - m.rank, dist);
         if (k !== 0) off.addScaledVector(new THREE.Vector3(m.dir[0], m.dir[1], m.dir[2]), dist * k);
