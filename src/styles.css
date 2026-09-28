@@ -994,6 +994,18 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 .bambucode code { font-size: 11px; word-break: break-all; }
 .bambupaste { display: grid; gap: 8px; margin-top: 8px; }
 
+/* phones: the ⋯ menu in the top bar */
+.phonemenu { display: none; position: relative; }
+.phonemenu summary { list-style: none; display: grid; place-items: center; font-size: 18px; line-height: 1; cursor: pointer; }
+.phonemenu summary::-webkit-details-marker { display: none; }
+.phonemenu-list { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; display: flex; flex-direction: column; min-width: 200px; padding: 4px; }
+.phonemenu-list button { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 10px; background: none; border: 0; border-radius: var(--r); color: var(--fg); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.phonemenu-list button:hover:not(:disabled) { background: var(--surface-3); }
+.phonemenu-list button:disabled { opacity: 0.45; }
+.phonemenu-list svg { width: 16px; height: 16px; flex: none; }
+.phonemenu-list button { white-space: nowrap; }
+@media (max-width: 860px) { .phonemenu { display: block; } .app:not(.empty) .acts > .iconbtn[title='Light / dark'] { display: none; } }
+
 /* phones: the editors' toolbars sit below the view tabs, not on them */
 @media (max-width: 860px) { .editor .toolbar, .board-editor .toolbar { top: 54px; } .editor.wiring .toolbar { top: 58px; } }
 

@@ -177,6 +177,16 @@ export function App() {
               <button className="iconbtn" disabled={!canRedo} onClick={redo} title="Redo (⇧⌘Z)"><Icon d={I.redo} /></button>
               <button className="iconbtn" onClick={saveProject} title="Save project (⌘S)"><Icon d={I.save} /></button>
               <button className="iconbtn" onClick={() => { if (confirm('Start a new rack? This one stays only in the project file you saved (⌘S saves it now).')) closeProject(); }} title="New rack"><Icon d={I.newdoc} /></button>
+              {/* on a phone Redo, Save and New rack have no room in the bar: they live in this menu */}
+              <details className="phonemenu" onClick={(e) => { if ((e.target as HTMLElement).tagName === 'BUTTON') (e.currentTarget as HTMLDetailsElement).open = false; }}>
+                <summary className="iconbtn" title="More" aria-label="More">⋯</summary>
+                <div className="phonemenu-list floating">
+                  <button disabled={!canRedo} onClick={redo}><Icon d={I.redo} /> Redo</button>
+                  <button onClick={saveProject}><Icon d={I.save} /> Save the project file</button>
+                  <button onClick={() => { if (confirm('Start a new rack? This one stays only in the project file you saved.')) closeProject(); }}><Icon d={I.newdoc} /> New rack</button>
+                  <button onClick={() => { const t = theme === 'dark' ? 'light' : 'dark'; store.set({ theme: t }); try { localStorage.setItem('boarddock.theme', t); } catch { /* private mode */ } }}><Icon d={theme === 'dark' ? I.sun : I.moon} /> {theme === 'dark' ? 'Light' : 'Dark'} theme</button>
+                </div>
+              </details>
             </>
           )}
           <button className="iconbtn" onClick={() => { const t = theme === 'dark' ? 'light' : 'dark'; store.set({ theme: t }); try { localStorage.setItem('boarddock.theme', t); } catch { /* private mode */ } }} title="Light / dark"><Icon d={theme === 'dark' ? I.sun : I.moon} /></button>
