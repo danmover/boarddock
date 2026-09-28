@@ -4,33 +4,24 @@ What still needs doing on BoardDock, in the order it's being worked through. New
 
 Nothing BoardDock makes has been printed and tried yet, so anything below about fit, strength or clips is from the model and its checks, not from a real print.
 
-## 1. A collision test for whole racks
+## 0. Serious: a board bolted on top goes through the parts of the board under it
 
-A much better collision test, to prove that Auto-arrange and everything else lays racks out with nothing inside anything. It goes through the real pipeline (`generate()` from `src/cad/assembly`) and uses exact mesh intersections (manifold-3d via `K()` in `src/cad/kernel`), not bounding boxes.
-- Racks to cover:
-  - every template alone: standing, lying flat, as a loose holder, and on a DIN flat clip;
-  - boards back to back in one dock, and stacks;
-  - probes and USB-serial adapters;
-  - boxes: hubs, chargers, a switch, powerboards;
-  - table stands on and off, rails across and along, the L-shape;
-  - a Pi cluster (rpi5 ×4, rpi4 ×2, rpi_zero, net_switch8, usb_hub7, usb_charger ×2, psu_pi5 ×4, pb6) and a busy mixed rack (rpi5 ×2, rpi4, usb_hub7, usb_hubc, uno, pico, usb_charger6, net_switch5, esp32, pb4), both with Auto-connect;
-  - a rack laid out by hand and then edited: lay a board flat, change its dock edge, turn a dock, swap front and back;
-  - a built rack with boards added.
-- Measure by category: holder-holder, holder-board, holder-plug, cap/cradle-plug, cable-holder, cable-board, cable-cable, cable-stand/rail, and tags/labels against anything. The contacts that are allowed:
-  - a plug in its own jack;
-  - a board in its own holder's slots and pins;
-  - a cable in its own comb;
-  - a clip hook in its own slot.
-  Report penetration depth as well as volume, since a thin, deep overlap matters.
-- For automatic layouts, also check:
-  - no failing Check line (the tongue root included) when a passing way of docking exists;
-  - no "overlap on the panel" or "runs into" warnings;
-  - rails within Longest rail;
-  - no plug in use blocked.
-- Keep it deterministic (fixed ids). Commit a baseline file of the totals per rack and category. The test fails when any category grows past the baseline plus a small tolerance, and prints the worst overlaps with part names and coordinates. Update the baseline only on purpose, when a fix lowers it.
-- Put a fast subset (well under a minute) in `npm test`, and the full matrix in a script (e.g. `npm run collisions`) run before each merge.
-- The last hand measurement (links from autoLinks with fixed ids): the cluster about 313 mm³ in all (parts 169, cable-stand/rail 130, cable-tag 8, cable-cable 6), the busy rack about 285 (parts 218, cable-tag 25, cable-stand/rail 41, cable-cable 1). That was before the last three known overlaps were fixed (strap loops under the USB-C hub's plugs, two cables pressing where they crossed at a stand, a flat board over the next rail), so expect a little less.
-- Then use the test to fix what it finds, biggest first, keeping only changes that lower the totals.
+A Pi 4 bolted onto a Pi 4, or a Pi Zero onto a Pi 4, sits on the default 11 mm standoffs while the lower Pi's USB and Ethernet jacks stand 16 mm tall, so they go through the top board (about 3900 mm³ of board inside board and plug in the collision test's "stacks" rack). Nothing warns: Check lists the stack as info. The stack can't be built as shown. Raise the standoffs to clear the tallest part under the top board (or say what length is needed), and say so in Check. Found by the collision test (`src/model/holes.ts`, `src/cad/panelgen.ts`).
+
+## 1. A collision test for whole racks (the test is in; fixing what it finds)
+
+Done: `tests/collide/` builds 140 racks through `generate()` (every template alone standing, lying flat, loose and on a DIN flat clip; back to back; stacks; probes and adapters; boxes; stands off; rails along, rows, lying flat, whichever suits each, an L of rails, an L-shaped board; the Pi cluster and the busy mixed rack with Auto-connect; a rack changed by hand; a built rack with boards added), with seeded ids, and intersects every printed part, board, plug, rail, stand and cable exactly (manifold), by category, with volume and depth. Allowed: a plug in its own jack (a box's port reaches into the box along the plug), a cable in its own plugs, a board on its own holder's pins, a DIN clip's hooks in its own holder. Automatic layouts are also checked for failing Check lines (a failing tongue root says which ways of docking would pass), overlap and "runs into" warnings, rails over Longest rail (unless one dock is longer than the limit) and blocked plugs in use. Baseline: `tests/collide/baseline.json`; `npm test` runs 7 quick racks (about 30 s), `npm run collisions` all 140 (about 90 s, in CI too), `npm run collisions:update` rewrites the baseline.
+
+Baseline now: 8272 mm³ over the 140 racks, and 9 layout problems. The measure also showed that the item-1 settling change (cables back to the side they were laid on, crossing beads kept further apart) made cables worse over the whole matrix (cable categories 1360 → 2363 mm³), so it was taken back out.
+
+Left, biggest first (from the baseline):
+- Boards in boards and plugs in boards in a bolted stack: item 0.
+- A DIN rail clip's (pull tab) snap hooks reach 0.7 mm up into every box resting on the holder (about 23 mm³ a box; most of holder-board's 2262 mm³). Also item 3's last bullet.
+- Holder into holder, 718 mm³ in 18 racks, up to 4 mm deep: not looked at yet.
+- Cable into cable, 675 mm³ in 14 racks, up to 7.35 mm deep; among them a pair pressing where they cross beside a stand's comb or under a rail edge (the item-1 fix for it made things worse and was taken out).
+- Cable tags into cables, 274 mm³, up to 5.2 mm deep; cables into stands and rails, 258 mm³, up to 4 mm (a cable through a stand foot's comb, cables 0.75 mm into rail edges); cables into holders, 154 mm³ (one into a dock's release lever).
+- A cap or cradle into its plug, 98 mm³ in one rack; holders into plugs, 67 mm³ (a Pi 4's holder 0.4 mm into its USB plugs); a rail's end about 1 mm into its end block (in 71 racks, 77 mm³ all told).
+- Layout: the library's own USB-C hub fails Check ("Right end: a RJ45 / Ethernet is taller than the box": the box is 14 mm tall); five cables "run into" something on the rows, columns, boxes and no-stands racks.
 
 ## 2. Toolbox pictures to match the 3D models
 
@@ -132,4 +123,4 @@ Check each cradle and cap prints well in every orientation, and fit a cap only w
 Each: how bad (1 to 5), what's wrong, where, and how it was seen.
 
 - 2 · The route check says "The USB-serial adapter USB to Powered USB hub P5 cable runs into the USB charger holder" on a rack of 2 × Pi 4, Pi 5, Uno, Mega, Pico, Nano, ESP32, 7-port hub, 4-port charger, J-Link and USB-serial adapter with Auto-connect and Longest rail 300 mm (standing or lying flat). Cable routing, `src/cad/panelgen.ts`. Seen in a scratch test of that rack.
-- 1 · `npm test` takes about 160 s, most of it building holders and racks. Item 1's fast subset should keep new tests from adding much.
+- 1 · `npm test` takes about 160 s, most of it building holders and racks (the collision test's quick racks add about 30 s).

@@ -662,7 +662,8 @@ PETG results (E = 2100 MPa, strain limit 2%):
 ```bash
 npm install
 npm run dev          # web app at http://localhost:5173
-npm test             # vitest: importers, holders, panels, dock FEA
+npm test             # vitest: importers, holders, panels, dock FEA, and a quick collision check
+npm run collisions   # the whole collision matrix (about 140 racks, a minute or two)
 npm run typecheck
 npm run build        # production web build in dist/
 npm run desktop      # Electron app from the build
@@ -670,6 +671,8 @@ npm run dist         # installers for the current OS in release/
 ```
 
 What's still to do, in order, is in [TODO.md](TODO.md).
+
+**The collision test** (`tests/collide/`) builds racks through the real generator (every template alone standing, lying flat, loose and on a DIN clip; boards back to back and stacked; probes; boxes; stands on and off; rails across, along and at right angles; a Pi cluster and a busy mixed rack with Auto-connect; a rack changed by hand; a built rack with boards added) and intersects every printed part, board, plug, rail, stand and cable exactly with manifold, by what met what. A plug in its own jack, a cable in its own plug, a board on its own holder's pins and a DIN clip's hooks in its own holder are allowed. For automatic layouts it also looks for failing Check lines, overlap and clash warnings, rails over Longest rail and blocked plugs in use. Each rack's figures (volume and depth per category) are held against `tests/collide/baseline.json`: the test fails when one grows past it, and prints the worst overlaps with part names and coordinates. `npm test` runs a few quick racks, `npm run collisions` all of them (CI runs both). When a fix lowers the figures, `npm run collisions:update` writes the new baseline; only do that on purpose.
 
 The board tiles on Start and in **Add a board** are pictures shipped in `public/tiles/`. After changing a template, render them again with the dev server running (`PLAYWRIGHT=/path/to/playwright/index.mjs node scripts/render-tiles.mjs`) and bump `TILE_V` in `src/ui/panels.tsx`.
 

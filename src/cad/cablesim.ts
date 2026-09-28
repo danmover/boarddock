@@ -124,12 +124,6 @@ export function settleCables(cables: SimCable[], obs: SimObstacle[], rounds = 60
   };
 
   const tangent = (c: number, i: number) => { const b = beads[c]; return unit(sub(b[Math.min(b.length - 1, i + 1)], b[Math.max(0, i - 1)])); };
-  // how far apart two beads have to be for the cables to clear by `gap`: where two cables cross, the stretches between
-  // their beads pass closer than the beads do (by up to half a step along each), so the beads keep that much further apart
-  const needOf = (c: number, i: number, c2: number, i2: number, gap: number) => {
-    const g = cables[c].r + cables[c2].r + gap;
-    return len(cross(tangent(c, i), tangent(c2, i2))) > 0.5 ? Math.sqrt(g * g + (STEP * STEP) / 2) : g;
-  };
   const CC = Math.max(4, 2 * rMax + GAP + 1);
   const ckey = (q: number[]) => `${Math.floor(q[0] / CC)},${Math.floor(q[1] / CC)},${Math.floor(q[2] / CC)}`;
 
@@ -144,13 +138,11 @@ export function settleCables(cables: SimCable[], obs: SimObstacle[], rounds = 60
         if (!l) continue;
         for (const [c2, i2] of l) {
           if (c2 <= c) continue; // each pair once
-          const p2 = beads[c2][i2];
+          const p2 = beads[c2][i2], need = cables[c].r + cables[c2].r + GAP;
           const d = sub(p2, q), D = len(d);
-          if (D >= Math.hypot(cables[c].r + cables[c2].r + GAP, STEP / Math.SQRT2)) continue; // (the most needOf can ask)
+          if (D >= need) continue;
           const h1 = held[c][i], h2 = held[c2][i2];
           if (h1 && h2) continue;
-          const need = needOf(c, i, c2, i2, GAP);
-          if (D >= need) continue;
           // which way apart: where they cross, one goes over the other (the later one on top); alongside, straight apart
           const t1 = tangent(c, i), t2 = tangent(c2, i2);
           let n: number[];
@@ -159,19 +151,13 @@ export function settleCables(cables: SimCable[], obs: SimObstacle[], rounds = 60
             // keep whichever is already on top there on top; if neither is yet, the later one goes over
             n = unit(across);
             const k = dot(d, n);
-            if (Math.abs(k) > 0.3 * (cables[c].r + cables[c2].r + GAP) ? k < 0 : n[2] < 0 || (Math.abs(n[2]) < 0.2 && k < 0)) n = n.map((v) => -v);
+            if (Math.abs(k) > 0.3 * need ? k < 0 : n[2] < 0 || (Math.abs(n[2]) < 0.2 && k < 0)) n = n.map((v) => -v);
           }
           else if (D > 1e-3) {
             // alongside: side by side on the level, as cables lying together do (one balanced on another rolls off
-            // it); straight apart where the run is steep. Each goes back to the side it was laid on there, so where
-            // two cross at a shallow angle the crossing stays where it was laid instead of unzipping along the street
-            // until something (a comb) stops it, with the two pressed together there
+            // it); straight apart where the run is steep
             const k = dot(d, t1), side = cross([0, 0, 1], t1);
-            if (len(side) > 0.5) {
-              n = unit(side);
-              const laid = dot(sub(plan[c2][i2], plan[c][i]), n);
-              if (Math.abs(laid) > 0.5 ? laid < 0 : dot(d, n) < 0) n = n.map((v) => -v);
-            }
+            if (len(side) > 0.5) { n = unit(side); if (dot(d, n) < 0) n = n.map((v) => -v); }
             else n = unit([d[0] - k * t1[0], d[1] - k * t1[1], d[2] - k * t1[2]]);
           }
           else { n = unit(cross(t1, Math.abs(t1[2]) < 0.9 ? cross([0, 0, 1], t1) : [1, 0, 0])); if (n[2] < 0) n = n.map((v) => -v); }
@@ -289,7 +275,7 @@ export function settleCables(cables: SimCable[], obs: SimObstacle[], rounds = 60
       const gi = Math.floor(q[0] / CC), gj = Math.floor(q[1] / CC), gk = Math.floor(q[2] / CC);
       for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) for (let dk = -1; dk <= 1; dk++) for (const [c2, i2] of grid.get(`${gi + di},${gj + dj},${gk + dk}`) ?? []) {
         if (c2 === c) continue;
-        if (len(sub(beads[c2][i2], q)) < needOf(c, i, c2, i2, 0.05)) return false;
+        if (len(sub(beads[c2][i2], q)) < r + cables[c2].r + 0.05) return false;
       }
       return true;
     };
