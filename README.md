@@ -256,6 +256,7 @@ The inspector sets:
 A box is a size and rows of ports (Board step, **Box**). Pick a preset (USB hub, powered 7-port hub, USB-C hub with Ethernet, USB charger, USB charger with USB-C, network switch, plug-pack supplies) or set your own:
 - length, width and height; its **corners** seen from above (square, rounded by a radius up to fully round ends, or cut off straight); its **colour** in the 3D view;
 - any number of rows of ports, each on its own card: how many, which type (USB-A, USB-C, micro-USB, USB-B, DC barrel, mains, RJ45, HDMI, audio, screw terminals), on which face (front, back, either end or the top), and what they are for (hub port, upstream, power out, DC out, power in, and so on);
+- for ports that give power, what each one gives (a 27 W USB-C PD port gives 5 A, most USB-C charger ports 3 A), and a DC port's voltage;
 - a plug pack's own lead length, and a powerboard's rating (A, from its label).
 
 **Plug packs** (Start › Hubs and chargers: the Raspberry Pi 27 W (5 A) and 15 W (3 A) USB-C supplies, a 12 V DC plug pack) plug straight into a powerboard's outlet, so they stay off the rails; their own lead goes to the board. Auto-connect plugs them in, and the shopping list says their lead comes with them. A DC pack only goes to a DC input on its own when both say the same voltage: BoardDock can't check polarity, so check both labels.
