@@ -17,7 +17,7 @@ import { boardDetail, plugDetail, plugUp } from './boardviz';
 import { DOCK_MIN_ZB, flatHolderDock, gripSpan, holderDock, HD, rod } from './dock';
 import { EAR, TONGUE } from './dockdims';
 import { dockFrame, dockSite, earSite, flatFrame, type DockSite, type EarSite } from './dockplan';
-import { inv, type M4 } from '../geom/mat';
+import { dir as dirM, inv, mul, type M4 } from '../geom/mat';
 import { rectSection, roundSection, solveFrame, type FElem, type FNode } from '../fea/frame3d';
 
 const ID = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
@@ -1489,13 +1489,18 @@ function earFeatures(C: Ctx, s: EarSite) {
   const f = flatHolderDock(EAR.len + s.inset + H.wall * 0.7, C.job.dock?.fit ?? 0);
   C.pos.push(f.add.transform(D as any));
   C.neg.push(f.cut.transform(D as any));
+  // the key and the rod print lying down as a standing holder's tongue and rod do (socket y up): the tongue flat, its
+  // layers along it; the dovetail and the tunnel stand straight up; the rod on its side
+  const PR = inv(dockFrame('bottom', 0, 0)), toHolder = mul(D, dockFrame('bottom', 0, 0));
   const r = rod(f.top, 0);
-  C.parts.push(part('rod', 'Release rod + button', r.m.transform(D as any), ID, '#ff5d6c', 1, { kind: 'rod', module: C.mid }, { seq: 3.5, dir: [0, 0, 1] }));
-  feat(C, 'dock', earPoly(s, s.tc - EAR.hx, s.tc + EAR.hx, -EAR.len, 0), 0, EAR.drop + f.top + HD.stroke + HD.head.t);
+  C.parts.push(part('earkey', 'Dock key (tongue) for the flat holder', f.key.transform(PR as any), toHolder, H.color ?? '#e4ebe6', 1, { kind: 'holder', module: C.mid }, { seq: 3.2, dir: [dirM(D, [0, -1, 0])[0], dirM(D, [0, -1, 0])[1], 0] }));
+  C.parts.push(part('rod', 'Release rod + button', r.m.transform(PR as any), toHolder, '#ff5d6c', 1, { kind: 'rod', module: C.mid }, { seq: 3.5, dir: [0, 0, 1] }));
+  feat(C, 'dock', earPoly(s, s.tc - EAR.hx, s.tc + EAR.hx, -EAR.len, 0), -EAR.ped - 14, f.top + HD.stroke + HD.head.t - EAR.ped);
   if (s.conflicts.length) C.warnings.push(`Dock ear on the ${s.edge} edge: ${s.conflicts.join(', ')} ${s.conflicts.length > 1 ? 'are' : 'is'} in the way. Pick another dock edge in the Rails step.`);
   C.checks.push({ group: 'Dock', name: 'Lying flat', value: `ear on the ${s.edge} edge`, status: 'info', detail: `the holder lies top face up on its dock by a tab on its ${s.edge} edge, with the same tongue and socket as a standing one: so it takes the same shoe and socket, and a J-Link or adapter can stand behind it in the socket's other half.` });
   const eRatio = mat.E / MATERIALS.PETG.E;
   C.checks.push({ group: 'Dock', name: 'Release', value: `press the button, ${HD.stroke} mm`, status: 'info', detail: `thumb on the button on the tab, fingers under the tab, squeeze and lift the holder straight up. About ${(4.0 * eRatio).toFixed(1)} N (${H.material}); the latch spring returns the button. Rod: ${round(r.len, 0)} mm, printed flat.` });
+  C.checks.push({ group: 'Dock', name: 'Dock key', value: 'slides in under the tab', status: 'info', detail: `the tongue is a small key of its own, printed on its side so its layers run along it (as a standing holder's tongue does). Slide its dovetail into the groove under the tab from the tab's tip, then put the release rod in from the top: the rod through both locks the key in. Dovetail ${2 * EAR.dove.root}–${2 * EAR.dove.top} mm, ${EAR.dove.gap} mm clearance a side: not print-tested yet.` });
   // a press on the far side of the holder (plugging in from above) bends the tongue at the socket mouth the same way
   // a push on a standing holder's far edge does
   const tb = 2 * TONGUE.hx, th = TONGUE.y1 - TONGUE.y0, F = 20, lever = s.far - (TONGUE.y0 + TONGUE.y1) / 2, sig = (F * lever) / ((tb * th * th) / 6);

@@ -13,17 +13,17 @@ import { bbox } from '../src/geom/poly';
 const T = (id: string) => TEMPLATES.find((t) => t.id === id)!.make();
 
 describe('lying flat on a dock', () => {
-  it('the flat frame puts the ear tip over the divider, the top face up, and hangs the holder level with the tongue tip', () => {
+  it('the flat frame puts the ear tip over the divider, the top face up, and the holder on the key over the socket', () => {
     const p = newProject(T('rpi4')), m = p.modules[0];
     const s = earSite(m.board, m.holder, 'left');
     const F = flatFrame('left', s.tc, s.L0);
     // up stays up
     expect(dir(F, [0, 0, 1])).toEqual([0, 0, 1].map((v) => expect.closeTo(v, 9)));
-    // the holder's outer face on the ear edge is EAR.len in from the divider; its underside hangs level with the tongue's
-    // tip (socket-local z = -14), so the holder prints flat
+    // the holder's outer face on the ear edge is EAR.len in from the divider; its underside on the key's pedestal, EAR.ped
+    // above the socket top
     const face = ptM(F, [-s.L0, s.tc, 0]);
     expect(face[1]).toBeCloseTo(EAR.len, 6);
-    expect(face[2]).toBeCloseTo(-EAR.drop, 6);
+    expect(face[2]).toBeCloseTo(EAR.ped, 6);
     // and the board's middle is further in (the holder reaches away from the socket)
     const bb = bbox(m.board.outline), mid = ptM(F, [(bb.x0 + bb.x1) / 2, (bb.y0 + bb.y1) / 2, 0]);
     expect(mid[1]).toBeGreaterThan(EAR.len + 10);
@@ -68,12 +68,22 @@ describe('lying flat on a dock', () => {
     expect(r.parts.filter((x) => x.id.endsWith('rod')).length).toBe(4);
     expect(pr.collisions).toEqual([]);
     expect(r.report.warnings.filter((w) => /loose piece|Dock ear|release lever/.test(w))).toEqual([]);
-    // every holder prints flat: nothing below its underside (the tongue stands on the bed beside it)
-    for (const h of r.parts.filter((x) => x.id.endsWith('holder'))) {
-      let zmin = Infinity;
+    // every holder prints base-down with nothing under it (the tongue is a key of its own); each flat holder has a
+    // key and a rod, and both print lying down: the key with its tongue flat, the rod on its side
+    const holders = r.parts.filter((x) => x.id.endsWith('holder')), keys = r.parts.filter((x) => x.id.endsWith('earkey')), rods = r.parts.filter((x) => x.id.endsWith('_rod'));
+    expect(keys.length).toBe(holders.length);
+    expect(rods.length).toBe(holders.length);
+    for (const h of holders) {
+      // the lowest layer covers much of the part's footprint: it stands on its base, not on a point
+      let zmin = Infinity; const low: number[] = [];
       for (let k = 2; k < h.mesh.pos.length; k += 3) zmin = Math.min(zmin, h.mesh.pos[k]);
+      for (let k = 2; k < h.mesh.pos.length; k += 3) if (h.mesh.pos[k] < zmin + 0.01) low.push(h.mesh.pos[k - 2], h.mesh.pos[k - 1]);
       expect(zmin).toBeGreaterThan(-0.01);
+      const xs = low.filter((_, i) => i % 2 === 0), ys = low.filter((_, i) => i % 2 === 1);
+      expect((Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys))).toBeGreaterThan(0.5 * h.size[0] * h.size[1]);
     }
+    for (const k of keys) { expect(k.size[2]).toBeLessThan(11); expect(Math.max(k.size[0], k.size[1])).toBeGreaterThan(14); }
+    for (const q of rods) expect(q.size[2]).toBeLessThan(Math.max(q.size[0], q.size[1]) / 2);
     // lying flat, the rack stands lower out of the wall than it would with the boards standing
     const q = newProject(T('rpi4'));
     q.modules.push(newModule(T('uno')), newModule(T('pico')), newModule(T('nano')));

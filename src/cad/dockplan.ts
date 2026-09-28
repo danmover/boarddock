@@ -32,14 +32,14 @@ export function dockFrame(edge: EdgeName, tc: number, L0: number): M4 {
 
 /**
  * Holder frame -> socket-local frame of a dock slot whose holder lies flat, docked by the ear on `edge` (tongue at `tc`
- * along it, holder's outer face `L0` out along its normal): the ear's tip over the socket's divider, its top face up out
- * of the socket, and the holder hanging beside the socket from its ear, its underside level with the tongue's tip.
+ * along it, holder's outer face `L0` out along its normal): the ear's tip over the socket's divider, the holder's
+ * underside on the key's pedestal, its top face up out of the socket.
  */
 export function flatFrame(edge: EdgeName, tc: number, L0: number): M4 {
   const n = edgeNormal(edge), e = [n[1], -n[0]];
-  // socket-local -> holder: x -> -e, y -> -n (in from the ear's tip), z -> +z; the holder's underside EAR.drop below
-  // the socket top (level with the tongue's tip)
-  const D = basis([-e[0], -e[1], 0], [-n[0], -n[1], 0], [0, 0, 1], [tc * e[0] + (L0 + EAR.len) * n[0], tc * e[1] + (L0 + EAR.len) * n[1], EAR.drop]);
+  // socket-local -> holder: x -> -e, y -> -n (in from the ear's tip), z -> +z; the holder's underside on the key's
+  // pedestal, EAR.ped above the socket top
+  const D = basis([-e[0], -e[1], 0], [-n[0], -n[1], 0], [0, 0, 1], [tc * e[0] + (L0 + EAR.len) * n[0], tc * e[1] + (L0 + EAR.len) * n[1], -EAR.ped]);
   return inv(D);
 }
 
@@ -295,7 +295,7 @@ export function bestDock(m: Module, railDir: 'h' | 'v', slot = 0, turns: Turn[] 
       const v = dir(inv(slotMatrix(turn, slot, flatFrame(edge, 0, 0))), [1, 0, 0]);
       const n = edgeNormal(edge), depth = (vert ? sz.y : sz.x) + EAR.len, width = vert ? sz.x : sz.y;
       const along = Math.abs(v[0] * n[0] + v[1] * n[1]) * depth + Math.abs(v[0] * n[1] - v[1] * n[0]) * width;
-      s = score(m.board, acc, SOCKET_Z - EAR.drop + sz.z, along) - 6 * earConflicts(m, edge);
+      s = score(m.board, acc, SOCKET_Z + EAR.ped + sz.z, along) - 6 * earConflicts(m, edge);
     } else {
       const reach = (vert ? sz.y : sz.x) + SOCKET_Z + 20;
       const across = vert ? sz.x : sz.y;
@@ -426,8 +426,7 @@ function docksFor<T extends Module>(p: Project, mods: T[], railDir: 'h' | 'v', o
       mods.forEach((m2, j) => {
         // two boards share a dock back to back when both stand or both lie flat (ears back to back)
         if (used.has(j) || j <= i || backs.has(m2.id) || best[j].lie !== lie) return;
-        // (two lying flat reach along the rail: across it, one of them would cover the dock's release lever)
-        for (const t of lie === 'flat' ? ([90, 270] as Turn[]) : TURNS) {
+        for (const t of TURNS) {
           const a = bestDock(m, railDir, 0, [t], EDGES, lie), b = bestDock(m2, railDir, 1, [t], EDGES, lie);
           if (a.access.some((x) => x.ok === 'blocked') || b.access.some((x) => x.ok === 'blocked')) continue;
           const loss = best[i].score + best[j].score - a.score - b.score;

@@ -105,15 +105,15 @@ Plugs always win: if the button would block one, it moves.
 ### Lying flat
 
 A board can also **lie flat on its dock**, top face up (out of the wall), on the same shoe and socket:
-- Its holder has a tab, the **ear**, on one edge. Under the ear's tip are the same pedestal and tongue as a standing holder's, so it plugs straight down into the same socket and the same latch holds it.
-- The holder hangs beside the socket from its ear, its underside level with the tongue's tip. So the whole holder prints flat with nothing underneath: the tongue stands on the bed beside it, and the ear sits on a post in the wall. The board sits low, just above the shoe.
-- On top of the ear is the release button, on a short rod straight down to the latch, clear of the board. To take it off, put your thumb on the button and your fingers under the ear, then squeeze and lift.
-- Two boards can lie **back to back** in one socket, ears together, reaching opposite ways **along** the rail. Reaching across it, one of them would cover the shoe's release lever. A single flat board goes across the rail with the lever on its other side. A J-Link or serial adapter can **stand** in the other half of a flat board's socket.
+- Its holder has a tab, the **ear**, on one edge, flush with its underside, so the holder prints base-down like any other.
+- The tongue that plugs into the socket is a small **dock key** of its own: the standing holder's pedestal and tongue, with a dovetail on top. It prints lying on its side (its tongue flat, its layers running along it, as a standing holder's tongue does), slides into a dovetail groove under the ear from the ear's tip, and the release rod locks it in: the rod goes in from the top, through the ear and the key, down to the socket's latch. The same socket and latch hold it as hold a standing holder.
+- The release button sits on top of the ear, clear of the board. To take the board off, put your thumb on the button and your fingers under the ear, then squeeze and lift. The rod prints lying down.
+- Two boards can lie **back to back** in one socket, ears together, reaching opposite ways. A J-Link or serial adapter can **stand** in the other half of a flat board's socket. The shoe's release lever goes on the side away from a flat board where it can.
 - The ear goes on an edge where it keeps clear of the plugs, as near the middle as it can.
 
 **Rails › Boards in their docks** sets it for the whole rack:
 - **Stand up** (the default) takes the least rail.
-- **Lie flat** stands far less out of the wall (a Pi, Uno, Pico and ESP32 rack: 57 mm instead of 163 mm), and headers point straight out at you, but each board takes its width of rail.
+- **Lie flat** stands far less out of the wall (a Pi, Uno, Pico and ESP32 rack: about 72 mm instead of 163 mm), and headers point straight out at you, but each board takes its width of rail.
 - **Whichever suits each** lays a board flat only where that keeps its plugs clearly easier to reach.
 
 Each slot also has its own **stands / lies flat** toggle in the Rails list and in the dock's inspector. Check lists the tongue's stress under a 20 N press on the far side of a flat holder (the same load case as a push on a standing holder's far edge). None of this has been printed yet.

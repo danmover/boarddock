@@ -35,11 +35,12 @@ export function headSpan(side: number): [number, number] {
 
 /**
  * A holder that lies flat in a dock (top face up, out of the wall): a tab, the ear, sticks out from the edge it docks
- * by. Under the ear's tip are the same pedestal and tongue as a standing holder's, in the same socket; on top of it is
- * the release button, on a short rod straight down to the latch, clear of the board. `len`: how far the ear reaches out
- * from the holder's wall (the button head ends 1 mm short of the wall); `hx`: half its width; `t`: its thickness;
- * `ped`: the pedestal it stands on over the socket top; `drop`: how far the holder hangs below the socket top, so its
- * underside is level with the tongue's tip and the whole holder prints flat on the bed with nothing underneath: the
- * tongue stands on the bed beside it, and the ear sits on a post in the wall.
+ * by, flush with the holder's underside, so the holder prints base-down like any other. The tongue that goes in the
+ * socket is a small key of its own (the standing holder's pedestal and tongue, and a dovetail on top): it prints on
+ * its side like the test kit's key, its tongue lying flat as a standing holder's does, slides into a dovetail groove
+ * under the ear from its tip, and the release rod, on its way down through the ear and the key to the latch, locks
+ * it there. `len`: how far the ear reaches out from the holder's wall (the button head ends 1 mm short of the wall);
+ * `hx`: half its width; `t`: its thickness; `ped`: the pedestal it stands on over the socket top (the holder's
+ * underside is that far above it); `dove`: the dovetail, half-widths at its root and at its top, height, clearance.
  */
-export const EAR = { len: 15, hx: 12, t: 4.5, ped: 3, drop: 14 };
+export const EAR = { len: 15, hx: 12, t: 4.5, ped: 3, dove: { root: 3.4, top: 4.4, h: 2.4, gap: 0.2 } };

@@ -283,7 +283,7 @@ export function generatePanel(p: Project): GenResult {
     // (it hangs on its own side of the socket, EAR.len out: across the rail over one side's lever, or along the rail
     // past the shoe's end, clear of both)
     const hangs = (st: Seat) => { const a = ((mt.turn + (st.slot ? 180 : 0)) * Math.PI) / 180; return Math.abs(Math.cos(a)) > 0.5 ? Math.sign(Math.cos(a)) : 0; };
-    const covers = (sgn: number) => mt.kind === 'dock' && seats.some((st) => st.lie && hangs(st) === sgn && SOCKET_Z - EAR.drop < SHOE_LEVER.top);
+    const covers = (sgn: number) => mt.kind === 'dock' && seats.some((st) => st.lie && hangs(st) === sgn && SOCKET_Z + EAR.ped < SHOE_LEVER.top + 2);
     const auto: 1 | -1 = covers(1) !== covers(-1) ? (covers(1) ? -1 : 1) : over(-1) < over(1) - 0.5 ? -1 : 1;
     const lever: 1 | -1 = mt.lever === 'pos' ? 1 : mt.lever === 'neg' ? -1 : auto;
     if (covers(lever)) warnings.push(`${seats.filter((st) => st.lie).map((st) => st.mod.board.name).join(' and ')}: lying flat, ${covers(-lever) ? 'on both sides of the dock, they cover' : 'it covers'} the dock's rail release lever. ${covers(-lever) ? 'Turn the dock 90° so they reach along the rail' : 'Put the lever on the other side'} (Rails step).`);

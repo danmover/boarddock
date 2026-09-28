@@ -238,24 +238,26 @@ export function holderDock(far: number, pedestal: number, side = 0, fit = 0) {
 }
 
 /**
- * Holder-side dock features for a holder lying flat (socket-local, holder A): the pedestal and tongue under the tip of
- * the ear, the ear itself reaching back `reach` mm into the holder's wall, on a post in the wall that stands on the bed
- * (the holder hangs EAR.drop below the socket top, level with the tongue's tip, so all of it prints flat without
- * supports), and the tunnel the release rod runs up through to its button on top of the ear. `top`: the ear's top face.
+ * A holder lying flat (socket-local, holder A). The ear, fused to the holder: from over the socket back `reach` mm into
+ * the holder's wall, its underside on the key's pedestal, a dovetail groove under it open at its tip, the release-rod
+ * tunnel through it, and two gussets up the wall. The key, a part of its own: the standing holder's pedestal and
+ * tongue, a dovetail on the pedestal that slides into the ear's groove, the rod tunnel through it. `top`: the ear's top.
  */
 export function flatHolderDock(reach: number, fit = 0) {
-  const top = EAR.ped + EAR.t, y1 = Math.max(EAR.len + 0.8, reach);
-  // the ear: rounded outer corners, its top edges chamfered
+  const top = EAR.ped + EAR.t, y1 = Math.max(EAR.len + 0.8, reach), { root, top: dt, h: dh, gap } = EAR.dove;
+  // the ear: rounded outer corners, its top edges chamfered, gussets from it up the wall either side of the button
   const plate = extCh(roundCS(rect2(-EAR.hx, HD.backY, EAR.hx, y1 + 3), 2.5).intersect(rect2(-EAR.hx - 1, HD.backY, EAR.hx + 1, y1)), EAR.ped, top, 0.6, 0);
-  const add = unionMF([
+  const ear = unionMF([plate, ...[-1, 1].map((sg) => extYZ(P([[y1 - 6, top - 0.01], [y1 + 0.01, top - 0.01], [y1 + 0.01, top + 5]]), 1.0).translate([sg * (EAR.hx - 1.4), 0, 0]))]);
+  // the dovetail (x, z), along y from the ear's tip to the end of the pedestal: narrow at the root, wider at the top
+  const dove = (g: number) => P([[-root - g, EAR.ped - 0.02], [root + g, EAR.ped - 0.02], [dt + g, EAR.ped + dh + g], [-dt - g, EAR.ped + dh + g]]);
+  const tunnel = box(-HD.tunnelHx, HD.tunnelY[0], -0.2, HD.tunnelHx, HD.tunnelY[1], top + 0.2);
+  const cut = unionMF([extXZ(dove(gap), HD.backY - 1, HD.base.y1 + gap), tunnel]); // (open at the tip, where the key slides in)
+  const key = unionMF([
     tongue(Math.min(1.0, EAR.ped), fit),
-    extXZ(rect2(-HD.base.hx, 0, HD.base.hx, EAR.ped + 0.02), HD.backY, HD.base.y1), // pedestal on the socket top
-    plate,
-    // the post: the wall under the ear, from the bed up (fused into the holder's wall)
-    box(-EAR.hx + 0.5, EAR.len - 0.8, -EAR.drop, EAR.hx - 0.5, y1, EAR.ped + 0.02),
-  ]);
-  const cut = box(-HD.tunnelHx, HD.tunnelY[0], -0.2, HD.tunnelHx, HD.tunnelY[1], top + 0.2); // release-rod tunnel
-  return { add, cut, top };
+    extXZ(rect2(-HD.base.hx, 0, HD.base.hx, EAR.ped), HD.backY, HD.base.y1), // pedestal on the socket top
+    extXZ(dove(0), HD.backY, HD.base.y1),
+  ]).subtract(tunnel);
+  return { add: ear, cut, key, top };
 }
 
 /** Release rod with its button head, socket-local (rest position). */
