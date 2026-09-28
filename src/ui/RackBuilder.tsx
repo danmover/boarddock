@@ -19,7 +19,7 @@ export function AccessChips({ list }: { list: Access[] }) {
   const c = accessCounts(list);
   if (!list.length) return null;
   return (
-    <span className="accchips" title="◉ points up · ✓ reachable · ⚠ points at the next dock · ✕ into the table">
+    <span className="accchips" title="Plugs on this board: ◉ faces you, easy to reach · ✓ reachable from the side · ⚠ points at the next dock · ✕ points into the table or wall">
       {c.front > 0 && <Chip status="ok">◉{c.front}</Chip>}
       {c.good - c.front > 0 && <Chip status="ok">✓{c.good - c.front}</Chip>}
       {c.side > 0 && <Chip status="warn">⚠{c.side}</Chip>}
@@ -184,7 +184,7 @@ export function RackBuilder() {
             <Pick label="Pull tab points" value={p.mount.tabSide} options={[['down', 'Down'], ['up', 'Up']]} onChange={(v) => edit((q) => { q.mount.tabSide = v; })} />
           </div>
         )}
-        <p className="hint">TS35 × 7.5 top-hat rail, cut with a hacksaw. {rep ? `Rails to cut: ${rep.rails.map((r) => `${Math.round(r.length)} mm`).join(' + ') || 'none'}. Tallest point ${Math.round(rep.height ?? rep.depth)} mm above the ${rep.stands?.length ? 'table' : 'rail base'}.` : ''}</p>
+        <p className="hint">DIN rail (TS35 top-hat, 35 × 7.5 mm, the metal strip from electrical cabinets), cut with a hacksaw. {rep ? `Rails to cut: ${rep.rails.map((r) => `${Math.round(r.length)} mm`).join(' + ') || 'none'}. Tallest point ${Math.round(rep.height ?? rep.depth)} mm above the ${rep.stands?.length ? 'table' : 'rail base'}.` : ''}</p>
       </details>
     </>
   );

@@ -1472,7 +1472,7 @@ function shopping(p: Project, res: Res, d: Delta | null, tot: { g: number; m: nu
     ...d.spareCables.map((c) => `Cable ${c.no != null ? `#${c.no} ` : ''}(${c.a} to ${c.b}) is no longer used`),
   ] });
   const rails = d ? d.rails.map((r) => r.length) : (res.report.panel?.rails ?? []).map((r) => r.length);
-  if (rails.length) out.push({ head: 'Rails', items: count(rails.map((l) => `TS35 × 7.5 top-hat rail, cut to ${Math.round(l)} mm`)) });
+  if (rails.length) out.push({ head: 'Rails', items: count(rails.map((l) => `DIN rail (TS35 top-hat, 35 × 7.5 mm), cut to ${Math.round(l)} mm`)) });
   // a probe's ribbon comes with it: not bought, but it may need an adapter
   const cables = (d ? d.cables : res.report.cables ?? []).filter((c) => c.ribbon == null);
   const typeOf = (id: string, end: 'a' | 'b') => { const l = (p.links ?? []).find((x) => x.id === id); const r = l?.[end]; return plugName(p.modules.find((m) => m.id === r?.module)?.board.comps.find((c) => c.ref === baseRef(r?.ref ?? ''))?.conn?.type ?? ''); };

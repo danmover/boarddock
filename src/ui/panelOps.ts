@@ -317,6 +317,8 @@ export function bedNote(p: Project, boards: { name: string; outline: [number, nu
 /** One line on where a newly added board goes. */
 export function placementNote(p: Project): string {
   if (p.layout !== 'panel') return '';
-  if (p.panel.auto) return ' Auto-arrange lays out the whole rack again with it (mark the rack as built in Export to keep boards where they are).';
+  // an unbuilt rack that lays itself out: nothing to say (the add toast stays short)
+  if (p.panel.auto && !p.built) return '';
+  if (p.panel.auto) return ' The rack is laid out again with it.';
   return ' It goes into an empty dock slot if one fits (nothing new to print but its holder), else the first free spot on the rails, near a board it is cabled to; the rest stay put.';
 }
