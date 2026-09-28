@@ -455,7 +455,10 @@ function connectors(C: Ctx) {
     const sEdge = inside(mouth, C.b.outline) ? Math.min(rayExit(mouth, d, C.b.outline), 50) : -Math.min(rayExit(mouth, [-d[0], -d[1]], C.b.outline), 50);
     const toOut = sEdge + H.gap + H.wall; // outer face of the wall
     const zLo = zAx - ph / 2 - cl, zHi = Math.max(zAx + ph / 2 + cl, zw + 1);
-    C.neg.push(orientedBox(mouth, d, Math.min(-0.6, sEdge - 0.5), toOut + 4, -(pw / 2 + cl), pw / 2 + cl, zLo, zHi + 20));
+    const opening = orientedBox(mouth, d, Math.min(-0.6, sEdge - 0.5), toOut + 4, -(pw / 2 + cl), pw / 2 + cl, zLo, zHi + 20);
+    C.neg.push(opening);
+    // (and again after everything: a neighbouring plug's collar, 2 mm away on a Pi's USB pair, reached into it)
+    C.hard.push(opening);
     C.blocked.push({ poly: orientedRect(mouth, d, -2, toOut + 2, -(pw / 2 + cl + 3), pw / 2 + cl + 3), why: c.ref });
     // right-angle pins: a jumper's housing on each pin with a wire, straight out
     if (cn.type === 'pins_ra') {

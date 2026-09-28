@@ -26,4 +26,10 @@ describe('dock clearances', () => {
     // pegs in their sockets: only the three crush ribs press (well under 1 mm³ each; a peg in the arm was 24 mm³)
     for (const w of m.worst.filter((x) => x.cat === 'holder-holder' && /J-Link|USB-serial/.test(x.a) && /J-Link|USB-serial/.test(x.b))) expect(w.vol).toBeLessThan(1);
   }, 120_000);
+
+  it('keeps a plug\'s collar out of the next plug\'s opening', () => {
+    // a Pi 4's two USB pairs are 18 mm apart and their plugs 16 mm wide: each collar reached 0.4 mm into the other's
+    const m = run('busy mixed rack');
+    expect(m.worst.filter((w) => w.cat === 'holder-plug').map((w) => `${w.a} × ${w.b} ${w.vol.toFixed(2)}`)).toEqual([]);
+  }, 120_000);
 });
