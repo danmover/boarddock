@@ -2,8 +2,8 @@
 // you have one. Click a part in the toolbox (or drag it over) and it follows the pointer until you place it; plugs
 // snap to the nearest edge. Drag parts about: they snap to the board's edges and middle and to the other parts, and
 // show how far they are from the nearest edges. Measure puts a dimension between two things and typing what your
-// calipers say moves the part there. Hover anything for what it is.
-// Keys: V select, H pan (or Space / right-drag), M measure, T toolbox, ⌘A all, Esc none, Del delete, R rotate,
+// calipers say moves the part there. Shape (ShapeTool) edits the outline and cut-outs. Hover anything for what it is.
+// Keys: V select, H pan (or Space / right-drag), M measure, S shape, T toolbox, ⌘A all, Esc none, Del delete, R rotate,
 // ⌘D duplicate, arrows nudge (Shift 1 mm), Alt while dragging: no snapping. Wheel zooms.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Comp, Dim, Feat, Project, V2 } from '../model/types';
@@ -19,8 +19,9 @@ import { headerPins } from '../model/probes';
 import { plugName } from '../model/links';
 import { alignPhoto, edgeGaps, fitPhoto, itemsBox, scalePhoto, snapBox, snapLines, type Box2 } from '../model/editorgeo';
 import { PART_DRAG, Toolbox } from './Toolbox';
+import { useShapeTool } from './ShapeTool';
 
-export type Tool = 'select' | 'pan' | 'place' | 'measure' | 'photoScale' | 'photoAlign';
+export type Tool = 'select' | 'pan' | 'place' | 'measure' | 'shape' | 'photoScale' | 'photoAlign';
 const PIN_TYPES = new Set(['header', 'pins_ra', 'jst_ph', 'jst_xh', 'swd10', 'jtag20']);
 const snap = (v: number) => Math.round(v * 10) / 10;
 const TBX_KEY = 'boarddock.toolbox';
@@ -98,8 +99,13 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
   const photoFile = useRef<HTMLInputElement>(null);
   const drag = useRef<{ kind: 'pan' | 'move' | 'box' | 'dim'; start: V2; client: V2; vb0: typeof vb; orig?: Map<string, V2>; moved?: boolean; pre?: Project; additive?: boolean; dim?: { id: string; axis: 'x' | 'y'; va: number; vb: number; line0: number; t0: number; anchor: number } } | null>(null);
   const [dimLast, setDimLast] = useState<string | null>(null); // the dimension dragged last: it steps aside, not the others
+  const shape = useShapeTool({ b, px, active: tool === 'shape', setTool });
+  // on a phone the toolbox lies over the drawing: the Shape tool needs the board, so it closes it
+  useEffect(() => { if (tool === 'shape' && typeof matchMedia !== 'undefined' && matchMedia('(max-width: 900px)').matches) setTbx(false); }, [tool]);
 
-  useEffect(() => setVb(fitBox(bb)), [bb.x0, bb.y0, bb.x1, bb.y1, mod.id]);
+  useEffect(() => setVb(fitBox(bb)), [mod.id]);
+  // a new size fits the view to it, but not while the Shape tool changes it (the view would move under the pointer)
+  useEffect(() => { if (tool !== 'shape') setVb(fitBox(bb)); }, [bb.x0, bb.y0, bb.x1, bb.y1]);
   useEffect(() => { try { localStorage.setItem(TBX_KEY, tbx ? '1' : '0'); } catch { /* private mode */ } }, [tbx]);
   useEffect(() => { try { localStorage.setItem(CU_KEY, showCu ? '1' : '0'); } catch { /* private mode */ } }, [showCu]);
   useEffect(() => {
@@ -138,7 +144,8 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
     setPhotoMenu(false);
     (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
     const panning = e.button === 1 || e.button === 2 || space || tool === 'pan';
-    if (panning) { drag.current = { kind: 'pan', start: w, client: [e.clientX, e.clientY], vb0: vb }; return; }
+    if (panning || (tool === 'shape' && !shape.onDown(e, w))) { drag.current = { kind: 'pan', start: w, client: [e.clientX, e.clientY], vb0: vb }; return; }
+    if (tool === 'shape') return;
     if (tool === 'place' && item) { putPart(item, w); if (!e.shiftKey) arm(null); return; }
     if (tool === 'measure') {
       const f = pickFeat(b, w, 12 * px);
@@ -184,6 +191,7 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
     setCursor(w);
     const d = drag.current;
     if (tool === 'measure') setSnapF(pickFeat(b, w, 12 * px));
+    if (tool === 'shape' && !d) { shape.onMove(e, w); setHov(null); return; }
     if (!d) {
       const t = (e.target as SVGElement).closest('[data-id]') as SVGElement | null;
       const r = wrap.current?.getBoundingClientRect();
@@ -233,6 +241,7 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
   };
 
   const onUp = () => {
+    if (tool === 'shape') shape.onUp();
     const d = drag.current;
     drag.current = null;
     setGuides(null);
@@ -279,6 +288,7 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
         if (k === 'v') { setTool('select'); setItem(null); return; }
         if (k === 'h') { setTool('pan'); return; }
         if (k === 'm') { setTool('measure'); setDimA(null); return; }
+        if (k === 's' && mb.kind !== 'box') { setTool('shape'); setItem(null); return; }
         if (k === 't') { setTbx((x) => !x); return; }
       }
       if (!s.length) return;
@@ -450,7 +460,7 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
       {tbx && <Toolbox armed={tool === 'place' ? item : null} onArm={arm} onClose={() => setTbx(false)} />}
       <svg ref={svg} className="bcanvas" viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`} onWheel={(e) => zoom(Math.exp(Math.max(-60, Math.min(60, e.deltaY)) * 0.0022), toWorld(e))} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onLostPointerCapture={onUp}
         onDragOver={(e) => { if (e.dataTransfer.types.includes(PART_DRAG)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } }} onDrop={dropPart}
-        style={{ cursor: space || tool === 'pan' ? 'grab' : tool === 'select' ? 'default' : tool === 'place' ? 'copy' : 'crosshair' }}>
+        style={{ cursor: space || tool === 'pan' ? 'grab' : tool === 'select' ? 'default' : tool === 'shape' ? shape.cursor : tool === 'place' ? 'copy' : 'crosshair' }}>
         <defs>
           <pattern id="g1" width="1" height="1" patternUnits="userSpaceOnUse"><path d="M1 0H0V1" fill="none" stroke="var(--grid-fine)" strokeWidth={fs(0.6)} /></pattern>
           <pattern id="g10" width="10" height="10" patternUnits="userSpaceOnUse"><rect width="10" height="10" fill={px < 0.06 ? 'url(#g1)' : 'none'} /><path d="M10 0H0V10" fill="none" stroke="var(--grid)" strokeWidth={fs(1)} /></pattern>
@@ -512,6 +522,8 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
             </g>
           );
         })}
+        {/* the Shape tool's corners, edges and drawing, and holes or parts left off the board */}
+        {shape.layer}
         {/* the part about to be placed, following the pointer */}
         {ghost?.comp && <>{ghost.comp.conn?.entry === 'edge' && plugArrow(ghost.comp, true)}{partSvg(ghost.comp, true)}</>}
         {ghost?.hole && <circle cx={ghost.hole.x} cy={-ghost.hole.y} r={ghost.hole.d / 2 + 1.1} fill="none" stroke="var(--accent)" strokeWidth={fs(2)} strokeDasharray={`${fs(4)} ${fs(3)}`} style={{ pointerEvents: 'none' }} />}
@@ -608,6 +620,7 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
         {toolBtn('select', 'Select', 'V', 'M5 3l14 8-6 2-2 6z')}
         {toolBtn('pan', 'Pan', 'H', 'M12 3v18M3 12h18M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3')}
         {toolBtn('measure', 'Measure', 'M', 'M3 17h18M3 14v6M21 14v6M6 4h12v6H6zM9 4v3M12 4v4M15 4v3')}
+        {!shape.isBox && toolBtn('shape', 'Shape', 'S', 'M5 18L7 6l11 3 1 9zM3.5 16.5h3v3h-3zM5.5 4.5h3v3h-3zM16.5 7.5h3v3h-3zM17.5 16.5h3v3h-3z')}
         <span className="tsep" />
         <div className="tpop">
           <button className={`tbtn ${photoMenu || tool.startsWith('photo') ? 'on' : ''}`} onClick={() => setPhotoMenu((x) => !x)} title="A photo of the real board under the drawing, to trace over">
@@ -635,6 +648,8 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
         <button className="tbtn mono" onClick={() => setVb(fitBox(bb))} title="Fit the board">Fit</button>
         <button className="tbtn" onClick={() => zoom(0.8)} title="Zoom in">+</button>
       </div>
+
+      {shape.panel}
 
       {editDim && (() => {
         // the board's width or height (between its edges), or one of its dimensions
@@ -721,7 +736,7 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
         );
       })()}
 
-      {nSel > 0 && !editDim && !photoAsk && (
+      {nSel > 0 && !editDim && !photoAsk && tool !== 'shape' && (
         <div className="selbar floating">
           <b className="mono">{nSel} selected</b>
           <button className="btn small ghost" onClick={() => rotateSel(sel, 90)} title="R">Rotate 90°</button>
@@ -748,10 +763,11 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
       )}
       <div className="hud floating mono">
         <span>{tool === 'place' ? `place ${armedItem?.label ?? 'it'}: click ${armedItem?.edge ? 'near the edge it goes on' : 'where it goes'} · Shift keeps placing · Esc stops`
-          : tool === 'measure' ? (dimA ? 'now the second: a hole, a part (its centre or a side) or an edge' : 'measure: click the first thing, an edge of the board, a hole, or a part (its centre or a side)')
+          : tool === 'measure' ? (dimA ? 'now the second: a hole, a part (its centre or a side), a corner or an edge' : 'measure: click the first thing, an edge of the board, a corner of it, a hole, or a part (its centre or a side)')
+          : tool === 'shape' ? `shape: ${shape.hint}`
           : tool === 'photoScale' ? (photoA ? 'now the second point on the photo' : 'scale the photo: click a point on it you know the distance from (a hole)')
           : tool === 'photoAlign' ? (photoA ? 'now where that point goes on the drawing' : 'line up the photo: click a point on it (a hole)')
-          : 'drag to move (snaps; Alt: freely) · box-drag selects · Shift-click adds · right-drag pans · wheel zooms · V H M T'}</span>
+          : 'drag to move (snaps; Alt: freely) · box-drag selects · Shift-click adds · right-drag pans · wheel zooms · V H M S T'}</span>
         {cursor && <span className="xy">{(cursor[0] - bb.x0).toFixed(1)}, {(cursor[1] - bb.y0).toFixed(1)}</span>}
       </div>
     </div>

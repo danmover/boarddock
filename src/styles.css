@@ -902,6 +902,12 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 .db-shapes button { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 6px 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); color: var(--muted); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
 .db-shapes button svg { width: 34px; height: 34px; }
 .db-shapes button.on { border-color: var(--accent); color: var(--fg); background: var(--accent-soft); }
+.db-shapes.more { margin-top: 6px; }
+.db-shapes.more button { padding: 8px 4px 6px; font-size: 11.5px; }
+.db-shapes.more button svg { width: 28px; height: 28px; }
+.db-more { display: block; margin: -4px 0 10px auto; background: none; border: 0; color: var(--accent); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; padding: 2px 0; }
+.db-more:hover { text-decoration: underline; }
+.db-more.open { margin-bottom: 0; }
 .db-photo { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 11.5px; color: var(--muted); }
 .db-go { width: 100%; margin-top: 12px; justify-content: center; }
 .db-preview { width: 100%; height: auto; max-height: 340px; background: repeating-linear-gradient(0deg, transparent 0 9.5px, color-mix(in srgb, var(--fg) 5%, transparent) 9.5px 10px), repeating-linear-gradient(90deg, transparent 0 9.5px, color-mix(in srgb, var(--fg) 5%, transparent) 9.5px 10px), var(--viewer); border-radius: 12px; border: 1px solid var(--line); }
@@ -1012,3 +1018,29 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 .dimedit-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .dimedit input { width: 84px; height: 28px; padding: 0 8px; border-radius: 7px; border: 1px solid var(--line-2); background: var(--surface); color: var(--fg); font-size: 13px; }
 .dimedit small { color: var(--muted); font-size: 11px; }
+/* ---- the board editor's Shape tool: a bar under the drawing (modes, then what the selection or tool takes) ---- */
+.shapebar { position: absolute; bottom: 52px; left: 50%; transform: translateX(-50%); z-index: 6; padding: 5px 7px; display: flex; flex-direction: column; gap: 4px; max-width: min(920px, calc(100% - 24px)); width: max-content; }
+.board-editor.with-tbx .shapebar { left: calc(284px + (100% - 284px) / 2); max-width: min(920px, calc(100% - 308px)); }
+.shapebar .sb-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 5px; }
+.shapebar .seg { flex: none; }
+.shapebar .seg button { min-height: 24px; padding: 2px 9px; flex: none; }
+.shapebar .sb-modes button { padding: 2px 11px; }
+.shapebar .sb-lbl { font-size: 11.5px; font-weight: 600; color: var(--accent); margin: 0 2px 0 6px; white-space: nowrap; }
+.shapebar .tsep { width: 1px; height: 18px; background: var(--line-2); margin: 0 3px; }
+.sb-num { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+.sb-num input[type='text'] { width: 58px; height: 26px; padding: 0 6px; font-size: 12px; }
+.sb-num em { font-style: normal; font-family: var(--mono); font-size: 10.5px; color: var(--subtle); }
+.shapebar .sb-note { font-size: 11.5px; color: var(--muted); padding: 0 4px 1px; }
+.shapebar .sb-note.bad { color: var(--bad); }
+.board-editor:has(.shapebar) .legend2 { display: none; }
+/* the Toolbox button (when the toolbox is hidden) is an icon; on a laptop-sized editor Pan and Tracks are too, so the
+   toolbar (with Shape) stays on one row, clear of the view tabs */
+.board-editor .toolbar .tbtn[title^='Show the toolbox'] span { display: none; }
+@media (min-width: 861px) and (max-width: 1380px) { .board-editor .toolbar .tbtn[title^='Pan'] span, .board-editor .toolbar .tbtn[aria-pressed] span { display: none; } }
+@media (max-width: 900px) {
+  .board-editor.with-tbx .shapebar { left: 50%; max-width: calc(100% - 16px); }
+  .shapebar { bottom: 44px; max-width: calc(100% - 16px); padding: 4px 5px; }
+  .shapebar .sb-lbl { display: none; }
+  .sb-num input[type='text'] { width: 50px; }
+}
+@media (max-width: 860px) { .board-editor .toolbar .tbtn { padding: 0 7px; } }

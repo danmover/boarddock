@@ -117,8 +117,9 @@ export interface Board {
   vias?: { x: number; y: number; d: number }[];
 }
 
-/** A point or line on a board a dimension runs from: a hole's centre, a part's centre or one side of it, or an edge of the board. */
-export interface Feat { k: 'hole' | 'comp' | 'edge'; id?: string; at: 'c' | 'x0' | 'x1' | 'y0' | 'y1' }
+/** A point or line on a board a dimension runs from: a hole's centre, a part's centre or one side of it, an edge of the
+ * board, or a corner of its outline (i: which corner, counted round the outline). */
+export interface Feat { k: 'hole' | 'comp' | 'edge' | 'corner'; id?: string; at: 'c' | 'x0' | 'x1' | 'y0' | 'y1'; i?: number }
 /** A dimension between two features along x or y: typing its value moves the second (or the first, if the second is the board's edge). */
 export interface Dim { id: string; a: Feat; b: Feat; axis: 'x' | 'y'; off?: number; t?: number } // off: where its line is, mm past what it measures (dragged; else laid out by itself); t: its label along the line, 0…1
 
