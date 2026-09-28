@@ -810,7 +810,25 @@ export function generatePanel(p: Project): GenResult {
     const nameOfLink = (id: string) => { const l = routes.find((q) => q.l.id === id)?.l; return l ? `${nameOf2(l.a.module)} ${l.a.ref}` : id; };
     if (sim.touching.length) warnings.push(`${sim.touching.length} pair${sim.touching.length > 1 ? 's' : ''} of cables still press on each other after settling (${sim.touching.slice(0, 3).map(([a, b]) => `${nameOfLink(a)} and ${nameOfLink(b)}`).join('; ')}): give them more room, or connect other plugs.`);
     if (routes.length) checks.push({ group: 'Panel', name: 'Cables settled', value: sim.touching.length ? `${sim.touching.length} pair${sim.touching.length > 1 ? 's' : ''} pressing` : 'none through another', status: sim.touching.length ? 'warn' : 'ok', detail: `every cable was let settle with the others${laidOut ? ` (their planned routes met in ${laidOut} place${laidOut > 1 ? 's' : ''})` : ''}: where two cross one lies over the other, where they run together they lie side by side, each keeps its length and stays in its plugs, runs straight out of them before it bends, sags a little where it hangs free and sits in the stands' combs. Ribbons stay where they were laid and the rest settle round them.${sim.kinked.length ? ` ${sim.kinked.length} still bend${sim.kinked.length > 1 ? '' : 's'} tighter than a cable likes somewhere (squeezed between plugs close together): ${sim.kinked.slice(0, 3).map(nameOfLink).join('; ')}.` : ''}` });
-    const tagPts: number[][] = []; // where the tags already placed are (rack frame)
+    // where the tags already placed are (assembly frame), and every settled cable's beads (rack frame), on 6 mm grids
+    const G = 6, cell = (q: number[]) => `${Math.floor(q[0] / G)},${Math.floor(q[1] / G)},${Math.floor(q[2] / G)}`;
+    const inGrid = <T>(grid: Map<string, T[]>, q: number[], f: (x: T) => boolean) => {
+      const i = Math.floor(q[0] / G), j = Math.floor(q[1] / G), k = Math.floor(q[2] / G);
+      for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (let c = -1; c <= 1; c++) for (const x of grid.get(`${i + a},${j + b},${k + c}`) ?? []) if (f(x)) return true;
+      return false;
+    };
+    const tagGrid = new Map<string, number[][]>();
+    const addTagPt = (q: number[]) => { const k = cell(q); (tagGrid.get(k) ?? tagGrid.set(k, []).get(k)!).push(q); };
+    const tagNear = (q: number[]) => inGrid(tagGrid, q, (w) => Math.hypot(w[0] - q[0], w[1] - q[1], w[2] - q[2]) < 1.2);
+    const beadGrid = new Map<string, [number, number][]>();
+    sim.paths.forEach((P, cj) => P.forEach((q, i) => { const k = cell(q); (beadGrid.get(k) ?? beadGrid.set(k, []).get(k)!).push([cj, i]); }));
+    /** Whether a point (rack frame) is inside a cable other than cable qi near arc length s (where its own tag wraps it);
+     * beads are 2.5 mm apart, so the check reaches half a step further, for the cable between them. */
+    const beadNear = (u: number[], qi: number, s: number) => inGrid(beadGrid, u, ([cj, i]) => {
+      if (cj === qi && Math.abs(i * 2.5 - s) < 8) return false;
+      const P = sim.paths[cj][i], rr = routes[cj].d / 2 + 0.4;
+      return (P[0] - u[0]) ** 2 + (P[1] - u[1]) ** 2 + (P[2] - u[2]) ** 2 < rr * rr + 1.5625;
+    });
     for (const [qi, q] of routes.entries()) {
       const { l, d, free } = q;
       const { hit } = planned[qi];
@@ -914,42 +932,44 @@ export function generatePanel(p: Project): GenResult {
           return { o, t, x, y: y.map((v, i) => (v * yy[i] < 0 ? -v : v)) };
         };
         // a hand-width from its plug, where the cable runs straight and the tag touches nothing: no holder, rail,
-        // stand, board or other cable or tag
+        // stand, board or other cable or tag. The ring and the whole flag are checked, every 2 mm, at both faces
         const r0 = d / 2 + 0.2 + TAG.wall, sh = TAG.flagW / 2 - 0.5;
-        const clearAt = (s: number, f: number) => {
-          const { o, x, y } = spotAt(s, f);
-          const t0 = along(s - 6).t, t1 = along(s + 6).t;
-          if (t0[0] * t1[0] + t0[1] * t1[1] + t0[2] * t1[2] < 0.9) return false; // bent here
+        const tagShape = (o: number[], t: number[], x: number[], y: number[]) => {
           const pts: number[][] = [];
-          for (const k of [r0, r0 + 5, r0 + TAG.flagL - 1.5]) for (const w of k === r0 ? [0] : [-sh, 0, sh]) pts.push([o[0] + x[0] * k + y[0] * w, o[1] + x[1] * k + y[1] * w, o[2] + x[2] * k + y[2] * w]);
-          for (const w of [-r0, r0]) pts.push([o[0] + y[0] * w, o[1] + y[1] * w, o[2] + y[2] * w]);
-          pts.push([o[0] - x[0] * r0, o[1] - x[1] * r0, o[2] - x[2] * r0]);
-          return pts.every((q) => {
+          for (const a of [-TAG.height / 2 + 0.2, 0, TAG.height / 2 - 0.2]) {
+            const c = [o[0] + t[0] * a, o[1] + t[1] * a, o[2] + t[2] * a];
+            for (let k = r0; k <= r0 + TAG.flagL - 1; k += 2) for (let w = -sh; w <= sh + 1e-9; w += sh / 2) pts.push([c[0] + x[0] * k + y[0] * w, c[1] + x[1] * k + y[1] * w, c[2] + x[2] * k + y[2] * w]);
+            for (const [kx, ky] of [[0, r0], [0, -r0], [-r0, 0], [-r0 * 0.7, r0 * 0.7], [-r0 * 0.7, -r0 * 0.7]]) pts.push([c[0] + x[0] * kx + y[0] * ky, c[1] + x[1] * kx + y[1] * ky, c[2] + x[2] * kx + y[2] * ky]);
+          }
+          return pts;
+        };
+        // (how many of those points are blocked: none, and the spot is clear)
+        const blockedAt = (s: number, f: number) => {
+          const { o, t, x, y } = spotAt(s, f);
+          const t0 = along(s - 6).t, t1 = along(s + 6).t;
+          if (t0[0] * t1[0] + t0[1] * t1[1] + t0[2] * t1[2] < 0.9) return Infinity; // bent here
+          let n = 0;
+          for (const q of tagShape(o, t, x, y)) {
             const u = uv(q);
-            if (stands && u[2] < -STAND.H + 0.3) return false; // the table
-            if (obs.some((ob) => ob.box[0] - 0.3 < u[0] && u[0] < ob.box[3] + 0.3 && ob.box[1] - 0.3 < u[1] && u[1] < ob.box[4] + 0.3 && ob.box[2] - 0.3 < u[2] && u[2] < ob.box[5] + 0.3)) return false;
-            for (const [cj, P] of sim.paths.entries()) {
-              const rr = (cj === qi ? 0 : routes[cj].d / 2) + 0.4;
-              for (let i = 0; i < P.length; i += 1) {
-                if (cj === qi && Math.abs(i * 2.5 - s) < 8) continue; // its own cable, where it wraps it
-                const dx = P[i][0] - u[0], dy = P[i][1] - u[1], dz = P[i][2] - u[2];
-                if (dx * dx + dy * dy + dz * dz < (cj === qi ? routes[cj].d / 2 + 0.4 : rr) ** 2) return false;
-              }
-            }
-            return !tagPts.some((w) => Math.hypot(w[0] - q[0], w[1] - q[1], w[2] - q[2]) < 3);
-          });
+            if ((stands && u[2] < -STAND.H + 0.3)
+              || obs.some((ob) => ob.box[0] - 0.3 < u[0] && u[0] < ob.box[3] + 0.3 && ob.box[1] - 0.3 < u[1] && u[1] < ob.box[4] + 0.3 && ob.box[2] - 0.3 < u[2] && u[2] < ob.box[5] + 0.3)
+              || beadNear(u, qi, s) || tagNear(q)) n++;
+          }
+          return n;
         };
         const place = (s0: number, lo: number, hi: number) => {
-          for (let k = 0; k < 24; k++) {
-            const s = s0 + (k % 2 ? -1 : 1) * Math.ceil(k / 2) * 6;
+          // outwards from the preferred spot in 3 mm steps; failing a clear spot, the one that touches least
+          let best = { s: s0, f: 0, n: Infinity };
+          for (let k = 0; k < 80; k++) {
+            const s = s0 + (k % 2 ? -1 : 1) * Math.ceil(k / 2) * 3;
             if (s < lo || s > hi) continue;
-            for (let f = 0; f < 4; f++) if (clearAt(s, f)) return { s, f };
+            for (let f = 0; f < 4; f++) { const n = blockedAt(s, f); if (n === 0) return { s, f }; if (n < best.n) best = { s, f, n }; }
           }
-          return { s: s0, f: 0 };
+          return best;
         };
         const spot = ({ s, f }: { s: number; f: number }) => {
           const { o, t, x, y } = spotAt(s, f);
-          for (const k of [r0, r0 + 6, r0 + TAG.flagL - 1.5]) tagPts.push([o[0] + x[0] * k, o[1] + x[1] * k, o[2] + x[2] * k]);
+          for (const q of tagShape(o, t, x, y)) addTagPt(q);
           return basis(x, y, t, [o[0] - t[0] * 1.5, o[1] - t[1] * 1.5, o[2] - t[2] * 1.5]);
         };
         const s1 = Math.min(90, len * 0.3), lo = Math.min(s1, lead(d / 2) + 12);
