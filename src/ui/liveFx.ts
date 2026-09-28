@@ -40,8 +40,9 @@ function labelSprite(text: string): THREE.Sprite {
   g.fillStyle = '#e8edf4'; g.textBaseline = 'middle'; g.fillText(text, pad, h / 2 + 1);
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
-  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, toneMapped: false }));
-  const H = 5; // mm tall
+  // the same size on screen however far away (readable zoomed out, not huge zoomed in)
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, toneMapped: false, sizeAttenuation: false }));
+  const H = 0.021;
   sp.scale.set((H * w) / h, H, 1);
   sp.raycast = noRay;
   sp.renderOrder = 11;
@@ -56,7 +57,7 @@ export interface LiveFx { tick(now: number): boolean; setLive(on: boolean): void
 
 /** Hang the live touches on the meshes of the ghosts that have them. `live` false: lights on steady, no pulses. */
 export function liveFx(items: { gh: Ghost; mesh: THREE.Object3D }[], live: boolean): LiveFx {
-  const lights: LightObj[] = [], flows: FlowObj[] = [], extras: THREE.Object3D[] = [];
+  const lights: LightObj[] = [], flows: FlowObj[] = [], extras: THREE.Object3D[] = [], tags: { at: THREE.Vector3; texts: string[]; mesh: THREE.Object3D }[] = [];
   const made: { dispose(): void }[] = [];
   const dotGeo = new THREE.SphereGeometry(1, 12, 8), beadGeo = new THREE.SphereGeometry(1, 10, 6);
   made.push(dotGeo, beadGeo);
@@ -108,12 +109,11 @@ export function liveFx(items: { gh: Ghost; mesh: THREE.Object3D }[], live: boole
         extras.push(dot);
       }
       if (F.label) {
-        const tag = labelSprite(F.label);
-        made.push(tag.material, (tag.material as THREE.SpriteMaterial).map!);
-        const t = F.len * 0.8 + F.dash + 7;
-        tag.position.set(F.p[0] + F.d[0] * t, F.p[1] + F.d[1] * t, F.p[2] + F.d[2] * t);
-        mesh.add(tag);
-        extras.push(tag);
+        // leads out of plugs close together share one label ("to a screen ×2 · to speakers")
+        const t = F.len * 0.8 + F.dash + 7, at = new THREE.Vector3(F.p[0] + F.d[0] * t, F.p[1] + F.d[1] * t, F.p[2] + F.d[2] * t);
+        const near = tags.find((g) => g.at.distanceTo(at) < 45);
+        if (near) near.texts.push(F.label);
+        else tags.push({ at, texts: [F.label], mesh });
       }
     }
     if (fx.flow && fx.flow.pts.length > 1) {
@@ -135,6 +135,15 @@ export function liveFx(items: { gh: Ghost; mesh: THREE.Object3D }[], live: boole
       }
       flows.push({ beads, pts, cum, len, speed: fx.flow.slow ? 45 : 110, on: fx.flow.on });
     }
+  }
+  for (const g of tags) {
+    const n = new Map<string, number>();
+    for (const t of g.texts) n.set(t, (n.get(t) ?? 0) + 1);
+    const tag = labelSprite([...n].map(([t, k]) => (k > 1 ? `${t} ×${k}` : t)).join(' · '));
+    made.push(tag.material, (tag.material as THREE.SpriteMaterial).map!);
+    tag.position.copy(g.at);
+    g.mesh.add(tag);
+    extras.push(tag);
   }
   let on = live, last = -1;
   const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
