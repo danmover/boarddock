@@ -259,7 +259,7 @@ The Plugs step counts what still needs a port: USB devices against free hub and 
 
 ### Powerboards
 
-Powerboards (power strips) are boxes too, under Start's accessories: 4 or 6 outlets, with a switch by each, with outlets turned 45° so plug packs fit side by side, or with two USB ports. Set the outlets (AU/NZ, UK, US or EU), how many, their angle and the size under **Box**; the outlets spread evenly along the top. Auto-connect plugs each charger's mains lead into a free outlet, and buys the lead only if it is longer than the one most chargers come with. A powerboard's own lead goes to the wall: BoardDock never plugs one powerboard into another, and warns if you do.
+Powerboards (power strips) are boxes too, under Start's accessories: 4 or 6 outlets, with a switch by each, with outlets turned 45° so plug packs fit side by side, or with two USB ports. Set the outlets (AU/NZ, UK, US or EU), how many, their angle and the size under **Box**; the outlets spread evenly along the top. Auto-connect plugs each charger's mains lead into a free outlet, and buys the lead only if it is longer than the one a charger usually comes with. The shopping list names hook-up wire by size (red and black, 0.5 to 0.75 mm², ferrules for screw terminals) and a barrel-to-wire lead as a pigtail. A powerboard's own lead goes to the wall: BoardDock never plugs one powerboard into another, and warns if you do.
 
 A box longer than your printer's bed (a powerboard usually is) gets its holder in two halves that meet end to end, each clipped to the rail on its own.
 
@@ -366,7 +366,7 @@ A pin header (▸) opens into its pins, with their net names from your KiCad fil
 | Show or hide holders, docks, caps, boards, plugs, cables, cable numbers or rails | **Layers** |
 | See every keyboard shortcut | **?** |
 
-Plugs are drawn after their type: a USB-C's slim oval overmould, a USB-A's metal shell and grip ridges (a stacked pair takes one plug per socket), an HDMI's flat shell, an RJ45's clear plug and boot, a barrel plug's sleeve, a 3.5 mm plug's rings, wires with ferrules in a screw terminal. A port shows a plug only where a cable goes: a cable to another board on the rack, a cradle the board has for one (a screen or a supply off the rack), or a box's own supply (mains, DC in); a free port stays empty. A cable that leaves the rack bends down and runs off along the table; cables in the rack bend in arcs of about four diameters, as real ones do.
+Plugs are drawn after their type: a USB-C's slim oval overmould, a USB-A's metal shell and grip ridges (a stacked pair takes one plug per socket), an HDMI's flat shell, an RJ45's clear plug and boot, a barrel plug's sleeve, a 3.5 mm plug's rings, wires with ferrules in a screw terminal. A port shows a plug only where a cable goes: a cable to another board on the rack, a cradle the board has for one (a screen or a supply off the rack), or a box's own supply (mains, DC in); a free port stays empty. A box's own supply (a powerboard's lead, a charger's mains lead) bends down and runs off along the table, past the edge of the rack, towards the wall. A cradled port with nothing connected to it (a Pi's micro-HDMI, if no screen is wired up) gets only a short cut-off tail, since where that cable goes isn't known; running your Pis headless, **Go headless** in the Plugs step drops those HDMI and audio cradles (and their caps) on every board. Cables in the rack bend in arcs of about four diameters, as real ones do. A cable's number badge reads what it is and where it goes ("Power → Pi 5"); hover it for the whole label.
 
 ![Stepping through the assembly](docs/images/steps.png)
 
@@ -454,7 +454,11 @@ Choose **Loose holders** in the Panel step for holders without a rail dock:
 - **side by side** with printed link bars;
 - **back to back** with snap rivets.
 
-Each holder can also have a flat pull-tab DIN clip or a **stand socket** (round, square, hex or D-shaped post, or a 1/4"-20 tripod nut trap).
+Each holder can also have a flat pull-tab DIN clip or a **stand socket** (round, square, hex or D-shaped post, or a 1/4"-20 tripod nut trap). Loose holders start without the DIN clip (tick **DIN rail clip** if you have a rail), and the shopping list and assembly notes only mention a rail when there is one.
+
+- A stack never covers a box: hubs, chargers and powerboards stand beside it on the table, so their ports and outlets stay free.
+- A board bolted onto another (a HAT on a Pi, a shield on an Arduino) gets a standoff on each hole the two share and a screw in each end, sized from those holes (M2.5 for a Pi, M3 for an Arduino); the Rails step says how many next to the board.
+- Cables between loose holders aren't routed or sized (there are no rails to run them along): each plug gets a short cut-off tail in 3D, Check says so, and the shopping list asks you to measure them on your bench. A box's own supply lead still runs off along the table.
 
 | Stacked | Side by side |
 |---|---|
