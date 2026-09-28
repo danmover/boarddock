@@ -17,25 +17,26 @@ const T = (id: string) => TEMPLATES.find((t) => t.id === id)!.make();
 const rack = (ids: string[]) => { const p = newProject(T(ids[0])); for (const id of ids.slice(1)) p.modules.push(newModule(T(id))); return p; };
 
 describe('power budget', () => {
-  it('spreads six Pi 4s over two chargers and puts them on USB-C ports first', () => {
+  it('spreads six Pi 4s over two chargers, only on ports that give them 3 A', () => {
     const p = rack(['rpi4', 'rpi4', 'rpi4', 'rpi4', 'rpi4', 'rpi4', 'usb_charger6', 'usb_charger6']);
     p.links = autoLinks(p);
     const on = (i: number) => p.links!.filter((l) => l.a.module === p.modules[i].id || l.b.module === p.modules[i].id).length;
-    expect(on(6)).toBe(3);
-    expect(on(7)).toBe(3);
+    // each charger has two 3 A USB-C ports; its 2.4 A USB-A ports are too weak for a Pi 4, so two Pis wait
+    expect(on(6)).toBe(2);
+    expect(on(7)).toBe(2);
     const srcs = powerBudget(p);
     expect(srcs.map((s) => s.kind)).toEqual(['charger', 'charger']);
-    // 3 × 1.5 A on a charger that gives about 9.4 A: fine in total, but 1 of the 3 Pis is on a 2.4 A USB-A port
-    for (const s of srcs) { expect(s.load).toBeCloseTo(4.5, 5); expect(s.ports.length).toBe(1); expect(s.status).toBe('warn'); }
+    for (const s of srcs) { expect(s.load).toBeCloseTo(3, 5); expect(s.ports.length).toBe(0); expect(s.status).toBe('ok'); }
+    expect(portBudget(p).powerIns.length).toBe(2);
   });
 
   it('flags one charger asked for far more than it gives', () => {
-    const p = rack(['rpi4', 'rpi4', 'rpi4', 'rpi4', 'rpi4', 'rpi4', 'rpi4', 'rpi4', 'usb_charger']);
+    const p = rack(['rpi_zero', 'rpi_zero', 'rpi_zero', 'rpi_zero', 'rpi_zero', 'rpi_zero', 'usb_charger']);
     p.links = autoLinks(p);
     const [s] = powerBudget(p);
     expect(s.takers.length).toBe(4); // four ports
-    expect(s.load).toBeCloseTo(6, 5);
-    p.modules[8].board.box!.supply = 4;
+    expect(s.load).toBeCloseTo(2.4, 5);
+    p.modules[6].board.box!.supply = 1;
     expect(powerBudget(p)[0].status).toBe('bad');
   });
 
@@ -57,7 +58,7 @@ describe('power budget', () => {
   });
 
   it('lists boards with wires and none connected', () => {
-    const p = rack(['rpi4', 'relay4', 'power_dist', 'usb_charger']);
+    const p = rack(['rpi4', 'relay4', 'power_dist', 'usb_charger6']);
     p.links = autoLinks(p);
     expect(portBudget(p).unwired.map((u) => u.name).sort()).toEqual(['Power distribution', 'Relay board']);
   });
@@ -65,7 +66,7 @@ describe('power budget', () => {
 
 describe('layout', () => {
   it('puts each box among the boards it feeds, in the middle of them', () => {
-    const p = rack(['rpi4', 'rpi4', 'usb_charger', 'pico', 'pico', 'usb_hub']);
+    const p = rack(['rpi4', 'rpi4', 'usb_charger6', 'pico', 'pico', 'usb_hub']);
     p.links = autoLinks(p);
     const segs = byBoxes(p, p.modules.filter((m) => m.board.kind !== 'box'), p.modules.filter((m) => m.board.kind === 'box'));
     const names = segs.map((s) => [...s.boards.map((m) => m.board.name), '|', ...s.boxes.map((m) => m.board.name)].join(' '));

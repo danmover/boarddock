@@ -33,14 +33,14 @@ describe('assign', () => {
 });
 
 describe('auto-connect', () => {
-  it('powers six Pi 4s from two chargers, three each, and says why', () => {
+  it('powers Pi 4s from two chargers, spread, only on ports that give them enough, and says why', () => {
     const p = rack(['rpi4', 'rpi4', 'rpi4', 'rpi4', 'rpi4', 'rpi4', 'usb_charger6', 'usb_charger6']);
     const ls = autoLinks(p).filter((l) => l.kind === 'power');
-    expect(ls.length).toBe(6);
+    expect(ls.length).toBe(4); // the four 3 A USB-C ports; the 2.4 A USB-A ones are too weak for a Pi 4
     const by = new Map<string, number>();
     const chargers = new Set(p.modules.filter((m) => /charger/i.test(m.board.name)).map((m) => m.id));
     for (const l of ls) { const c = chargers.has(l.a.module) ? l.a.module : l.b.module; by.set(c, (by.get(c) ?? 0) + 1); }
-    expect([...by.values()].sort()).toEqual([3, 3]);
+    expect([...by.values()].sort()).toEqual([2, 2]);
     expect(ls.every((l) => l.auto && l.why && /needs about/.test(l.why))).toBe(true);
   });
   it('measures on the rack: each device takes the hub port nearest to it', () => {
@@ -65,9 +65,9 @@ describe('auto-connect', () => {
     const ls = autoLinks(p).filter((l) => l.kind === 'net');
     expect(ls.length).toBe(3);
   });
-  it('advice: boards without power ask for a charger, devices without ports for a hub', () => {
+  it('advice: boards without power ask for a charger (a Pi 5 its own 27 W supply)', () => {
     const p = rack(['rpi5', 'rpi5', 'uno', 'uno', 'uno', 'uno', 'uno']);
-    const adv = wiringAdvice(p);
-    expect(adv.some((a) => a.add === 'usb_charger6')).toBe(true);
+    expect(wiringAdvice(p).some((a) => a.add === 'psu_pi5' && a.count === 2)).toBe(true);
+    expect(wiringAdvice(rack(['rpi4', 'rpi5'])).some((a) => a.add === 'usb_charger6')).toBe(true);
   });
 });

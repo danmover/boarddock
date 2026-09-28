@@ -47,6 +47,7 @@ const SHELF: Record<string, Shelf> = {
   proto_5x7: 'Blank and perfboard', blank: 'Blank and perfboard',
   example_dual_swd: 'Examples', example_jtag: 'Examples',
   usb_hub: 'Hubs and chargers', usb_hub7: 'Hubs and chargers', net_switch5: 'Hubs and chargers', net_switch8: 'Hubs and chargers', usb_hubc: 'Hubs and chargers', usb_charger: 'Hubs and chargers', usb_charger6: 'Hubs and chargers',
+  psu_pi5: 'Hubs and chargers', psu_pi4: 'Hubs and chargers', dc_pack_12v: 'Hubs and chargers',
   pb4: 'Powerboards', pb6: 'Powerboards', pb4sw: 'Powerboards', pb4ang: 'Powerboards', pb4usb: 'Powerboards', power_dist: 'Powerboards',
   jlink: 'Probes and adapters', ftdi: 'Probes and adapters', relay4: 'Add-on boards',
 };
@@ -229,6 +230,9 @@ export const TEMPLATES: Template[] = [
   { id: 'usb_hubc', name: 'USB-C hub with Ethernet (110 × 32)', accessory: true, make: () => makeBox('hubc') },
   { id: 'usb_charger', name: 'USB charger, 4 ports (box 90 × 60 × 28)', accessory: true, make: () => makeBox('charger4') },
   { id: 'usb_charger6', name: 'USB charger, 4 A + 2 C (110 × 70)', accessory: true, make: () => makeBox('charger6') },
+  { id: 'psu_pi5', name: 'USB-C supply, 27 W, 5 A (the Raspberry Pi 5 one; a plug pack)', accessory: true, make: () => makeBox('psu_pi5') },
+  { id: 'psu_pi4', name: 'USB-C supply, 15 W, 3 A (the Raspberry Pi 4 one; a plug pack)', accessory: true, make: () => makeBox('psu_pi4') },
+  { id: 'dc_pack_12v', name: 'DC plug pack, 12 V 2 A (barrel plug)', accessory: true, make: () => makeBox('dc_pack_12v') },
   { id: 'jlink', name: 'J-Link debug probe (50 × 50 × 3, 10-pin ribbon)', accessory: true, make: () => makeBox('jlink') },
   { id: 'pb4', name: 'Powerboard, 4 outlets (290 × 58 × 40)', accessory: true, make: () => makeBox('pb4') },
   { id: 'pb6', name: 'Powerboard, 6 outlets (420 × 58 × 40)', accessory: true, make: () => makeBox('pb6') },

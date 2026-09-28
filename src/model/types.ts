@@ -87,6 +87,8 @@ export interface BoxPortGroup {
   off?: number[]; // a top row: each port's centre, mm from the front edge (dragged); overrides across and near
   up?: number; // a side face: the ports' centre, mm up from the bottom of the box (unset: halfway up)
   across?: number; // a top row: its centre, mm from the front edge (unset: by near)
+  amps?: number; // power out: what each port gives, A (unset: typical for its type)
+  volts?: number; // DC out: its output voltage
   turn?: 0 | 90 | 180 | 270; // a side face: the socket turned, clockwise looking at it: 90 or 270 on its side (upright), 180 upside down
 }
 export interface BoxSpec {
@@ -95,6 +97,8 @@ export interface BoxSpec {
   ribbon?: number; // a debug probe (J-Link): length of the ribbon it comes with, mm
   corner?: number; // its corners seen from above: radius (or chamfer size), mm; unset: min(4, width / 6)
   chamfer?: boolean; // corners cut straight across instead of rounded
+  pack?: { lead: number }; // a plug pack: it plugs straight into an outlet (or the wall), off the rack; lead: its own output lead, mm
+  rating?: number; // a powerboard: what it may carry in all, A at mains voltage (unset: a typical figure for its outlets)
 }
 
 export interface Board {

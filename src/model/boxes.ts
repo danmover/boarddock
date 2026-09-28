@@ -19,6 +19,7 @@ export const BOX_ROLES: [string, string][] = [
   ['uart', "serial pins: jumper wires to a board's UART header"],
   ['mains-out', 'mains outlet: a charger\'s lead plugs in'],
   ['mains-in', 'mains in: a lead to an outlet (or the wall)'],
+  ['dc-out', "DC out: a supply's DC lead to a board's DC input"],
   ['other', 'leaves the rack (supply, screen)'],
 ];
 
@@ -26,6 +27,7 @@ export const FACE_NAME: Record<BoxFace, string> = { front: 'Front', back: 'Back'
 const ANGLE: Record<Exclude<BoxFace, 'top'>, number> = { front: -90, back: 90, left: 180, right: 0 };
 
 const g = (type: string, count: number, face: BoxFace, role: string): BoxPortGroup => ({ id: uid('pg'), type, count, face, role });
+const PACK = (what: string) => `A plug pack: it plugs straight into a powerboard's outlet (or the wall), so it stays off the rails, and its own lead goes to ${what}. Auto-connect plugs it in. Set its figures under Box to match the label on yours.`;
 const POWERBOARD = "A powerboard: set its outlets (AU, UK, US or EU), how many, their angle and its size under Box. Auto-connect plugs the chargers' mains leads into it; its own lead goes to the wall. Never plug one powerboard into another.";
 
 /** A small part standing on a bare board (a probe's chip, an LED): for the look of it, in 2D and 3D. */
@@ -41,6 +43,11 @@ export const BOX_PRESETS: Record<string, { name: string; color: string; spec: ()
   // a desktop network switch: its Ethernet ports along the front, its power in at the back
   switch8: { name: 'Network switch, 8 ports', color: '#2b2f36', spec: () => ({ l: 158, w: 100, h: 27, groups: [g('rj45', 8, 'front', 'net'), g('barrel', 1, 'back', 'other')] }), note: "A network switch: every board's Ethernet goes to one of its ports (Auto-connect does it), its own power supply plugs in at the back. Set its size and ports under Box to match yours." },
   switch5: { name: 'Network switch, 5 ports', color: '#2b2f36', spec: () => ({ l: 100, w: 70, h: 25, groups: [g('rj45', 5, 'front', 'net'), g('barrel', 1, 'back', 'other')] }), note: "A network switch: every board's Ethernet goes to one of its ports (Auto-connect does it), its own power supply plugs in at the back. Set its size and ports under Box to match yours." },
+  // plug packs: a supply that plugs straight into an outlet, its own lead ending in its output plug. The Raspberry Pi
+  // 27 W supply gives 5 A over USB-C PD (a Pi 5's full USB), the 15 W one 3 A; sizes and leads are typical, not measured
+  psu_pi5: { name: 'USB-C supply, 27 W (5 A)', color: '#f4f3ef', spec: () => ({ l: 62, w: 50, h: 32, supply: 5, pack: { lead: 1200 }, groups: [{ ...g('usb_c', 1, 'right', 'power-out'), amps: 5 }, g('mains_lead', 1, 'left', 'mains-in')] }), note: PACK('a Pi 5 (5 A over USB-C PD, so its USB ports give their full 1.6 A)') },
+  psu_pi4: { name: 'USB-C supply, 15 W (3 A)', color: '#f4f3ef', spec: () => ({ l: 55, w: 45, h: 28, supply: 3, pack: { lead: 1500 }, groups: [{ ...g('usb_c', 1, 'right', 'power-out'), amps: 3 }, g('mains_lead', 1, 'left', 'mains-in')] }), note: PACK('a Pi 4 (3 A over USB-C)') },
+  dc_pack_12v: { name: 'DC plug pack, 12 V 2 A', color: '#2b2f36', spec: () => ({ l: 70, w: 45, h: 35, pack: { lead: 1500 }, groups: [{ ...g('barrel', 1, 'right', 'dc-out'), amps: 2, volts: 12 }, g('mains_lead', 1, 'left', 'mains-in')] }), note: PACK("a board's 12 V DC input (a barrel plug, 5.5 × 2.1 mm on most). BoardDock can't check voltages or polarity: check both labels match before you plug it in") },
   // powerboards (power strips): outlets along the top, spread evenly, their own lead out of one end
   pb4: { name: 'Powerboard, 4 outlets', color: '#f1f0eb', spec: () => ({ l: 290, w: 58, h: 40, groups: [g('ac_au', 4, 'top', 'mains-out'), g('mains_lead', 1, 'left', 'mains-in')] }), note: POWERBOARD },
   pb6: { name: 'Powerboard, 6 outlets', color: '#f1f0eb', spec: () => ({ l: 420, w: 58, h: 40, groups: [g('ac_au', 6, 'top', 'mains-out'), g('mains_lead', 1, 'left', 'mains-in')] }), note: POWERBOARD },

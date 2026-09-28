@@ -7,7 +7,8 @@
 // removes it.
 import { useEffect, useMemo, useRef, useState, type PointerEvent as RPE } from 'react';
 import type { Link, Pin, PlugRef, Project } from '../model/types';
-import { autoLinks, cableFlow, compatible, KIND_COLOR, KIND_NAME, linkKind, numberLinks, plugsOf, rankTargets, sameRef, shortName, wiringAdvice, type PlugInfo } from '../model/links';
+import { allPlugs, autoLinks, cableFlow, canCable, connectNote, KIND_COLOR, KIND_NAME, linkKind, numberLinks, PC, pcModule, rankTargets, refusal, sameRef, shortName, wiringAdvice, type PlugInfo } from '../model/links';
+import { isPlugPack } from '../model/powerdata';
 import { TEMPLATES } from '../model/templates';
 import { fillWires, headerPins } from '../model/probes';
 import { flowLayout, rackLayout, type Pos, type Size } from '../model/wirelayout';
@@ -22,7 +23,7 @@ const PIN_TYPES = new Set(['header', 'pins_ra', 'jst_ph', 'jst_xh']);
 // jumper wire colours, in the order a new wire takes them (ground black, a supply red)
 const JUMPER = ['#e0a030', '#3b7dd8', '#8a5cc7', '#e87b2a', '#2f9e44', '#e6e6e2', '#8b5a2b', '#9aa0a6'];
 
-const ROLE_TEXT: Record<string, string> = { host: 'USB host', device: 'USB device', 'power-in': 'power in', 'power-in-dc': 'DC in', 'power-out': 'power out', 'hub-up': 'to host', 'hub-down': 'hub port', net: 'Ethernet', video: 'video', audio: 'audio', wire: 'wires', debug: 'debug', uart: 'serial', other: '' };
+const ROLE_TEXT: Record<string, string> = { host: 'USB host', device: 'USB device', 'power-in': 'power in', 'power-in-dc': 'DC in', 'power-out': 'power out', 'dc-out': 'DC out', 'mains-in': 'mains plug', 'mains-out': 'outlet', 'hub-up': 'to host', 'hub-down': 'hub port', net: 'Ethernet', video: 'video', audio: 'audio', wire: 'wires', debug: 'debug', uart: 'serial', other: '' };
 
 type Row = { q: PlugInfo; pin?: Pin };
 type View = { x: number; y: number; k: number };
@@ -66,9 +67,11 @@ export function WiringView() {
   const [side, setSide] = useState<'todo' | 'cables' | null>(() => (typeof window !== 'undefined' && window.innerWidth < 760 ? null : 'todo'));
   const box = useRef<HTMLDivElement>(null);
   const gesture = useRef<{ kind: 'pan' | 'card'; id?: string; sx: number; sy: number; vx: number; vy: number; moved: boolean } | null>(null);
-  const plugs = useMemo(() => plugsOf(p), [p]);
+  const plugs = useMemo(() => allPlugs(p), [p]);
   const links = p.links ?? [];
   sideRef.current = side;
+  // the cards: every board and box, and "Your computer" (off the rack) when anything could go to it
+  const mods = useMemo(() => (links.some((l) => l.a.module === PC || l.b.module === PC) || plugs.some((q) => q.role === 'device' || q.role === 'hub-up') ? [...p.modules, pcModule(p)] : p.modules), [p, plugs]);
 
   const jumperOf = (q: PlugInfo) => links.find((l) => l.kind === 'jumper' && (sameRef(l.a, q.ref) || sameRef(l.b, q.ref)));
   const showsPins = (q: PlugInfo) => pinsOf(q).length >= 2 && (open.has(keyOf(q)) || !!jumperOf(q) || pendingPin?.q.module === q.module && pendingPin.q.ref.ref === q.ref.ref);
@@ -76,28 +79,38 @@ export function WiringView() {
   // each card's rows: its plugs, and under a pin header that is open, its pins
   const rows = useMemo(() => {
     const out = new Map<string, Row[]>();
-    for (const m of p.modules) out.set(m.id, []);
+    for (const m of mods) out.set(m.id, []);
     for (const q of plugs) {
-      const r = out.get(q.module.id)!;
+      const r = out.get(q.module.id);
+      if (!r) continue;
       r.push({ q });
       if (showsPins(q)) for (const pin of pinsOf(q)) r.push({ q, pin });
     }
     return out;
-  }, [plugs, open, links, pendingPin]);
+  }, [plugs, mods, open, links, pendingPin]);
   const cardH = (id: string) => HEAD + (rows.get(id) ?? []).reduce((s, r) => s + (r.pin ? PROW : ROW), 0) + Math.max(0, (rows.get(id)?.length ? 0 : ROW)) + 10;
-  const sizes = useMemo(() => new Map<string, Size>(p.modules.map((m) => [m.id, { w: W, h: cardH(m.id) }])), [rows, p.modules]);
+  const sizes = useMemo(() => new Map<string, Size>(mods.map((m) => [m.id, { w: W, h: cardH(m.id) }])), [rows, mods]);
 
   // where each card is: where it was put, else as on the rails; cards new since then go in a row underneath
   const pos: Pos = useMemo(() => {
     const saved = p.wiring?.pos ?? {};
-    const def = rackLayout(p, railRows(p, rep?.panel ?? undefined), sizes);
-    const have = p.modules.filter((m) => saved[m.id]);
+    const def = withMissing(rackLayout(p, railRows(p, rep?.panel ?? undefined), sizes));
+    const have = mods.filter((m) => saved[m.id]);
     if (!have.length) return def;
     const out: Pos = new Map(have.map((m) => [m.id, saved[m.id]]));
     let x = 20, y = Math.max(...have.map((m) => saved[m.id][1] + sizes.get(m.id)!.h)) + 50;
-    for (const m of p.modules) if (!out.has(m.id)) { out.set(m.id, [x, y]); x += W + 60; }
+    for (const m of mods) if (!out.has(m.id)) { out.set(m.id, [x, y]); x += W + 60; }
     return out;
-  }, [p.wiring, p.modules, rep, sizes]);
+  }, [p.wiring, mods, rep, sizes]);
+  /** Cards a layout left out (your computer, a plug pack off the rails): in a column to the left of the rest. */
+  function withMissing(q: Pos): Pos {
+    const miss = mods.filter((m) => !q.has(m.id));
+    if (!miss.length) return q;
+    const xs = [...q.values()].map((c) => c[0]), ys = [...q.values()].map((c) => c[1]);
+    let x = (xs.length ? Math.min(...xs) : 20) - W - 80, y = ys.length ? Math.min(...ys) : 20;
+    for (const m of miss) { q.set(m.id, [x, y]); y += (sizes.get(m.id)?.h ?? 100) + 40; }
+    return q;
+  }
   const at = (id: string) => { const q = pos.get(id) ?? [20, 20]; return drag?.id === id ? [q[0] + drag.dx, q[1] + drag.dy] : q; };
 
   // ---- the canvas: fit, pan, zoom at the pointer ----
@@ -183,7 +196,7 @@ export function WiringView() {
     if (!g) return;
     if (g.kind === 'card' && g.moved && drag) {
       // the first card moved keeps every other card where it is now
-      const all = Object.fromEntries(p.modules.map((m) => [m.id, pos.get(m.id) ?? [20, 20]])) as Record<string, [number, number]>;
+      const all = Object.fromEntries(mods.map((m) => [m.id, pos.get(m.id) ?? [20, 20]])) as Record<string, [number, number]>;
       const q = all[drag.id];
       all[drag.id] = [Math.round(q[0] + drag.dx), Math.round(q[1] + drag.dy)];
       edit((pp) => { pp.wiring = { ...(pp.wiring ?? {}), pos: all }; });
@@ -197,7 +210,7 @@ export function WiringView() {
     }
   };
   const arrange = (how: 'flow' | 'rack') => {
-    const next = how === 'flow' ? flowLayout(p, sizes) : rackLayout(p, railRows(p, rep?.panel ?? undefined), sizes);
+    const next = withMissing(how === 'flow' ? flowLayout(p, sizes) : rackLayout(p, railRows(p, rep?.panel ?? undefined), sizes));
     edit((pp) => { pp.wiring = { ...(pp.wiring ?? {}), pos: Object.fromEntries([...next].map(([id, q]) => [id, [Math.round(q[0]), Math.round(q[1])]])) }; });
     setView(null);
     toast(how === 'flow' ? 'Laid out as the power and data flow: chargers and hosts, then hubs, then probes and adapters, then the boards they serve. ⌘Z undoes it.' : 'Laid out as the boards stand on the rails. ⌘Z undoes it.');
@@ -243,8 +256,9 @@ export function WiringView() {
   // ---- connecting ----
   /** Cable plug a to plug b (whatever either had goes), then offer to do the same for the other boards like it. */
   const connect = (a: PlugInfo, b: PlugInfo) => {
-    if (a.module === b.module) { toast('Pick a plug on another board.'); return; }
-    if (!compatible(a.role, b.role)) { toast(`${a.label} (${ROLE_TEXT[a.role] || a.role}) does not plug into ${b.label} (${ROLE_TEXT[b.role] || b.role}).`); return; }
+    // never what doesn't fit or isn't safe (a powerboard into another, an outlet onto wires), said in plain words
+    const no = refusal(p, a, b);
+    if (no) { toast(no); return; }
     const kind = linkKind(a.role, b.role);
     edit((pp) => {
       pp.links = (pp.links ?? []).filter((l) => !sameRef(l.a, a.ref) && !sameRef(l.b, a.ref) && !sameRef(l.a, b.ref) && !sameRef(l.b, b.ref));
@@ -253,11 +267,14 @@ export function WiringView() {
     setPending(null);
     // the same for the others: what Auto-connect would add of this kind now
     const more = autoLinks(store.get().project!, plugPlaces()).filter((l) => l.kind === kind).length;
-    if (more) toast(`Connected ${shortName(a.module.board.name)} ${a.label} to ${shortName(b.module.board.name)} ${b.label}.`, { label: `Connect ${more} more ${KIND_NAME[kind!]} like this`, run: () => addLinks(kind) });
+    const note = connectNote(a, b);
+    if (more) toast(`Connected ${shortName(a.module.board.name)} ${a.label} to ${shortName(b.module.board.name)} ${b.label}.${note ? ` ${note}` : ''}`, { label: `Connect ${more} more ${KIND_NAME[kind!]} like this`, run: () => addLinks(kind) });
+    else if (note) toast(note);
   };
   /** Move one end of a cable: `keep` stays, the end that was elsewhere now goes to `to` (the cable keeps its number). */
   const replug = (l: Link, keep: PlugInfo, to: PlugInfo) => {
-    if (to.module === keep.module || !compatible(keep.role, to.role)) { toast(`${to.label} does not take the other end of this cable (${keep.label}).`); return; }
+    const no = refusal(p, keep, to);
+    if (no) { toast(no); return; }
     edit((pp) => {
       const x = (pp.links ?? []).find((q) => q.id === l.id);
       if (!x) return;
@@ -345,7 +362,8 @@ export function WiringView() {
   }
   const where = (id: string) => {
     const mt = rep?.panel?.mounts.find((m) => m.slots.some((s) => s.module === id));
-    if (!mt) return p.modules.find((m) => m.id === id)?.on ? 'stacked on another board' : 'not on a rail yet';
+    if (id === PC) return 'off the rack';
+    if (!mt) { const m = p.modules.find((x) => x.id === id); return m?.on ? 'stacked on another board' : m && isPlugPack(m.board) ? 'in an outlet, off the rails' : 'not on a rail yet'; }
     const s = mt.slots.findIndex((x) => x.module === id);
     return `rail ${mt.rail.replace(/^r/, '')}, ${mt.slots.length > 1 ? `${s ? 'back' : 'front'} of the dock` : 'on a flat clip'}`;
   };
@@ -381,7 +399,7 @@ export function WiringView() {
                 </g>
               );
             })}
-            {p.modules.map((m) => {
+            {mods.map((m) => {
               const c = at(m.id);
               const rs = rows.get(m.id) ?? [];
               const isBox = m.board.kind === 'box', h = sizes.get(m.id)!.h;
@@ -416,7 +434,7 @@ export function WiringView() {
                     const l = links.find((x) => sameRef(x.a, q.ref) || sameRef(x.b, q.ref));
                     const isP = pending === q || wireDrag?.from === q;
                     const src = wireDrag?.from ?? pending;
-                    const ok = src && src !== q && src.module !== q.module && compatible(src.role, q.role);
+                    const ok = src && src !== q && src.module.id !== q.module.id && canCable(p, src, q);
                     const pins = pinsOf(q), shown = showsPins(q), cab = l && cableOf(l.id);
                     return (
                       <g key={q.ref.ref} data-plug={keyOf(q)} style={{ cursor: wireDrag ? 'copy' : 'pointer' }} onPointerDown={(e) => { e.stopPropagation(); if (e.button === 0) pressed.current = { q, sx: e.clientX, sy: e.clientY, dragged: false }; }}
@@ -508,15 +526,16 @@ function WiringSide({ tab, setTab, onPick }: { tab: 'todo' | 'cables'; setTab: (
   const rep = useApp((s) => s.result?.report ?? null);
   const sel = useApp((s) => s.sel);
   const links = p.links ?? [];
-  const plugs = useMemo(() => plugsOf(p), [p]);
+  const plugs = useMemo(() => allPlugs(p), [p]);
   const advice = useMemo(() => wiringAdvice(p), [p]);
   const linked = new Set(links.flatMap((l) => [`${l.a.module}/${l.a.ref}`, `${l.b.module}/${l.b.ref}`]));
   // plugs that want something: a board's power, a device's host, a hub's uplink, a header's probe or serial cable
-  const WANT: Record<string, string> = { 'power-in': 'needs power', device: 'needs a USB port', 'hub-up': 'needs a host', debug: 'no probe on it', uart: 'no serial on it', 'mains-in': 'needs an outlet' };
-  const todo = plugs.filter((q) => WANT[q.role] && !linked.has(keyOf(q)) && !((q.role === 'debug' || q.role === 'uart') && q.module.board.kind === 'box'));
+  const WANT: Record<string, string> = { 'power-in': 'needs power', 'power-in-dc': 'needs a DC supply', device: 'needs a USB port', 'hub-up': 'needs a host', debug: 'no probe on it', uart: 'no serial on it', 'mains-in': 'needs an outlet' };
+  // (a powerboard's own lead goes to the wall, not to anything in the rack)
+  const todo = plugs.filter((q) => WANT[q.role] && q.module.id !== PC && !linked.has(keyOf(q)) && !((q.role === 'debug' || q.role === 'uart') && q.module.board.kind === 'box') && !(q.role === 'mains-in' && q.module.board.comps.some((c) => c.conn?.type.startsWith('ac_'))));
   const best = (q: PlugInfo) => rankTargets(p, q.ref, plugPlaces(), 1)[0];
   const nos = numberLinks(links);
-  const nameOf = (id: string) => shortName(p.modules.find((m) => m.id === id)?.board.name ?? '?');
+  const nameOf = (id: string) => (id === PC ? 'Your computer' : shortName(p.modules.find((m) => m.id === id)?.board.name ?? '?'));
   return (
     <div className="wside floating" onPointerDown={(e) => e.stopPropagation()}>
       <div className="wside-tabs" role="tablist">

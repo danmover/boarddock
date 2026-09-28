@@ -2,7 +2,7 @@
 // multi-selection picked in the 3D view (a cradle here, a cap there, a whole dock) goes in one ⌘Z.
 import type { Feature, Project } from '../model/types';
 import { ROLE_INFO } from '../model/holes';
-import { cableNumbers, KIND_COLOR, KIND_NAME, refText } from '../model/links';
+import { cableNumbers, findModule, KIND_COLOR, KIND_NAME, refText } from '../model/links';
 import { mountLabels } from '../model/built';
 import { dropModule, edit, select, store, toast, type SelItem } from '../state';
 import { materialise } from './panelOps';
@@ -41,7 +41,7 @@ export function describe(p: Project, it: SelItem): { title: string; sub: string;
     case 'link': {
       const l = (p.links ?? []).find((x) => x.id === it.id);
       const c = store.get().result?.report.cables?.find((x) => x.id === it.id);
-      const nm = (r?: { module: string; ref: string }) => (r ? `${mod(r.module)?.board.name ?? '?'} ${refText(mod(r.module), r.ref)}` : '?');
+      const nm = (r?: { module: string; ref: string }) => (r ? `${findModule(p, r.module)?.board.name ?? '?'} ${refText(findModule(p, r.module), r.ref)}` : '?');
       return { title: `${l ? KIND_NAME[l.kind ?? 'usb'] : ''} cable`, sub: `${nm(l?.a)} to ${nm(l?.b)}${c ? ` · ${Math.round(c.length / 10)} cm, buy ${c.buy} m` : ''}`, color: l ? KIND_COLOR[l.kind ?? 'usb'] : 'var(--muted)', removable: 'Remove cable' };
     }
     case 'railstand': {
