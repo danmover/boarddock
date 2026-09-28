@@ -464,11 +464,13 @@ function connectors(C: Ctx) {
     if (cn.cradle && F.cradles && ph > 0.5) {
       specs.push({ ref: c.ref, mouth, d, sEdge, toOut, zAx, pw, ph, pl, cap: cn.cap && F.caps, angle: cn.angle });
     } else if (cn.guard && F.guards) {
-      // collar that shields the receptacle and frames the opening
-      const ow = pw + 2 * cl, oh = ph + 2 * cl;
+      // collar that shields the receptacle and frames the opening; round the receptacle's own body where that sticks
+      // out past the wall's face (a jack at the board's edge), since a plug-sized opening there would cut into it
+      const jw = 2 * extentAlong(c, cn.angle + 90), proud = c.side === 'top' && toOut - 0.6 < 0.3 && jw > pw + 2 * cl;
+      const ow = proud ? jw + 0.8 : pw + 2 * cl, oh = ph + 2 * cl;
       // a wide opening gets a 45 degree gable over it, so its roof is never a flat bridge of more than GUARD_FLAT
-      const rise = Math.max(0, (ow - GUARD_FLAT) / 2), zRoof = zAx + oh / 2;
-      const hole = rect2(-ow / 2, zLo, ow / 2, zRoof).add(rise > 0 ? poly([[-ow / 2, zRoof - 0.01], [ow / 2, zRoof - 0.01], [ow / 2 - rise, zRoof + rise], [-(ow / 2 - rise), zRoof + rise]], 'NonZero') : rect2(0, 0, 0, 0));
+      const rise = Math.max(0, (ow - GUARD_FLAT) / 2), zRoof = proud ? Math.max(zAx + oh / 2, zt + c.h + 0.4) : zAx + oh / 2;
+      const hole = rect2(-ow / 2, proud ? Math.min(zLo, zt - 0.4) : zLo, ow / 2, zRoof).add(rise > 0 ? poly([[-ow / 2, zRoof - 0.01], [ow / 2, zRoof - 0.01], [ow / 2 - rise, zRoof + rise], [-(ow / 2 - rise), zRoof + rise]], 'NonZero') : rect2(0, 0, 0, 0));
       const outline = rise > 0
         ? poly([[-(ow / 2 + 1.8), 0], [ow / 2 + 1.8, 0], [ow / 2 + 1.8, zRoof + 1.8], [ow / 2 - rise + 1.8, zRoof + rise + 1.8], [-(ow / 2 - rise + 1.8), zRoof + rise + 1.8], [-(ow / 2 + 1.8), zRoof + 1.8]], 'NonZero')
         : rect2(-(ow / 2 + 1.8), 0, ow / 2 + 1.8, zRoof + 1.8);
@@ -559,7 +561,7 @@ function cradleGroup(C: Ctx, g: CradleSpec[], H: HolderSettings) {
   const zFloorMin = Math.min(...m.map((k) => k.zf));
   const ledgeZ0 = Math.max(0.6, zFloorMin - 4.0 > 0.6 ? zFloorMin - 4.0 : zFloorMin - 1.5);
   if (withCap) for (const [tw, sgn] of [[tL, -1], [tR, 1]] as [number, number][]) {
-    const pr = poly([[tw - sgn * 0.01, ledgeZ0], [tw + sgn * 0.7, ledgeZ0], [tw + sgn * 0.7, ledgeZ0 + 0.3], [tw - sgn * 0.01, ledgeZ0 + 1.0]], 'NonZero');
+    const pr = poly([[tw - sgn * 0.01, ledgeZ0], [tw + sgn * 0.7, ledgeZ0], [tw + sgn * 0.7, ledgeZ0 + 0.3], [tw - sgn * 0.01, ledgeZ0 + 1.0]], 'NonZero'); // 0.7: LEDGE below
     bodies.push(sweepTZ(o, d, pr, sc0, sc1));
   }
   C.late.push(unionMF(bodies).subtract(unionMF(cuts)));
@@ -572,7 +574,9 @@ function cradleGroup(C: Ctx, g: CradleSpec[], H: HolderSettings) {
   }
   if (!withCap) return;
   // one cap over the whole group: top plate, a pad pressing on each plug, legs with hooks at the two outer ends
-  const legT = 1.1, top = 1.6, gp = 0.25, hook = 0.6;
+  // the legs stand just clear of the ledges' tips (LEDGE out from the cradle's walls); each hook reaches in under its
+  // ledge to just short of the wall, so it catches the ledge's full width less the clearances
+  const LEDGE = 0.7, legT = 1.1, top = 1.6, gp = LEDGE + 0.15, hook = gp - 0.1;
   const plugTops = m.map((k) => k.sp.zAx + k.sp.ph / 2);
   const zPlate = Math.max(...plugTops) + 0.2;
   const zHook = ledgeZ0 - 0.05;
@@ -586,25 +590,30 @@ function cradleGroup(C: Ctx, g: CradleSpec[], H: HolderSettings) {
   const at: V2 = add(o, d, sc0 + 0.3);
   const Tm = matFromBasis([t[0], t[1], 0], [0, 0, 1], [d[0], d[1], 0], [at[0], at[1], 0]);
   const L = zPlate - zHook;
-  const eps = (3 * legT * (hook + 0.1)) / (2 * L * L);
+  const eps = (3 * legT * (hook - (gp - LEDGE) + 0.05)) / (2 * L * L); // each leg springs out past its ledge's tip
   const refs = g.map((sp) => sp.ref).join(' + ');
   C.parts.push(part(`cap_${C.parts.length}`, `Plug cap (${refs})`, mesh, Tm, '#f2c94c', 1, { kind: 'cap', module: C.mid, refs: g.map((sp) => sp.ref) }, { seq: 20 + (C.job.level ?? 0), dir: [0, 0, 1] }));
-  C.checks.push({ group: 'Plugs', name: `Cap legs (${refs})`, value: `${(eps * 100).toFixed(2)}% strain`, status: strainStatus(C, eps), detail: `${round(L, 1)} mm legs, ${hook} mm hooks under the cradle ledges; they flex within the layers` });
+  C.checks.push({ group: 'Plugs', name: `Cap legs (${refs})`, value: `${(eps * 100).toFixed(2)}% strain`, status: strainStatus(C, eps), detail: `${round(L, 1)} mm legs, ${round(hook, 2)} mm hooks under the cradle ledges; they flex within the layers` });
 }
 
 /** Loops on the two long sides of a box: a hook-and-loop strap goes over the box and through them. */
 function strapLoops(C: Ctx) {
   const H = C.H, ol = C.b.outline, bb = bbox(ol);
-  const alongX = bb.x1 - bb.x0 >= bb.y1 - bb.y0;
-  // the strap runs over the top between a pair of loops on the long sides: keep it off ports on those sides and on top
-  const L0 = alongX ? bb.x0 : bb.y0, L = alongX ? bb.x1 - bb.x0 : bb.y1 - bb.y0;
-  // a side port only gets in the way when its plug reaches down to the loops (7 mm tall)
+  // the strap runs over the top between a pair of loops on two opposite sides, the long ones if their ports leave room
+  // (else round the box the other way): keep it off ports on those sides and on top
+  // (a side port only gets in the way when its plug reaches down to the loops, 7 mm tall)
   const low = (c: Comp) => C.zt + c.conn!.zc - c.conn!.plug.h / 2 < 8;
-  const busy = C.b.comps.filter((c) => c.conn && !c.hidden && (c.conn.entry === 'top' || ((alongX ? Math.abs(Math.sin(rad(c.conn.angle))) > 0.7 : Math.abs(Math.cos(rad(c.conn.angle))) > 0.7) && low(c))))
-    .map((c) => { const at = (alongX ? c.x : c.y) - L0, half = Math.max(c.w, c.l, c.conn!.plug.w) / 2 + 10; return [at - half, at + half]; });
-  const free = (f: number) => !busy.some(([a, b]) => f * L > a && f * L < b);
-  const pick = (want: number, lo: number, hi: number) => { let best: number | null = null; for (let f = lo; f <= hi + 1e-9; f += 0.01) if (free(f) && (best == null || Math.abs(f - want) < Math.abs(best - want))) best = f; return best; };
-  const fa = pick(0.28, 0.1, 0.46), fb = pick(0.72, 0.54, 0.9);
+  const spots = (alongX: boolean) => {
+    const L0 = alongX ? bb.x0 : bb.y0, L = alongX ? bb.x1 - bb.x0 : bb.y1 - bb.y0;
+    const busy = C.b.comps.filter((c) => c.conn && !c.hidden && (c.conn.entry === 'top' || ((alongX ? Math.abs(Math.sin(rad(c.conn.angle))) > 0.7 : Math.abs(Math.cos(rad(c.conn.angle))) > 0.7) && low(c))))
+      .map((c) => { const at = (alongX ? c.x : c.y) - L0, half = Math.max(c.w, c.l, c.conn!.plug.w) / 2 + 10; return [at - half, at + half]; });
+    const free = (f: number) => !busy.some(([a, b]) => f * L > a && f * L < b);
+    const pick = (want: number, lo: number, hi: number) => { let best: number | null = null; for (let f = lo; f <= hi + 1e-9; f += 0.01) if (free(f) && (best == null || Math.abs(f - want) < Math.abs(best - want))) best = f; return best; };
+    return [pick(0.28, 0.1, 0.46), pick(0.72, 0.54, 0.9)];
+  };
+  const long = bb.x1 - bb.x0 >= bb.y1 - bb.y0;
+  let alongX = long, [fa, fb] = spots(alongX);
+  if (fa == null || fb == null) { const [ga, gb] = spots(!long); if (ga != null && gb != null) { alongX = !long; fa = ga; fb = gb; } }
   if (fa == null || fb == null) C.warnings.push('The strap loops could not all miss the ports: check that the strap clears them.');
   for (const f of [fa ?? 0.28, fb ?? 0.72]) for (const side of [-1, 1]) {
     const q: V2 = alongX ? [bb.x0 + (bb.x1 - bb.x0) * f, side > 0 ? bb.y1 : bb.y0] : [side > 0 ? bb.x1 : bb.x0, bb.y0 + (bb.y1 - bb.y0) * f];
@@ -616,7 +625,7 @@ function strapLoops(C: Ctx) {
     C.blocked.push({ poly: orientedRect(q, n, -2, t1 + 1, -9, 9), why: 'strap loop' });
     feat(C, 'tie', orientedRect(q, n, t0, t1, -8, 8), 0, 7, ['strap']);
   }
-  C.checks.push({ group: 'Holder', name: 'Strap loops', value: '4', status: 'info', detail: 'thread a 12 mm hook-and-loop strap (or two zip ties) over the box through the loops on each long side' });
+  C.checks.push({ group: 'Holder', name: 'Strap loops', value: '4', status: 'info', detail: `thread a 12 mm hook-and-loop strap (or two zip ties) over the box through the loops on each ${alongX === long ? 'long' : 'short'} side${alongX === long ? '' : ' (the long sides are busy with ports)'}` });
 }
 
 /**
@@ -645,7 +654,14 @@ function tieAnchor(C: Ctx, at: V2, edgeConn: { d: V2; half: number; sEdge: numbe
     // on the side the cable will be pulled to (towards the rails it runs down to), where the tie takes the strain
     const pull = pullDir(C);
     if (pull) cand.sort((u, v) => ((v[0] - e[0]) * pull[0] + (v[1] - e[1]) * pull[1]) - ((u[0] - e[0]) * pull[0] + (u[1] - e[1]) * pull[1]));
-    q = cand.find((pt) => !C.blocked.some((bl) => inside(pt, bl.poly))) ?? cand[0];
+    // it goes on the wall beside the opening: not past the board's corner (it would hang in the air, or down into the
+    // dock's shoe and its release lever), not near the dock's edge, not where something else already is
+    const fits = (pt: V2) => [3.4, -3.4].every((k) => inside(add(add(pt, t, k), edgeConn.d, -1), b.outline))
+      && (!C.dock || C.dock.L0 - (pt[0] * C.dock.n[0] + pt[1] * C.dock.n[1]) > 9)
+      && !C.blocked.some((bl) => inside(pt, bl.poly));
+    const pick = cand.find(fits);
+    if (!pick) return; // no room for one beside this plug: the cradle alone holds it
+    q = pick;
     n = edgeConn.d;
   } else {
     let best = { d: Infinity, q: at as V2, n: [0, -1] as V2 };
@@ -1717,7 +1733,9 @@ function dockFeatures(C: Ctx, s: DockSite) {
   const H = C.H, mat = MATERIALS[H.material];
   const D = inv(dockFrame(s.edge, s.tc, s.L0)); // socket-local -> holder
   const f = holderDock(s.far, s.ped, s.side, C.job.dock?.fit ?? 0);
-  C.pos.push(f.add.transform(D as any));
+  // (beside a board that sits low, the pedestal would reach in over the board's corner: it stops at the board, which
+  // drops in past it from above)
+  C.pos.push(f.add.transform(D as any).subtract(ext(C.inner, C.zb - 0.2, C.zt + 60)));
   C.neg.push(f.cut.transform(D as any));
   C.keep.push(poly(tsPoly(s, s.tc - HD.spineHx - 1.2, s.tc + HD.spineHx + 1.2, -1, s.far + 1)), poly(tsPoly(s, s.tc - HD.base.hx - 1.2, s.tc + HD.base.hx + 1.2, -1, s.ped + 1.5)));
   const r = rod(f.zg1, s.side);

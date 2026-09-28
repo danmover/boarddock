@@ -778,9 +778,10 @@ export function leadStub(name: string, p: number[], d: number[], cable: number, 
 
 /**
  * Round every corner of a polyline with an arc of radius `r` (smaller where the segments are short), the way a
- * cable bends: no kinks, however the route was drawn.
+ * cable bends: no kinks, however the route was drawn. With `ok`, a corner whose arc `ok` rejects (it would cut through
+ * something the corner itself clears) is bent tighter, down to a sixth of `r`.
  */
-export function filletPath(pts: number[][], r: number): number[][] {
+export function filletPath(pts: number[][], r0: number, ok?: (arc: number[][]) => boolean): number[][] {
   if (pts.length < 3) return pts;
   const sub = (a: number[], b: number[]) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
   const len = (a: number[]) => Math.hypot(a[0], a[1], a[2]);
@@ -797,21 +798,28 @@ export function filletPath(pts: number[][], r: number): number[][] {
     const cos = Math.max(-1, Math.min(1, un[0] * vn[0] + un[1] * vn[1] + un[2] * vn[2]));
     const th = Math.acos(cos); // angle between the two legs at the corner
     if (th > Math.PI - 0.02 || th < 0.02) { out.push(b); continue; } // straight on, or straight back (no arc fits a U-turn)
-    // tangent length for radius r, at most half of each neighbouring segment (the other half is the next corner's)
-    let t = r / Math.tan(th / 2);
-    t = Math.min(t, segLen[i - 1] * 0.5, segLen[i] * 0.5);
-    const rr = t * Math.tan(th / 2);
-    const p0 = at(b, un, t), p1 = at(b, vn, t);
-    // arc centre: along the bisector
-    const bis = [un[0] + vn[0], un[1] + vn[1], un[2] + vn[2]], lb = len(bis) || 1;
-    const cen = at(b, bis.map((x) => x / lb), rr / Math.sin(th / 2));
-    const e0 = sub(p0, cen), e1 = sub(p1, cen);
-    const sweep = Math.PI - th, n = Math.max(2, Math.ceil(sweep / (Math.PI / 18)));
-    // slerp between the two radius vectors
-    const s = Math.sin(sweep) || 1;
-    for (let k = 0; k <= n; k++) {
-      const f = k / n, w0 = Math.sin((1 - f) * sweep) / s, w1 = Math.sin(f * sweep) / s;
-      out.push([cen[0] + e0[0] * w0 + e1[0] * w1, cen[1] + e0[1] * w0 + e1[1] * w1, cen[2] + e0[2] * w0 + e1[2] * w1]);
+    const radii = ok ? [r0, r0 * 0.6, r0 * 0.35, r0 / 6] : [r0];
+    for (const [ri, r] of radii.entries()) {
+      const arc: number[][] = [];
+      // tangent length for radius r, at most half of each neighbouring segment (the other half is the next corner's)
+      let t = r / Math.tan(th / 2);
+      t = Math.min(t, segLen[i - 1] * 0.5, segLen[i] * 0.5);
+      const rr = t * Math.tan(th / 2);
+      const p0 = at(b, un, t), p1 = at(b, vn, t);
+      // arc centre: along the bisector
+      const bis = [un[0] + vn[0], un[1] + vn[1], un[2] + vn[2]], lb = len(bis) || 1;
+      const cen = at(b, bis.map((x) => x / lb), rr / Math.sin(th / 2));
+      const e0 = sub(p0, cen), e1 = sub(p1, cen);
+      const sweep = Math.PI - th, n = Math.max(2, Math.ceil(sweep / (Math.PI / 18)));
+      // slerp between the two radius vectors
+      const s = Math.sin(sweep) || 1;
+      for (let k = 0; k <= n; k++) {
+        const f = k / n, w0 = Math.sin((1 - f) * sweep) / s, w1 = Math.sin(f * sweep) / s;
+        arc.push([cen[0] + e0[0] * w0 + e1[0] * w1, cen[1] + e0[1] * w0 + e1[1] * w1, cen[2] + e0[2] * w0 + e1[2] * w1]);
+      }
+      if (ri < radii.length - 1 && !ok!(arc)) continue;
+      out.push(...arc);
+      break;
     }
   }
   out.push(P[P.length - 1]);

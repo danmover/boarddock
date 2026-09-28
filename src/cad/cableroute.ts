@@ -44,6 +44,8 @@ export function segInBox(p: number[], q: number[], b: Box, pad: number): [number
 /** How far a cable runs straight out of its plug before it bends: past the plug's boot, then room for a bend of about
  * four diameters (a cable bent tighter right at the plug looks and is wrong). */
 export const lead = (radius: number) => Math.max(14, 10 + 8 * radius);
+/** The radius a cable's bends are drawn with (about four diameters): see filletPath. */
+export const bendRadius = (radius: number) => Math.min(25, Math.max(10, 8 * radius));
 const add = (a: number[], b: number[], s = 1) => [a[0] + b[0] * s, a[1] + b[1] * s, a[2] + b[2] * s];
 const dist = (a: number[], b: number[]) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 export const routeLength = (r: Route) => r.pts.reduce((s, q, i) => (i ? s + dist(q, r.pts[i - 1]) : 0), 0);

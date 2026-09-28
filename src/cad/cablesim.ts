@@ -63,8 +63,8 @@ export function settleCables(cables: SimCable[], obs: SimObstacle[], rounds = 60
   // arc length of every bead from each end, and which are held in their plugs
   const arc = beads.map((b) => { const s = [0]; for (let i = 1; i < b.length; i++) s.push(s[i - 1] + len(sub(b[i], b[i - 1]))); return s; });
   const held = cables.map((c, k) => { const s = arc[k], L = s[s.length - 1]; return s.map((x) => c.fixed || x <= c.pin[0] || L - x <= c.pin[1]); });
-  // a comb holds the bead in its slot, and the one each side
-  cables.forEach((C, k) => { for (const g of C.grip ?? []) { let bi = -1, bd = 1.3; beads[k].forEach((q, i) => { const dd = len(sub(q, g)); if (dd < bd) { bd = dd; bi = i; } }); if (bi >= 0) for (const j of [bi - 1, bi, bi + 1]) if (j >= 0 && j < beads[k].length) held[k][j] = true; } });
+  // a comb holds the cable in its slot: the bead nearest it goes into the slot, and it and the one each side are held
+  cables.forEach((C, k) => { for (const g of C.grip ?? []) { let bi = -1, bd = 4; beads[k].forEach((q, i) => { const dd = len(sub(q, g)); if (dd < bd) { bd = dd; bi = i; } }); if (bi < 0) continue; beads[k][bi] = g.slice(); plan[k][bi] = g.slice(); for (const j of [bi - 1, bi, bi + 1]) if (j >= 0 && j < beads[k].length) held[k][j] = true; } });
   // rest lengths: the free stretch a few per cent longer than laid (the held ends are exactly as laid, so their share
   // of the slack doesn't all bunch up in the middle)
   const rest = beads.map((b, c) => b.map((_, i) => (i ? len(sub(b[i], b[i - 1])) * (cables[c].fixed || held[c][i] || held[c][i - 1] ? 1 : 1 + SLACK) : 0)));
@@ -79,7 +79,6 @@ export function settleCables(cables: SimCable[], obs: SimObstacle[], rounds = 60
   const OC = 24, ogrid = new Map<string, number[]>();
   const okey = (i: number, j: number, k: number) => `${i},${j},${k}`;
   obs.forEach((o, n) => {
-    if (o.stand) return; // cables lie in the stands' combs
     const b = o.box, g = rMax + 1;
     for (let i = Math.floor((b[0] - g) / OC); i <= Math.floor((b[3] + g) / OC); i++)
       for (let j = Math.floor((b[1] - g) / OC); j <= Math.floor((b[4] + g) / OC); j++)
@@ -91,6 +90,8 @@ export function settleCables(cables: SimCable[], obs: SimObstacle[], rounds = 60
   const ownOk = (c: number, i: number, o: SimObstacle) => {
     const C = cables[c];
     if (o.plug && C.plugs?.includes(o.plug)) return true;
+    // a stand is solid, except where this cable lies in its comb
+    if (o.stand) return (C.grip ?? []).some((g) => Math.hypot(beads[c][i][0] - g[0], beads[c][i][1] - g[1]) < 6 + C.r);
     return !!o.module && !!C.mods?.includes(o.module) && inBox(plan[c][i], o.box, C.r - 0.5);
   };
   const pushOut = (c: number, i: number) => {
@@ -152,7 +153,13 @@ export function settleCables(cables: SimCable[], obs: SimObstacle[], rounds = 60
             const k = dot(d, n);
             if (Math.abs(k) > 0.3 * need ? k < 0 : n[2] < 0 || (Math.abs(n[2]) < 0.2 && k < 0)) n = n.map((v) => -v);
           }
-          else if (D > 1e-3) { const k = dot(d, t1); n = unit([d[0] - k * t1[0], d[1] - k * t1[1], d[2] - k * t1[2]]); }
+          else if (D > 1e-3) {
+            // alongside: side by side on the level, as cables lying together do (one balanced on another rolls off
+            // it); straight apart where the run is steep
+            const k = dot(d, t1), side = cross([0, 0, 1], t1);
+            if (len(side) > 0.5) { n = unit(side); if (dot(d, n) < 0) n = n.map((v) => -v); }
+            else n = unit([d[0] - k * t1[0], d[1] - k * t1[1], d[2] - k * t1[2]]);
+          }
           else { n = unit(cross(t1, Math.abs(t1[2]) < 0.9 ? cross([0, 0, 1], t1) : [1, 0, 0])); if (n[2] < 0) n = n.map((v) => -v); }
           // how far apart they already are that way
           const sep = dot(d, n), move = need - sep;
