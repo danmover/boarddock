@@ -311,6 +311,29 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
   const clipAt = result?.report.clipAt;
   const levels = result?.report.levels;
   const nSel = sel.length;
+  // what each plug on an edge is, printed on the board just inside it (on the plug itself the plug hides it): its
+  // reference and its kind, along the edge, reading the right way up, pushed further in where it would sit on another
+  const plugLabels = useMemo(() => {
+    const out: { x: number; y: number; deg: number; ref: string; kind: string; fz: number }[] = [];
+    const boxes = b.comps.filter((c) => !c.hidden).map((c) => bbox(compRect(c, 0.2)));
+    const taken: { x0: number; y0: number; x1: number; y1: number }[] = [];
+    for (const c of b.comps) {
+      if (c.hidden || c.side === 'bottom' || c.conn?.entry !== 'edge') continue;
+      const d: V2 = [Math.cos(rad(c.conn.angle)), Math.sin(rad(c.conn.angle))], t: V2 = [-d[1], d[0]];
+      const back = extentAlong(c, c.conn.angle + 180), wide = Math.abs(t[0]) * c.w + Math.abs(t[1]) * c.l;
+      const fz = Math.max(1, Math.min(2.2, wide / Math.max(4, c.ref.length) / 0.7));
+      const kind = plugName(c.conn.type), len = Math.max(c.ref.length * fz, kind.length * fz * 0.72) * 0.62, h = fz * 1.9;
+      let deg = (Math.atan2(t[1], t[0]) * 180) / Math.PI;
+      if (deg > 90.01) deg -= 180; else if (deg <= -90.01) deg += 180;
+      let at: V2 = [c.x - d[0] * (back + 0.8 + h / 2), c.y - d[1] * (back + 0.8 + h / 2)];
+      const boxAt = (q: V2) => { const hx = Math.abs(t[0]) * len / 2 + Math.abs(d[0]) * h / 2, hy = Math.abs(t[1]) * len / 2 + Math.abs(d[1]) * h / 2; return { x0: q[0] - hx, x1: q[0] + hx, y0: q[1] - hy, y1: q[1] + hy }; };
+      const hit = (r: { x0: number; y0: number; x1: number; y1: number }) => [...taken, ...boxes.filter((_, i) => b.comps.filter((x) => !x.hidden)[i] !== c)].some((o) => o.x0 < r.x1 && r.x0 < o.x1 && o.y0 < r.y1 && r.y0 < o.y1);
+      for (let k = 0; k < 4 && hit(boxAt(at)); k++) at = [at[0] - d[0] * (h + 0.4), at[1] - d[1] * (h + 0.4)];
+      taken.push(boxAt(at));
+      out.push({ x: at[0], y: at[1], deg, ref: c.ref, kind, fz });
+    }
+    return out;
+  }, [b.comps]);
   // the board's size, on the sides with fewer edge plugs so it doesn't cover one; its labels are kept clear of
   const sizeAt = useMemo(() => {
     const n = (ang: number) => b.comps.filter((c) => c.conn && c.conn.entry === 'edge' && Math.round(c.conn.angle) === ang).length;
@@ -347,7 +370,7 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
 
   const partSvg = (c: Comp, ghostly = false) => {
     const r = compRect(c), on = !ghostly && isSel(sel, c.id), L = look(c), bottom = c.side === 'bottom';
-    const lbl = !ghostly && Math.min(c.w, c.l) / Math.max(px, 1e-6) > 22;
+    const lbl = !ghostly && c.conn?.entry !== 'edge' && Math.min(c.w, c.l) / Math.max(px, 1e-6) > 22;
     const d = c.conn?.entry === 'edge' ? [Math.cos(rad(c.conn.angle)), Math.sin(rad(c.conn.angle))] : null;
     const ext = d ? extentAlong(c, c.conn!.angle) : 0;
     const rr = Math.min(c.w, c.l) / 2;
@@ -387,7 +410,7 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
           return pins.map((q, i) => { const x = q.x + n[0] * off, y = q.y + n[1] * off; return q.net && <text key={'n' + i} x={x} y={-y} fontSize={Math.min(1.25, fs(10))} textAnchor={flip ? 'end' : 'start'} dominantBaseline="central" transform={`rotate(${-(flip ? deg + 180 : deg)} ${x} ${-y})`} className="netlbl" style={{ pointerEvents: 'none' }}>{q.net.replace(/^\//, '').slice(0, 10)}</text>; });
         })()}
         {/* too small to write on: its reference printed beside it, as on the board */}
-        {!lbl && !ghostly && !bottom && c.ref && 1 / Math.max(px, 1e-6) > 9 && (() => { const top = Math.max(...r.map((q) => q[1])); return <text x={c.x} y={-(top + 0.75)} fontSize={0.95} textAnchor="middle" className="netlbl" opacity={0.8} style={{ pointerEvents: 'none' }}>{c.ref.slice(0, 6)}</text>; })()}
+        {!lbl && !ghostly && !bottom && c.ref && c.conn?.entry !== 'edge' && 1 / Math.max(px, 1e-6) > 9 && (() => { const top = Math.max(...r.map((q) => q[1])); return <text x={c.x} y={-(top + 0.75)} fontSize={0.95} textAnchor="middle" className="netlbl" opacity={0.8} style={{ pointerEvents: 'none' }}>{c.ref.slice(0, 6)}</text>; })()}
         {lbl && <text x={c.x} y={-c.y} fontSize={fs(11)} textAnchor="middle" dominantBaseline="central" className={`silk ${L.label === 'dark' ? 'dark' : ''}`} style={{ pointerEvents: 'none' }}>{c.ref}</text>}
         {lbl && Math.min(c.w, c.l) / Math.max(px, 1e-6) > 44 && Math.max(c.w, c.l) / Math.max(px, 1e-6) > 7 * (c.conn ? plugName(c.conn.type) : c.value || 'xxxxxxxxxxxx').length && <text x={c.x} y={-c.y + fs(12)} fontSize={fs(9)} textAnchor="middle" dominantBaseline="central" className={`silk ${L.label === 'dark' ? 'dark' : ''}`} opacity={0.75} style={{ pointerEvents: 'none' }}>{c.conn ? plugName(c.conn.type) : c.value || `${c.h.toFixed(1)} mm tall`}</text>}
       </g>
@@ -463,6 +486,14 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
         </g>}
         {b.comps.filter((c) => !c.hidden && c.conn?.entry === 'edge').map((c) => plugArrow(c))}
         {b.comps.filter((c) => !c.hidden).map((c) => partSvg(c))}
+        {<g style={{ pointerEvents: 'none' }}>
+          {plugLabels.filter((q) => q.fz / Math.max(px, 1e-6) > 5.5).map((q, i) => (
+            <g key={i} transform={`translate(${q.x},${-q.y}) rotate(${-q.deg})`}>
+              <text y={-q.fz * 0.1} fontSize={q.fz} textAnchor="middle" className="netlbl" opacity={0.92}>{q.ref}</text>
+              {q.fz * 0.72 / Math.max(px, 1e-6) > 6 && <text y={q.fz * 0.95} fontSize={q.fz * 0.72} textAnchor="middle" className="netlbl" opacity={0.6}>{q.kind}</text>}
+            </g>
+          ))}
+        </g>}
         {b.holes.map((h) => {
           const on = isSel(sel, h.id);
           const role = h.role ?? 'mount';
@@ -554,13 +585,13 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
           <rect x={Math.min(marquee.a[0], marquee.b[0])} y={-Math.max(marquee.a[1], marquee.b[1])} width={Math.abs(marquee.b[0] - marquee.a[0])} height={Math.abs(marquee.b[1] - marquee.a[1])}
             fill="var(--accent)" fillOpacity={0.08} stroke="var(--accent)" strokeWidth={fs(1)} strokeDasharray={`${fs(4)} ${fs(3)}`} />
         )}
-        <g style={{ pointerEvents: 'none' }}>
-          {/* the board's size, on the sides with fewer edge plugs so it doesn't cover one */}
+        <g>
+          {/* the board's size, on the sides with fewer edge plugs so it doesn't cover one: click either to type it */}
           {(() => {
             const { top, left } = sizeAt;
             return <>
-              <DimLine a={[bb.x0, top ? bb.y1 : bb.y0]} b={[bb.x1, top ? bb.y1 : bb.y0]} off={top ? fs(30) : -fs(30)} px={px} label={`${bw.toFixed(1)}`} />
-              <DimLine a={[left ? bb.x0 : bb.x1, bb.y0]} b={[left ? bb.x0 : bb.x1, bb.y1]} off={left ? -fs(30) : fs(30)} px={px} label={`${bh.toFixed(1)}`} vertical />
+              <DimLine a={[bb.x0, top ? bb.y1 : bb.y0]} b={[bb.x1, top ? bb.y1 : bb.y0]} off={top ? fs(30) : -fs(30)} px={px} label={`${bw.toFixed(1)}`} on={editDim?.id === '@w'} onEdit={() => setEditDim({ id: '@w', v: bw.toFixed(2) })} title="The board's width: click to type what your calipers read" />
+              <DimLine a={[left ? bb.x0 : bb.x1, bb.y0]} b={[left ? bb.x0 : bb.x1, bb.y1]} off={left ? -fs(30) : fs(30)} px={px} label={`${bh.toFixed(1)}`} vertical on={editDim?.id === '@h'} onEdit={() => setEditDim({ id: '@h', v: bh.toFixed(2) })} title="The board's height: click to type what your calipers read" />
             </>;
           })()}
         </g>
@@ -600,25 +631,42 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
       </div>
 
       {editDim && (() => {
-        const dm = (b.dims ?? []).find((x) => x.id === editDim.id);
+        // the board's width or height (between its edges), or one of its dimensions
+        const size = editDim.id === '@w' || editDim.id === '@h';
+        const dm: Dim | undefined = size ? { id: editDim.id, a: { k: 'edge', at: editDim.id === '@w' ? 'x0' : 'y0' }, b: { k: 'edge', at: editDim.id === '@w' ? 'x1' : 'y1' }, axis: editDim.id === '@w' ? 'x' : 'y' } : (b.dims ?? []).find((x) => x.id === editDim.id);
         if (!dm) return null;
         const apply = () => {
           const v = parseFloat(editDim.v.replace(',', '.'));
+          if (!(v > 0)) { toast('Type a length in mm.'); return; }
           let ok = false;
-          editMod((m) => { const dd = (m.board.dims ?? []).find((x) => x.id === dm.id); if (dd) ok = setDim(m.board, dd, v); });
+          editMod((m) => { const dd = size ? dm : (m.board.dims ?? []).find((x) => x.id === dm.id); if (dd) ok = setDim(m.board, dd, v); });
           if (!ok) toast('Nothing to move there: put a dimension from an edge to a hole or a part.');
           setEditDim(null);
         };
+        // where its label is on screen
+        const { top, left } = sizeAt;
+        const labW: V2 = size ? (editDim.id === '@w' ? [(bb.x0 + bb.x1) / 2, top ? bb.y1 + fs(30) : bb.y0 - fs(30)] : [left ? bb.x0 - fs(30) : bb.x1 + fs(30), (bb.y0 + bb.y1) / 2]) : (dimsDraw.find((q) => q.id === dm.id)?.lab ?? [(bb.x0 + bb.x1) / 2, bb.y1]);
+        const sr = svg.current?.getBoundingClientRect(), wr = wrap.current?.getBoundingClientRect();
+        let sx = 200, sy = 200;
+        if (sr && wr) {
+          const k = Math.max(vb.w / sr.width, vb.h / sr.height), ox = vb.x + (vb.w - sr.width * k) / 2, oy = vb.y + (vb.h - sr.height * k) / 2;
+          sx = (labW[0] - ox) / k + sr.left - wr.left; sy = (-labW[1] - oy) / k + sr.top - wr.top;
+        }
+        const what = size ? (editDim.id === '@w' ? 'the board gets that wide (its right side moves)' : 'the board gets that tall (its top moves)') : dm.b.k === 'edge' && dm.a.k === 'edge' ? 'the board’s size' : `moves the ${dm.b.k !== 'edge' ? 'second' : 'first'} one to it`;
         return (
-          <div className="selbar floating dimbar">
-            <b>Measured</b>
-            <input autoFocus className="mono" value={editDim.v} onChange={(e) => setEditDim({ ...editDim, v: e.target.value })} onKeyDown={(e) => { if (e.key === 'Enter') apply(); if (e.key === 'Escape') setEditDim(null); }} aria-label="Measured distance in mm" />
-            <span>mm {dm.b.k === 'edge' && dm.a.k === 'edge' ? '(the board’s size)' : `(moves the ${dm.b.k !== 'edge' ? 'second' : 'first'} one)`}</span>
-            <button className="btn small primary" onClick={apply}>Set</button>
-            {dm.off != null && <button className="btn small ghost" onClick={() => editMod((m) => { const dd = (m.board.dims ?? []).find((x) => x.id === dm.id); if (dd) { delete dd.off; delete dd.t; } })} title="Let it find its own place again">Put back</button>}
-            {(b.dims ?? []).some((x) => x.off != null) && <button className="btn small ghost" onClick={() => editMod((m) => { for (const dd of m.board.dims ?? []) { delete dd.off; delete dd.t; } })} title="Every dimension back to its own place, none on another">Tidy all</button>}
-            <button className="btn small danger" onClick={() => { editMod((m) => { m.board.dims = (m.board.dims ?? []).filter((x) => x.id !== dm.id); }); setEditDim(null); }}>Delete</button>
-            <button className="btn small ghost icon" onClick={() => setEditDim(null)} title="Esc">✕</button>
+          <div className="dimedit floating" style={{ left: Math.max(8, Math.min((wr?.width ?? 800) - 250, sx - 118)), top: Math.max(8, sy - 88) }} onPointerDown={(e) => e.stopPropagation()}>
+            <div className="dimedit-row">
+              <input autoFocus onFocus={(e) => e.target.select()} className="mono" value={editDim.v} onChange={(e) => setEditDim({ ...editDim, v: e.target.value })} onKeyDown={(e) => { if (e.key === 'Enter') apply(); if (e.key === 'Escape') setEditDim(null); }} aria-label="Measured distance in mm" />
+              <span>mm</span>
+              <button className="btn small primary" onClick={apply}>Set</button>
+              <button className="btn small ghost icon" onClick={() => setEditDim(null)} title="Esc" aria-label="Close">✕</button>
+            </div>
+            <small>{what}</small>
+            {!size && <div className="dimedit-row">
+              {dm.off != null && <button className="btn small ghost" onClick={() => editMod((m) => { const dd = (m.board.dims ?? []).find((x) => x.id === dm.id); if (dd) { delete dd.off; delete dd.t; } })} title="Let it find its own place again">Put back</button>}
+              {(b.dims ?? []).some((x) => x.off != null) && <button className="btn small ghost" onClick={() => editMod((m) => { for (const dd of m.board.dims ?? []) { delete dd.off; delete dd.t; } })} title="Every dimension back to its own place, none on another">Tidy all</button>}
+              <button className="btn small ghost danger" onClick={() => { editMod((m) => { m.board.dims = (m.board.dims ?? []).filter((x) => x.id !== dm.id); }); setEditDim(null); }}>Delete</button>
+            </div>}
           </div>
         );
       })()}
@@ -704,20 +752,24 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
   );
 }
 
-function DimLine({ a, b, off, px, label, vertical }: { a: V2; b: V2; off: number; px: number; label: string; vertical?: boolean }) {
+function DimLine({ a, b, off, px, label, vertical, on, onEdit, title }: { a: V2; b: V2; off: number; px: number; label: string; vertical?: boolean; on?: boolean; onEdit?: () => void; title?: string }) {
   const [ax, ay] = vertical ? [a[0] + off, a[1]] : [a[0], a[1] + off];
   const [bx, by] = vertical ? [b[0] + off, b[1]] : [b[0], b[1] + off];
   const mx = (ax + bx) / 2, my = (ay + by) / 2;
   const t = 4 * px;
   return (
     <>
+      <g style={{ pointerEvents: 'none' }}>
       <line x1={a[0]} y1={-a[1]} x2={ax} y2={-ay} stroke="var(--subtle)" strokeWidth={px} />
       <line x1={b[0]} y1={-b[1]} x2={bx} y2={-by} stroke="var(--subtle)" strokeWidth={px} />
       <line x1={ax} y1={-ay} x2={bx} y2={-by} stroke="var(--muted)" strokeWidth={px * 1.2} />
       <path d={vertical ? `M${ax - t},${-ay - t}L${ax + t},${-ay + t}M${bx - t},${-by - t}L${bx + t},${-by + t}` : `M${ax - t},${-ay + t}L${ax + t},${-ay - t}M${bx - t},${-by + t}L${bx + t},${-by - t}`} stroke="var(--muted)" strokeWidth={px * 1.2} />
-      <g transform={`translate(${mx},${-my})${vertical ? ' rotate(-90)' : ''}`}>
-        <rect x={-label.length * 3.6 * px - 7 * px} y={-9 * px} width={label.length * 7.2 * px + 14 * px} height={18 * px} rx={9 * px} fill="var(--surface)" stroke="var(--line)" strokeWidth={px} />
-        <text x={0} y={0} fontSize={11 * px} textAnchor="middle" dominantBaseline="central" className="mono" fill="var(--fg)">{label}</text>
+      </g>
+      <g className="dimlab" transform={`translate(${mx},${-my})${vertical ? ' rotate(-90)' : ''}`} style={{ cursor: onEdit ? 'pointer' : undefined }}
+        onPointerDown={onEdit ? (e) => e.stopPropagation() : undefined} onClick={onEdit ? (e) => { e.stopPropagation(); onEdit(); } : undefined}>
+        {title && <title>{title}</title>}
+        <rect x={-label.length * 3.6 * px - 7 * px} y={-9 * px} width={label.length * 7.2 * px + 14 * px} height={18 * px} rx={9 * px} fill={on ? 'var(--accent)' : 'var(--surface)'} stroke={on ? 'var(--accent)' : 'var(--line-2)'} strokeWidth={px} />
+        <text x={0} y={0} fontSize={11 * px} textAnchor="middle" dominantBaseline="central" className="mono" fill={on ? 'var(--accent-ink)' : 'var(--fg)'}>{label}</text>
       </g>
     </>
   );

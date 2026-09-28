@@ -2,7 +2,7 @@
 // after what it is (metal connector shells with their openings, headers with gold pins, chips with legs, jacks,
 // LEDs, passives), plus realistic plugs with cables. Built once per board (the module cache keeps them).
 import type { Anim, Board, Comp, Ghost, MeshData, PickTag, V2 } from '../model/types';
-import { bbox, compRect, inside, rad } from '../geom/poly';
+import { bbox, compRect, extentAlong, inside, rad } from '../geom/poly';
 import { textStrokes, textWidth } from './font';
 import { headerPins } from '../model/probes';
 import { boardCopper } from '../model/copper';
@@ -264,9 +264,12 @@ function partDetail(bin: Bin, c: Comp, zt: number, zb: number) {
 
 const lum = (hex: string) => { const n = parseInt(hex.slice(1), 16); return (0.3 * (n >> 16) + 0.59 * ((n >> 8) & 255) + 0.11 * (n & 255)) / 255; };
 
-function silkText(bin: Bin, text: string, o: [number, number], hgt: number, zt: number) {
-  const sw = Math.max(0.14, hgt * 0.13);
-  for (const [a, b] of textStrokes(text, hgt)) {
+/** Silkscreen text with its bottom-left corner at o, running at `deg` degrees (0: along x). */
+function silkText(bin: Bin, text: string, o: [number, number], hgt: number, zt: number, deg = 0) {
+  const sw = Math.max(0.14, hgt * 0.13), rc = Math.cos(rad(deg)), rs = Math.sin(rad(deg));
+  const R = (q: number[]): [number, number] => [q[0] * rc - q[1] * rs, q[0] * rs + q[1] * rc];
+  for (const [a0, b0] of textStrokes(text, hgt)) {
+    const a = R(a0), b = R(b0);
     const dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy);
     const an = Math.atan2(dy, dx), ca = Math.cos(an), sa = Math.sin(an);
     const T = [ca, sa, 0, 0, -sa, ca, 0, 0, 0, 0, 1, 0, o[0] + a[0], o[1] + a[1], zt, 1];
@@ -434,6 +437,26 @@ export function boardDetail(b: Board, zb: number, zt: number, tag: PickTag, anim
     if (!inside([o[0] + tw, o[1] + hgt], b.outline) || !inside(o, b.outline)) continue;
     silkText(bin, c.ref, o, hgt, zt);
     labels++;
+  }
+  // what each plug on an edge is, printed just inside it (on the plug the plug would hide it), along the edge
+  const rects = list.filter((c) => c.side === 'top').map((c) => ({ c, r: bbox(compRect(c, 0.3)) }));
+  const taken: { x0: number; y0: number; x1: number; y1: number }[] = [];
+  for (const c of list) {
+    if (c.side !== 'top' || c.conn?.entry !== 'edge') continue;
+    const d = [Math.cos(rad(c.conn.angle)), Math.sin(rad(c.conn.angle))], t = [-d[1], d[0]];
+    const back = extentAlong(c, c.conn.angle + 180), wide = Math.abs(t[0]) * c.w + Math.abs(t[1]) * c.l;
+    const hgt = Math.max(0.9, Math.min(1.8, (wide * 0.85) / Math.max(3, c.ref.length) / 0.75)), tw = textWidth(c.ref, hgt);
+    let deg = (Math.atan2(t[1], t[0]) * 180) / Math.PI;
+    if (deg > 90.01) deg -= 180; else if (deg <= -90.01) deg += 180;
+    const u = [Math.cos(rad(deg)), Math.sin(rad(deg))], v = [-u[1], u[0]];
+    let at = [c.x - d[0] * (back + 0.8 + hgt / 2), c.y - d[1] * (back + 0.8 + hgt / 2)];
+    const box = (q: number[]) => { const hx = Math.abs(u[0]) * tw / 2 + Math.abs(v[0]) * hgt / 2, hy = Math.abs(u[1]) * tw / 2 + Math.abs(v[1]) * hgt / 2; return { x0: q[0] - hx, x1: q[0] + hx, y0: q[1] - hy, y1: q[1] + hy }; };
+    const clash = (r: ReturnType<typeof box>) => ![[r.x0, r.y0], [r.x1, r.y1], [r.x0, r.y1], [r.x1, r.y0]].every((q) => inside(q as [number, number], b.outline)) || taken.some((o) => o.x0 < r.x1 && r.x0 < o.x1 && o.y0 < r.y1 && r.y0 < o.y1) || rects.some((o) => o.c !== c && o.r.x0 < r.x1 && r.x0 < o.r.x1 && o.r.y0 < r.y1 && r.y0 < o.r.y1);
+    let k = 0;
+    for (; k < 4 && clash(box(at)); k++) at = [at[0] - d[0] * (hgt + 0.5), at[1] - d[1] * (hgt + 0.5)];
+    if (k === 4 && clash(box(at))) continue;
+    taken.push(box(at));
+    silkText(bin, c.ref, [at[0] - u[0] * tw / 2 - v[0] * hgt / 2, at[1] - u[1] * tw / 2 - v[1] * hgt / 2], hgt, zt, deg);
   }
   const bbB = bbox(b.outline), nameH = Math.min(2.2, (bbB.y1 - bbB.y0) * 0.05);
   const nm = b.name.slice(0, 28), nw = textWidth(nm, nameH);
