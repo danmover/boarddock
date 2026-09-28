@@ -705,4 +705,46 @@ export function spreadOut(p: Project, rep: PanelReport, clear = 2, rails?: strin
   return moved;
 }
 
+/**
+ * Slide rails apart across, where something docked on one reaches over the next rail's docks (a board laid flat reaches
+ * across its rail, further than it stood): of each overlapping pair on two parallel rails, the rail further from the
+ * first rail moves away from it just far enough to clear the other by `clear` mm, and every rail beyond it on that side
+ * moves with it, so the gaps between them stay as they were. Rails at right angles to the first (an L-shape) and rails
+ * in line with it are left alone. Returns the ids of the rails that moved. Pure: uses what the last build measured.
+ */
+export function spreadRails(p: Project, rep: PanelReport, clear = 2): string[] {
+  const first = p.panel.rails[0];
+  if (!first) return [];
+  const ax = first.dir === 'h' ? 1 : 0; // across the rails: y for rails along x
+  const across = (r: { x: number; y: number }) => (ax ? r.y : r.x);
+  const off = (r: { x: number; y: number }) => across(r) - across(first);
+  const shift = new Map<string, number>(); // how far each rail has moved across so far
+  const railOf = (id: string) => { const mt = rep.mounts.find((m) => m.id === id) ?? rep.mounts.find((m) => m.id === rep.modules.find((q) => q.id === id)?.mount); return mt && p.panel.rails.find((r) => r.id === mt.rail && r.dir === first.dir); };
+  const footOf = (id: string) => rep.modules.find((q) => q.id === id)?.foot ?? rep.mounts.find((m) => m.id === id)?.foot;
+  const pairs = rep.collisions.map(([a, b]) => ({ ra: railOf(a), rb: railOf(b), fa: footOf(a), fb: footOf(b) }))
+    .filter((q) => q.ra && q.rb && q.fa && q.fb && q.ra !== q.rb && Math.abs(off(q.ra) - off(q.rb)) > 1)
+    .map((q) => (Math.abs(off(q.ra!)) > Math.abs(off(q.rb!)) ? { near: q.rb!, far: q.ra!, ff: q.fa!, fn: q.fb! } : { near: q.ra!, far: q.rb!, ff: q.fb!, fn: q.fa! }))
+    .sort((a, b) => Math.abs(off(a.far)) - Math.abs(off(b.far)));
+  for (const { near, far, ff, fn } of pairs) {
+    const side = Math.sign(off(far) - off(near)) || 1;
+    // where the two reach across now, after the moves so far
+    const sf = shift.get(far.id) ?? 0, sn = shift.get(near.id) ?? 0;
+    const need = side > 0 ? fn[ax + 2] + sn + clear - (ff[ax] + sf) : ff[ax + 2] + sf + clear - (fn[ax] + sn);
+    if (need <= 0.05) continue;
+    const s = Math.round(need * 10) / 10 + 0.1;
+    for (const r of p.panel.rails) {
+      if (r.dir !== first.dir || Math.sign(off(r) - off(near)) !== side || Math.abs(off(r)) < Math.abs(off(far)) - 0.5) continue;
+      shift.set(r.id, (shift.get(r.id) ?? 0) + side * s);
+    }
+  }
+  const moved: string[] = [];
+  for (const r of p.panel.rails) {
+    const s = shift.get(r.id);
+    if (!s) continue;
+    if (ax) r.y = Math.round((r.y + s) * 10) / 10; else r.x = Math.round((r.x + s) * 10) / 10;
+    moved.push(r.id);
+  }
+  return moved;
+}
+
 export { I4 };

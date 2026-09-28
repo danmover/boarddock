@@ -4,16 +4,7 @@ What still needs doing on BoardDock, in the order it's being worked through. New
 
 Nothing BoardDock makes has been printed and tried yet, so anything below about fit, strength or clips is from the model and its checks, not from a real print.
 
-## 1. Collisions in 3D (mostly done)
-
-Done: cables no longer pass through table stands, rails or each other (cables side by side, combs only where a cable runs straight, bends kept out of rails); zip-tie anchors stay on the board and clear of the dock lever; port guards wrap round jacks that stick out past the wall; the dock pedestal is notched round low boards (Uno, Zero, relay board); plug caps clear the cradle ledges; cable number tags find a clear spot. Measured overlap on three test racks fell from about 1650 to about 720 mm³.
-
-Left:
-- The USB-C hub's strap loops sit under its front plugs (its short ends have ports too): lower the loop under a port.
-- A pair of cables still presses together where they cross under a rail edge.
-- A board laid flat can reach across into the next rail's boards: Check warns, but only docks on its own rail slide along to make room.
-
-## 2. A collision test for whole racks
+## 1. A collision test for whole racks
 
 A much better collision test, to prove that Auto-arrange and everything else lays racks out with nothing inside anything. It goes through the real pipeline (`generate()` from `src/cad/assembly`) and uses exact mesh intersections (manifold-3d via `K()` in `src/cad/kernel`), not bounding boxes.
 - Racks to cover:
@@ -38,14 +29,14 @@ A much better collision test, to prove that Auto-arrange and everything else lay
   - no plug in use blocked.
 - Keep it deterministic (fixed ids). Commit a baseline file of the totals per rack and category. The test fails when any category grows past the baseline plus a small tolerance, and prints the worst overlaps with part names and coordinates. Update the baseline only on purpose, when a fix lowers it.
 - Put a fast subset (well under a minute) in `npm test`, and the full matrix in a script (e.g. `npm run collisions`) run before each merge.
-- The last hand measurement (links from autoLinks with fixed ids): the cluster about 313 mm³ in all (parts 169, cable-stand/rail 130, cable-tag 8, cable-cable 6), the busy rack about 285 (parts 218, cable-tag 25, cable-stand/rail 41, cable-cable 1). The known remaining overlaps are in item 1.
+- The last hand measurement (links from autoLinks with fixed ids): the cluster about 313 mm³ in all (parts 169, cable-stand/rail 130, cable-tag 8, cable-cable 6), the busy rack about 285 (parts 218, cable-tag 25, cable-stand/rail 41, cable-cable 1). That was before the last three known overlaps were fixed (strap loops under the USB-C hub's plugs, two cables pressing where they crossed at a stand, a flat board over the next rail), so expect a little less.
 - Then use the test to fix what it finds, biggest first, keeping only changes that lower the totals.
 
-## 3. Toolbox pictures to match the 3D models
+## 2. Toolbox pictures to match the 3D models
 
 The board editor's toolbox pictures (each plug, header, part) no longer look like the 3D model of the same thing: redraw them from the models, or check each against its model.
 
-## 4. DIN rail clip review
+## 3. DIN rail clip review
 
 Go through the clip in depth, measuring rather than guessing:
 - the release lever: how it frees the clip from the rail, and what keeps the lever on;
@@ -54,11 +45,11 @@ Go through the clip in depth, measuring rather than guessing:
 - that every piece is printable;
 - the clip's snap hooks reach 0.7 mm up into a box resting on the holder.
 
-## 5. Bill of materials and a build guide
+## 4. Bill of materials and a build guide
 
 A proper bill of materials at the end (printed parts, boards, cables, rails, supplies, with quantities) and a step-by-step build view: each step's text with its 3D view, next and back, usable on a phone at the bench, and printable. Start from what's already there (the shopping list in Export and the assembly Steps).
 
-## 6. From the second round of test users
+## 5. From the second round of test users
 
 Most serious first:
 - A switch's or powered hub's DC input is never given a supply, yet the To do list says done.
@@ -73,15 +64,15 @@ Most serious first:
 - The page freezes for 8 to 30 s on import, step changes, adding a hub, the first 3D view and Mark built.
 - USB-serial adapter jumpers never reach the UART header.
 - Loose holders drop probes into the row; docks and loose holders can't be mixed.
-- Smaller things: cables beside a stand comb, an auto-connected cable through a Pi 4 holder, off-rack labels crowding a big rack, toast wording, the Wiring view at 16 boards, Auto-arrange putting cabled boards on opposite rails, Forget with no confirm, the headline print time estimate, the L-shape spacing defaults, the printer not asked up front, Next not auto-connecting, Measure moving one side only, round boards' corner holes, mirrored silkscreen, bulk tools for identical boards, locking a dock or rail, per-plate control, and more wording fixes.
+- Smaller things: cables beside a stand comb, an auto-connected cable through a Pi 4 holder (still there: on a rack of a Pi 4, Uno, Pico, ESP32 and the 4-port hub, Auto-connect's hub UP to Pi 4 USB2 cable "runs into the Raspberry Pi 4B holder", with or without table stands), off-rack labels crowding a big rack, toast wording, the Wiring view at 16 boards, Auto-arrange putting cabled boards on opposite rails, Forget with no confirm, the headline print time estimate, the L-shape spacing defaults, the printer not asked up front, Next not auto-connecting, Measure moving one side only, round boards' corner holes, mirrored silkscreen, bulk tools for identical boards, locking a dock or rail, per-plate control, and more wording fixes.
 
-## 7. Started before, not finished
+## 6. Started before, not finished
 
 - Tight cable bends where neighbouring plugs' cables bend the same way.
 - The spring clips flexing in the assembly animation.
 - The DIN plate slots on rack and inline mounts: a plate printed on its face.
 
-## 8. From the first round of test users
+## 7. From the first round of test users
 
 - Jumper and debug ribbons routed straight over the dock.
 - A 12 V pack auto-connecting to boards with a known DC input range (Uno, Mega).
@@ -90,7 +81,7 @@ Most serious first:
 
 Ideas: a cluster preset, isolate or X-ray the selection in 3D, a command palette, a debug bench sheet, a live buy/print/tools checklist, What's new highlighted in 3D, mains and low-voltage zones, a layout lock with change receipts.
 
-## 9. Plug protection
+## 8. Plug protection
 
 Check each cradle and cap prints well in every orientation, and fit a cap only where the pull comes out of the cradle's open side.
 
@@ -135,3 +126,10 @@ Check each cradle and cap prints well in every orientation, and fit a cap only w
 7. Links can end at the virtual "@pc" (your computer): check that everything looking up a link's board uses findModule, not p.modules.find (boardviz, assembly and the exporters in particular).
 8. Make sure Plugs › "Cables to buy" uses the same wording and lengths as the shopping list (buyText).
 9. The "Add a board" window should keep keyboard focus inside it while open, and give it back when it closes.
+
+## Found along the way
+
+Each: how bad (1 to 5), what's wrong, where, and how it was seen.
+
+- 2 · The route check says "The USB-serial adapter USB to Powered USB hub P5 cable runs into the USB charger holder" on a rack of 2 × Pi 4, Pi 5, Uno, Mega, Pico, Nano, ESP32, 7-port hub, 4-port charger, J-Link and USB-serial adapter with Auto-connect and Longest rail 300 mm (standing or lying flat). Cable routing, `src/cad/panelgen.ts`. Seen in a scratch test of that rack.
+- 1 · `npm test` takes about 160 s, most of it building holders and racks. Item 1's fast subset should keep new tests from adding much.

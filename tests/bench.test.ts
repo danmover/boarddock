@@ -6,7 +6,7 @@ import { TEMPLATES } from '../src/model/templates';
 import { newModule, newProject } from '../src/model/library';
 import { autoLinks, numberLinks } from '../src/model/links';
 import { addAdapters, addProbes, companionLabel, fillWires, stackProbes } from '../src/model/probes';
-import { appendDock, seatBoard, autoAssign, bestDock, dropEmptied, nearestFree, seatCompanion, seatCompanions, shorterLever, spreadOut, tongueStress } from '../src/cad/dockplan';
+import { appendDock, seatBoard, autoAssign, bestDock, dropEmptied, nearestFree, seatCompanion, seatCompanions, shorterLever, spreadOut, spreadRails, tongueStress } from '../src/cad/dockplan';
 import { generatePanel } from '../src/cad/panelgen';
 import { initKernel } from '../src/cad/kernel';
 import { delta, snapshot } from '../src/model/built';
@@ -113,6 +113,33 @@ describe('docking', () => {
     expect(before.collisions.length).toBeGreaterThan(0);
     expect(spreadOut(p, before, 2).length).toBeGreaterThan(0);
     expect(generatePanel(p).report.panel!.collisions).toEqual([]);
+  }, 600000);
+
+  it('slides the next rails across when a board laid flat reaches over them', async () => {
+    await initKernel();
+    // small boards on three rails 83 and 110 mm apart; the Mega on the first, laid flat, reaches 73 to 168 mm across
+    const p = rack(['mega', 'uno', 'pico', 'nano', 'esp32', 'pico', 'nano', 'uno']);
+    p.panel.maxRail = 200;
+    const pr = generatePanel(p).report.panel!;
+    p.panel.rails = pr.rails.map((x) => ({ id: x.id, x: x.x, y: x.y, dir: x.dir, length: null }));
+    p.panel.mounts = pr.mounts.map((m) => ({ id: m.id, rail: m.rail, at: m.at, kind: m.kind, turn: m.turn, lever: m.leverSide > 0 ? 'pos' as const : 'neg' as const, slots: m.slots.map((s) => ({ ...s })) }));
+    p.panel.auto = false;
+    expect(p.panel.rails.length).toBe(3);
+    const railOf = (rep: PanelReport, id: string) => rep.mounts.find((m) => m.id === id)?.rail ?? rep.mounts.find((m) => m.id === rep.modules.find((q) => q.id === id)?.mount)?.rail;
+    const mega = p.modules[0].id, mt = p.panel.mounts.find((m) => m.slots.some((s) => s.module === mega))!, k = mt.slots.findIndex((s) => s.module === mega);
+    expect(mt.rail).toBe(p.panel.rails[0].id);
+    for (const edge of ['bottom', 'right'] as const) {
+      const q = structuredClone(p), y0 = q.panel.rails.map((r) => r.y);
+      q.panel.mounts.find((m) => m.id === mt.id)!.slots[k] = { module: mega, edge, lie: 'flat' };
+      const before = generatePanel(q).report.panel!;
+      expect(before.collisions.filter((c) => railOf(before, c[0]) !== railOf(before, c[1])).length, edge).toBeGreaterThan(0);
+      expect(spreadRails(q, before, 2), edge).toEqual([q.panel.rails[1].id, q.panel.rails[2].id]);
+      expect(generatePanel(q).report.panel!.collisions, edge).toEqual([]);
+      // the first rail stays; the ones beyond keep their gap to each other
+      expect(q.panel.rails[0].y).toBe(y0[0]);
+      expect(q.panel.rails[1].y).toBeLessThan(y0[1]);
+      expect(q.panel.rails[2].y - q.panel.rails[1].y).toBeCloseTo(y0[2] - y0[1], 5);
+    }
   }, 600000);
 
   it('gives probes taken off their stack a dock right beside their board', () => {

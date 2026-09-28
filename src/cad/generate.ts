@@ -596,36 +596,76 @@ function cradleGroup(C: Ctx, g: CradleSpec[], H: HolderSettings) {
   C.checks.push({ group: 'Plugs', name: `Cap legs (${refs})`, value: `${(eps * 100).toFixed(2)}% strain`, status: strainStatus(C, eps), detail: `${round(L, 1)} mm legs, ${round(hook, 2)} mm hooks under the cradle ledges; they flex within the layers` });
 }
 
-/** Loops on the two long sides of a box: a hook-and-loop strap goes over the box and through them. */
-function strapLoops(C: Ctx) {
-  const H = C.H, ol = C.b.outline, bb = bbox(ol);
-  // the strap runs over the top between a pair of loops on two opposite sides, the long ones if their ports leave room
-  // (else round the box the other way): keep it off ports on those sides and on top
-  // (a side port only gets in the way when its plug reaches down to the loops, 7 mm tall)
-  const low = (c: Comp) => C.zt + c.conn!.zc - c.conn!.plug.h / 2 < 8;
-  const spots = (alongX: boolean) => {
-    const L0 = alongX ? bb.x0 : bb.y0, L = alongX ? bb.x1 - bb.x0 : bb.y1 - bb.y0;
-    const busy = C.b.comps.filter((c) => c.conn && !c.hidden && (c.conn.entry === 'top' || ((alongX ? Math.abs(Math.sin(rad(c.conn.angle))) > 0.7 : Math.abs(Math.cos(rad(c.conn.angle))) > 0.7) && low(c))))
-      .map((c) => { const at = (alongX ? c.x : c.y) - L0, half = Math.max(c.w, c.l, c.conn!.plug.w) / 2 + 10; return [at - half, at + half]; });
-    const free = (f: number) => !busy.some(([a, b]) => f * L > a && f * L < b);
-    const pick = (want: number, lo: number, hi: number) => { let best: number | null = null; for (let f = lo; f <= hi + 1e-9; f += 0.01) if (free(f) && (best == null || Math.abs(f - want) < Math.abs(best - want))) best = f; return best; };
-    return [pick(0.28, 0.1, 0.46), pick(0.72, 0.54, 0.9)];
+/** A strap loop's size: its slot takes a 12 mm strap (13 mm wide), 1.5 mm ends; 7 mm tall, or as low as 3.5 mm under a
+ * plug. `strap`, `tie`: how far each side of the loop's middle the strap (12 mm, 1 mm clear) or a zip tie (4.8 mm, 0.6
+ * mm clear) needs to be free of plugs. */
+export const STRAP_LOOP = { slot: 6.5, half: 8, tall: 7, low: 3.5, strap: 7.5, tie: 3 };
+
+/**
+ * Where a box's strap loops go: a pair of spots along two opposite sides (the strap runs over the top from a loop on one
+ * side to the loop across from it). What goes through the loop (a strap, or with `tie` a zip tie) keeps clear of every
+ * plug on those sides and on top, since it runs up the whole side; a loop's ends (16 mm) may reach under a side plug,
+ * and that loop is made lower to pass under it. `at`: the loop's middle, mm along the side from its start; `tall`: the
+ * loop's height. Null when no spot is clear on that half of the side.
+ */
+export function strapSpots(b: Board, zt: number, alongX: boolean, tie = false): ({ at: number; tall: number } | null)[] {
+  const bb = bbox(b.outline), S = STRAP_LOOP, band = tie ? S.tie : S.strap;
+  const L0 = alongX ? bb.x0 : bb.y0, L = alongX ? bb.x1 - bb.x0 : bb.y1 - bb.y0;
+  const onSide = (c: Comp) => c.conn!.entry === 'edge' && (alongX ? Math.abs(Math.sin(rad(c.conn!.angle))) : Math.abs(Math.cos(rad(c.conn!.angle)))) > 0.7;
+  // every port that may take a plug (one marked as never used gets none, so the strap may cross it)
+  const ports = b.comps.filter((c) => c.conn && !c.hidden && c.conn.use !== 'no' && (c.conn.entry === 'top' || onSide(c))).map((c) => {
+    const at = (alongX ? c.x : c.y) - L0, top = c.conn!.entry === 'top';
+    const half = top ? Math.max(c.w, c.l, c.conn!.plug.w) / 2 : c.conn!.plug.w / 2;
+    // the lowest the plug (and the opening cut for it, 0.6 mm round it) comes, holder frame
+    const bottom = top ? Infinity : (c.side === 'top' ? zt + c.conn!.zc : zt - b.thickness - c.conn!.zc) - c.conn!.plug.h / 2 - 0.6;
+    return { a: at - half, b: at + half, bottom };
+  });
+  const spot = (at: number) => {
+    if (ports.some((q) => at + band > q.a && at - band < q.b)) return null; // it would cross a plug
+    let tall = S.tall;
+    for (const q of ports) if (at + S.half > q.a - 0.5 && at - S.half < q.b + 0.5) tall = Math.min(tall, q.bottom - 0.8);
+    return tall >= S.low ? { at, tall } : null;
   };
+  // each loop in its own half of the side, nearest a quarter in from its end; full height before a lowered one
+  const pick = (want: number, lo: number, hi: number) => {
+    let best: { at: number; tall: number } | null = null;
+    const cost = (s: { at: number; tall: number }) => Math.abs(s.at - want) + (s.tall < S.tall ? L : 0);
+    for (let at = lo; at <= hi + 1e-9; at += 0.25) { const s = spot(at); if (s && (!best || cost(s) < cost(best))) best = s; }
+    return best;
+  };
+  // (a loop may reach 1 mm past the box's end: the holder's outline is a wall and a gap further out)
+  const end = S.half - 1;
+  return [pick(0.28 * L, end, L / 2 - end), pick(0.72 * L, L / 2 + end, L - end)];
+}
+
+/**
+ * Loops on two opposite sides of a box: a hook-and-loop strap goes over the box and through them. The long sides if a
+ * strap there misses the plugs, else the short ones; failing both, spots where a zip tie passes between the plugs.
+ */
+function strapLoops(C: Ctx) {
+  const H = C.H, bb = bbox(C.b.outline), S = STRAP_LOOP;
   const long = bb.x1 - bb.x0 >= bb.y1 - bb.y0;
-  let alongX = long, [fa, fb] = spots(alongX);
-  if (fa == null || fb == null) { const [ga, gb] = spots(!long); if (ga != null && gb != null) { alongX = !long; fa = ga; fb = gb; } }
-  if (fa == null || fb == null) C.warnings.push('The strap loops could not all miss the ports: check that the strap clears them.');
-  for (const f of [fa ?? 0.28, fb ?? 0.72]) for (const side of [-1, 1]) {
-    const q: V2 = alongX ? [bb.x0 + (bb.x1 - bb.x0) * f, side > 0 ? bb.y1 : bb.y0] : [side > 0 ? bb.x1 : bb.x0, bb.y0 + (bb.y1 - bb.y0) * f];
+  const tries: [boolean, boolean][] = [[long, false], [!long, false], [long, true], [!long, true]];
+  const hit = tries.map(([ax, tie]) => ({ ax, tie, spots: strapSpots(C.b, C.zt, ax, tie) })).find((t) => t.spots.every(Boolean));
+  const alongX = hit?.ax ?? long, tie = hit?.tie ?? false;
+  const L = alongX ? bb.x1 - bb.x0 : bb.y1 - bb.y0;
+  if (!hit) C.warnings.push('The strap loops could not all miss the ports: check that the strap clears them.');
+  else if (tie) C.warnings.push('No gap between this box\'s plugs is wide enough for a 12 mm strap: thread a zip tie through each pair of loops instead, between the plugs.');
+  // no clear spot at all: the loops go a quarter in from each end, as low as a loop goes
+  const spots = hit?.spots ?? [{ at: 0.28 * L, tall: S.low }, { at: 0.72 * L, tall: S.low }];
+  for (const s of spots) for (const side of [-1, 1]) {
+    const { at, tall } = s!;
+    const q: V2 = alongX ? [bb.x0 + at, side > 0 ? bb.y1 : bb.y0] : [side > 0 ? bb.x1 : bb.x0, bb.y0 + at];
     const n: V2 = alongX ? [0, side] : [side, 0];
     const t0 = H.gap + H.wall - 0.4, t1 = t0 + 5.5;
-    const blk = orientedBox(q, n, t0, t1, -8, 8, 0, 7).subtract(orientedBox(q, n, t0 + 1.6, t0 + 3.9, -6.5, 6.5, -1, 8));
+    const blk = orientedBox(q, n, t0, t1, -S.half, S.half, 0, tall).subtract(orientedBox(q, n, t0 + 1.6, t0 + 3.9, -S.slot, S.slot, -1, tall + 1));
     C.late.push(blk);
-    wallPiece(C, add(q, left(n), -9), left(n), 0, 18, 7);
-    C.blocked.push({ poly: orientedRect(q, n, -2, t1 + 1, -9, 9), why: 'strap loop' });
-    feat(C, 'tie', orientedRect(q, n, t0, t1, -8, 8), 0, 7, ['strap']);
+    wallPiece(C, add(q, left(n), -(S.half + 1)), left(n), 0, 2 * S.half + 2, tall);
+    C.blocked.push({ poly: orientedRect(q, n, -2, t1 + 1, -(S.half + 1), S.half + 1), why: 'strap loop' });
+    feat(C, 'tie', orientedRect(q, n, t0, t1, -S.half, S.half), 0, tall, ['strap']);
   }
-  C.checks.push({ group: 'Holder', name: 'Strap loops', value: '4', status: 'info', detail: `thread a 12 mm hook-and-loop strap (or two zip ties) over the box through the loops on each ${alongX === long ? 'long' : 'short'} side${alongX === long ? '' : ' (the long sides are busy with ports)'}` });
+  const lowered = spots.some((s) => s!.tall < S.tall);
+  C.checks.push({ group: 'Holder', name: 'Strap loops', value: '4', status: 'info', detail: `thread ${tie ? 'a zip tie' : 'a 12 mm hook-and-loop strap (or two zip ties)'} over the box through the loops on each ${alongX === long ? 'long' : 'short'} side${alongX === long ? '' : ' (the long sides are busy with ports)'}${lowered ? '; a loop under a plug is made lower to pass under it' : ''}` });
 }
 
 /**

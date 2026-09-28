@@ -5,6 +5,11 @@ import { resample, settleCables, type SimCable } from '../src/cad/cablesim';
 
 const minDist = (a: number[][], b: number[][]) => { let m = Infinity; for (const p of a) for (const q of b) m = Math.min(m, Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2])); return m; };
 const length = (a: number[][]) => a.reduce((s, q, i) => (i ? s + Math.hypot(q[0] - a[i - 1][0], q[1] - a[i - 1][1], q[2] - a[i - 1][2]) : 0), 0);
+/** The closest two polylines come, segment to segment (sampled finely along each). */
+const segGap = (a: number[][], b: number[][]) => {
+  const fine = (p: number[][]) => p.flatMap((q, i) => (i ? Array.from({ length: 10 }, (_, k) => p[i - 1].map((v, j) => v + ((q[j] - v) * (k + 1)) / 10)) : [q]));
+  return minDist(fine(a), fine(b));
+};
 
 describe('cables settling', () => {
   it('resamples at even steps and keeps the ends', () => {
@@ -18,12 +23,27 @@ describe('cables settling', () => {
     const b: SimCable = { id: 'b', pts: [[0, -60, 10], [0, 60, 10]], r: 2, pin: [8, 8] };
     const res = settleCables([a, b], []);
     expect(minDist(res.paths[0], res.paths[1])).toBeGreaterThan(3.8);
+    expect(segGap(res.paths[0], res.paths[1])).toBeGreaterThan(3.95); // between the beads too
     expect(res.touching).toEqual([]);
     expect(res.paths[0][0]).toEqual([-60, 0, 10]);
     expect(res.paths[1][res.paths[1].length - 1]).toEqual([0, 60, 10]);
     // lying on the table (their lowest point), so the second rides up over the first rather than the first going under
     const top = (p: number[][]) => Math.max(...p.map((q) => q[2]));
     expect(top(res.paths[1])).toBeGreaterThan(top(res.paths[0]));
+  });
+  it('a crossing stays where it was laid, not slid along the street into a comb', () => {
+    // two lanes 8 mm apart, both held in a comb at u = 150; b leaves its lane at u = 60 with a bend and crosses a's
+    // lane on its way out: it goes over a there (it used to unzip along the street up to the comb and press on a)
+    const a: SimCable = { id: 'a', pts: [[0, -4, 0], [250, -4, 0]], r: 2.25, pin: [8, 8], grip: [[150, -4, 0]] };
+    const bend = Array.from({ length: 9 }, (_, k) => { const t = (k / 8) * (Math.PI / 2); return [60 - 18 * Math.sin(t), 4 - 18 * (1 - Math.cos(t)), 0]; });
+    const b: SimCable = { id: 'b', pts: [[250, 4, 0], ...bend, [42, -60, 0]], r: 2.25, pin: [8, 8], grip: [[150, 4, 0]] };
+    const res = settleCables([a, b], []);
+    expect(res.touching).toEqual([]);
+    // along the street between the bend and the comb, b is still on its own side of a
+    const yAt = (p: number[][], u: number) => p.reduce((m, q) => (Math.abs(q[0] - u) < Math.abs(m[0] - u) ? q : m))[1];
+    for (const u of [100, 120, 140]) expect(yAt(res.paths[1], u), `u = ${u}`).toBeGreaterThan(yAt(res.paths[0], u) + 4);
+    // and the cables clear each other between their beads too, not just at them
+    expect(segGap(res.paths[0], res.paths[1])).toBeGreaterThan(2 * 2.25 - 0.05);
   });
   it('two cables laid on the same line lie side by side', () => {
     const a: SimCable = { id: 'a', pts: [[0, 0, 5], [40, 0, 5], [160, 0, 5], [200, 0, 5]], r: 2, pin: [8, 8] };
