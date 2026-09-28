@@ -2,6 +2,7 @@
 // new parts, the new cables and any rail that has to be longer. Parts are recognised by their geometry, so a holder
 // that did not change is not printed again.
 import type { Built, GenResult, PanelReport, PartOut, Project } from './types';
+import { stackMode } from './holes';
 
 /** Docks and flat clips numbered the way you count them on the rack: rail 1, second dock = "1.2". */
 export function mountLabels(panel: PanelReport | null | undefined): Map<string, string> {
@@ -73,7 +74,77 @@ export interface Delta {
   moved: { name: string; from: string; to: string }[]; // boards that sit somewhere else now
   spare: { name: string; qty: number }[]; // printed parts the rack no longer uses
   spareCables: { no?: number; a: string; b: string }[]; // cables it no longer uses
+  plan: PlanStep[]; // the same, as the steps you would take at the rack, in order
   any: boolean;
+}
+
+/**
+ * One thing to do at the rack, in the order you would do it: take boards off, swap boards, cut rails and move the
+ * end blocks, move docks, clip on new docks, seat boards, plug cables in. `parts`: what to print for it.
+ */
+export interface PlanStep {
+  kind: 'off' | 'swap' | 'cut' | 'ends' | 'move' | 'dock' | 'seat' | 'cable' | 'print';
+  text: string;
+  parts?: PartOut[];
+}
+
+const railText = (rep: PanelReport | null | undefined, id: string) => `rail ${Math.max(1, (rep?.rails.findIndex((r) => r.id === id) ?? 0) + 1)}`;
+const qtyName = (x: { name: string; qty: number }) => `${x.name}${x.qty > 1 ? ` ×${x.qty}` : ''}`;
+
+/** The steps of a delta, in the order you would work at the rack. */
+function planOf(p: Project, res: GenResult, b: Built, d: Omit<Delta, 'plan' | 'any'>): PlanStep[] {
+  const rep = res.report.panel, seats = seatLabels(rep), labels = mountLabels(rep);
+  const out: PlanStep[] = [];
+  const nameOf = (id: string) => p.modules.find((m) => m.id === id)?.board.name ?? b.names?.[id] ?? 'a board';
+  const partsOf = (id: string) => d.parts.filter((pt) => pt.tag?.module === id);
+  const used = new Set<PartOut>();
+  const take = (xs: PartOut[]) => { for (const x of xs) used.add(x); return xs; };
+  // a board replaced in its place keeps its id and takes a new name; one taken off and one added in the same spot is
+  // a swap too
+  const gone = b.boards.filter((id) => !p.modules.some((m) => m.id === id));
+  const fresh = p.modules.filter((m) => !b.boards.includes(m.id));
+  const swapped = new Set<string>();
+  for (const id of gone) {
+    const at = b.seats?.[id], into = at ? fresh.find((m) => seats.get(m.id) === at && !swapped.has(m.id)) : undefined;
+    if (into) {
+      swapped.add(into.id); swapped.add(id);
+      out.push({ kind: 'swap', text: `Swap ${b.names?.[id] ?? 'the board'} for ${into.board.name} in ${at}: take the old one out of its holder and dock, print the new holder, seat ${into.board.name} in it and plug its holder into the same dock.`, parts: take(partsOf(into.id)) });
+    } else out.push({ kind: 'off', text: `Take ${b.names?.[id] ?? 'a board'} off${at ? ` ${at}` : ''}: press its holder's button and lift it out.` });
+  }
+  for (const m of p.modules) {
+    if (!b.boards.includes(m.id)) continue;
+    const was = b.names?.[m.id], ps = partsOf(m.id);
+    if (m.revision && m.revision.at > b.at) out.push({ kind: 'swap', text: `Swap in the new version of ${m.board.name}${seats.get(m.id) ? ` (${seats.get(m.id)})` : ''}: take the board out, print its new holder, and seat the new board in it.${ps.length ? '' : ' Its holder comes out the same, so there is nothing to print.'}`, parts: take(ps) });
+    else if (was && was !== m.board.name && ps.length) out.push({ kind: 'swap', text: `Swap ${was} for ${m.board.name}${seats.get(m.id) ? ` in ${seats.get(m.id)}` : ''}: print the new holder, seat ${m.board.name} in it and plug it into the same dock.`, parts: take(ps) });
+  }
+  for (const r of d.rails) {
+    out.push({ kind: 'cut', text: r.was == null ? `Cut a new ${Math.round(r.length)} mm rail for ${railText(rep, r.id)}.` : `Cut a longer rail for ${railText(rep, r.id)}: ${Math.round(r.length)} mm (yours is ${Math.round(r.was)} mm). Slide the docks across onto it in the same order.` });
+    if (r.was != null && p.panel.stands !== false) out.push({ kind: 'ends', text: `Move the end block at the far end of ${railText(rep, r.id)} out to the new end, ${Math.round(r.length - r.was)} mm further.` });
+  }
+  for (const m of d.moved) out.push({ kind: 'move', text: `Move ${m.name} from ${m.from} to ${m.to}.`, parts: take(partsOf(p.modules.find((x) => x.board.name === m.name)?.id ?? '')) });
+  // new docks: where their shoes clip on, from the rail's start
+  const newMounts = [...new Set(d.parts.filter((pt) => pt.tag?.kind === 'shoe' || pt.tag?.kind === 'socket').flatMap((pt) => [pt.tag, ...(pt.tags ?? [])].map((t) => t?.mount)).filter(Boolean) as string[])];
+  for (const id of newMounts) {
+    const mt = rep?.mounts.find((x) => x.id === id);
+    if (!mt) continue;
+    const ps = take(d.parts.filter((pt) => (pt.tag?.kind === 'shoe' || pt.tag?.kind === 'socket') && [pt.tag, ...(pt.tags ?? [])].some((t) => t?.mount === id)).map((pt) => ({ ...pt, qty: 1 })));
+    out.push({ kind: 'dock', text: `Clip a new dock (${mt.kind === 'dock' ? 'shoe and socket' : 'flat clip'}) onto ${railText(rep, mt.rail)} at ${Math.round(mt.at)} mm from its start: dock ${labels.get(id) ?? ''}.`.replace(' :', ':'), parts: ps });
+  }
+  for (const m of fresh) {
+    if (swapped.has(m.id)) continue;
+    const where = m.on ? (stackMode(p, m) === 'bolted' ? `bolt it onto ${nameOf(m.on)} on its standoffs` : `press it onto the corner towers of ${nameOf(m.on)}'s holder`) : `plug the holder into ${seats.get(m.id) ?? 'its dock'}`;
+    out.push({ kind: 'seat', text: `Seat ${m.board.name} in its holder and ${where}.`, parts: take(partsOf(m.id)) });
+  }
+  // anything else to print that belongs to a board already there (a holder that changed)
+  for (const m of p.modules) {
+    const ps = partsOf(m.id).filter((x) => !used.has(x));
+    if (ps.length) out.push({ kind: 'print', text: `Print a new holder for ${m.board.name} (${d.why.get(ps[0]) ?? 'it changed'}) and swap it in.`, parts: take(ps) });
+  }
+  const rest = d.parts.filter((x) => !used.has(x));
+  if (rest.length) out.push({ kind: 'print', text: `Also print: ${[...new Set(rest.map((x) => d.why.get(x) ?? 'changed'))].join(', ')}.`, parts: rest });
+  if (d.cables.length) out.push({ kind: 'cable', text: `Plug in ${d.cables.length > 1 ? `${d.cables.length} cables` : 'a cable'}: ${d.cables.map((c) => (c.was != null ? `#${c.no}, now ${c.buy} m (yours is ${c.was} m)` : `${c.no != null ? `#${c.no} ` : ''}${c.a} to ${c.b} (${c.buy} m)`)).join(', ')}.` });
+  if (d.spare.length || d.spareCables.length) out.push({ kind: 'off', text: `Spare now: ${[...d.spare.map(qtyName), ...d.spareCables.map((c) => (c.no != null ? `cable #${c.no}` : `the ${c.a} to ${c.b} cable`))].join(', ')}.` });
+  return out;
 }
 
 /** What is new since the rack was built. */
@@ -135,7 +206,8 @@ export function delta(p: Project, res: GenResult): Delta | null {
     else why.set(pt, `${m.board.name} changed`);
   }
   const revised = p.modules.filter((m) => b.boards.includes(m.id) && m.revision && m.revision.at > b.at).map((m) => m.board.name);
-  return { parts, why, cables, rails, boards, removed, revised, moved, spare, spareCables, any: parts.length + cables.length + rails.length + removed.length + moved.length > 0 };
+  const d = { parts, why, cables, rails, boards, removed, revised, moved, spare, spareCables };
+  return { ...d, plan: planOf(p, res, b, d), any: parts.length + cables.length + rails.length + removed.length + moved.length > 0 };
 }
 
 /**

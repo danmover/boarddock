@@ -152,6 +152,19 @@ export function commitFrom(prev: Project) {
   persist(state.project);
 }
 
+/**
+ * Finish the last change with a follow-up worked out after it was built (docks slid apart to make room, say): the
+ * project changes but no new undo step is made, so one ⌘Z still takes back both.
+ */
+export function amend(fn: (p: Project) => void) {
+  const cur = state.project;
+  if (!cur) return;
+  const next = structuredClone(cur);
+  fn(next);
+  store.set({ project: next });
+  persist(next);
+}
+
 /** Change the active module (board + holder) through a mutating function on a copy (undoable). */
 export function editMod(fn: (m: Module, p: Project) => void) {
   edit((p) => fn(activeModule(p), p));
@@ -261,7 +274,8 @@ export function putBoards(bs: Board[], replace: boolean, opts: { stay?: boolean 
 export function loadProject(raw: unknown) {
   const p = migrate(raw);
   const cur = state.project;
-  store.set({ project: p, past: cur ? [...state.past.slice(-60), cur] : [], future: [], sel: [], step: 'import', result: null });
+  // it opens on Start, where the rack's card says what it is, whether it is built and what is new
+  store.set({ project: p, past: cur ? [...state.past.slice(-60), cur] : [], future: [], sel: [], step: 'import', view: 'library', result: null });
   persist(p);
 }
 

@@ -3,9 +3,11 @@
 // Keys: R / Shift+R turn, F swap front and back, arrows move along the rail (Shift = 10 mm), Del remove,
 // Cmd/Ctrl+A select all docks, Esc clear.
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Access, PanelReport, V2 } from '../model/types';
+import type { Access, PanelReport, Project, V2 } from '../model/types';
+import { shortName } from '../model/links';
+import { companionLabel, isProbe } from '../model/probes';
 import { isSel, select, store, useApp, type SelItem } from '../state';
-import { addDock, addRail, autoArrange, moveRail, nudge, placeMount, removeMounts, removeRails, seat, swapSlots, turnMounts } from './panelOps';
+import { addDock, addRail, autoArrange, tidyUp, moveRail, nudge, placeMount, removeMounts, removeRails, seat, swapSlots, turnMounts } from './panelOps';
 
 export const PALETTE = ['#4c8dff', '#46d58b', '#f5c542', '#c084fc', '#2dd4bf', '#fb7185', '#a3e635', '#38bdf8'];
 export const MODULE_DRAG = 'application/x-boarddock-module';
@@ -21,6 +23,18 @@ function fit(r: PanelReport | null): Box {
   const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
   const m = Math.max(x1 - x0, y1 - y0) * 0.12 + 30;
   return { x: x0 - m, y: -y1 - m, w: x1 - x0 + 2 * m, h: y1 - y0 + 2 * m };
+}
+
+/** Whether the rack's bounds got bigger than they were (so a view that showed all of it no longer does). */
+const grew = (a: Box | null, b: Box) => !a || b.w > a.w + 1 || b.h > a.h + 1 || b.x < a.x - 1 || b.y < a.y - 1;
+
+/** A board's label on the rack: short (no maker's name), a probe by the header it serves, "+2 stacked". */
+function labelOf(p: Project, id: string, stack?: string[]): string {
+  const m = p.modules.find((x) => x.id === id);
+  if (!m) return '';
+  const n = isProbe(m) ? companionLabel(p, m) : shortName(m.board.name);
+  const k = stack?.length ?? 0;
+  return `${n.length > 24 ? `${n.slice(0, 23).trimEnd()}…` : n}${k ? ` +${k} stacked` : ''}`;
 }
 
 export function accessCounts(a: Access[]) {
@@ -47,7 +61,15 @@ export function PanelEditor() {
   const color = useMemo(() => new Map(project.modules.map((m, i) => [m.id, PALETTE[i % PALETTE.length]])), [project.modules]);
   const nameOf = (id: string | null) => project.modules.find((m) => m.id === id)?.board.name ?? '';
 
-  useEffect(() => { if (rep && !fitted.current) { setVb(fit(rep)); fitted.current = true; } }, [rep]);
+  const lastFit = useRef<Box | null>(null);
+  useEffect(() => {
+    if (!rep) return;
+    const f = fit(rep), was = lastFit.current;
+    lastFit.current = f;
+    if (!fitted.current) { setVb(f); fitted.current = true; return; }
+    // the rack grew (a longer rail, a new one) and now runs out of the view: fit it all again
+    if (grew(was, f)) setVb((v) => (f.x < v.x || f.y < v.y || f.x + f.w > v.x + v.w || f.y + f.h > v.y + v.h ? f : v));
+  }, [rep]);
   useEffect(() => { setGhost(null); }, [result]);
   useEffect(() => {
     const el = svg.current;
@@ -300,7 +322,7 @@ export function PanelEditor() {
                 const bad = collide.has(q.id);
                 return (
                   <g key={q.id}>
-                    <rect x={f[0] + o[0]} y={-(f[3] + o[1])} width={f[2] - f[0]} height={f[3] - f[1]} rx={2.5} fill={c} fillOpacity={on ? 0.28 : 0.17} stroke={bad ? 'var(--bad)' : c} strokeWidth={fs(1.5)} />
+                    <rect x={f[0] + o[0]} y={-(f[3] + o[1])} width={f[2] - f[0]} height={f[3] - f[1]} rx={2.5} fill={c} fillOpacity={on ? 0.28 : 0.17} stroke={bad ? 'var(--bad)' : c} strokeWidth={fs(1.5)}><title>{nameOf(q.id)}{q.stack?.length ? ` + ${q.stack.join(' + ')}` : ''}</title></rect>
                     {bad && <rect x={f[0] + o[0]} y={-(f[3] + o[1])} width={f[2] - f[0]} height={f[3] - f[1]} fill="url(#clash)" />}
                   </g>
                 );
@@ -321,11 +343,11 @@ export function PanelEditor() {
                 const mid = (a0 + a1) / 2;
                 const cx = (h ? (f[0] + f[2]) / 2 : mid) + o[0], cy = (h ? mid : (f[1] + f[3]) / 2) + o[1];
                 const across = (h ? f[2] - f[0] : f[3] - f[1]) / px, along = Math.abs(a1 - a0) / px;
-                const name = nameOf(q.id) + (q.stack?.length ? ` + ${q.stack.join(' + ')}` : '');
+                const name = labelOf(project, q.id, q.stack);
                 const fsz = 11.5;
                 const vertical = h ? across < Math.max(name.length * fsz * 0.6, 24 * 5.9) + 16 && along > across : false;
                 const sub = `${q.edge} edge in · ◉${cnt.front} ✓${cnt.good - cnt.front}${cnt.side ? ` ⚠${cnt.side}` : ''}${cnt.blocked ? ` ✕${cnt.blocked}` : ''}`;
-                const tw = Math.max(Math.min(name.length, 26) * fsz * 0.6, sub.length * 9.5 * 0.62) + 16;
+                const tw = Math.max(name.length * fsz * 0.6, sub.length * 9.5 * 0.62) + 16;
                 const dirs = ['up', 'down', 'left', 'right'] as const;
                 // slide along the rail if another label is there; with no room, just the name, faint
                 const spot = claim(cx, cy, fs(vertical ? 17 : tw / 2), fs(vertical ? tw / 2 : 17), h);
@@ -340,11 +362,14 @@ export function PanelEditor() {
                       const ay = d === 'up' ? f[3] + o[1] + fs(11) : d === 'down' ? f[1] + o[1] - fs(11) : (f[1] + f[3]) / 2 + o[1];
                       return <text key={d} x={ax} y={-ay} fontSize={fs(12)} textAnchor="middle" dominantBaseline="central" fill={col} className="mono">{`${ARROW[d]}${list.length > 1 ? list.length : ''}`}</text>;
                     })}
-                    <g transform={vertical ? `rotate(-90 ${lx} ${-ly})` : undefined} opacity={spot ? 1 : 0.55}>
-                      <rect x={lx - fs(tw / 2)} y={-ly - fs(17)} width={fs(tw)} height={fs(34)} rx={fs(8)} fill="var(--surface)" fillOpacity={0.94} stroke={c} strokeWidth={fs(1.2)} />
-                      <text x={lx} y={-ly - (spot ? fs(6) : 0)} fontSize={fs(fsz)} textAnchor="middle" dominantBaseline="central" fill="var(--fg)" fontWeight={600}>{name.slice(0, 26)}</text>
-                      {spot && <text x={lx} y={-ly + fs(8)} fontSize={fs(9.5)} textAnchor="middle" dominantBaseline="central" className="mono" fill="var(--muted)">{sub}</text>}
-                    </g>
+                    {/* with no room for its label (it would cover another), the board keeps its colour and the name shows on hover */}
+                    {spot && (
+                      <g transform={vertical ? `rotate(-90 ${lx} ${-ly})` : undefined}>
+                        <rect x={lx - fs(tw / 2)} y={-ly - fs(17)} width={fs(tw)} height={fs(34)} rx={fs(8)} fill="var(--surface)" fillOpacity={0.94} stroke={c} strokeWidth={fs(1.2)} />
+                        <text x={lx} y={-ly - fs(6)} fontSize={fs(fsz)} textAnchor="middle" dominantBaseline="central" fill="var(--fg)" fontWeight={600}>{name}</text>
+                        <text x={lx} y={-ly + fs(8)} fontSize={fs(9.5)} textAnchor="middle" dominantBaseline="central" className="mono" fill="var(--muted)">{sub}</text>
+                      </g>
+                    )}
                   </g>
                 );
               })}
@@ -372,6 +397,7 @@ export function PanelEditor() {
 
       <div className="toolbar floating">
         <button className={`tbtn wide ${project.panel.auto ? 'on' : ''}`} onClick={autoArrange} title="Lay everything out automatically: orientations for plug access, back-to-back pairs, packing, new rows">⚡ Auto-arrange</button>
+        {!project.panel.auto && <button className="tbtn wide" onClick={tidyUp} title="Take out empty docks and slide overlapping docks apart along their rail; nothing else moves">Tidy up</button>}
         <span className="tsep" />
         <button className="tbtn wide" onClick={() => addRail('h')} title="Add a horizontal rail">+ Rail ⟷</button>
         <button className="tbtn wide" onClick={() => addRail('v')} title="Add a vertical rail">+ Rail ↕</button>

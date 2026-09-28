@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { zipSync, strToU8 } from 'fflate';
-import type { Board, BoxFace, BoxSpec, Comp, Hole, HoleRole, PartOut, Project, V2 } from '../model/types';
+import type { Board, BoxFace, BoxSpec, Comp, Hole, HoleRole, Module, PartOut, Project, V2 } from '../model/types';
 import { applyHoleRoles, boltedOn, detectHoleRoles, ROLE_INFO } from '../model/holes';
 import { baseRef, refText, cableNumbers, cablePurpose, shortName, compatible, KIND_COLOR, linkKind, linkOf, plugName, plugRole, plugsOf, portBudget, sameRef } from '../model/links';
 import { applyBox, BOX_PORT_TYPES, BOX_PRESETS, BOX_ROLES, boxProblems, FACE_NAME, inferBox, layoutPorts, makeBox, tightFaces } from '../model/boxes';
@@ -303,6 +303,7 @@ function BoardCard() {
         {view !== 'editor' ? <button className="btn small primary" onClick={() => store.set({ view: 'editor' })}><Icon d={I.board} /> Open the editor</button> : <button className="btn small" onClick={() => store.set({ view: 'assembly' })}><Icon d={I.cube} /> In 3D</button>}
         <button className="btn small" onClick={() => { const ok = saveBoard(b); toast(ok ? `Saved ${b.name} to My boards: the library lists it for any rack.` : 'This browser would not store it (private window, or storage full).'); }} title="Keep this board to add again to any rack">Save to My boards</button>
         {!box && <NewVersionButton moduleId={m.id} small />}
+        {p.modules.length > 1 && <button className="btn small" onClick={() => store.set({ addSheet: true, replaceMode: true })} title="Pick another board from the library (or its files) to take this one's place: its dock, stack, holder settings and the cables to plugs it also has stay">Replace with…</button>}
       </div>
       {b.notes.length > 0 && <div className="warns">{b.notes.map((n, i) => <div key={i}>{n}</div>)}</div>}
     </div>
@@ -425,32 +426,47 @@ const ROLE_COLOR: Record<string, string> = { 'hub-down': '#8b95a3', 'hub-up': '#
  */
 function DebugProbes() {
   const p = useApp((s) => s.project)!;
+  const cables = useApp((s) => s.result?.report.cables);
   const m = activeModule(p);
   const heads = debugHeaders(m.board), uarts = uartHeaders(m.board);
   if (!heads.length && !uarts.length) return null;
-  const other = (c: Comp) => { const l = linkOf(p, { module: m.id, ref: c.ref }); const o = l && (l.a.module === m.id ? l.b : l.a); return o ? { m: p.modules.find((x) => x.id === o.module), ref: o.ref } : null; };
+  const other = (c: Comp) => { const l = linkOf(p, { module: m.id, ref: c.ref }); const o = l && (l.a.module === m.id ? l.b : l.a); return o ? { m: p.modules.find((x) => x.id === o.module), ref: o.ref, link: l.id } : null; };
   const freeDbg = heads.filter((c) => !other(c)), freeUart = uarts.filter((c) => !other(c));
-  const row = (c: Comp, chip: ReactNode) => (
+  const kindOf = (x: Module) => x.board.name.replace(/\s*\(.*\)$/, '');
+  const row = (c: Comp, chip: ReactNode, extra?: ReactNode) => (
     <SelRow key={c.id} it={{ kind: 'comp', id: c.id }}>
       <span className="grow"><b>{c.ref}</b> <small>{isUartPort(c) ? 'UART' : plugName(c.conn!.type)}</small></span>
+      {extra}
       {chip}
     </SelRow>
   );
+  // a probe's ribbon length, set where the "too short" note shows up
+  const ribbon = (o: NonNullable<ReturnType<typeof other>>) => {
+    const pm = o.m!, len = pm.board.box?.ribbon ?? 200, run = cables?.find((x) => x.id === o.link && x.ribbon != null)?.length;
+    return (
+      <span className="ribbon" onClick={(e) => e.stopPropagation()} title={run != null ? `Its ribbon has to run about ${Math.round(run)} mm` : 'How long its ribbon is'}>
+        {run != null && run > len && <Chip status="warn">needs ~{Math.round(run)}</Chip>}
+        <input type="number" aria-label={`${kindOf(pm)} ribbon length (mm)`} value={len} step={10} min={50} max={1000}
+          onChange={(e) => { const v = Math.max(50, Math.min(1000, +e.target.value || 200)); edit((q) => { const x = q.modules.find((y) => y.id === pm.id); if (x?.board.box) x.board.box.ribbon = v; }); }} />
+        <small>mm</small>
+      </span>
+    );
+  };
   return (
     <Section title={`${heads.length ? 'Debug' : ''}${heads.length && uarts.length ? ' & ' : ''}${uarts.length ? 'UART' : ''} headers · ${heads.length + uarts.length}`}>
       <div className="list">
-        {heads.map((c) => { const o = other(c); return row(c, o?.m ? <Chip status="ok">{o.m.board.name.replace(/\s*\(.*\)$/, '')}</Chip> : <Chip status="info">no probe</Chip>); })}
-        {uarts.map((c) => { const o = other(c); return row(c, o?.m ? <Chip status="ok">{shortName(o.m.board.name)} {refText(o.m, o.ref)}</Chip> : <Chip status="info">no cable</Chip>); })}
+        {heads.map((c) => { const o = other(c); return o?.m ? row(c, <Chip status="ok">{kindOf(o.m)}</Chip>, isProbe(o.m) && o.m.board.box ? ribbon(o) : undefined) : row(c, <button className="btn small soft" onClick={(e) => { e.stopPropagation(); addJLinks(m.id, [c.ref]); }} title={`A J-Link on ${c.ref}, cabled to it, behind this board`}><Icon d={I.plus} /> J-Link</button>); })}
+        {uarts.map((c) => { const o = other(c); return o?.m ? row(c, <Chip status="ok">{shortName(kindOf(o.m))} {isProbe(o.m) ? '' : refText(o.m, o.ref)}</Chip>) : row(c, <button className="btn small soft" onClick={(e) => { e.stopPropagation(); addSerialAdapters(m.id, [c.ref]); }} title={`A USB-serial adapter on ${c.ref}, with jumper wires, behind this board`}><Icon d={I.plus} /> Adapter</button>); })}
       </div>
       {uarts.map((c) => <UartPins key={c.id} c={c} many={uarts.length > 1} />)}
-      {(freeDbg.length > 0 || freeUart.length > 0) && (
+      {(freeDbg.length > 1 || freeUart.length > 0) && (
         <div className="btns" style={{ marginTop: 8, flexWrap: 'wrap' }}>
-          {freeDbg.length > 0 && <button className="btn small soft" onClick={() => addJLinks(m.id)}>Add {freeDbg.length > 1 ? `${freeDbg.length} J-Links` : 'a J-Link'}</button>}
-          {freeUart.length > 0 && <button className="btn small soft" onClick={() => addSerialAdapters(m.id)} title="The FT232RL board: jumper wires from its pins to the header">Add {freeUart.length > 1 ? `${freeUart.length} USB-serial adapters` : 'a USB-serial adapter'}</button>}
-          {freeUart.length > 0 && <button className="btn small ghost" onClick={() => addUartCables(m.id)} title="A USB to TTL cable with loose jumper ends, straight to a hub">or a serial cable</button>}
+          {freeDbg.length > 1 && <button className="btn small soft" onClick={() => addJLinks(m.id)}>Add {freeDbg.length} J-Links</button>}
+          {freeUart.length > 1 && <button className="btn small soft" onClick={() => addSerialAdapters(m.id)} title="The FT232RL board: jumper wires from its pins to the header">Add {freeUart.length} USB-serial adapters</button>}
+          {freeUart.length > 0 && <button className="btn small ghost" onClick={() => addUartCables(m.id)} title="A USB to TTL cable with loose jumper ends, straight to a hub">or {freeUart.length > 1 ? 'serial cables' : 'a serial cable'}</button>}
         </div>
       )}
-      <p className="hint">{heads.length > 0 && 'Each J-Link slides down into a slot in the back of this board\'s dock, USB end up (more than one: the slots stack on towers); its ribbon loops over the top of the dock to its header, and its USB goes to a hub (Auto-connect). '}{uarts.length > 0 && 'A USB-serial adapter (the little FT232RL board) goes in the slot behind the board too, with jumper wires from its pins to the header: GND to GND, its TXD to the board\'s RX, its RXD to the board\'s TX. (Or a serial cable with loose ends, straight to a hub.) '}Found by shape (2 × 5 at 1.27 mm) or name (SWD, JTAG, debug, UART, serial, TX/RX); mark others by selecting them and choosing <b>Debug / UART</b>.</p>
+      <p className="hint">{heads.length > 0 && 'Each J-Link slides down into a slot in the back of this board\'s dock, USB end up (more than one: the slots stack on towers); its ribbon loops over the top of the dock to its header, and its USB goes to a hub (Auto-connect). The number by it is its ribbon\'s length: set yours. '}{uarts.length > 0 && 'A USB-serial adapter (the little FT232RL board) goes in the slot behind the board too, with jumper wires from its pins to the header: GND to GND, its TXD to the board\'s RX, its RXD to the board\'s TX. (Or a serial cable with loose ends, straight to a hub.) '}Found by shape (2 × 5 at 1.27 mm) or name (SWD, JTAG, debug, UART, serial, TX/RX); mark others by selecting them and choosing <b>Debug / UART</b>.</p>
     </Section>
   );
 }
@@ -1377,6 +1393,17 @@ function PlateThumb({ pl, bed }: { pl: ReturnType<typeof packPlates>[number]; be
   );
 }
 
+/** One step of What's new: tick it off as you go (the ticks are only on this screen), with what to print for it. */
+function PlanItem({ st }: { st: Delta['plan'][number] }) {
+  const [done, setDone] = useState(false);
+  return (
+    <li className={`${st.kind}${done ? ' done' : ''}`}>
+      <label><input type="checkbox" checked={done} onChange={(e) => setDone(e.target.checked)} /><span>{st.text}</span></label>
+      {st.parts && st.parts.length > 0 && <ul className="deltaparts">{st.parts.map((x, k) => <li key={k}>Print {x.name}{x.qty > 1 ? ` ×${x.qty}` : ''}</li>)}</ul>}
+    </li>
+  );
+}
+
 /** Mark the rack as built, and what is new since. */
 function BuildSection({ d }: { d: Delta | null }) {
   const p = useApp((s) => s.project)!;
@@ -1392,14 +1419,10 @@ function BuildSection({ d }: { d: Delta | null }) {
       {d && d.any ? (
         <>
           <p className="hint" style={{ marginTop: 0 }}>Since then {[d.boards.length ? `you added ${d.boards.join(', ')}` : '', d.removed.length ? `took off ${d.removed.join(', ')}` : '', d.revised.length ? `swapped in a new version of ${d.revised.join(', ')}` : ''].filter(Boolean).join(', ').replace(/^(took|swapped)/, 'you $1') || 'the rack changed'}. On the rack:</p>
-          <ul className="fmt deltalist">
-            {d.removed.length > 0 && <li><b>Take off</b> {d.removed.join(', ')}{d.spare.length ? `; spare now: ${d.spare.map((x) => `${x.name}${x.qty > 1 ? ` ×${x.qty}` : ''}`).join(', ')}` : ''}{d.spareCables.length ? `; cable${d.spareCables.length > 1 ? 's' : ''} ${d.spareCables.map((c) => (c.no != null ? `#${c.no}` : `${c.a} to ${c.b}`)).join(', ')} no longer used` : ''}.</li>}
-            {d.moved.map((m) => <li key={m.name}><b>Move</b> {m.name} from {m.from} to {m.to}.</li>)}
-            {d.parts.length > 0 && <li><b>Print</b> {d.parts.reduce((a, x) => a + x.qty, 0)} part{d.parts.reduce((a, x) => a + x.qty, 0) > 1 ? 's' : ''}: {[...new Set(d.parts.map((x) => d.why.get(x) ?? ''))].map((w) => `${d.parts.filter((x) => d.why.get(x) === w).map((x) => `${x.name}${x.qty > 1 ? ` ×${x.qty}` : ''}`).join(', ')} (${w})`).join('; ')}.</li>}
-            {d.cables.length > 0 && <li><b>Buy</b> {d.cables.length} cable{d.cables.length > 1 ? 's' : ''}: {d.cables.map((c) => (c.was != null ? `#${c.no} is now ${c.buy} m (yours is ${c.was} m)` : `${c.no != null ? `#${c.no} ` : ''}${c.a} to ${c.b} (${c.buy} m)`)).join(', ')}.</li>}
-            {d.rails.map((r) => <li key={r.id}><b>Cut</b> rail {r.id.replace(/^r/, '')}: {r.was == null ? `a new ${Math.round(r.length)} mm rail` : `now ${Math.round(r.length)} mm (yours is ${Math.round(r.was)} mm): cut a longer one`}.</li>)}
-            {!d.removed.length && d.spare.length > 0 && <li><b>Spare</b> {d.spare.map((x) => `${x.name}${x.qty > 1 ? ` ×${x.qty}` : ''}`).join(', ')} (replaced by the new print).</li>}
-          </ul>
+          <ol className="deltaplan">
+            {d.plan.map((st, i) => <PlanItem key={`${i}:${st.text}`} st={st} />)}
+          </ol>
+          {d.parts.length > 0 && <p className="hint">{d.parts.reduce((a, x) => a + x.qty, 0)} new part{d.parts.reduce((a, x) => a + x.qty, 0) > 1 ? 's' : ''} to print in all: <b>What's new</b> above picks just these for the plates.</p>}
           <div className="btns" style={{ marginTop: 8 }}><button className="btn small soft" onClick={markBuilt}>I've built these too</button></div>
         </>
       ) : <p className="hint" style={{ marginTop: 0 }}>Nothing new to print, cut or buy since then. Add a board and this lists just what it needs.</p>}
