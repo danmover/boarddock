@@ -169,6 +169,10 @@ export interface PrinterSettings {
   maxZ?: number; // build height
   gcodeStart?: string; // start/end G-code typed in for in-app slicing; empty uses the printer's profile
   gcodeEnd?: string;
+  // a Bambu Lab printer's own start, end and layer-change code, in Bambu Studio's template language, read from the
+  // user's own Bambu Studio or OrcaSlicer (BoardDock doesn't ship it): filled in for every print
+  bambu?: { start: string; end?: string; layer?: string; from: string };
+  plate?: string; // the build plate, as Bambu Studio names it ("Textured PEI Plate", "Cool Plate"...)
 }
 
 /** One board and the holder built around it. */

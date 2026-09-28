@@ -41,6 +41,39 @@ function slicerPaths() {
 const installed = () => slicerPaths().filter(([, p]) => fs.existsSync(p));
 
 ipcMain.handle('slicers', () => [...new Set(installed().map(([n]) => n))]);
+
+// A Bambu Lab printer's own start, end and layer-change code, read from the user's own Bambu Studio or OrcaSlicer
+// (their machine profiles, which BoardDock doesn't ship). Only those folders, only a preset name, only those fields.
+function bambuProfileDirs() {
+  const pf = process.env.ProgramFiles || 'C:\\Program Files';
+  if (process.platform === 'darwin') return [['Bambu Studio', '/Applications/BambuStudio.app/Contents/Resources/profiles/BBL/machine'], ['OrcaSlicer', '/Applications/OrcaSlicer.app/Contents/Resources/profiles/BBL/machine']];
+  if (process.platform === 'win32') return [['Bambu Studio', path.join(pf, 'Bambu Studio', 'resources', 'profiles', 'BBL', 'machine')], ['OrcaSlicer', path.join(pf, 'OrcaSlicer', 'resources', 'profiles', 'BBL', 'machine')]];
+  return [['Bambu Studio', '/usr/share/bambu-studio/profiles/BBL/machine'], ['OrcaSlicer', '/usr/share/orca-slicer/profiles/BBL/machine']];
+}
+ipcMain.handle('bambu-profile', (_e, preset) => {
+  const name = String(preset ?? '');
+  if (!/^[\w .+-]{3,80}$/.test(name)) return { error: 'not a printer preset name' };
+  const KEYS = ['machine_start_gcode', 'machine_end_gcode', 'layer_change_gcode'];
+  const read = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
+  const text = (v) => (typeof v === 'string' ? v : Array.isArray(v) ? v.join('\n') : undefined);
+  for (const [app, dir] of bambuProfileDirs()) {
+    if (!fs.existsSync(dir)) continue;
+    const got = {};
+    for (const k of KEYS) {
+      // newer versions keep each piece in its own "<preset> template <key>.json"; older ones inline, maybe inherited
+      const t = read(path.join(dir, `${name} template ${k}.json`));
+      if (t && text(t[k])) { got[k] = text(t[k]); continue; }
+      let cur = read(path.join(dir, `${name}.json`));
+      for (let i = 0; cur && i < 6; i++) {
+        if (text(cur[k])) { got[k] = text(cur[k]); break; }
+        if (Array.isArray(cur.include)) { const inc = cur.include.map((x) => read(path.join(dir, `${x}.json`))).find((x) => x && text(x[k])); if (inc) { got[k] = text(inc[k]); break; } }
+        cur = typeof cur.inherits === 'string' && /^[\w .+-]+$/.test(cur.inherits) ? read(path.join(dir, `${cur.inherits}.json`)) : null;
+      }
+    }
+    if (got.machine_start_gcode) return { start: got.machine_start_gcode, end: got.machine_end_gcode, layer: got.layer_change_gcode, from: `${app} on this computer` };
+  }
+  return { error: 'Bambu Studio or OrcaSlicer was not found, or has no profile for this printer' };
+});
 ipcMain.handle('open-in-slicer', async (_e, name, file, bytes) => {
   try {
     // only print files, only a sensible size: the page can't make this write and open anything else

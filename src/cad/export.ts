@@ -42,17 +42,21 @@ function footprint(p: PartOut): { x0: number; y0: number; w: number; h: number }
   return { x0, y0, w: x1 - x0, h: y1 - y0 };
 }
 
+/** Room kept clear round the edge of the bed (mm): a part that only fits without it gets a plate to itself. */
+export const EDGE = 4;
+
 /**
  * MaxRects bin packing (best short-side fit, 90 degree rotation allowed). Parts keep their print orientation.
  * Fewest plates wins; each plate becomes one STL/3MF.
  */
-export function packPlates(parts: PartOut[], bed: V2, spacing: number, copies = 1): Plate[] {
+export function packPlates(parts: PartOut[], bed: V2, spacing: number, copies = 1, margin = EDGE): Plate[] {
   type R = { x: number; y: number; w: number; h: number };
   const items: { part: PartOut; copy: number; w: number; h: number }[] = [];
   for (const p of parts) for (let c = 0; c < p.qty * copies; c++) { const f = footprint(p); items.push({ part: p, copy: c, w: f.w + spacing, h: f.h + spacing }); }
   items.sort((a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h) || b.w * b.h - a.w * a.h);
   const plates: { free: R[]; placed: Placed[] }[] = [];
-  const W = bed[0] + spacing, Hh = bed[1] + spacing;
+  // a margin round the edge of the bed: the skirt (or brim) goes there, and nothing is printed right at the edge
+  const W = bed[0] - 2 * margin + spacing, Hh = bed[1] - 2 * margin + spacing;
   const place = (pl: { free: R[]; placed: Placed[] }, it: (typeof items)[0]) => {
     let best: { r: R; rot: boolean; score: number } | null = null;
     for (const r of pl.free) for (const rot of [false, true]) {

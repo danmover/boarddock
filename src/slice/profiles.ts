@@ -25,17 +25,19 @@ const PROFILED: Record<string, { kiri: string; fit: Fit; note?: string }> = {
   'Creality K1C': { kiri: 'Creality.K1', fit: 'close', note: "Uses Kiri:Moto's K1 profile: same bed and the same START_PRINT macro." },
 };
 const UNSUPPORTED: Record<string, string> = {
-  'Bambu Lab A1 mini': "Kiri:Moto has no A1 mini profile, and Bambu printers need Bambu's own start code. Slice it in Bambu Studio or OrcaSlicer.",
+  'Bambu Lab A1 mini': "It needs the A1 mini's own start code, which comes with Bambu Studio and OrcaSlicer: load it below (the desktop app reads it from your slicer), and BoardDock fills it in for every print.",
   'Prusa XL': 'The XL is a tool changer: its start code has to pick up a tool, which plain start code cannot do safely. Slice it in PrusaSlicer.',
 };
 
-/** Where this printer's start/end G-code comes from, or why BoardDock will not slice for it. */
-export function machinePlan(pr: Printer | null, name: string): MachinePlan {
+/** Where this printer's start/end G-code comes from, or why BoardDock will not slice for it. `own`: the printer's
+ * own code from the user's Bambu Studio or OrcaSlicer (where it came from), which beats every other source. */
+export function machinePlan(pr: Printer | null, name: string, own?: string): MachinePlan {
   const firmware = pr?.firmware ?? 'marlin';
+  if (own && firmware === 'bambu') return { fit: 'exact', firmware, label: `The ${name}'s own start code`, note: `From ${own}, filled in for each print (temperatures, plate, the area to level, the height). Bambu's own code, so it knows this printer; BoardDock hasn't run it on one.` };
   if (UNSUPPORTED[name]) return { fit: 'none', firmware, label: 'Not available', note: UNSUPPORTED[name] };
   const hit = PROFILED[name];
   if (hit) return { fit: hit.fit, kiri: hit.kiri, firmware, label: `Kiri:Moto's ${hit.kiri.replace(/\./g, ' ').replace('i3 ', '')} profile`, note: hit.note };
-  if (firmware === 'bambu') return { fit: 'none', firmware, label: 'Not available', note: "Bambu printers need Bambu's own start code. Slice it in Bambu Studio or OrcaSlicer." };
+  if (firmware === 'bambu') return { fit: 'none', firmware, label: 'Not available', note: "Bambu printers need Bambu's own start code: load it below from Bambu Studio or OrcaSlicer." };
   return {
     fit: 'generic',
     firmware,
