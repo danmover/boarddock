@@ -144,7 +144,7 @@ export { computeLevels } from './levels';
 /** Where a cable leaves a plug: point, outward direction, cable size, and (for a ribbon) the plug's width axis. */
 /** Where a cable leaves a plug: the point, its axis out, the plug's width axis; `span`: how deep an IDC socket is across
  * its ribbon; `wires`: a serial cable's loose ends, the top of each jumper on its pin. */
-export interface PlugEnd { module: string; ref: string; p: [number, number, number]; d: [number, number, number]; cable: number; w?: [number, number, number]; span?: number; wires?: { p: [number, number, number]; colour: string; pin?: string }[] }
+export interface PlugEnd { module: string; ref: string; p: [number, number, number]; d: [number, number, number]; cable: number; w?: [number, number, number]; span?: number; wires?: { p: [number, number, number]; colour: string; pin?: string }[]; open?: [number, number] } // open: the opening cut for the plug in the holder's wall, across and up (mm)
 export interface ModuleOut { parts: PartOut[]; ghosts: Ghost[]; warnings: string[]; checks: Check[]; levels: GenResult['report']['levels']; clipAt: V2 | null; clipT: number[] | null; dockM: M4 | null; features: Feature[]; plugs: PlugEnd[] }
 
 // Built modules are cached by their inputs: moving, turning or re-pairing docks does not rebuild holders.
@@ -437,13 +437,15 @@ function connectors(C: Ctx) {
       C.plugs.push({ module: C.mid, ref: c.ref, p: [cx, cy, zAx], d: [d[0], d[1], 0], cable: 1.4, w: [-d[1], d[0], 0], ...(wires.length ? { wires } : {}) });
       continue;
     }
-    // plug ghost
-    C.ghosts.push(...plugDetail(mouth, d, zAx, cn.plug, { kind: 'plug', module: C.mid, refs: [c.ref] }, { seq: 30, dir: [d[0], d[1], 0] }, cn.type));
+    // plug ghost: drawn as the plug is made, then turned the way the socket is (a box's USB-A on its side)
+    const roll = cn.roll ?? 0, side = roll % 180 !== 0;
+    C.ghosts.push(...plugDetail(mouth, d, zAx, side ? { ...cn.plug, w: ph, h: pw } : cn.plug, { kind: 'plug', module: C.mid, refs: [c.ref] }, { seq: 30, dir: [d[0], d[1], 0] }, cn.type, roll));
     const pe = [mouth[0] + d[0] * (cn.plug.len + 0.6), mouth[1] + d[1] * (cn.plug.len + 0.6)];
+    const open: [number, number] = [pw + 2 * cl, ph + 2 * cl];
     if (cn.type === 'usb_a_dual') {
       const off = c.side === 'top' ? 3.9 : -3.9;
-      C.plugs.push({ module: C.mid, ref: c.ref, p: [pe[0], pe[1], zAx - off], d: [d[0], d[1], 0], cable: cn.plug.cable }, { module: C.mid, ref: `${c.ref}:2`, p: [pe[0], pe[1], zAx + off], d: [d[0], d[1], 0], cable: cn.plug.cable });
-    } else C.plugs.push({ module: C.mid, ref: c.ref, p: [pe[0], pe[1], zAx], d: [d[0], d[1], 0], cable: cn.plug.cable, w: [-d[1], d[0], 0] });
+      C.plugs.push({ module: C.mid, ref: c.ref, p: [pe[0], pe[1], zAx - off], d: [d[0], d[1], 0], cable: cn.plug.cable, open }, { module: C.mid, ref: `${c.ref}:2`, p: [pe[0], pe[1], zAx + off], d: [d[0], d[1], 0], cable: cn.plug.cable, open });
+    } else C.plugs.push({ module: C.mid, ref: c.ref, p: [pe[0], pe[1], zAx], d: [d[0], d[1], 0], cable: cn.plug.cable, w: side ? [0, 0, 1] : [-d[1], d[0], 0], open });
     if (cn.cradle && F.cradles && ph > 0.5) {
       specs.push({ ref: c.ref, mouth, d, sEdge, toOut, zAx, pw, ph, pl, cap: cn.cap && F.caps, angle: cn.angle });
     } else if (cn.guard && F.guards) {

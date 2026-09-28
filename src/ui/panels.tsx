@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { zipSync, strToU8 } from 'fflate';
-import type { Board, BoxFace, BoxSpec, Comp, Hole, HoleRole, PartOut, Project, V2 } from '../model/types';
+import type { Board, Comp, Hole, HoleRole, PartOut, Project, V2 } from '../model/types';
 import { applyHoleRoles, boltedOn, detectHoleRoles, ROLE_INFO } from '../model/holes';
 import { baseRef, refText, cableNumbers, cablePurpose, shortName, compatible, KIND_COLOR, linkKind, linkOf, plugName, plugRole, plugsOf, portBudget, sameRef } from '../model/links';
-import { applyBox, BOX_PORT_TYPES, BOX_PRESETS, BOX_ROLES, boxProblems, FACE_NAME, inferBox, layoutPorts, makeBox, tightFaces } from '../model/boxes';
+import { BOX_PRESETS, makeBox } from '../model/boxes';
 import { addJLinks, addLinks, addSerialAdapters, addUartCables, removeLinks, setLink } from './linkOps';
 import { adapterFor, debugHeaders, isDebugPort, isProbe, isUartPort, markDebug, uartHeaders, uartPins, type DebugKind } from '../model/probes';
 import { Icon, I } from './icons';
@@ -30,7 +30,8 @@ import { saveBoard } from '../model/myboards';
 import { boardSig, useKeptPicture } from './pics';
 import { paletteFor } from '../model/palette';
 import { PartPic } from './Toolbox';
-import { needOf, poweredHub, supplyOf, watts } from '../model/powerdata';
+import { BoxEditor } from './BoxEditor';
+import { needOf } from '../model/powerdata';
 import { picture } from './snapshot';
 import { boardPicture, holderPicture, type PicPart } from '../worker/client';
 import { GcodeSection } from './GcodeSection';
@@ -417,8 +418,6 @@ function BoardTab() {
   );
 }
 
-const ROLE_COLOR: Record<string, string> = { 'hub-down': '#8b95a3', 'hub-up': '#4c8dff', 'power-out': '#d0443a', 'power-in': '#f08a4b', host: '#8b95a3', device: '#4c8dff', net: '#3b7dd8', debug: '#a3a9b1', other: '#e0a030' };
-
 /**
  * A board's debug headers (a J-Link for each, one press) and UART headers (a USB-serial cable to the nearest free USB
  * port, one press).
@@ -473,103 +472,6 @@ function UartPins({ c, many }: { c: Comp; many: boolean }) {
       </div>
       <p className="hint">{u.from === 'nets' ? 'From the nets in your file. ' : u.from === 'guess' ? "A guess from its size: check the board's markings. " : ''}The cable's black end goes on GND, its green (TX) on the board's RX, its white (RX) on the board's TX.</p>
     </div>
-  );
-}
-
-/** Size and ports of a box (hub, charger): presets, rows of ports per face, a top-view preview. */
-function BoxEditor() {
-  const p = useApp((s) => s.project)!;
-  const m = activeModule(p), b = m.board;
-  const spec = b.box;
-  const set = (fn: (s: BoxSpec) => void) => editMod((q, pp) => {
-    const s = structuredClone(q.board.box ?? inferBox(q.board, (c) => plugRole(q, c)));
-    fn(s);
-    applyBox(q.board, s);
-    // cables to ports that no longer exist go
-    const refs = new Set(q.board.comps.map((c) => c.ref));
-    pp.links = (pp.links ?? []).filter((l) => !((l.a.module === q.id && !refs.has(l.a.ref)) || (l.b.module === q.id && !refs.has(l.b.ref))));
-  });
-  if (!spec) return (
-    <Section title="Box">
-      <p className="hint" style={{ marginTop: 0 }}>This box's ports were placed one by one. Turn it into an editable box to set how many ports it has and where they are.</p>
-      <button className="btn small soft" onClick={() => set(() => {})}>Edit as a box</button>
-    </Section>
-  );
-  const probs = boxProblems(spec);
-  const count = (r: string) => spec.groups.filter((x) => x.role === r).reduce((a, x) => a + x.count, 0);
-  const sum = [['hub-down', 'hub port'], ['hub-up', 'upstream'], ['power-out', 'power out'], ['power-in', 'power in'], ['host', 'host port'], ['device', 'USB device port'], ['debug', 'debug port'], ['uart', 'serial header'], ['mains-out', 'outlet']].map(([r, n]) => [count(r), n] as [number, string]).filter(([k]) => k).map(([k, n]) => `${k} ${n}${k > 1 ? 's' : ''}`).join(', ');
-  return (
-    <Section title="Box" right={<span className="chip">{sum || 'no ports'}</span>}>
-      <div className="btns" style={{ flexWrap: 'wrap' }}>
-        {Object.entries(BOX_PRESETS).map(([k, P]) => <button key={k} className="btn small" onClick={() => set((s) => { Object.assign(s, P.spec()); })}>{P.name}</button>)}
-      </div>
-      <div className="row3" style={{ marginTop: 10 }}>
-        <Num label="Length" value={spec.l} min={10} max={800} step={1} onChange={(v) => set((s) => { s.l = v; })} />
-        <Num label="Width" value={spec.w} min={8} max={300} step={1} onChange={(v) => set((s) => { s.w = v; })} />
-        <Num label="Height" value={spec.h} min={1} max={150} step={0.1} onChange={(v) => set((s) => { s.h = v; })} hint="Under 5 mm it is a bare board (a probe, an adapter): its ports stand on its top face." />
-      </div>
-      {(count('power-out') > 0 || (count('hub-down') > 0 && poweredHub(b))) && (() => {
-        const guess = supplyOf({ ...b, box: { ...spec, supply: undefined } }, b.comps.filter((c) => c.conn).map((c) => ({ c, role: plugRole(m, c) })).filter((x) => x.role === 'power-out' || x.role === 'hub-down')).total;
-        return (
-          <div className="row" style={{ marginTop: 8, alignItems: 'end' }}>
-            <Num label={`Total output${spec.supply ? '' : ' (typical)'}`} unit="A at 5 V" value={spec.supply ?? guess} min={0.5} max={40} step={0.5} onChange={(v) => set((s) => { s.supply = v; })} hint="What the whole box gives at 5 V: its label's watts divided by 5." />
-            <small className="hint" style={{ margin: 0 }}>{watts(spec.supply ?? guess)} W. {spec.supply ? '' : 'Check its label: the watts divided by 5.'}</small>
-          </div>
-        );
-      })()}
-      {spec.groups.some((g) => g.role === 'debug') && <div className="row" style={{ marginTop: 8 }}><Num label="Ribbon length" value={spec.ribbon ?? 200} min={50} max={2000} step={10} onChange={(v) => set((s) => { s.ribbon = v; })} hint="The ribbon it came with: the rack checks that it reaches the board." /></div>}
-      <BoxPreview spec={spec} />
-      <div className="boxgroups">
-        {spec.groups.map((g, i) => (
-          <div key={g.id} className="boxgroup">
-            <div className="row" style={{ gridTemplateColumns: '58px 1.25fr 1fr 26px', alignItems: 'end' }}>
-              <Num label="Ports" value={g.count} min={0} max={24} step={1} unit="" onChange={(v) => set((s) => { s.groups[i].count = Math.max(0, Math.round(v)); })} />
-              <Pick label="Type" value={g.type} options={BOX_PORT_TYPES.map((t) => [t, plugName(t)] as [string, string])} onChange={(v) => set((s) => { s.groups[i].type = v; })} />
-              <Pick label="On" value={g.face} options={(Object.keys(FACE_NAME) as BoxFace[]).map((f) => [f, FACE_NAME[f].replace(' end', '')] as [BoxFace, string])} onChange={(v) => set((s) => { s.groups[i].face = v; })} />
-              <button className="btn small ghost icon" title="Remove these ports" onClick={() => set((s) => { s.groups.splice(i, 1); })}><Icon d={I.x} /></button>
-            </div>
-            <Pick label="What they are for" value={g.role} options={BOX_ROLES as [string, string][]} onChange={(v) => set((s) => { s.groups[i].role = v; })} />
-            {g.face === 'top' && (
-              <div className="row" style={{ marginTop: 6, alignItems: 'end' }}>
-                <Pick label="Where on top" value={g.near ?? 'mid'} options={[['mid', 'across the middle'], ['front', 'by the front edge'], ['back', 'by the back edge']]} onChange={(v) => set((s) => { s.groups[i].near = v === 'mid' ? undefined : (v as 'front' | 'back'); })} />
-                {g.type.startsWith('ac_') && <Pick label="Turned" value={g.rot ?? 0} options={[[0, 'square'], [45, '45° (plug packs fit)'], [90, 'across']]} onChange={(v) => set((s) => { s.groups[i].rot = v || undefined; })} />}
-                {g.type.startsWith('ac_') && <div className="field"><span>&nbsp;</span><Check label="A switch each" value={!!g.switched} onChange={(v) => set((s) => { s.groups[i].switched = v || undefined; })} /></div>}
-              </div>
-            )}
-            {g.type === 'pins_ra' && <div className="row" style={{ marginTop: 6 }}><Text label="Pin names, pin 1 first" value={(g.pins ?? []).join(', ')} onChange={(v) => set((s) => { s.groups[i].pins = v.split(/[,\s]+/).filter(Boolean).slice(0, 40); })} placeholder="GND, CTS, VCC, TXD, RXD, DTR" /></div>}
-          </div>
-        ))}
-      </div>
-      <button className="btn small" style={{ marginTop: 8 }} onClick={() => set((s) => { const hub = s.groups.some((x) => x.role === 'hub-down'); s.groups.push({ id: uid('pg'), type: 'usb_a', count: 1, face: 'front', role: hub ? 'hub-down' : s.groups.some((x) => x.role === 'power-out') ? 'power-out' : 'hub-down' }); })}><Icon d={I.plus} /> Add ports</button>
-      {probs.length > 0 && (
-        <div className="warns" style={{ marginTop: 8 }}>
-          {probs.map((x) => <div key={x}>{x}</div>)}
-          {tightFaces(spec).slice(0, 1).map((t) => <button key={t.face} className="btn small soft" style={{ marginTop: 6 }} onClick={() => set((s) => { s[t.dim] = Math.max(s[t.dim], ...tightFaces(s).filter((x) => x.dim === t.dim).map((x) => x.need)); })}>Make the box {Math.max(...tightFaces(spec).filter((x) => x.dim === t.dim).map((x) => x.need))} mm {t.dim === 'l' ? 'long' : 'wide'}</button>)}
-        </div>
-      )}
-      <p className="hint">{isProbe(m) ? 'It slides down into a slot in the back of its board\'s dock and stays there; the next probe or adapter for that board gets the next slot, on corner towers. Height is its thickness.' : spec.groups.some((x) => x.type.startsWith('ac_')) ? 'A powerboard lies on its base in its holder, strapped down between the outlets. Outlets spread evenly along the top; turn them 45° if your chargers are plug packs. Its own lead goes to the wall: never into another powerboard.' : 'Front and back are the long sides; the box lies on its base in its holder, strapped down. Ports on top are fine: the strap loops move to miss them.'} Cables to ports you remove are removed too.</p>
-    </Section>
-  );
-}
-
-/** Top view of a box with its ports, coloured by what they are for. */
-function BoxPreview({ spec }: { spec: BoxSpec }) {
-  const W = 300, s = Math.min((W - 40) / spec.l, 110 / spec.w), bw = spec.l * s, bh = spec.w * s, ox = (W - bw) / 2, oy = 22;
-  const pos = layoutPorts(spec);
-  return (
-    <svg className="boxpreview" viewBox={`0 0 ${W} ${bh + 44}`} width="100%">
-      <rect x={ox} y={oy} width={bw} height={bh} rx={Math.min(8, bh / 5)} fill="var(--surface-3)" stroke="var(--line-2)" />
-      <text x={W / 2} y={oy + bh + 16} textAnchor="middle" fontSize={10} fill="var(--subtle)">front</text>
-      <text x={W / 2} y={14} textAnchor="middle" fontSize={10} fill="var(--subtle)">back</text>
-      {pos.map(({ group, along }, k) => {
-        const w = Math.max(4, connById(group.type).body.w * s), t = 5, c = ROLE_COLOR[group.role] ?? '#8b95a3';
-        const r = group.face === 'top' ? { x: ox + along * s - w / 2, y: oy + bh / 2 - t / 2, w, h: t }
-          : group.face === 'front' ? { x: ox + along * s - w / 2, y: oy + bh - t / 2, w, h: t }
-          : group.face === 'back' ? { x: ox + along * s - w / 2, y: oy - t / 2, w, h: t }
-          : { x: (group.face === 'left' ? ox : ox + bw) - t / 2, y: oy + bh - along * s - w / 2, w: t, h: w };
-        return <rect key={k} {...{ x: r.x, y: r.y, width: r.w, height: r.h }} rx={1.5} fill={c} />;
-      })}
-    </svg>
   );
 }
 

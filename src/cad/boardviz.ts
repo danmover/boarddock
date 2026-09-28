@@ -335,20 +335,26 @@ export function boardDetail(b: Board, zb: number, zt: number, tag: PickTag, anim
       if (c.hidden || !c.conn || c.conn.entry !== 'edge') continue;
       const t = c.conn.type, a = rad(c.conn.angle), d = [Math.cos(a), Math.sin(a)], tt = [-d[1], d[0]];
       const zc = zt + c.conn.zc;
-      const pw = t === 'usb_a' ? 13 : t === 'barrel' ? 9 : Math.max(6, c.conn.plug.w * 0.65), ph = t === 'usb_a' ? 5.8 : t === 'barrel' ? 9 : Math.max(2.8, c.conn.plug.h * 0.45);
+      // drawn as the socket is made (flat), then turned the way it sits in the box's face
+      const roll = c.conn.roll ?? 0, pl = roll % 180 ? { w: c.conn.plug.h, h: c.conn.plug.w } : c.conn.plug;
+      const pw = t === 'usb_a' ? 13 : t === 'barrel' ? 9 : Math.max(6, pl.w * 0.65), ph = t === 'usb_a' ? 5.8 : t === 'barrel' ? 9 : Math.max(2.8, pl.h * 0.45);
       // the mouth sits on the housing face: find it along d from the port position
       let s0 = 0;
       for (let k = 0; k < 60 && inside([c.x + d[0] * s0, c.y + d[1] * s0], b.outline); k++) s0 += 0.5;
-      const T = [d[0], d[1], 0, 0, tt[0], tt[1], 0, 0, 0, 0, 1, 0, c.x + d[0] * s0, c.y + d[1] * s0, zc, 1];
+      const T = rollT([d[0], d[1], 0, 0, tt[0], tt[1], 0, 0, 0, 0, 1, 0, c.x + d[0] * s0, c.y + d[1] * s0, zc, 1], roll);
       bin.box('black', T, -0.8, -pw / 2, -ph / 2, 0.08, pw / 2, ph / 2);
-      if (t === 'usb_a') { bin.box('white', T, -0.7, -pw / 2 + 1.6, -0.7, 0.1, pw / 2 - 1.6, 0.9); bin.box('metal', T, -0.2, -pw / 2 - 0.4, -ph / 2 - 0.4, 0.12, pw / 2 + 0.4, -ph / 2); bin.box('metal', T, -0.2, -pw / 2 - 0.4, ph / 2, 0.12, pw / 2 + 0.4, ph / 2 + 0.4); }
+      // a USB-A's tongue in the upper half of its mouth (the lower half upside down), its metal shell above and below
+      if (t === 'usb_a') { bin.box('white', T, -0.7, -pw / 2 + 1.6, 0.2, 0.1, pw / 2 - 1.6, 1.9); bin.box('metal', T, -0.2, -pw / 2 - 0.4, -ph / 2 - 0.4, 0.12, pw / 2 + 0.4, -ph / 2); bin.box('metal', T, -0.2, -pw / 2 - 0.4, ph / 2, 0.12, pw / 2 + 0.4, ph / 2 + 0.4); }
+      // an RJ45's latch notch at the top of its mouth (at the bottom upside down)
+      if (t === 'rj45') bin.box('box', T, -0.7, -2, ph / 2 - 1.4, 0.1, 2, ph / 2 + 0.01);
       if (t === 'barrel') bin.box('metal', T, -0.7, -0.8, -0.8, 0.1, 0.8, 0.8);
     }
     // ports in the top face: the opening, the tongue and the shell rim (a mains outlet: its face and slots)
     for (const c of b.comps) {
       if (c.hidden || !c.conn || c.conn.entry !== 'top') continue;
       if (c.conn.type.startsWith('ac_')) { outlet(bin, c, zt); continue; }
-      const t = c.conn.type, T = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, c.x, c.y, zt, 1];
+      // turned with the port (a row turned 90 degrees runs across the box)
+      const t = c.conn.type, ca = Math.cos(rad(c.rot)), sa = Math.sin(rad(c.rot)), T = [ca, sa, 0, 0, -sa, ca, 0, 0, 0, 0, 1, 0, c.x, c.y, zt, 1];
       const pw = t === 'usb_a' ? 13 : Math.max(6, c.conn.plug.w * 0.65), ph = t === 'usb_a' ? 5.8 : Math.max(2.8, c.conn.plug.h * 0.45);
       bin.box('black', T, -pw / 2, -ph / 2, -0.8, pw / 2, ph / 2, 0.08);
       if (t === 'usb_a') { bin.box('white', T, -pw / 2 + 1.6, -0.7, -0.7, pw / 2 - 1.6, 0.9, 0.1); bin.box('metal', T, -pw / 2 - 0.4, -ph / 2 - 0.4, -0.2, pw / 2 + 0.4, -ph / 2, 0.12); bin.box('metal', T, -pw / 2 - 0.4, ph / 2, -0.2, pw / 2 + 0.4, ph / 2 + 0.4, 0.12); }
@@ -445,8 +451,16 @@ export function boardDetail(b: Board, zb: number, zt: number, tag: PickTag, anim
 type PlugSize = { w: number; h: number; len: number; cable: number };
 
 /** A plug in a receptacle: its metal tip inside the mouth, the overmoulded body and the boot, shaped after its type. */
-export function plugDetail(mouth: V2, d: V2, zAx: number, p: PlugSize, tag: PickTag, anim: Anim, type = ''): Ghost[] {
-  return plugAt([d[0], d[1], 0, 0, -d[1], d[0], 0, 0, 0, 0, 1, 0, mouth[0], mouth[1], zAx, 1], p, tag, anim, type); // x along the plug axis
+export function plugDetail(mouth: V2, d: V2, zAx: number, p: PlugSize, tag: PickTag, anim: Anim, type = '', roll = 0): Ghost[] {
+  // x along the plug axis; `roll` turns it about that axis, clockwise looking at the socket (a plug on its side)
+  return plugAt(rollT([d[0], d[1], 0, 0, -d[1], d[0], 0, 0, 0, 0, 1, 0, mouth[0], mouth[1], zAx, 1], roll), p, tag, anim, type);
+}
+
+/** A frame whose x runs out of a socket, turned `deg` clockwise about x as seen looking into the socket. */
+function rollT(T: number[], deg: number) {
+  if (!deg) return T;
+  const a = rad(-deg), c = Math.cos(a), sn = Math.sin(a);
+  return mulT(T, [1, 0, 0, 0, 0, c, sn, 0, 0, -sn, c, 0, 0, 0, 0, 1]);
 }
 
 /** A plug pointing straight up out of a port in a top face at (x, y, z). */

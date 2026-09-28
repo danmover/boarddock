@@ -9,6 +9,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Comp, Dim, Feat, Project, V2 } from '../model/types';
 import { bbox, compRect, extentAlong, rad, uid } from '../geom/poly';
 import { connById } from '../model/library';
+import { boxFromEdits } from '../model/boxes';
 import { activeModule, commitFrom, editMod, isSel, select, store, toast, useApp, type SelItem } from '../state';
 import { ROLE_INFO } from '../model/holes';
 import { PALETTE } from '../model/palette';
@@ -127,7 +128,7 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
     const it = PALETTE.find((x) => x.id === id);
     if (!it) return;
     const made = it.make(b, w);
-    editMod((m) => { if (made.comp) m.board.comps.push(made.comp); if (made.hole) m.board.holes.push(made.hole); });
+    editMod((m) => { if (made.comp) m.board.comps.push(made.comp); if (made.hole) m.board.holes.push(made.hole); if (made.comp?.conn) boxFromEdits(m.board); });
     if (made.comp) select([{ kind: 'comp', id: made.comp.id }]); else if (made.hole) select([{ kind: 'hole', id: made.hole.id }]);
   };
   const arm = (id: string | null) => { setItem(id); setTool(id ? 'place' : 'select'); };
@@ -235,7 +236,12 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
     const d = drag.current;
     drag.current = null;
     setGuides(null);
-    if (d?.kind === 'move' && d.moved && d.pre) commitFrom(d.pre);
+    if (d?.kind === 'move' && d.moved && d.pre) {
+      // a box's ports stay where they were dragged: written into the box, so its next layout keeps them
+      const p = structuredClone(store.get().project!);
+      if (boxFromEdits(activeModule(p).board)) store.set({ project: p });
+      commitFrom(d.pre);
+    }
     if (d?.kind === 'dim' && d.dim) {
       const id = d.dim.id;
       if (!d.moved) { const q = dimsDraw.find((x) => x.id === id); if (q) setEditDim({ id, v: q.value.toFixed(2) }); }
@@ -741,12 +747,13 @@ function each(s: SelItem[], fn: (it: { x: number; y: number }, kind: 'hole' | 'c
       const it = x.kind === 'hole' ? m.board.holes.find((h) => h.id === x.id) : m.board.comps.find((c) => c.id === x.id);
       if (it) fn(it, x.kind as 'hole' | 'comp');
     }
+    boxFromEdits(m.board);
   });
 }
 
 export function removeSel(s: SelItem[]) {
   const ids = new Set(s.map((x) => x.id));
-  editMod((m) => { m.board.holes = m.board.holes.filter((h) => !ids.has(h.id)); m.board.comps = m.board.comps.filter((c) => !ids.has(c.id)); });
+  editMod((m) => { m.board.holes = m.board.holes.filter((h) => !ids.has(h.id)); m.board.comps = m.board.comps.filter((c) => !ids.has(c.id)); boxFromEdits(m.board); });
   select([]);
 }
 

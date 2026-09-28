@@ -1,6 +1,6 @@
 // Draw your own board: its shape and size (and its holes, if they are in a pattern), with a live picture as you type,
 // and optionally a photo of it to trace over. It opens in the board editor, where its plugs, headers and parts come
-// from the toolbox.
+// from the toolbox. Or build a box of your own (a hub, a charger...): see DrawBox.
 import { useMemo, useRef, useState } from 'react';
 import type { Board, Hole, V2 } from '../model/types';
 import { circleLoop, roundedRectLoop, uid } from '../geom/poly';
@@ -8,6 +8,7 @@ import { fitPhoto } from '../model/editorgeo';
 import { store, toast } from '../state';
 import { Num, Seg, Text } from './controls';
 import { Icon, I } from './icons';
+import { DrawBox } from './BoxEditor';
 
 type Shape = 'rect' | 'round' | 'circle';
 type Holes = 'none' | 'corners' | 'spacing';
@@ -27,7 +28,18 @@ export function drawnBoard(o: { name: string; shape: Shape; w: number; h: number
 
 const SHAPES: [Shape, string, string][] = [['rect', 'Rectangle', 'M4 6h16v12H4z'], ['round', 'Rounded', 'M8 6h8a4 4 0 014 4v4a4 4 0 01-4 4H8a4 4 0 01-4-4v-4a4 4 0 014-4z'], ['circle', 'Round', 'M12 4a8 8 0 100 16a8 8 0 100-16']];
 
+/** Draw your own: a board (its shape, size and holes), or a box (a hub, a charger, a supply, a probe, an adapter) built from scratch. */
 export function DrawBoard({ put }: { put: (b: Board) => void }) {
+  const [what, setWhat] = useState<'board' | 'box'>('board');
+  return (
+    <>
+      <div className="db-what"><Seg value={what} options={[['board', 'A board'], ['box', 'A box (hub, charger…)']]} onChange={setWhat} /></div>
+      {what === 'box' ? <DrawBox put={put} /> : <DrawPcb put={put} />}
+    </>
+  );
+}
+
+function DrawPcb({ put }: { put: (b: Board) => void }) {
   const [name, setName] = useState('');
   const [shape, setShape] = useState<Shape>('rect');
   const [w, setW] = useState(60), [h, setH] = useState(40), [r, setR] = useState(3), [t, setT] = useState(1.6);
