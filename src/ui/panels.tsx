@@ -31,6 +31,7 @@ import { boardSig, useKeptPicture } from './pics';
 import { paletteFor } from '../model/palette';
 import { PartPic } from './Toolbox';
 import { BoxEditor } from './BoxEditor';
+import { BoardCheck } from './BoardCheck';
 import { needOf } from '../model/powerdata';
 import { picture } from './snapshot';
 import { boardPicture, holderPicture, type PicPart } from '../worker/client';
@@ -262,6 +263,7 @@ export function BoardPanel() {
     <div className="bpanel">
       <ModulePicker />
       <BoardCard />
+      <BoardCheck />
       <div className="ptabs" role="tablist">
         {tabs.map(([k, n, c]) => <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? 'on' : ''} onClick={() => { setTab(k); if (k !== 'sel') back.current = k; }}>{n}{c != null && <small>{c}</small>}</button>)}
       </div>

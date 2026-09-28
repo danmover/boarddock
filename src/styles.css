@@ -1064,3 +1064,18 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 .player .live i { display: inline-block; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); margin-right: 6px; vertical-align: 1px; }
 .player .live.on i { background: var(--led-on); box-shadow: 0 0 6px var(--led-on); animation: lampBeat 1.25s steps(1, end) infinite; }
 @media (prefers-reduced-motion: reduce) { .lamp, .player .live.on i { animation: none !important; } }
+
+/* the Board step's check */
+.bcheck { border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px; margin-bottom: 10px; background: var(--surface-2); font-size: 12.5px; }
+.bcheck-head { display: flex; align-items: center; gap: 8px; }
+.bcheck-head b { flex: 1; font-weight: 600; }
+.bcheck .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); flex: none; }
+.bcheck.warn .dot { background: var(--warn); }
+.bcheck.bad .dot { background: var(--bad); }
+.bcheck ul { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.bcheck li { display: flex; gap: 8px; align-items: flex-start; }
+.bcheck li .bcheck-text { flex: 1; text-align: left; background: none; border: 0; padding: 0; color: var(--fg); font: inherit; line-height: 1.4; cursor: pointer; }
+.bcheck li.info .bcheck-text { color: var(--muted); }
+.bcheck li.bad .bcheck-text::before { content: "● "; color: var(--bad); }
+.bcheck li.warn .bcheck-text::before { content: "● "; color: var(--warn); }
+.bcheck .linkbtn { background: none; border: 0; padding: 0; color: var(--accent); font: inherit; font-size: 12px; cursor: pointer; }
