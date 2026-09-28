@@ -64,10 +64,13 @@ export function Check({ label, value, onChange, hint }: { label: ReactNode; valu
   );
 }
 
-export function Section({ title, right, children }: { title: string; right?: ReactNode; children: ReactNode }) {
+/** A card with a title; `toggle` puts a checkbox at the right of the title, and the whole title is its label. */
+export function Section({ title, right, toggle, children }: { title: string; right?: ReactNode; toggle?: { value: boolean; onChange: (v: boolean) => void }; children: ReactNode }) {
   return (
     <div className="section">
-      <h3><span>{title}</span>{right}</h3>
+      <h3>{toggle
+        ? <label className="sect-toggle"><span>{title}</span><input type="checkbox" checked={toggle.value} onChange={(e) => toggle.onChange(e.target.checked)} /></label>
+        : <span>{title}</span>}{right}</h3>
       {children}
     </div>
   );

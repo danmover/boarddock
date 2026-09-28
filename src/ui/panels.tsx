@@ -1028,7 +1028,7 @@ export function MountPanel() {
       <div style={{ marginBottom: 10 }}>{pick}</div>
       <p className="lede">Holders without rail docks: stack them, set them side by side or back to back, clip one flat onto a DIN rail, or give it a stand socket.</p>
       <LayoutSection />
-      <Section title="DIN rail clip" right={<Check label="" value={M.kind === 'din'} onChange={(v) => setM((m) => { m.kind = v ? 'din' : 'none'; m.picked = true; })} />}>
+      <Section title="DIN rail clip" toggle={{ value: M.kind === 'din', onChange: (v) => setM((m) => { m.kind = v ? 'din' : 'none'; m.picked = true; }) }}>
         {M.kind === 'din' ? (
           <>
             <p className="hint" style={{ marginTop: 0 }}><b>To remove: pull the tab towards you.</b> The lower jaw swings off the rail and the holder tilts free in the same motion. Nothing to push sideways, no screwdriver, and it works with neighbours packed tight. The clip snaps into the holder in four orientations.</p>
@@ -1052,7 +1052,7 @@ export function MountPanel() {
           </>
         ) : <p className="hint" style={{ marginTop: 0 }}>No DIN clip. The flat base also sticks well with double-sided foam tape.</p>}
       </Section>
-      <Section title="Stand socket (female)" right={<Check label="" value={S.enabled} onChange={(v) => setS((s) => { s.enabled = v; })} />}>
+      <Section title="Stand socket (female)" toggle={{ value: S.enabled, onChange: (v) => setS((s) => { s.enabled = v; }) }}>
         {S.enabled ? (
           <>
             <div className="row">
