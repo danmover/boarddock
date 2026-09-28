@@ -217,7 +217,13 @@ export function printability(m: MeshData) {
     if (pos[o * 3 + 2] < Math.max(pos[i * 3 + 2], pos[j * 3 + 2]) - 0.002) regions.get(find(ft))!.rim.push(i, j);
   }
   let span = 0;
+  const triArea = (t: number) => {
+    const a = idx[3 * t] * 3, b = idx[3 * t + 1] * 3, c = idx[3 * t + 2] * 3;
+    return Math.abs((pos[b] - pos[a]) * (pos[c + 1] - pos[a + 1]) - (pos[c] - pos[a]) * (pos[b + 1] - pos[a + 1])) / 2;
+  };
   for (const { tris, rim } of regions.values()) {
+    const area = tris.reduce((a, t) => a + triArea(t), 0);
+    if (area < 0.05) continue; // slivers where two faces meet: nothing prints there
     const d2 = (x: number, y: number) => {
       let best = Infinity;
       for (let k = 0; k < rim.length; k += 2) {
@@ -230,6 +236,7 @@ export function printability(m: MeshData) {
     // the farthest centre of a triangle from where it is held: how far this underside reaches out (a bridge: half its
     // span); held nowhere, all of it
     if (!rim.length) {
+      if (area < 0.5) continue; // a fleck on a step no wider than a line (the layer check sees real islands)
       let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
       for (const t of tris) for (let k = 0; k < 3; k++) { const v = idx[3 * t + k] * 3; x0 = Math.min(x0, pos[v]); x1 = Math.max(x1, pos[v]); y0 = Math.min(y0, pos[v + 1]); y1 = Math.max(y1, pos[v + 1]); }
       span = Math.max(span, Math.hypot(x1 - x0, y1 - y0));

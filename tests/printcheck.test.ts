@@ -31,7 +31,7 @@ describe('printability, sliced', () => {
       expect(r, pt.name).not.toBeNull();
       expect(r.islands, `${pt.name} starts in mid-air`).toEqual([]);
       if (MOVING.test(pt.name)) expect(r.gaps, `${pt.name} has a slot that prints closed`).toBeNull();
-      expect(r.bridge?.span ?? 0, `${pt.name} bridge`).toBeLessThan(20);
+      expect(r.bridge?.span ?? 0, `${pt.name} bridge`).toBeLessThan(12);
       expect(r.cantilever?.reach ?? 0, `${pt.name} overhang`).toBeLessThan(2);
       expect(verdict(r, MOVING.test(pt.name)).status, pt.name).not.toBe('bad');
     }

@@ -93,7 +93,7 @@ export function reachInLayer(piece: CS, held: CS, u: CS): { reach: number; far: 
   return { reach: d, far: [f[0], f[1]] };
 }
 
-/** Held from roughly opposite sides: seen from the point reached last, two contacts more than 120 degrees apart. */
+/** Held from opposite sides: seen from the point reached last, contacts spread over more than 150 degrees. */
 function heldAcross(touch: CS, far: [number, number], reach: number): boolean {
   const lim = 1.35 * reach + 0.5;
   const dirs: number[] = [];
@@ -110,10 +110,11 @@ function heldAcross(touch: CS, far: [number, number], reach: number): boolean {
   }
   dirs.sort((a, b) => a - b);
   if (dirs.length < 2) return false;
-  // the largest empty arc of directions: under 240 degrees means contacts more than 120 degrees apart
+  // the largest empty arc of directions: under 210 degrees means contacts spread over more than 150 (a strip held
+  // along one side, round ends and all, spreads to about 140)
   let gap = dirs[0] + 2 * Math.PI - dirs[dirs.length - 1];
   for (let i = 1; i < dirs.length; i++) gap = Math.max(gap, dirs[i] - dirs[i - 1]);
-  return gap < (4 * Math.PI) / 3;
+  return gap < (7 * Math.PI) / 6;
 }
 
 /** Slice a part (print pose) and report what a slicer would struggle with. Measured from the part's own bottom. */
