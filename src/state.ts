@@ -5,6 +5,7 @@ import { activeModule, migrate, newModule, newProject } from './model/library';
 import { seatBoard } from './cad/dockplan';
 import { describeChange } from './model/diff';
 import { carryOver, compareBoards } from './model/revision';
+import { ackMeasuredHoles } from './model/checkSummary';
 
 export { activeModule };
 
@@ -144,13 +145,15 @@ export function edit(fn: (p: Project) => void) {
   if (!cur) return;
   const next = structuredClone(cur);
   fn(next);
+  ackMeasuredHoles(cur, next); // (a board's "measure the holes" reminder is done once a hole is edited)
   store.set({ project: next, past: [...state.past.slice(-60), cur], future: [] });
   persist(next);
 }
 
 /** Record `prev` as an undo step for changes already applied with store.set (e.g. a drag). */
 export function commitFrom(prev: Project) {
-  store.set({ past: [...state.past.slice(-60), prev], future: [] });
+  const next = state.project && structuredClone(state.project);
+  store.set({ ...(next && ackMeasuredHoles(prev, next) ? { project: next } : {}), past: [...state.past.slice(-60), prev], future: [] });
   persist(state.project);
 }
 
