@@ -3,16 +3,19 @@
 // reports plug access, collisions, rail lengths and the parts list.
 import type { Anim, Check, EdgeName, Feature, GenResult, Ghost, Link, MeshData, Module, Motion, PanelReport, PartOut, PickTag, Project, Rail, RailMount, V2 } from '../model/types';
 
-const CABLE_ORDER: NonNullable<Link['kind']>[] = ['mains', 'power', 'usb', 'net', 'video', 'audio', 'wire', 'debug', 'uart', 'jumper'];
-// assembly steps after every board's (boards use 300 + 10 per seat): cables, the other plugs, caps
-const CABLE_SEQ = 1e6, PLUG_SEQ = 1e6 + 90, CAP_SEQ = 1e6 + 100, TAG_SEQ = 1e6 + 110;
+// mains last: everything low-voltage (and every screw terminal) is done before anything goes near the wall
+const CABLE_ORDER: NonNullable<Link['kind']>[] = ['power', 'usb', 'net', 'video', 'audio', 'wire', 'debug', 'uart', 'jumper', 'mains'];
+// assembly steps after every board's (boards use 300 + 10 per seat): cables, the other plugs, caps, tags, and the
+// wall last of all
+const CABLE_SEQ = 1e6, PLUG_SEQ = 1e6 + 90, CAP_SEQ = 1e6 + 100, TAG_SEQ = 1e6 + 110, WALL_SEQ = 1e6 + 120;
 import { MATERIALS } from '../model/library';
 import { bbox, round } from '../geom/poly';
 import { basis, dir, I4, inv, mul, pt as ptM, rotZ, tr, type M4 } from '../geom/mat';
 import { filletPath, hangingCable, ribbonMesh, sphereMesh, tubeMesh } from './boardviz';
-import { baseRef, cableNumbers, cablePurpose, cableToBuy, KIND_COLOR, KIND_NAME, plugRole, refText } from '../model/links';
+import { baseRef, cableNumbers, cablePurpose, cableToBuy, findModule, KIND_COLOR, KIND_NAME, offRackModule, plugRole, plugsOf, refText, shortName } from '../model/links';
+import { isPlugPack } from '../model/powerdata';
 import { cableTag } from './cabletag';
-import { powerBudget, powerText } from '../model/power';
+import { mainsBudget, mainsText, powerBudget, powerText } from '../model/power';
 import { buildModule, builtLevels, transformMesh, type ArrangeHooks, type ModuleOut } from './generate';
 import { baseOf, ridersOf, stackLayers, type StackLayer } from '../model/holes';
 import { freeAll, toMesh, type MF } from './kernel';
@@ -162,7 +165,8 @@ export function generatePanel(p: Project): GenResult {
   for (const mt of mounts) for (const sl of mt.slots) if (rider(sl.module)) sl.module = null;
   const placedIds = new Set(mounts.flatMap((mt) => mt.slots.map((s) => s.module)).filter(Boolean) as string[]);
   for (const id of [...placedIds]) for (const r of ridersOf(p, mods.get(id)!.m)) placedIds.add(r.id);
-  const unplaced = p.modules.filter((m) => !placedIds.has(m.id)).map((m) => m.id);
+  // (a plug pack lives in an outlet, off the rails)
+  const unplaced = p.modules.filter((m) => !placedIds.has(m.id) && !isPlugPack(m.board)).map((m) => m.id);
   if (unplaced.length) warnings.push(`${unplaced.length} board${unplaced.length > 1 ? 's are' : ' is'} not on a rail yet: drag ${unplaced.length > 1 ? 'them' : 'it'} onto a rail in the Rails step, or press Auto-arrange.`);
 
   // ---- build every seated holder ----
@@ -474,12 +478,17 @@ export function generatePanel(p: Project): GenResult {
   const hasRef = (id: string, ref: string) => !!mods.get(id)?.m.board.comps.some((c) => c.ref === baseRef(ref));
   const live = (p.links ?? []).filter((l) => placedIds.has(l.a.module) && placedIds.has(l.b.module) && hasRef(l.a.module, l.a.ref) && hasRef(l.b.module, l.b.ref));
   const linked = new Set(live.flatMap((l) => [`${l.a.module}/${l.a.ref}`, `${l.b.module}/${l.b.ref}`]));
-  // plugs whose cable leaves the rack: a board's cradled plug with nothing in the rack on the other end, a box's supply
+  // plugs whose cable leaves the rack: one cabled to your computer or to a plug pack in an outlet, a board's cradled
+  // plug with nothing in the rack on the other end, a box's supply
+  const toOff = new Set((p.links ?? []).flatMap((l) => [[l.a, l.b], [l.b, l.a]]).filter(([, o]) => offRackModule(findModule(p, o.module))).map(([me]) => `${me.module}/${baseRef(me.ref)}`));
   const offRack = (module: string, ref: string) => {
     const m = mods.get(module)?.m, c = m?.board.comps.find((x) => x.ref === ref);
     if (!m || !c?.conn) return false;
+    if (toOff.has(`${module}/${ref}`)) return true;
     return m.board.kind === 'box' ? ['other', 'mains-in'].includes(plugRole(m, c)) : !!c.conn.cradle;
   };
+  // a mains plug whose lead goes to the wall: it goes in last of all, in the last step
+  const toWall = (module: string, ref: string) => { const m = mods.get(module)?.m, c = m?.board.comps.find((x) => x.ref === baseRef(ref)); return !!m && !!c && plugRole(m, c) === 'mains-in' && !linked.has(`${module}/${ref}`); };
   const hang = new Set<string>();
   // assembly steps: stands 100-130, docks 200-210, each board 300 + 10k (+1 rod, +2 board, +3 stack, +4 into its dock),
   // cables CABLE_SEQ + kind (power first), then other plugs, then caps
@@ -550,7 +559,7 @@ export function generatePanel(p: Project): GenResult {
             }
             const own = moveAnim(g.anim, L.T);
             let a: Anim | undefined = own;
-            if (g.tag?.kind === 'plug') a = { seq: plugSeq.get(key) ?? plugSeq.get(`${key}:2`) ?? PLUG_SEQ, dir: own?.dir ?? [0, 0, 1], dist: 30, style: 'plug' };
+            if (g.tag?.kind === 'plug') a = { seq: plugSeq.get(key) ?? plugSeq.get(`${key}:2`) ?? (toWall(g.tag.module!, g.tag.refs?.[0] ?? '') ? WALL_SEQ : PLUG_SEQ), dir: own?.dir ?? [0, 0, 1], dist: 30, style: 'plug' };
             else if (g.tag?.kind === 'board' || g.tag?.kind === 'parts') {
               // the layer's own board drops into its holder; a board bolted onto it comes one step later
               const mine = g.tag.module === L.mod.id;
@@ -845,15 +854,9 @@ export function generatePanel(p: Project): GenResult {
       const su = si >= 0 ? [route.pts[si][0], route.pts[si + 1][0]] : [route.pts[0][0], route.pts[route.pts.length - 1][0]];
       lanes.push({ street: ch.street, y: vl, d: Math.round(d * 10) / 10, u0: Math.min(...su), u1: Math.max(...su) });
     }
-    // a powerboard plugged into another powerboard: the first one carries both loads through one outlet
-    for (const l of live) {
-      if (l.kind !== 'mains') continue;
-      const ms = [l.a, l.b].map((r) => mods.get(r.module)?.m);
-      if (ms.every((m) => m?.board.comps.some((c) => c.conn?.type.startsWith('ac_')))) warnings.push(`${ms[0]!.board.name} and ${ms[1]!.board.name} are plugged one into the other: never daisy-chain powerboards. Plug each into the wall.`);
-    }
     const clashing = cables.filter((c) => c.clash);
     for (const c of clashing) warnings.push(`The ${c.a} to ${c.b} cable runs into ${c.clash}. Move or turn one of the boards, or connect it to another plug (routes are checked against bounding boxes, so this may be a close shave rather than a real clash).`);
-    if (cables.length) checks.push({ group: 'Panel', name: 'Cable routes', value: clashing.length ? `${clashing.length} of ${cables.length} touch something` : `all ${cables.length} clear`, status: clashing.length ? 'warn' : 'ok', detail: clashing.length ? clashing.map((c) => `${c.a} to ${c.b}: ${c.clash}`).join('; ') : 'every cable was routed clear of the holders, boards, plugs, docks, rails and stands (checked against their bounding boxes, so a route marked clear really is)' });
+    if (cables.length) checks.push({ group: 'Panel', name: 'Cable routes', value: clashing.length ? `${clashing.length} of ${cables.length} touch something` : `all ${cables.length} clear`, status: clashing.length ? 'warn' : 'ok', detail: clashing.length ? clashing.map((c) => `${c.a} to ${c.b}: ${c.clash}`).join('; ') : 'no clash found in the model: every route misses the holders, boards, plugs, docks, rails and stands, checked with their bounding boxes (a rough check: route the real cables with care)' });
     const long = cables.filter((c) => c.length > 1200);
     if (long.length) warnings.push(`${long.map((c) => `${c.a} to ${c.b}`).join(', ')}: over 1.2 m of ${long.length > 1 ? 'cable each' : 'cable'}. Put the two boards closer (Auto-arrange keeps connected boards together).`);
     for (const pw of powerBudget(p)) { const t = powerText(pw); checks.push({ group: 'Power', name: t.name, value: t.value, status: pw.status, detail: t.detail, module: pw.module.id }); }
@@ -865,6 +868,23 @@ export function generatePanel(p: Project): GenResult {
     if (cables.length) checks.push({ group: 'Panel', name: 'Cables', value: `${cables.length}, ${round(cables.reduce((a, c) => a + c.length, 0) / 1000, 1)} m`, status: 'info', detail: cables.map((c) => `${KIND_NAME[c.kind]} ${c.a} to ${c.b}: ${round(c.length / 10, 0)} cm (${c.ribbon != null ? 'comes with the probe' : `buy ${c.buy} m`})`).join('; ') });
   }
 
+  // ---- mains and supplies: what BoardDock can and can't check ----
+  // a powerboard plugged into another powerboard: the first one carries both loads through one outlet. BoardDock
+  // never makes one, and refuses to; one from an older rack fails Check
+  for (const l of p.links ?? []) {
+    if (l.kind !== 'mains') continue;
+    const ms = [l.a, l.b].map((r) => mods.get(r.module)?.m);
+    if (ms.every((m) => m?.board.comps.some((c) => c.conn?.type.startsWith('ac_')))) checks.push({ group: 'Power', name: 'Powerboard into powerboard', value: `${shortName(ms[0]!.board.name)} and ${shortName(ms[1]!.board.name)}`, status: 'bad', module: ms[0]!.id, detail: `${ms[0]!.board.name} and ${ms[1]!.board.name} are plugged one into the other: never daisy-chain powerboards (the first one carries both loads through one outlet). Remove that cable and plug each powerboard into its own wall socket.` });
+  }
+  for (const mb of mainsBudget(p)) { const t = mainsText(mb); checks.push({ group: 'Power', name: t.name, value: t.value, status: mb.status, detail: t.detail, module: mb.module.id }); }
+  // a board whose only supply is a DC input with nothing on it: a supply off the rack, or none at all
+  const dcFree = plugsOf(p).filter((x) => x.role === 'power-in-dc' && !(p.links ?? []).some((l) => [l.a, l.b].some((r) => r.module === x.ref.module && r.ref === x.ref.ref)));
+  if (dcFree.length) checks.push({ group: 'Power', name: 'DC inputs with no supply', value: dcFree.map((x) => `${shortName(x.module.board.name)} ${x.comp.ref}`).join(', '), status: 'warn', module: dcFree[0].module.id,
+    detail: `${dcFree.length > 1 ? 'These boards take' : 'This board takes'} power only through a DC input with nothing on it. Give ${dcFree.length > 1 ? 'each' : 'it'} a DC supply (Start › Hubs and chargers has a 12 V plug pack) and check its voltage and polarity against the board's label: BoardDock can't check either. If ${dcFree.length > 1 ? 'they have their' : 'it has its'} own supply off the rack, this is fine.` });
+  if ((p.links ?? []).some((l) => l.kind === 'mains') || p.modules.some((m) => m.board.comps.some((c) => c.conn?.type.startsWith('ac_'))))
+    checks.push({ group: 'Power', name: 'Mains: what BoardDock checks', value: 'plugs and outlets only', status: 'info',
+      detail: "BoardDock checks which mains plug goes into which outlet, never a powerboard into another, and adds up the load it knows about. It can't check your powerboard, its lead or earth, or the wall socket, and it doesn't model mains wiring through screw terminals or relays: that belongs in a proper enclosure, wired by someone qualified to. Plug the powerboards into the wall last, with their switches off." });
+
   // ---- cables that leave the rack (to a screen, a supply, the mains): out of the plug, a bend down, along the table ----
   const floorZ = stands ? -STAND.H : 0;
   const allEnds = [...ends.values()];
@@ -873,7 +893,7 @@ export function generatePanel(p: Project): GenResult {
     const e = ends.get(k);
     if (!e) continue;
     const i = k.indexOf('/'), module = k.slice(0, i), ref = k.slice(i + 1);
-    ghosts.push({ name: `off-rack cable ${k}`, mesh: tubeMesh(hangingCable(e.p, e.d, e.cable, floorZ, mid), Math.max(1.1, e.cable / 2)), color: '#2b2e33', opacity: 1, tag: { kind: 'plug', module, refs: [baseRef(ref)] }, anim: { seq: PLUG_SEQ, dir: [0, 0, 1], dist: 0, grow: true }, mat: 'cable', smooth: true });
+    ghosts.push({ name: `off-rack cable ${k}`, mesh: tubeMesh(hangingCable(e.p, e.d, e.cable, floorZ, mid), Math.max(1.1, e.cable / 2)), color: '#2b2e33', opacity: 1, tag: { kind: 'plug', module, refs: [baseRef(ref)] }, anim: { seq: toWall(module, ref) ? WALL_SEQ : PLUG_SEQ, dir: [0, 0, 1], dist: 0, grow: true }, mat: 'cable', smooth: true });
   }
 
   // ---- table stands: sleepers across the rails, with cable combs where the streets cross them ----
@@ -985,11 +1005,19 @@ export function generatePanel(p: Project): GenResult {
     if (k === 'debug') { steps.push({ seq: cableSeq(k), text: `Plug in the debug ribbon${cs.length > 1 ? 's' : ''}, red edge to pin 1, and lay ${cs.length > 1 ? 'them' : 'it'} over the top of the dock: ${cs.map((c) => `${c.no ? `#${c.no} ` : ''}${c.a} to ${c.b}`).join(', ')}.` }); continue; }
     if (k === 'jumper') { steps.push({ seq: cableSeq(k), text: `Push the jumper wires on, one housing per pin: ${cs.map((c) => `${c.no ? `#${c.no} ` : ''}${c.a} to ${c.b} (${Math.round(c.buy * 100)} cm): ${c.wires ?? ''}`).join('. ')}.` }); continue; }
     if (k === 'uart') { steps.push({ seq: cableSeq(k), text: `Plug in the USB-serial cable${cs.length > 1 ? 's' : ''} and push the loose ends onto the header pins: ${cs.map((c) => `${c.no ? `#${c.no} ` : ''}${c.a} to ${c.b} (${c.buy} m): ${c.wires ?? 'ground, TX and RX'}`).join('. ')}.` }); continue; }
+    if (k === 'mains') { steps.push({ seq: cableSeq(k), text: `With every powerboard still unplugged from the wall, plug the mains leads and plug packs into their outlets: ${cs.map((c) => `${c.no ? `#${c.no} ` : ''}${c.a} to ${c.b}`).join(', ')}.` }); continue; }
     steps.push({ seq: cableSeq(k), text: `Plug in the ${KIND_NAME[k]} cable${cs.length > 1 ? 's' : ''}: ${cs.map((c) => `${c.no ? `#${c.no} ` : ''}${c.a} to ${c.b} (${c.buy} m)`).join(', ')}${combed ? '. Press each one into its comb slot as you go' : ''}.` });
   }
-  if (ghosts.some((g) => g.tag?.kind === 'plug' && g.anim?.seq === PLUG_SEQ)) steps.push({ seq: PLUG_SEQ, text: 'Plug in the cables that leave the rack (power supplies, screens, your computer).' });
+  if (ghosts.some((g) => g.tag?.kind === 'plug' && g.anim?.seq === PLUG_SEQ)) steps.push({ seq: PLUG_SEQ, text: 'Plug in the cables that leave the rack (supplies, screens, your computer). Nothing goes into the wall yet.' });
   if (parts.some((x) => x.tag?.kind === 'cap')) steps.push({ seq: CAP_SEQ, text: 'Snap the caps over the plugs to lock them in.' });
   if (parts.some((x) => x.tag?.kind === 'cabletag')) steps.push({ seq: TAG_SEQ, text: 'Snap a numbered tag round each end of every cable, a hand-width from the plug: the numbers match the Wiring view and the shopping list.' });
+  // the wall, last of all: every terminal checked and every switch off first
+  const wall = ghosts.filter((g) => g.tag?.kind === 'plug' && g.anim?.seq === WALL_SEQ).map((g) => mods.get(g.tag!.module!)?.m).filter((m, i, a) => m && a.indexOf(m) === i) as Module[];
+  if (wall.length || cables.some((c) => c.kind === 'mains')) {
+    const boards = wall.filter((m) => m.board.comps.some((c) => c.conn?.type.startsWith('ac_'))), others = wall.filter((m) => !boards.includes(m));
+    const what = [boards.length ? (boards.length > 1 ? `the ${boards.length} powerboards` : `the ${boards[0].board.name}`) : '', others.length ? (others.length > 3 ? `the ${others.length} other mains leads` : others.map((m) => `the ${m.board.name}'s lead`).join(', ')) : ''].filter(Boolean).join(' and ') || 'the mains';
+    steps.push({ seq: WALL_SEQ, text: `Last, the mains. Check every screw terminal is tight and every plug is pushed home. Switch ${boards.length ? (boards.length > 1 ? 'every powerboard' : 'the powerboard') : 'everything'} off, plug ${what} into the wall, then switch on.` });
+  }
 
   const plugAt = Object.fromEntries([...ends].map(([k, e]) => [k, [round(e.p[0], 1), round(e.p[1], 1), round(e.p[2], 1)] as [number, number, number]]));
   const panel: PanelReport = { rails: rails as PanelReport['rails'], mounts: mountOut, modules: access, unplaced, depth, height: round(depth + (standOut?.length ? STAND.H : 0), 1), collisions, stands: standOut, plugs: plugAt };

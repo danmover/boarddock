@@ -71,11 +71,13 @@ export interface Pin { n: string; x: number; y: number; net?: string }
 /** Where a box's ports sit: its long faces (front: y = 0, back: y = width), its ends (left: x = 0, right: x = length), or its top. */
 export type BoxFace = 'front' | 'back' | 'left' | 'right' | 'top';
 /** A row of identical ports on one face of a box. */
-export interface BoxPortGroup { id: string; type: string; count: number; face: BoxFace; role: string; refs?: string[]; near?: 'front' | 'back'; pins?: string[]; rot?: number; switched?: boolean } // refs: the group's port names, kept as ports are added or removed; near: a top row's place by that long edge (else across the middle); pins: a pin header's pin names, pin 1 first; rot: a top row's ports turned (angled outlets); switched: a switch by each outlet
+export interface BoxPortGroup { id: string; type: string; count: number; face: BoxFace; role: string; refs?: string[]; near?: 'front' | 'back'; pins?: string[]; rot?: number; switched?: boolean; amps?: number; volts?: number } // refs: the group's port names, kept as ports are added or removed; near: a top row's place by that long edge (else across the middle); pins: a pin header's pin names, pin 1 first; rot: a top row's ports turned (angled outlets); switched: a switch by each outlet; amps: what each port gives (A; a 5 A USB-C PD port: 5); volts: a DC port's voltage
 export interface BoxSpec {
   l: number; w: number; h: number; groups: BoxPortGroup[];
   supply?: number; // A at 5 V the whole box can give (charger, powered hub); unset: a typical figure
   ribbon?: number; // a debug probe (J-Link): length of the ribbon it comes with, mm
+  pack?: { lead: number }; // a plug pack: it plugs straight into an outlet (or the wall), off the rack; lead: its own output lead, mm
+  rating?: number; // a powerboard: what it may carry in all, A at mains voltage (unset: a typical figure for its outlets)
 }
 
 export interface Board {

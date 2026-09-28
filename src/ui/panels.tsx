@@ -2,9 +2,10 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { zipSync, strToU8 } from 'fflate';
 import type { Board, BoxFace, BoxSpec, Comp, Hole, HoleRole, PartOut, Project, V2 } from '../model/types';
 import { applyHoleRoles, boltedOn, detectHoleRoles, ROLE_INFO } from '../model/holes';
-import { baseRef, refText, cableNumbers, cablePurpose, shortName, compatible, KIND_COLOR, linkKind, linkOf, plugName, plugRole, plugsOf, portBudget, sameRef } from '../model/links';
-import { applyBox, BOX_PORT_TYPES, BOX_PRESETS, BOX_ROLES, boxProblems, FACE_NAME, inferBox, layoutPorts, makeBox, tightFaces } from '../model/boxes';
-import { addJLinks, addLinks, addSerialAdapters, addUartCables, removeLinks, setLink } from './linkOps';
+import { allPlugs, baseRef, canCable, connectNote, findModule, offRackModule, powerShort, refText, cableNumbers, cablePurpose, shortName, strongerPower, KIND_COLOR, linkKind, linkOf, plugName, plugRole, plugsOf, portBudget, sameRef } from '../model/links';
+import { cableLines } from '../model/cablelist';
+import { applyBox, BOX_PORT_TYPES, BOX_PRESETS, BOX_ROLES, boxProblems, FACE_NAME, inferBox, layoutPorts, tightFaces } from '../model/boxes';
+import { addAccessory, addJLinks, addLinks, addSerialAdapters, addUartCables, plugPlaces, rebalancePower, removeLinks, setLink } from './linkOps';
 import { adapterFor, debugHeaders, isDebugPort, isProbe, isUartPort, markDebug, uartHeaders, uartPins, type DebugKind } from '../model/probes';
 import { Icon, I } from './icons';
 import { CONNECTORS, DEFAULT_FEATURES, HOLDER_PRESETS, MATERIALS, PRINTERS, connById, connSetup } from '../model/library';
@@ -13,7 +14,7 @@ import { TEMPLATES } from '../model/templates';
 import { ACCEPT } from '../import';
 import { openRevision } from './importFlow';
 import { bbox, compRect, roundedRectLoop, round, uid } from '../geom/poly';
-import { activeModule, addBoard, closeProject, dropModule, edit, editMod, isSel, select, setActive, store, toast, useApp, type SelItem, type Step } from '../state';
+import { activeModule, closeProject, dropModule, edit, editMod, isSel, select, setActive, store, toast, useApp, type SelItem, type Step } from '../state';
 import { kindName, rackName, sameKind } from '../model/diff';
 import { Check, Chip, Num, Pick, Section, Seg, Text, download, safeName } from './controls';
 import { estimate, packPlates, placedMesh, write3mf, writeStl } from '../cad/export';
@@ -25,7 +26,7 @@ import { duplicateModule, markBuilt, unmarkBuilt } from './panelOps';
 import { delta, partsFor, type Delta } from '../model/built';
 import { baseOf as stackBase, ridersOf } from '../model/holes';
 import { DockFeaSection } from './DockFea';
-import { powerBudget, powerText } from '../model/power';
+import { mainsBudget, mainsText, powerBudget, powerText } from '../model/power';
 import { saveBoard } from '../model/myboards';
 import { boardSig, useKeptPicture } from './pics';
 import { paletteFor } from '../model/palette';
@@ -686,15 +687,10 @@ function CablesSection() {
   const cables = useApp((s) => s.result?.report.cables) ?? NO_CABLES;
   const sel = useApp((s) => s.sel);
   const links = p.links ?? [];
-  const nm = (r: { module: string; ref: string }) => { const m = p.modules.find((x) => x.id === r.module); return `${m?.board.name ?? '?'} ${refText(m, r.ref)}`; };
+  const nm = (r: { module: string; ref: string }) => { const m = findModule(p, r.module); return `${m?.board.name ?? '?'} ${refText(m, r.ref)}`; };
   const nos = cableNumbers(links);
-  const buy = new Map<string, number[]>();
-  for (const l of links) {
-    const c = cables.find((x) => x.id === l.id);
-    const A = p.modules.find((m) => m.id === l.a.module)?.board.comps.find((x) => x.ref === baseRef(l.a.ref)), B = p.modules.find((m) => m.id === l.b.module)?.board.comps.find((x) => x.ref === baseRef(l.b.ref));
-    const key = `${c ? `${c.buy} m ` : ''}${plugName(A?.conn?.type ?? '')} to ${plugName(B?.conn?.type ?? '')}`;
-    buy.set(key, [...(buy.get(key) ?? []), nos.get(l.id)!]);
-  }
+  // the same list as the shopping list: ribbons come with their probe, jumper wires by the wire
+  const buy = cableLines(p, cables);
   const budget = portBudget(p);
   return (
     <Section title={`Cables · ${links.length}`} right={<span className="btns">
@@ -712,7 +708,7 @@ function CablesSection() {
                 <div key={l.id} className={`item ${isSel(sel, l.id) ? 'sel' : ''}`} onClick={() => select([{ kind: 'link', id: l.id }])}>
                   <span className="cno" style={{ background: KIND_COLOR[l.kind ?? 'usb'] }}>{nos.get(l.id)}</span>
                   <span className="grow"><b>{nm(l.a)}</b> <small>to</small> <b>{nm(l.b)}</b><small className="cpurpose">{cablePurpose(p, l).text}</small></span>
-                  {c ? <span className="chip">{Math.round(c.length / 10)} cm</span> : <span className="chip">not on the rails</span>}
+                  {c ? <span className="chip">{Math.round(c.length / 10)} cm</span> : <span className="chip">{[l.a, l.b].some((r) => offRackModule(findModule(p, r.module))) ? 'off the rack' : 'not on the rails'}</span>}
                   <button className="btn small ghost icon" title="Remove the cable" onClick={(e) => { e.stopPropagation(); removeLinks([l.id]); }}><Icon d={I.x} /></button>
                 </div>
               );
@@ -720,7 +716,8 @@ function CablesSection() {
           </div>
           <div className="divider" />
           <div className="field"><span>Cables to buy (route + 10%, next standard length)</span></div>
-          <ul className="fmt" style={{ marginTop: 4 }}>{[...buy.entries()].map(([k, ns]) => <li key={k}>{ns.length} × {k} <small>(cable{ns.length > 1 ? 's' : ''} {ns.sort((a, b) => a - b).join(', ')})</small></li>)}</ul>
+          <ul className="fmt" style={{ marginTop: 4 }}>{buy.buy.map((k) => <li key={k}>{k}</li>)}{!buy.buy.length && <li>nothing: {cables.length ? 'every cable comes with its part' : 'the cables are sized once the rack is laid out'}</li>}</ul>
+          {buy.comes.length > 0 && <p className="hint" style={{ margin: '4px 0 0' }}>Not to buy: {buy.comes.join('; ')}.</p>}
           {p.layout === 'panel' && <Check label="Print a numbered tag for each end of every cable" value={p.panel.cableTags !== false} onChange={(v) => edit((q) => { q.panel.cableTags = v; })} />}
         </>
       )}
@@ -794,24 +791,41 @@ function PowerDraw() {
   );
 }
 
-/** What each charger, hub and Pi is asked to supply against what it gives: a bar per source, and what to change. */
+/**
+ * What each charger, hub and Pi is asked to supply against what it gives: a bar per source, and what to change
+ * (move boards to stronger ports); then what each powerboard carries from the wall.
+ */
 function PowerBudget() {
   const p = useApp((s) => s.project)!;
   const srcs = useMemo(() => powerBudget(p), [p.links, p.modules]);
+  const mains = useMemo(() => mainsBudget(p), [p.links, p.modules]);
+  const stronger = useMemo(() => strongerPower(p, plugPlaces()), [p.links, p.modules]);
   const [open, setOpen] = useState<string | null>(null);
-  if (!srcs.length) return null;
+  if (!srcs.length && !mains.length) return null;
   const bad = srcs.filter((s) => s.status !== 'ok').length;
   return (
     <div className="powerlist">
       <div className="field"><span>Power{bad ? ` · ${bad} short` : ' · every source has enough'} <small>(estimates at 5 V)</small></span></div>
+      {stronger && <div className="btns" style={{ margin: '2px 0 6px' }}><button className="btn small soft" onClick={rebalancePower} title="Take the boards off ports that give them too little and plug them into stronger free ports (one undo step)">Move {stronger.moved > 1 ? `${stronger.moved} boards` : 'a board'} to stronger ports</button></div>}
       {srcs.map((s) => {
         const t = powerText(s), f = Math.min(1, s.load / Math.max(0.01, s.total));
         return (
           <div key={s.module.id} className={`pw ${s.status}`} onClick={() => setOpen(open === s.module.id ? null : s.module.id)} title="Click for the details">
             <div className="pw-row"><b title={s.module.board.name}>{shortName(s.module.board.name)}</b><small>{s.kind}</small><span className="grow" /><span className="mono">{Math.round(s.load * 10) / 10} / {Math.round(s.total * 10) / 10} A</span></div>
             {s.ports.length > 0 && <small className="pw-note">{s.ports.length} port{s.ports.length > 1 ? 's' : ''} too weak for {s.ports.length > 1 ? 'their boards' : shortName(s.ports[0].take)}</small>}
+            {s.limited.length > 0 && <small className="pw-note">{s.limited.map((q) => shortName(q.take)).join(', ')}: {s.limited[0].cap} A of the {s.limited[0].peak} A {s.limited.length > 1 ? 'they want' : 'it wants'}, so {s.limited.length > 1 ? 'their' : 'its'} USB ports are held back</small>}
             <div className="pw-bar"><i style={{ width: `${f * 100}%` }} /></div>
             {open === s.module.id && <p className="hint" style={{ margin: '6px 0 0' }}>{t.detail}</p>}
+          </div>
+        );
+      })}
+      {mains.map((s) => {
+        const t = mainsText(s), f = Math.min(1, s.amps / Math.max(0.01, s.rating)), k = `mains-${s.module.id}`;
+        return (
+          <div key={k} className={`pw ${s.status}`} onClick={() => setOpen(open === k ? null : k)} title="Click for the details">
+            <div className="pw-row"><b title={s.module.board.name}>{shortName(s.module.board.name)}</b><small>mains</small><span className="grow" /><span className="mono">{Math.round(s.amps * 100) / 100} / {s.rating} A</span></div>
+            <div className="pw-bar"><i style={{ width: `${f * 100}%` }} /></div>
+            {open === k && <p className="hint" style={{ margin: '6px 0 0' }}>{t.detail}</p>}
           </div>
         );
       })}
@@ -819,17 +833,27 @@ function PowerBudget() {
   );
 }
 
-/** Devices still waiting for a port, and free ports, with a one-click fix when ports run short. */
+/**
+ * Devices still waiting for a port, boards still without power (or on a port too weak for them), and free ports,
+ * with a one-click fix while ports or power run short: it adds the hub, charger or supply and connects it.
+ */
 function PortBudget({ budget }: { budget: ReturnType<typeof portBudget> }) {
-  const { devices, usbPorts, powerIns, powerOuts, unwired } = budget;
+  const p = useApp((s) => s.project)!;
+  const { devices, usbPorts, powerIns, powerOuts, weak, unwired } = budget;
+  const short = useMemo(() => powerShort(p), [p.links, p.modules]);
   const wires = unwired.length > 0 && <p className="hint">Not wired yet: {unwired.map((u) => `${u.name} (${u.refs.join(', ')})`).join('; ')}. Auto-connect leaves wires and jumper headers to you: connect them in the Wiring view or with “Cable to” on the connector.</p>;
-  if (!devices.length && !powerIns.length) return <><p className="hint">{usbPorts.length ? `${usbPorts.length} USB port${usbPorts.length > 1 ? 's' : ''} still free` : 'No USB ports left over'}{powerOuts.length ? `, ${powerOuts.length} charger port${powerOuts.length > 1 ? 's' : ''} free` : ''}.</p>{wires}</>;
-  const addBox = (k: keyof typeof BOX_PRESETS) => { addBoard(makeBox(k)); toast(`Added a ${BOX_PRESETS[k].name}: set its ports under Box, then press Auto-connect.`); };
+  if (!devices.length && !powerIns.length && !weak.length) return <><p className="hint">{usbPorts.length ? `${usbPorts.length} USB port${usbPorts.length > 1 ? 's' : ''} still free` : 'No USB ports left over'}{powerOuts.length ? `, ${powerOuts.length} charger port${powerOuts.length > 1 ? 's' : ''} free` : ''}.</p>{wires}</>;
+  const named = (id: string) => (TEMPLATES.find((t) => t.id === id)?.name ?? id).replace(/ \(.*$/, '');
+  const them = devices.length > 1 ? 'them' : 'it';
   return (
     <div className="warns" style={{ marginTop: 8 }}>
-      {devices.length > 0 && <div>{devices.length} USB plug{devices.length > 1 ? 's' : ''} waiting for a port ({devices.map((d) => `${d.module.board.name} ${d.comp.ref}`).join(', ')}); {usbPorts.length} free. {devices.length > usbPorts.length && <button className="btn small" style={{ marginLeft: 4 }} onClick={() => addBox(devices.length - usbPorts.length > 3 ? 'hub7' : 'hub4')}>Add a USB hub</button>}</div>}
+      {devices.length > 0 && <div>{devices.length} USB plug{devices.length > 1 ? 's' : ''} waiting for a port ({devices.map((d) => `${d.module.board.name} ${d.comp.ref}`).join(', ')}); {usbPorts.length} free on the rack.{devices.length > usbPorts.length && <> Plug {them} into your computer (Auto-connect does it), or <button className="btn small" style={{ marginLeft: 4 }} onClick={() => addAccessory(devices.length - usbPorts.length > 3 ? 'usb_hub7' : 'usb_hub')}>Add a USB hub</button></>}</div>}
       {wires}
-      {powerIns.length > 0 && <div>{powerIns.length} board{powerIns.length > 1 ? 's need' : ' needs'} power ({powerIns.map((d) => d.module.board.name).join(', ')}); {powerOuts.length} charger port{powerOuts.length === 1 ? '' : 's'} free. {powerIns.length > powerOuts.length && <button className="btn small" style={{ marginLeft: 4 }} onClick={() => addBox(powerIns.length - powerOuts.length > 4 ? 'charger6' : 'charger4')}>Add a USB charger</button>}</div>}
+      {(powerIns.length > 0 || weak.length > 0) && <div>
+        {powerIns.length > 0 && `${powerIns.length} board${powerIns.length > 1 ? 's need' : ' needs'} power (${powerIns.map((d) => d.module.board.name).join(', ')})`}{powerIns.length > 0 && weak.length > 0 && '; '}
+        {weak.length > 0 && `${weak.length} ${weak.length > 1 ? 'are' : 'is'} on a port too weak for ${weak.length > 1 ? 'them' : 'it'} (${weak.map((w) => `${shortName(w.take.module.board.name)} on ${w.src.label}${w.loop ? ', the hub it hosts' : ''}`).join(', ')})`}; {powerOuts.length} charger port{powerOuts.length === 1 ? '' : 's'} free.
+        {short.add && <button className="btn small" style={{ marginLeft: 4 }} onClick={() => addAccessory(short.add!.id, short.add!.count)} title="Adds it and connects the boards that need it">Add {short.add.count > 1 ? `${short.add.count} × ` : 'a '}{named(short.add.id)}</button>}
+      </div>}
     </div>
   );
 }
@@ -842,10 +866,12 @@ function CableTo({ c }: { c: Comp }) {
   const cur = linkOf(p, me);
   const other = cur ? (sameRef(cur.a, me) ? cur.b : cur.a) : null;
   const myRole = plugRole(m, c);
-  const options = plugsOf(p).filter((q) => q.module !== m && compatible(myRole, q.role));
+  // only what it can safely go to (never a powerboard into another), your computer included
+  const all = allPlugs(p), mine = all.find((q) => sameRef(q.ref, me));
+  const options = mine ? all.filter((q) => q.module.id !== m.id && canCable(p, mine, q)) : [];
   return (
     <Pick label="Cable to" value={other ? `${other.module}|${other.ref}` : ''} options={[['', options.length ? '— not connected —' : '— nothing it fits —'], ...options.map((q) => [`${q.ref.module}|${q.ref.ref}`, `${q.module.board.name} · ${q.label}`] as [string, string])]}
-      onChange={(v) => { if (!v) setLink(me, null); else { const [mod, ref] = v.split('|'); const q = options.find((x) => x.ref.module === mod && x.ref.ref === ref)!; setLink(me, q.ref, linkKind(myRole, q.role)); } }} />
+      onChange={(v) => { if (!v) setLink(me, null); else { const [mod, ref] = v.split('|'); const q = options.find((x) => x.ref.module === mod && x.ref.ref === ref)!; setLink(me, q.ref, linkKind(myRole, q.role)); const note = mine && connectNote(mine, q); if (note) toast(note); } }} />
   );
 }
 
@@ -1429,17 +1455,9 @@ function shopping(p: Project, res: Res, d: Delta | null, tot: { g: number; m: nu
   ] });
   const rails = d ? d.rails.map((r) => r.length) : (res.report.panel?.rails ?? []).map((r) => r.length);
   if (rails.length) out.push({ head: 'Rails', items: count(rails.map((l) => `TS35 × 7.5 top-hat rail, cut to ${Math.round(l)} mm`)) });
-  // a probe's ribbon comes with it: not bought, but it may need an adapter
-  const cables = (d ? d.cables : res.report.cables ?? []).filter((c) => c.ribbon == null);
-  const typeOf = (id: string, end: 'a' | 'b') => { const l = (p.links ?? []).find((x) => x.id === id); const r = l?.[end]; return plugName(p.modules.find((m) => m.id === r?.module)?.board.comps.find((c) => c.ref === baseRef(r?.ref ?? ''))?.conn?.type ?? ''); };
-  if (cables.length) {
-    const g = new Map<string, number[]>();
-    for (const c of cables) {
-      // jumper wires are bought by the wire: one per pin they join
-      if (c.kind === 'jumper') { const n = (p.links ?? []).find((x) => x.id === c.id)?.wires?.length ?? 3; const k = `female–female jumper wires (Dupont), ${Math.round(c.buy * 100)} cm`; g.set(k, [...(g.get(k) ?? []), ...Array(n).fill(c.no ?? 0)]); continue; }
-      const k = c.kind === 'mains' ? `mains lead, figure-8 (C7) to ${/UK|US|EU/.exec(`${typeOf(c.id, 'a')} ${typeOf(c.id, 'b')}`)?.[0] ?? 'AU'} plug, ${c.buy} m or longer (most chargers come with one)` : c.kind === 'uart' ? `USB to TTL serial cable, 3.3 V, with loose jumper ends (PL2303 or CP2102 type, like Adafruit 954), ${c.buy} m or longer` : `${c.buy} m ${typeOf(c.id, 'a')} to ${typeOf(c.id, 'b')} cable`; g.set(k, [...(g.get(k) ?? []), c.no ?? 0]); }
-    out.push({ head: 'Cables', items: [...g.entries()].map(([k, ns]) => { const u = [...new Set(ns)].sort((a, b) => a - b); return `${ns.length} × ${k} (number${u.length > 1 ? 's' : ''} ${u.join(', ')})`; }) });
-  }
+  // the same cable list as Plugs › Cables to buy (a probe's ribbon and a plug pack's lead come with them)
+  const cl = cableLines(p, d ? d.cables : res.report.cables ?? [], !!d);
+  if (cl.buy.length) out.push({ head: 'Cables', items: cl.buy });
   const newIds = new Set(p.built ? p.modules.filter((m) => !p.built!.boards.includes(m.id)).map((m) => m.id) : p.modules.map((m) => m.id));
   const mods = p.modules.filter((m) => !d || newIds.has(m.id));
   const other: string[] = [];

@@ -1,5 +1,5 @@
 // Cable edits (undoable).
-import { autoLinks, numberLinks, portBudget, sameRef, type PlugAt } from '../model/links';
+import { autoLinks, numberLinks, portBudget, powerShort, sameRef, strongerPower, type PlugAt } from '../model/links';
 import { TEMPLATES } from '../model/templates';
 import { addAdapters, addProbes, addUartLinks, fillWires, stackProbes } from '../model/probes';
 import { seatCompanion } from '../cad/dockplan';
@@ -9,12 +9,30 @@ import { edit, putBoards, select, store, toast } from '../state';
 /** Where each plug is on the rack as laid out now (for measuring cables), if it has been laid out. */
 export const plugPlaces = (): PlugAt | undefined => { const m = store.get().result?.report.panel?.plugs; return m ? (k: string) => m[k] : undefined; };
 
-/** Add Auto-connect's suggestions for every plug still free (or only cables of one kind: "the same for the others"). */
-export function addLinks(only?: NonNullable<import('../model/types').Link['kind']>) {
+/**
+ * Add Auto-connect's suggestions for every plug still free (or only cables of one kind: "the same for the others").
+ * `stronger`: then move boards on ports too weak for them to stronger free ones (a charger or supply just added), in
+ * the same undo step.
+ */
+export function addLinks(only?: NonNullable<import('../model/types').Link['kind']>, stronger = false) {
   const p = store.get().project;
   if (!p) return;
   const add = autoLinks(p, plugPlaces()).filter((l) => !only || l.kind === only);
-  const left = () => { const b = portBudget(store.get().project!); return [b.devices.length ? `${b.devices.length} USB device${b.devices.length > 1 ? 's have' : ' has'} no free port: add a hub or give it more ports.` : '', b.powerIns.length ? `${b.powerIns.length} board${b.powerIns.length > 1 ? 's need' : ' needs'} power: add a charger.` : ''].filter(Boolean).join(' '); };
+  if (stronger) {
+    let moved = 0;
+    const q0 = { ...p, links: numberLinks([...(p.links ?? []), ...add]) };
+    const r = strongerPower(q0, plugPlaces());
+    if (r || add.length) {
+      let stacked = false;
+      edit((q) => { q.links = (r ? r.links : q0.links).map((l) => fillWires(q, l)); stacked = stackProbes(q); moved = r?.moved ?? 0; });
+      toast(`Connected ${add.length} cable${add.length === 1 ? '' : 's'}${moved ? ` and moved ${moved} board${moved > 1 ? 's' : ''} to stronger ports` : ''}.${stacked ? ' The probes and adapters for one board stack up behind it.' : ''} ⌘Z undoes it.`);
+      return;
+    }
+  }
+  const left = () => {
+    const q = store.get().project!, b = portBudget(q), n = powerShort(q).unserved.length;
+    return [b.devices.length ? `${b.devices.length} USB device${b.devices.length > 1 ? 's have' : ' has'} no free port: add a hub or give it more ports.` : '', n ? `${n} board${n > 1 ? 's need' : ' needs'} power no free port gives: add a charger or a supply (the Plugs step offers one).` : ''].filter(Boolean).join(' ');
+  };
   if (!add.length) { toast(`Every plug that has a partner is already connected. ${left() || 'Add hubs or chargers (Start › accessories) for more.'}`); return; }
   let stacked = false;
   edit((q) => { q.links = numberLinks([...(q.links ?? []), ...add]).map((l) => fillWires(q, l)); stacked = stackProbes(q); });
@@ -46,7 +64,7 @@ export function addAccessory(id: string, count = 1) {
   const t = TEMPLATES.find((x) => x.id === id);
   if (!t) return;
   putBoards(Array.from({ length: count }, () => t.make()), false, { stay: true }); // staying where you are
-  addLinks();
+  addLinks(undefined, true);
 }
 
 export function removeLinks(ids: string[]) {
@@ -104,4 +122,17 @@ export function addUartCables(moduleId: string) {
   edit((q) => { r = addUartLinks(q, moduleId); });
   if (!r.added && !r.left) { toast('Every UART header on this board already has a cable.'); return; }
   toast(`${r.added ? `Added ${r.added} USB-serial cable${r.added > 1 ? 's' : ''} (USB to TTL, 3.3 V) to the nearest free USB port${r.added > 1 ? 's' : ''}.` : ''}${r.left ? ` ${r.left} UART header${r.left > 1 ? 's' : ''} found no free USB port: add a hub (Start › accessories).` : ''} ⌘Z undoes it.`);
+}
+
+/**
+ * Move the boards on ports too weak for them (or powered through the hub they host, or a Pi 5 on 3 A where a 5 A
+ * port is free) to stronger free ports, in one undo step. A cable that moves keeps its number.
+ */
+export function rebalancePower() {
+  const p = store.get().project;
+  if (!p) return;
+  const r = strongerPower(p, plugPlaces());
+  if (!r) { toast('No free port gives those boards more: add a charger or a supply (Start › Hubs and chargers).'); return; }
+  edit((q) => { q.links = r.links.map((l) => fillWires(q, l)); });
+  toast(`Moved ${r.moved} board${r.moved > 1 ? 's' : ''} to stronger ports. ⌘Z undoes it.`);
 }
