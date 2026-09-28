@@ -588,6 +588,12 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
   .stats { display: none; }
   .stage .tools { top: 56px; right: 8px; max-width: calc(100% - 16px); }
   .brand .word { display: none; }
+  /* Start on a phone: the library is the page, not a box inside the 3D view's strip; the side panel follows it */
+  .main:has(.stage > .start) { grid-template-rows: auto max-content; }
+  .stage:has(> .start) { overflow: visible; }
+  .stage > .start { position: static; overflow: visible; }
+  .nophone { display: none; }
+  .howto-steps[open] summary { display: block; }
 }
 
 /* box editor */
@@ -831,6 +837,8 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 .start-draw-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 .start-help { margin-top: 26px; color: var(--muted); font-size: 12.5px; }
 .start-help summary { cursor: pointer; font-weight: 650; color: var(--fg); }
+.howto-steps summary { cursor: pointer; font-size: 12.5px; color: var(--muted); margin-bottom: 8px; }
+.howto-steps[open] summary { display: none; }
 .howto .steps4 { list-style: none; margin: 0 0 12px; padding: 0; counter-reset: s; display: flex; flex-direction: column; gap: 8px; }
 .howto .steps4 li { counter-increment: s; display: grid; grid-template-columns: 28px 1fr; gap: 2px 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); }
 .howto .steps4 li::before { content: counter(s); grid-row: span 2; width: 26px; height: 26px; border-radius: 99px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); font-weight: 700; font-family: var(--mono); font-size: 12px; }

@@ -62,6 +62,7 @@ export function Library({ onAdd, dense }: { onAdd: (bs: Board[]) => void; dense?
           {LIBRARY_SHELVES.filter((s) => count(s)).map((s) => <button key={s} role="tab" aria-selected={shelf === s} className={shelf === s ? 'on' : ''} onClick={() => setShelf(s)}>{s} <small>{count(s)}</small></button>)}
         </div>
       </div>
+      {!picked && <p className="hint lib-tip">Tap a board to add it now, or tap <b>+</b> on each board you have (twice for two), then <b>Add</b>.</p>}
       {saved.length > 0 && (
         <section>
           <h4>My boards</h4>

@@ -44,14 +44,18 @@ export function ImportPanel() {
   const view = useApp((s) => s.view);
   if (!hasProject) return (
     <div className="howto">
+      {/* on a phone the four steps fold away under the library, which is what you came for */}
+      <details className="howto-steps" open={!window.matchMedia?.('(max-width: 860px)').matches}>
+      <summary>How it works, in four steps</summary>
       <ol className="steps4">
         <li><b>Bring your boards in</b><span>Drop their design files, pick them from the library, or draw one: in the middle of the window.</span></li>
         <li><b>Check each board</b><span>Its plugs, holes and tall parts, in the board editor with a toolbox of parts.</span></li>
         <li><b>Cables and rails</b><span>Auto-connect wires them up; every board docks on a DIN rail with its plugs reachable.</span></li>
         <li><b>Print and build</b><span>Plates to print, cables to buy, and the assembly step by step.</span></li>
       </ol>
-      <p className="hint"><b>You need</b> a 3D printer and a length of DIN rail (the 35 mm metal strip from electrical cabinets, a few dollars a metre, cut with a hacksaw), or pick <b>Loose holders</b> in the Rails step and skip the rail.</p>
-      <p className="hint">Press <kbd>?</kbd> any time for the keyboard shortcuts. Files never leave your computer.</p>
+      </details>
+      <p className="hint"><b>You need</b> a 3D printer and a length of DIN rail (TS35 top-hat: the 35 mm metal strip from electrical cabinets, a few dollars a metre, cut with a hacksaw), or pick <b>Loose holders</b> in the Rails step and skip the rail.</p>
+      <p className="hint"><span className="nophone">Press <kbd>?</kbd> any time for the keyboard shortcuts. </span>Files never leave your computer.</p>
     </div>
   );
   return (
