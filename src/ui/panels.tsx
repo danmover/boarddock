@@ -25,7 +25,7 @@ import { clipDims } from '../cad/dinclip';
 import { RackBuilder } from './RackBuilder';
 import { duplicateModule, markBuilt, unmarkBuilt } from './panelOps';
 import { removeItems } from './pickOps';
-import { delta, partsFor, type Delta } from '../model/built';
+import { delta, partsFor, strapBoxes, type Delta } from '../model/built';
 import { baseOf as stackBase, ridersOf } from '../model/holes';
 import { DockFeaSection } from './DockFea';
 import { mainsBudget, mainsText, powerBudget, powerText } from '../model/power';
@@ -1436,7 +1436,7 @@ function BuildSection({ d }: { d: Delta | null }) {
 
 type Res = NonNullable<ReturnType<typeof store.get>['result']>;
 /** Everything to print, cut and buy (or only what's new since the rack was built). */
-function shopping(p: Project, res: Res, d: Delta | null, tot: { g: number; m: number }, pick?: Set<string>): { head: string; items: string[] }[] {
+export function shopping(p: Project, res: Res, d: Delta | null, tot: { g: number; m: number }, pick?: Set<string>): { head: string; items: string[] }[] {
   const out: { head: string; items: string[] }[] = [];
   // a bolted board: a standoff on each hole it shares with the board below, a screw in each end, sized from the holes
   const bolts = (m: Project['modules'][number]) => {
@@ -1446,9 +1446,9 @@ function shopping(p: Project, res: Res, d: Delta | null, tot: { g: number; m: nu
     return `${h.n} × ${h.size} standoff, ${h.gap} mm, and ${h.screws} × ${h.size} screw (${m.board.name} on ${below}: ${h.shared ? `the ${h.n} holes they share` : 'no holes line up, so check where yours go'})`;
   };
   if (pick) {
-    const other: string[] = [];
+    const other: string[] = [], strap = new Set(strapBoxes(p, res.report.panel).map((x) => x.id));
     for (const m of p.modules.filter((x) => pick.has(x.id))) {
-      if (m.board.kind === 'box' && !isProbe(m)) other.push(`12 mm hook-and-loop strap for the ${m.board.name}`);
+      if (strap.has(m.id)) other.push(`12 mm hook-and-loop strap for the ${m.board.name}`);
       const b = m.on && pick.has(m.on) ? bolts(m) : null;
       if (b) other.push(b);
     }
@@ -1472,8 +1472,8 @@ function shopping(p: Project, res: Res, d: Delta | null, tot: { g: number; m: nu
   const newIds = new Set(p.built ? p.modules.filter((m) => !p.built!.boards.includes(m.id)).map((m) => m.id) : p.modules.map((m) => m.id));
   const mods = p.modules.filter((m) => !d || newIds.has(m.id));
   const other: string[] = [];
-  // straps: one line with the total, the lengths per box after it
-  const straps = mods.filter((m) => m.board.kind === 'box' && !isProbe(m)).map((m) => { const b = m.board.box; return { name: m.board.name, per: b ? Math.ceil((2 * (b.w + b.h) + 80) / 50) * 5 : 30 }; });
+  // straps: one line with the total, the lengths per box after it (only boxes that get a holder: not a plug pack)
+  const straps = strapBoxes(p, res.report.panel).filter((m) => mods.includes(m)).map((m) => { const b = m.board.box; return { name: m.board.name, per: b ? Math.ceil((2 * (b.w + b.h) + 80) / 50) * 5 : 30 }; });
   if (straps.length) {
     const lo = Math.min(...straps.map((x) => x.per)), hi = Math.max(...straps.map((x) => x.per)), all = straps.reduce((a, x) => a + 2 * x.per, 0);
     other.push(`${2 * straps.length} × 12 mm hook-and-loop strap, ${lo === hi ? `about ${lo} cm` : `${lo} to ${hi} cm`} each (${(all / 100).toFixed(1)} m in all, or a roll to cut): 2 for each of ${straps.length > 3 ? `the ${straps.length} boxes` : straps.map((x) => x.name).join(', ')}`);
