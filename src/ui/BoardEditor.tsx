@@ -328,39 +328,74 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
   const levels = result?.report.levels;
   const nSel = sel.length;
   // what each plug on an edge is, printed on the board just inside it (on the plug itself the plug hides it): its
-  // reference and its kind, along the edge, reading the right way up, pushed further in where it would sit on another
+  // reference and its kind, along the edge, reading the right way up, pushed further in where it would sit on another.
+  // Zoomed out it is still written big enough to read on screen, if there is room for it; else at its own size
   const plugLabels = useMemo(() => {
     const out: { x: number; y: number; deg: number; ref: string; kind: string; fz: number }[] = [];
-    const boxes = b.comps.filter((c) => !c.hidden).map((c) => bbox(compRect(c, 0.2)));
+    const shown = b.comps.filter((c) => !c.hidden), boxes = shown.map((c) => bbox(compRect(c, 0.2)));
     const taken: { x0: number; y0: number; x1: number; y1: number }[] = [];
     for (const c of b.comps) {
       if (c.hidden || c.side === 'bottom' || c.conn?.entry !== 'edge') continue;
       const d: V2 = [Math.cos(rad(c.conn.angle)), Math.sin(rad(c.conn.angle))], t: V2 = [-d[1], d[0]];
       const back = extentAlong(c, c.conn.angle + 180), wide = Math.abs(t[0]) * c.w + Math.abs(t[1]) * c.l;
-      const fz = Math.max(1, Math.min(2.2, wide / Math.max(4, c.ref.length) / 0.7));
-      const kind = plugName(c.conn.type), len = Math.max(c.ref.length * fz, kind.length * fz * 0.72) * 0.62, h = fz * 1.9;
+      const own = Math.max(1, Math.min(2.2, wide / Math.max(4, c.ref.length) / 0.7)), readable = 8.5 * px;
+      const kind = plugName(c.conn.type);
       let deg = (Math.atan2(t[1], t[0]) * 180) / Math.PI;
       if (deg > 90.01) deg -= 180; else if (deg <= -90.01) deg += 180;
-      let at: V2 = [c.x - d[0] * (back + 0.8 + h / 2), c.y - d[1] * (back + 0.8 + h / 2)];
-      const boxAt = (q: V2) => { const hx = Math.abs(t[0]) * len / 2 + Math.abs(d[0]) * h / 2, hy = Math.abs(t[1]) * len / 2 + Math.abs(d[1]) * h / 2; return { x0: q[0] - hx, x1: q[0] + hx, y0: q[1] - hy, y1: q[1] + hy }; };
-      const hit = (r: { x0: number; y0: number; x1: number; y1: number }) => [...taken, ...boxes.filter((_, i) => b.comps.filter((x) => !x.hidden)[i] !== c)].some((o) => o.x0 < r.x1 && r.x0 < o.x1 && o.y0 < r.y1 && r.y0 < o.y1);
-      for (let k = 0; k < 4 && hit(boxAt(at)); k++) at = [at[0] - d[0] * (h + 0.4), at[1] - d[1] * (h + 0.4)];
-      taken.push(boxAt(at));
-      out.push({ x: at[0], y: at[1], deg, ref: c.ref, kind, fz });
+      const others = boxes.filter((_, i) => shown[i] !== c);
+      const hit = (r: { x0: number; y0: number; x1: number; y1: number }) => r.x0 < bb.x0 || r.x1 > bb.x1 || r.y0 < bb.y0 || r.y1 > bb.y1 || [...taken, ...others].some((o) => o.x0 < r.x1 && r.x0 < o.x1 && o.y0 < r.y1 && r.y0 < o.y1);
+      // one size: where it goes, stepping further in while it sits on something
+      const place = (fz: number) => {
+        const len = Math.max(c.ref.length * fz, kind.length * fz * 0.72) * 0.62, h = fz * 1.9;
+        const boxAt = (q: V2) => { const hx = Math.abs(t[0]) * len / 2 + Math.abs(d[0]) * h / 2, hy = Math.abs(t[1]) * len / 2 + Math.abs(d[1]) * h / 2; return { x0: q[0] - hx, x1: q[0] + hx, y0: q[1] - hy, y1: q[1] + hy }; };
+        let at: V2 = [c.x - d[0] * (back + 0.8 + h / 2), c.y - d[1] * (back + 0.8 + h / 2)];
+        for (let k = 0; k < 4 && hit(boxAt(at)); k++) at = [at[0] - d[0] * (h + 0.4), at[1] - d[1] * (h + 0.4)];
+        return { fz, at, box: boxAt(at), clear: !hit(boxAt(at)) };
+      };
+      const tries = readable > own ? [place(readable), place(own)] : [place(own)];
+      const pick = tries.find((q) => q.clear) ?? (own / Math.max(px, 1e-6) > 5.5 ? tries[tries.length - 1] : null);
+      if (!pick) continue; // too small to read here and nowhere clear to write it bigger
+      taken.push(pick.box);
+      out.push({ x: pick.at[0], y: pick.at[1], deg, ref: c.ref, kind, fz: pick.fz });
     }
     return out;
-  }, [b.comps]);
+  }, [b.comps, bb, px]);
   // the board's size, on the sides with fewer edge plugs so it doesn't cover one; its labels are kept clear of
   const sizeAt = useMemo(() => {
     const n = (ang: number) => b.comps.filter((c) => c.conn && c.conn.entry === 'edge' && Math.round(c.conn.angle) === ang).length;
     return { top: n(90) <= n(-90), left: n(180) <= n(0) };
   }, [b.comps]);
+  // where the board's size labels sit: mid-side, 30 px out, slid along their line off any plug's opening (the hatched
+  // space its plug needs); where a side is full of them, further out past the openings
+  const sizeLab = useMemo(() => {
+    const zones = b.comps.filter((c) => !c.hidden && c.conn?.entry === 'edge').map((c) => {
+      const dd = c.conn!, e = extentAlong(c, dd.angle);
+      return bbox(plugPoly([c.x + Math.cos(rad(dd.angle)) * e, c.y + Math.sin(rad(dd.angle)) * e], dd.angle, dd.plug.w, dd.plug.len));
+    });
+    const hh = 9 * px, pad = 4 * px;
+    const side = (vertical: boolean, v: number) => {
+      const half = ((v.toFixed(1).length * 7.2 + 14) * px) / 2;
+      const lo = vertical ? bb.y0 : bb.x0, hi = vertical ? bb.y1 : bb.x1, mid = (lo + hi) / 2;
+      const out = vertical ? (sizeAt.left ? -1 : 1) : (sizeAt.top ? 1 : -1), edge = vertical ? (sizeAt.left ? bb.x0 : bb.x1) : (sizeAt.top ? bb.y1 : bb.y0);
+      const boxAt = (at: number, off: number) => { const q = edge + out * off; return vertical ? { x0: q - hh - pad, x1: q + hh + pad, y0: at - half - pad, y1: at + half + pad } : { x0: at - half - pad, x1: at + half + pad, y0: q - hh - pad, y1: q + hh + pad }; };
+      const hits = (r: DimBox) => zones.filter((z) => z.x0 < r.x1 && r.x0 < z.x1 && z.y0 < r.y1 && r.y0 < z.y1);
+      const off = 30 * px, n = 24;
+      for (let k = 0; k <= n; k++) for (const sgn of k ? [1, -1] : [1]) {
+        const at = mid + (sgn * k * (hi - lo)) / (2 * n);
+        if (!hits(boxAt(at, off)).length) return { at, off };
+      }
+      // nowhere clear along it: the line goes out past the openings it would cross
+      const far = Math.max(...hits(boxAt(mid, off)).map((z) => vertical ? (out > 0 ? z.x1 - edge : edge - z.x0) : (out > 0 ? z.y1 - edge : edge - z.y0)));
+      return { at: mid, off: Math.max(off, far + hh + 6 * px) };
+    };
+    return { w: side(false, bb.x1 - bb.x0), h: side(true, bb.y1 - bb.y0) };
+  }, [b.comps, bb, px, sizeAt]);
   const sizeBoxes = useMemo((): DimBox[] => {
-    const lw = (v: number) => (v.toFixed(1).length * 7.2 + 14) * px, hh = 9 * px, o = 30 * px;
-    const w = bb.x1 - bb.x0, h = bb.y1 - bb.y0, mx = (bb.x0 + bb.x1) / 2, my = (bb.y0 + bb.y1) / 2;
-    const y = sizeAt.top ? bb.y1 + o : bb.y0 - o, x = sizeAt.left ? bb.x0 - o : bb.x1 + o;
-    return [{ x0: mx - lw(w) / 2, x1: mx + lw(w) / 2, y0: y - hh, y1: y + hh }, { x0: x - hh, x1: x + hh, y0: my - lw(h) / 2, y1: my + lw(h) / 2 }];
-  }, [bb, px, sizeAt]);
+    const lw = (v: number) => (v.toFixed(1).length * 7.2 + 14) * px, hh = 9 * px;
+    const w = bb.x1 - bb.x0, h = bb.y1 - bb.y0, { w: sw, h: sh } = sizeLab;
+    const y = sizeAt.top ? bb.y1 + sw.off : bb.y0 - sw.off, x = sizeAt.left ? bb.x0 - sh.off : bb.x1 + sh.off;
+    return [{ x0: sw.at - lw(w) / 2, x1: sw.at + lw(w) / 2, y0: y - hh, y1: y + hh }, { x0: x - hh, x1: x + hh, y0: sh.at - lw(h) / 2, y1: sh.at + lw(h) / 2 }];
+  }, [bb, px, sizeAt, sizeLab]);
   // every dimension's line and label, none on top of another (model/dims)
   const dimsDraw = useMemo(() => layoutDims(b, px, { avoid: sizeBoxes, last: dimLast ?? undefined }), [b.dims, b.holes, b.comps, b.outline, px, sizeBoxes, dimLast]);
   // copper as a few paths (one per side and width), not thousands of elements: the board's own tracks, else plausible
@@ -503,7 +538,7 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
         {b.comps.filter((c) => !c.hidden && c.conn?.entry === 'edge').map((c) => plugArrow(c))}
         {b.comps.filter((c) => !c.hidden).map((c) => partSvg(c))}
         {<g style={{ pointerEvents: 'none' }}>
-          {plugLabels.filter((q) => q.fz / Math.max(px, 1e-6) > 5.5).map((q, i) => (
+          {plugLabels.map((q, i) => (
             <g key={i} transform={`translate(${q.x},${-q.y}) rotate(${-q.deg})`}>
               <text y={-q.fz * 0.1} fontSize={q.fz} textAnchor="middle" className="netlbl" opacity={0.92}>{q.ref}</text>
               {q.fz * 0.72 / Math.max(px, 1e-6) > 6 && <text y={q.fz * 0.95} fontSize={q.fz * 0.72} textAnchor="middle" className="netlbl" opacity={0.6}>{q.kind}</text>}
@@ -608,8 +643,8 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
           {(() => {
             const { top, left } = sizeAt;
             return <>
-              <DimLine a={[bb.x0, top ? bb.y1 : bb.y0]} b={[bb.x1, top ? bb.y1 : bb.y0]} off={top ? fs(30) : -fs(30)} px={px} label={`${bw.toFixed(1)}`} on={editDim?.id === '@w'} onEdit={() => setEditDim({ id: '@w', v: bw.toFixed(2) })} title="The board's width: click to type what your calipers read" />
-              <DimLine a={[left ? bb.x0 : bb.x1, bb.y0]} b={[left ? bb.x0 : bb.x1, bb.y1]} off={left ? -fs(30) : fs(30)} px={px} label={`${bh.toFixed(1)}`} vertical on={editDim?.id === '@h'} onEdit={() => setEditDim({ id: '@h', v: bh.toFixed(2) })} title="The board's height: click to type what your calipers read" />
+              <DimLine a={[bb.x0, top ? bb.y1 : bb.y0]} b={[bb.x1, top ? bb.y1 : bb.y0]} off={top ? sizeLab.w.off : -sizeLab.w.off} at={sizeLab.w.at} px={px} label={`${bw.toFixed(1)}`} on={editDim?.id === '@w'} onEdit={() => setEditDim({ id: '@w', v: bw.toFixed(2) })} title="The board's width: click to type what your calipers read" />
+              <DimLine a={[left ? bb.x0 : bb.x1, bb.y0]} b={[left ? bb.x0 : bb.x1, bb.y1]} off={left ? -sizeLab.h.off : sizeLab.h.off} at={sizeLab.h.at} px={px} label={`${bh.toFixed(1)}`} vertical on={editDim?.id === '@h'} onEdit={() => setEditDim({ id: '@h', v: bh.toFixed(2) })} title="The board's height: click to type what your calipers read" />
             </>;
           })()}
         </g>
@@ -666,7 +701,7 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
         };
         // where its label is on screen
         const { top, left } = sizeAt;
-        const labW: V2 = size ? (editDim.id === '@w' ? [(bb.x0 + bb.x1) / 2, top ? bb.y1 + fs(30) : bb.y0 - fs(30)] : [left ? bb.x0 - fs(30) : bb.x1 + fs(30), (bb.y0 + bb.y1) / 2]) : (dimsDraw.find((q) => q.id === dm.id)?.lab ?? [(bb.x0 + bb.x1) / 2, bb.y1]);
+        const labW: V2 = size ? (editDim.id === '@w' ? [sizeLab.w.at, top ? bb.y1 + sizeLab.w.off : bb.y0 - sizeLab.w.off] : [left ? bb.x0 - sizeLab.h.off : bb.x1 + sizeLab.h.off, sizeLab.h.at]) : (dimsDraw.find((q) => q.id === dm.id)?.lab ?? [(bb.x0 + bb.x1) / 2, bb.y1]);
         const sr = svg.current?.getBoundingClientRect(), wr = wrap.current?.getBoundingClientRect();
         let sx = 200, sy = 200;
         if (sr && wr) {
@@ -774,10 +809,11 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
   );
 }
 
-function DimLine({ a, b, off, px, label, vertical, on, onEdit, title }: { a: V2; b: V2; off: number; px: number; label: string; vertical?: boolean; on?: boolean; onEdit?: () => void; title?: string }) {
+/** A dimension line `off` out from a to b, its label in the middle or at `at` along it (x, or y if vertical). */
+function DimLine({ a, b, off, at, px, label, vertical, on, onEdit, title }: { a: V2; b: V2; off: number; at?: number; px: number; label: string; vertical?: boolean; on?: boolean; onEdit?: () => void; title?: string }) {
   const [ax, ay] = vertical ? [a[0] + off, a[1]] : [a[0], a[1] + off];
   const [bx, by] = vertical ? [b[0] + off, b[1]] : [b[0], b[1] + off];
-  const mx = (ax + bx) / 2, my = (ay + by) / 2;
+  const mx = !vertical && at != null ? at : (ax + bx) / 2, my = vertical && at != null ? at : (ay + by) / 2;
   const t = 4 * px;
   return (
     <>
