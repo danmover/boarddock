@@ -669,6 +669,8 @@ npm run desktop      # Electron app from the build
 npm run dist         # installers for the current OS in release/
 ```
 
+What's still to do, in order, is in [TODO.md](TODO.md).
+
 The board tiles on Start and in **Add a board** are pictures shipped in `public/tiles/`. After changing a template, render them again with the dev server running (`PLAYWRIGHT=/path/to/playwright/index.mjs node scripts/render-tiles.mjs`) and bump `TILE_V` in `src/ui/panels.tsx`.
 
 **Project layout:**
