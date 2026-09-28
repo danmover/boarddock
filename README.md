@@ -309,6 +309,13 @@ The panel routes every cable:
 1. Out of its plug and clear of its own board. A plug pointing up out of a board standing on edge steps sideways off the board before going down; a plug pointing sideways drops, reaches further out first, or slopes straight into a lane it faces. A drop that would land on a sleeper steps along the rail first.
 2. Down to a **street** between the rails (or beside the outer ones), where each cable gets its own lane. Lanes are ordered so as few cables cross as possible.
 3. Along the street and back up to the other plug the same way.
+4. Then all the cables **settle together**, the way real ones do once they are plugged in. Each is a chain of beads:
+   - where two cross, one lies over the other; where they run together, they lie side by side;
+   - nothing goes through a holder, dock, plug or ribbon;
+   - each cable keeps its length (it can't stretch) and its bends ease out;
+   - the ends stay straight in their plugs.
+
+   Ribbons stay where they were laid and the rest settle round them. Check says how many places the planned routes met, and warns about any pair still pressing on each other.
 
 Every combination of these is checked against the bounding boxes of every holder, board, plug, dock, rail and stand piece, and the shortest route that hits nothing wins. If every route touches something, the cable is marked in red in the 3D view and the Check step says what it runs into.
 

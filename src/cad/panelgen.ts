@@ -21,6 +21,7 @@ import { EAR } from './dockdims';
 import { autoAssign, bestDock, classify, clipToRail, dockSite, EDGES, edgeNormal, plugDirs, railMatrix, slotMatrix, withRiders } from './dockplan';
 import { capStress, pieceMesh, planStands, railI, standBoxes, STAND, type StandLane } from './railstand';
 import { assemble, bestRoute, escapes, hits, ribbonRoute, slope, type Box, type CableEnd, type Choice, type Obstacle, type RibbonEnd, type Route } from './cableroute';
+import { settleCables } from './cablesim';
 import { isDebugPort, isProbe, isUartPort, jumperToBuy, jumperWiring, ribbonOf, uartWiring } from '../model/probes';
 
 const SHOE_BOX = { x: [-LEN_X / 2, LEN_X / 2], y: [-29, 29], z: [0, 42.8] };
@@ -721,15 +722,31 @@ export function generatePanel(p: Project): GenResult {
       return { L: S[S.length - 1], at, part: (s0: number, s1: number) => [at(s0), ...P.filter((_, i) => S[i] > s0 && S[i] < s1), at(s1)] };
     };
     const tagMeshes = new Map<string, { mesh: MeshData; volume: number; size: [number, number, number] }>();
-    for (const q of routes) {
-      const { l, A, B, ch, d, zc, free } = q;
+    // every cable's planned way, with its bends as a cable takes them (arcs of about four diameters, no kinks)
+    const planned = routes.map((q) => {
+      const { l, A, B, ch, d, zc } = q;
       const vl = laneOf.get(l.id)!;
       const ea = ch.ea === 'slope' ? slope(A, vl, zc) ?? escapes(A, null, zc, d / 2)[0] : ch.ea;
       const eb = ch.eb === 'slope' ? slope(B, vl, zc) ?? escapes(B, null, zc, d / 2)[0] : ch.eb;
       const route = ch.direct ? ch.route : assemble(ea, eb, vl, zc);
-      const hit = hits(route, obs, [A, B], d / 2);
-      // bends as a cable takes them: arcs of about four diameters, no kinks
-      const path = filletPath(route.pts, l.kind === 'debug' ? 7 : l.kind === 'jumper' ? 6 : Math.min(25, Math.max(10, 4 * d))).map(xy);
+      return { route, vl, hit: hits(route, obs, [A, B], d / 2), path: filletPath(route.pts, l.kind === 'debug' ? 7 : l.kind === 'jumper' ? 6 : Math.min(25, Math.max(10, 4 * d))) };
+    });
+    // then they settle together, as real ones do: where two cross one lies over the other, where they run together
+    // they lie side by side, nothing goes through a holder, a dock, a plug or a ribbon, and the ends stay in their plugs
+    const simIn = routes.map((q, i) => {
+      const { l, A, B, d } = q, kind = l.kind ?? 'usb';
+      const r = kind === 'debug' ? Math.min(3, Math.min(ribbonWidth(l.a), ribbonWidth(l.b)) / 2) : kind === 'jumper' ? Math.max(1, (l.wires?.length ?? 1) * 0.8) : d / 2;
+      return { id: l.id, pts: planned[i].path, r, pin: [10, 10] as [number, number], fixed: kind === 'debug', mods: [l.a.module, l.b.module], plugs: [A.plug, B.plug] };
+    });
+    const laidOut = settleCables(simIn, obs, 0).touching.length; // where the planned routes met, before settling
+    const sim = settleCables(simIn, obs);
+    const nameOfLink = (id: string) => { const l = routes.find((q) => q.l.id === id)?.l; return l ? `${nameOf2(l.a.module)} ${l.a.ref}` : id; };
+    if (sim.touching.length) warnings.push(`${sim.touching.length} pair${sim.touching.length > 1 ? 's' : ''} of cables still press on each other after settling (${sim.touching.slice(0, 3).map(([a, b]) => `${nameOfLink(a)} and ${nameOfLink(b)}`).join('; ')}): give them more room, or connect other plugs.`);
+    if (routes.length) checks.push({ group: 'Panel', name: 'Cables settled', value: sim.touching.length ? `${sim.touching.length} pair${sim.touching.length > 1 ? 's' : ''} pressing` : 'none through another', status: sim.touching.length ? 'warn' : 'ok', detail: `every cable was let settle with the others${laidOut ? ` (their planned routes met in ${laidOut} place${laidOut > 1 ? 's' : ''})` : ''}: where two cross one lies over the other, where they run together they lie side by side, and each keeps its length and stays in its plugs. Ribbons stay where they were laid and the rest settle round them.` });
+    for (const [qi, q] of routes.entries()) {
+      const { l, ch, d, free } = q;
+      const { route, vl, hit } = planned[qi];
+      const path = sim.paths[qi].map(xy);
       let len = 0;
       for (let i = 1; i < path.length; i++) len += Math.hypot(path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1], path[i][2] - path[i - 1][2]);
       const kind = l.kind ?? 'usb';
