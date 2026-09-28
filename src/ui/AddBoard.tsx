@@ -7,7 +7,8 @@ import type { Board } from '../model/types';
 import { ACCEPT } from '../import';
 import { activeModule, lastReplace, putBoards, store, toast, useApp } from '../state';
 import { openFiles } from './importFlow';
-import { bedNote, placementNote } from './panelOps';
+import { rackCount } from '../model/diff';
+import { bedNote, placementNote, settleOverlaps } from './panelOps';
 import { DrawBoard } from './DrawBoard';
 import { Library } from './Library';
 import { Icon, I } from './icons';
@@ -23,9 +24,12 @@ export function countNames(bs: Board[]): string {
 /** Add boards without leaving the step, and say where they went. */
 export function addBoards(bs: Board[]) {
   if (!bs.length) return;
+  const before = store.get().project?.modules.length ?? 0;
   putBoards(bs, false, { stay: true });
   const p = store.get().project!;
-  toast(`Added ${countNames(bs)} (${p.modules.length} boards).${placementNote(p)}${bedNote(p, bs)} ⌘Z undoes it.`, { label: bs.length > 1 ? 'Check them' : 'Check its board', run: () => store.set({ step: 'board', view: 'assembly' }) });
+  toast(`Added ${countNames(bs)} (${rackCount(p)}).${placementNote(p, p.modules.slice(before).map((m) => m.id))}${bedNote(p, bs)} ⌘Z undoes it.`, { label: bs.length > 1 ? 'Check them' : 'Check its board', run: () => store.set({ step: 'board', view: 'assembly' }) });
+  // a board in a dock's free slot makes that dock reach further: slide its neighbours along if they now overlap
+  if (p.layout === 'panel' && !p.panel.auto) settleOverlaps();
 }
 
 /** Put a library board in place of the board being edited, and say what it kept. */

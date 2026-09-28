@@ -14,7 +14,7 @@ import { ACCEPT } from '../import';
 import { openRevision } from './importFlow';
 import { bbox, compRect, roundedRectLoop, round, uid } from '../geom/poly';
 import { activeModule, addBoard, closeProject, dropModule, edit, editMod, isSel, select, setActive, store, toast, useApp, type SelItem, type Step } from '../state';
-import { kindName, rackName, sameKind } from '../model/diff';
+import { kindName, rackCount, rackName, sameKind } from '../model/diff';
 import { Check, Chip, Num, Pick, Section, Seg, Text, download, safeName } from './controls';
 import { estimate, packPlates, placedMesh, write3mf, writeStl } from '../cad/export';
 import { buildTestKit, runClipFea } from '../worker/client';
@@ -95,11 +95,11 @@ function RackSummary() {
   const s = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
   // where the rack is up to: each row goes to its step
   const rows: { step: Step; label: string; state: string; done: boolean; tone?: 'warn' }[] = [
-    { step: 'board', label: 'Boards', state: `${s(p.modules.length, 'board')}, ${s(plugs, 'plug')}`, done: p.modules.length > 0 },
+    { step: 'board', label: 'Boards', state: `${rackCount(p)}, ${s(plugs, 'plug')}`, done: p.modules.length > 0 },
     { step: 'plugs', label: 'Cables', state: nl ? s(nl, 'cable') : 'none wired yet', done: nl > 0 },
     { step: 'mount', label: 'Rails', state: p.layout === 'panel' ? (rails ? `on ${s(rails, 'rail')}` : 'laying out…') : 'loose holders', done: p.layout !== 'panel' || rails > 0 },
     { step: 'check', label: 'Check', state: warn ? s(warn, 'note') : 'nothing to look at', done: !warn, tone: warn ? 'warn' : undefined },
-    { step: 'export', label: 'Print', state: p.built ? (d?.any ? `${d.parts.reduce((a, x) => a + x.qty, 0)} new parts to print` : `built ${when}`) : 'not printed yet', done: !!p.built && !d?.any },
+    { step: 'export', label: 'Print', state: p.built ? (d?.any ? `What's new: ${s(d.plan.length, 'step')}, ${s(d.parts.reduce((a, x) => a + x.qty, 0), 'part')} to print` : `built ${when}`) : 'not printed yet', done: !!p.built && !d?.any },
   ];
   return (
     <div className="section rackcard">

@@ -2,7 +2,7 @@
 // several boards (a Gerber set or an IDF pair stays one board); they join the project unless "replace" is ticked.
 import { importMany } from '../import';
 import { amend, lastReplace, loadProject, putBoards, reviseBoard, store, toast } from '../state';
-import { afterBuild, bedNote, placementNote } from './panelOps';
+import { afterBuild, bedNote, placementNote, settleOverlaps } from './panelOps';
 
 /** A warning that two things on the rack overlap or a cable runs into something. */
 const isClash = (w: string) => / overlap on the panel\.| runs into /.test(w);
@@ -59,7 +59,9 @@ async function openNow(files: File[], opts: { stay?: boolean }): Promise<void> {
     ? `Replaced ${s.project ? s.project.modules[s.project.active].board.name : 'the board'} with ${names[0]}${names.length > 1 ? ` and added ${names.slice(1).join(', ')}` : ''}`
     : `${had ? 'Added' : 'Imported'} ${boards.length > 1 ? `${boards.length} boards: ${names.join(', ')}` : names[0]}`;
   const added = had && (!replace || boards.length > 1);
-  toast(`${what}${n > 1 ? ` (${n} boards in the project)` : ''}.${replace && had ? lastReplace : ''}${added ? placementNote(store.get().project!) : ''}${bedNote(store.get().project!, boards)}${had ? ' ⌘Z undoes it.' : ''}${errors.length ? ` Skipped: ${errors.join('; ')}` : ''}`, opts.stay && !replace ? { label: boards.length > 1 ? 'Check them' : 'Check its board', run: () => store.set({ step: 'board', view: 'assembly' }) } : undefined);
+  const p1 = store.get().project!;
+  toast(`${what}${n > 1 ? ` (${n} boards in the project)` : ''}.${replace && had ? lastReplace : ''}${added ? placementNote(p1, p1.modules.slice(had).map((m) => m.id)) : ''}${bedNote(store.get().project!, boards)}${had ? ' ⌘Z undoes it.' : ''}${errors.length ? ` Skipped: ${errors.join('; ')}` : ''}`, opts.stay && !replace ? { label: boards.length > 1 ? 'Check them' : 'Check its board', run: () => store.set({ step: 'board', view: 'assembly' }) } : undefined);
+  if (added && p1.layout === 'panel' && !p1.panel.auto) settleOverlaps();
 }
 
 /**

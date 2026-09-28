@@ -2,7 +2,7 @@
 // exactly where they are, so nothing jumps.
 import type { GenResult, PanelReport, Project, RailMount, Slot, Turn } from '../model/types';
 import { round, uid } from '../geom/poly';
-import { appendDock, bestDock, dropEmptied, nearestFree, spreadOut, withRiders } from '../cad/dockplan';
+import { appendDock, bestDock, seatBoard, dropEmptied, nearestFree, spreadOut, withRiders } from '../cad/dockplan';
 import { baseOf, refreshStandoffs } from '../model/holes';
 import { amend, edit, select, store, toast, uniqueName } from '../state';
 import { mountLabels, snapshot } from '../model/built';
@@ -208,14 +208,24 @@ export function seat(moduleId: string, target?: { mount: string; slot: number } 
   toast(`${msg}${left ? '; the dock it left, empty now, went' : ''}. ⌘Z undoes it.`);
   // a board in a dock's other slot makes that dock reach further, and a new dock may land on another: slide the docks
   // along that rail if they now overlap
-  if (target) afterBuild((r) => {
-    const pr = r.report.panel, rail = 'mount' in target ? pr?.mounts.find((x) => x.id === target.mount)?.rail : target.rail;
-    if (!pr || !rail) return;
+  if (target) settleOverlaps((pr) => ['mount' in target ? pr.mounts.find((x) => x.id === target.mount)?.rail : target.rail], (n) => `${msg}; ${n > 1 ? `${n} docks` : 'the dock'} beside it slid along the rail to make room${left ? ', and the dock it left, empty now, went' : ''}. ⌘Z undoes it.`);
+}
+
+/**
+ * Once the rack is built again after a change by hand: where docks on a rail now overlap (a bigger board in a back
+ * slot reaches further), slide them apart along that rail, as part of the same undo step. `rails`: which rails to
+ * look at (all of them when left out); `say`: the toast, given how many docks moved.
+ */
+export function settleOverlaps(rails?: (pr: PanelReport) => (string | undefined)[], say: (n: number) => string = (n) => `${n > 1 ? `${n} docks` : 'A dock'} slid along the rail to make room, as the new board made its dock reach further. ⌘Z undoes it.`) {
+  afterBuild((r) => {
+    const pr = r.report.panel;
+    if (!pr || store.get().project?.panel.auto) return;
+    const on = rails ? rails(pr).filter((x): x is string => !!x) : pr.rails.map((x) => x.id);
     const mountOf = (id: string) => pr.mounts.find((x) => x.id === id) ?? pr.mounts.find((x) => x.id === pr.modules.find((q) => q.id === id)?.mount);
-    if (!pr.collisions.some((pair) => pair.every((id) => mountOf(id)?.rail === rail))) return;
+    if (!pr.collisions.some((pair) => pair.every((id) => { const rl = mountOf(id)?.rail; return !!rl && on.includes(rl) && rl === mountOf(pair[0])?.rail; }))) return;
     let moved: string[] = [];
-    amend((q) => { if (!q.panel.auto) moved = spreadOut(q, pr, 2, [rail]); });
-    if (moved.length) toast(`${msg}; ${moved.length > 1 ? `${moved.length} docks` : 'the dock'} beside it slid along the rail to make room${left ? ', and the dock it left, empty now, went' : ''}. ⌘Z undoes it.`);
+    amend((q) => { if (!q.panel.auto) moved = spreadOut(q, pr, 2, on); });
+    if (moved.length) toast(say(moved.length));
   });
 }
 
@@ -301,7 +311,7 @@ export function setLever(ids: string[], lever: RailMount['lever']) {
   panelEdit((p) => { for (const m of mountsOf(p, ids)) m.lever = lever; });
 }
 
-/** Copy a board and its holder settings; on a manual panel the copy gets a dock at the end of the last rail. */
+/** Copy a board and its holder settings; on a manual panel the copy goes in a free dock slot, else a new dock at the end. */
 export function duplicateModule(i: number) {
   edit((q) => {
     const src = q.modules[i];
@@ -311,8 +321,9 @@ export function duplicateModule(i: number) {
     copy.board.name = uniqueName(all, m && all.includes(m[1]) ? m[1] : src.board.name);
     q.modules.splice(i + 1, 0, copy);
     q.active = i + 1;
-    if (q.layout === 'panel' && !q.panel.auto) appendDock(q, copy.id);
+    if (q.layout === 'panel' && !q.panel.auto) seatBoard(q, copy.id);
   });
+  settleOverlaps();
 }
 
 /** Put a board in a new dock at the end of a rail. */
@@ -422,9 +433,23 @@ export function bedNote(p: Project, boards: { name: string; outline: [number, nu
   return ` ${big.length === 1 ? `${big[0].name}'s holder` : `The holders of ${big.map((b) => b.name).join(', ')}`} will not fit the ${p.printer.name} bed (${bx} × ${by} mm): a printer with a bigger bed can be picked in Export.`;
 }
 
-/** One line on where a newly added board goes. */
-export function placementNote(p: Project): string {
+/**
+ * One line on where newly added boards go. With `ids` (the boards just added, on a rack laid out by hand or built),
+ * where each one actually went: a free slot of a dock already there, or a new dock.
+ */
+export function placementNote(p: Project, ids?: string[]): string {
   if (p.layout !== 'panel') return '';
   if (p.panel.auto) return ' Auto-arrange lays out the whole rack again with it (mark the rack as built in Export to keep boards where they are).';
-  return ' It goes into an empty dock slot if one fits (nothing new to print but its holder), else the first free spot on the rails, near a board it is cabled to, else on the end of a rail, which then gets longer (Check says by how much); the rest stay put.';
+  const r = rep(), labels = mountLabels(r);
+  const spots = (ids ?? []).map((id) => {
+    const mt = p.panel.mounts.find((x) => x.slots.some((s) => s.module === id));
+    if (!mt) return null;
+    const m = p.modules.find((x) => x.id === id), other = mt.slots.find((s) => s.module && s.module !== id)?.module;
+    const known = labels.get(mt.id);
+    if (known) return `${m?.board.name ?? 'It'} went into the free slot of dock ${known}${other ? `, back to back with ${p.modules.find((x) => x.id === other)?.board.name}` : ''} (nothing new to print but its holder)`;
+    const k = p.panel.rails.findIndex((x) => x.id === mt.rail) + 1;
+    return `${m?.board.name ?? 'It'} got a new dock${k ? ` on rail ${k}` : ''}, in the first gap that fits or on the end of the rail (Check says if the rail gets longer)`;
+  }).filter(Boolean) as string[];
+  if (spots.length && spots.length <= 3) return ` ${spots.join('. ')}; the rest stay put.`;
+  return ' Each goes into a free dock slot where it docks well (nothing new to print but its holder), else a new dock in the first gap on the rails or on the end of a rail, which then gets longer (Check says by how much); the rest stay put.';
 }

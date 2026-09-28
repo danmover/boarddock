@@ -6,7 +6,7 @@ import { TEMPLATES } from '../src/model/templates';
 import { newModule, newProject } from '../src/model/library';
 import { autoLinks, numberLinks } from '../src/model/links';
 import { addAdapters, addProbes, companionLabel, fillWires, stackProbes } from '../src/model/probes';
-import { appendDock, autoAssign, bestDock, dropEmptied, nearestFree, seatCompanion, seatCompanions, shorterLever, spreadOut, tongueStress } from '../src/cad/dockplan';
+import { appendDock, seatBoard, autoAssign, bestDock, dropEmptied, nearestFree, seatCompanion, seatCompanions, shorterLever, spreadOut, tongueStress } from '../src/cad/dockplan';
 import { generatePanel } from '../src/cad/panelgen';
 import { initKernel } from '../src/cad/kernel';
 import { delta, snapshot } from '../src/model/built';
@@ -212,5 +212,22 @@ describe('racks laid out by hand or built', () => {
     const swap = d.plan.find((s) => s.kind === 'swap');
     expect(swap?.text).toMatch(/Swap Arduino Uno R3 for Arduino Mega 2560/);
     expect(swap?.parts?.length).toBeGreaterThan(0);
+  }, 120_000);
+
+  it('puts a new board on a built rack into a free dock slot before a new dock, and a hub in a dock of its own', () => {
+    const p = rack(['rpi4', 'uno']);
+    p.panel.pairs = false;
+    build(p);
+    const docks = p.panel.mounts.length;
+    const pi = newModule(T('rpi4'));
+    p.modules.push(pi);
+    const r = seatBoard(p, pi.id);
+    expect(r.where).toBe('slot');
+    expect(p.panel.mounts.length).toBe(docks);
+    expect(p.panel.mounts.find((m) => m.id === r.mount)!.slots.some((s) => s.module === pi.id)).toBe(true);
+    const hub = newModule(T('usb_hub'));
+    p.modules.push(hub);
+    expect(seatBoard(p, hub.id).where).toBe('new');
+    expect(p.panel.mounts.length).toBe(docks + 1);
   }, 120_000);
 });

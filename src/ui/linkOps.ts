@@ -77,7 +77,7 @@ function seatNote(q: Project, board: string, seats: Seated[], n: number, what: s
   const fresh = seats.find((x) => x.where === 'new');
   const near = seats.find((x) => x.where === 'near');
   const nameOf = (id?: string) => q.modules.find((m) => m.id === id)?.board.name;
-  if (!seats.length || seats.every((x) => x.where === 'home')) return { text: `${n > 1 ? ', stacked,' : ''} behind it in its dock`, fresh: undefined };
+  if (!seats.length || seats.every((x) => x.where === 'home')) return { text: `${n > 1 ? ', stacked,' : ','} behind it in its dock`, fresh: undefined };
   if (near && !fresh) return { text: `: its dock had no free slot, so ${they} went in the free slot of dock ${lab.get(near.mount) ?? ''}${near.beside ? `, behind ${nameOf(near.beside)}` : ''} on the same rail`.replace(/ +/g, ' '), fresh: undefined };
   const rail = q.panel.rails.findIndex((r) => r.id === fresh?.rail) + 1;
   return { text: `: there was no free slot behind the ${board}, so ${they} got a new dock${rail ? ` on rail ${rail}` : ''}, in the first gap that fits or on the end of the rail (which then gets longer). ${what === 'J-Link' ? 'Its ribbon' : 'Its jumper wires'} may not reach from there: Check says`, fresh };

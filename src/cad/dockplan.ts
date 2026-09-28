@@ -557,6 +557,36 @@ export function appendDock(p: Project, moduleId: string) {
   P.mounts.push({ id: uid('d'), rail: rail.id, at: null, place: 'free', kind: 'dock', turn: o.turn, slots: [{ module: moduleId, edge: o.edge }, { module: null, edge: 'auto' }] });
 }
 
+/**
+ * Put a new board on a rack laid out by hand or built: into a free slot of a dock already there when it docks well in
+ * it (the dock keeps its turn, and none of the board's plugs ends up blocked), so all there is to print is its holder;
+ * a dock beside a board it is cabled to first, then the one where its plugs are easiest to reach. Else a new dock at
+ * the end of the last rail. Boxes (hubs, chargers) and docks with a board lying flat are left out. Says which it did.
+ */
+export function seatBoard(p: Project, moduleId: string): { where: 'slot' | 'new'; mount: string } {
+  const P = p.panel, m0 = p.modules.find((x) => x.id === moduleId);
+  const fresh = () => { appendDock(p, moduleId); return { where: 'new' as const, mount: P.mounts[P.mounts.length - 1]?.id ?? '' }; };
+  if (!m0 || m0.board.kind === 'box' || m0.on) return fresh();
+  const m = withRiders(p, m0);
+  const cabled = new Set((p.links ?? []).flatMap((l) => (l.a.module === moduleId ? [l.b.module] : l.b.module === moduleId ? [l.a.module] : [])));
+  let best: { mt: RailMount; k: number; score: number } | null = null;
+  for (const mt of P.mounts) {
+    if (mt.kind !== 'dock' || mt.slots.some((s) => s.lie === 'flat')) continue;
+    const k = mt.slots.findIndex((s) => !s.module);
+    const rail = P.rails.find((r) => r.id === mt.rail);
+    if (k < 0 || !rail) continue;
+    const o = bestDock(m, rail.dir, k, [mt.turn]);
+    if (o.access.some((a) => a.ok === 'blocked')) continue;
+    // beside a board it is cabled to, its cables stay short
+    const score = o.score + (mt.slots.some((s) => s.module && cabled.has(s.module)) ? 5 : 0);
+    if (!best || score > best.score + 1e-9) best = { mt, k, score };
+  }
+  if (!best) return fresh();
+  for (const mt of P.mounts) for (const sl of mt.slots) if (sl.module === moduleId) sl.module = null;
+  best.mt.slots[best.k] = { module: moduleId, edge: 'auto' };
+  return { where: 'slot', mount: best.mt.id };
+}
+
 /** Where seatCompanion put a probe: behind its own board, in the free slot of another dock on that rail, or in a new
  * dock (the generator finds it a gap, else the end of a rail). `rail`: the rail it went on, when known. */
 export interface Seated { where: 'home' | 'near' | 'new'; mount: string; rail: string | null; beside?: string }
