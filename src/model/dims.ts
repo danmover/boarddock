@@ -1,8 +1,9 @@
-// Dimensions in the board editor, the way you measure a board with calipers: from an edge of the board (or a hole, or
-// a part) to a hole's centre or a part's side. Typing the measured value moves the thing measured to; two edges of the
-// board set its width or height. Pure: they read and change a Board.
+// Dimensions in the board editor, the way you measure a board with calipers: from an edge of the board (or a hole, a
+// part, or a corner of an odd-shaped outline) to a hole's centre, a part's side or a corner. Typing the measured value
+// moves the thing measured to; two edges of the board set its width or height. Pure: they read and change a Board.
 import type { Board, Comp, Dim, Feat, V2 } from './types';
 import { bbox, compRect } from '../geom/poly';
+import { isCorner, shapeProblem } from '../geom/shape';
 
 const compBox = (c: Comp) => { const r = compRect(c); return { x0: Math.min(...r.map((q) => q[0])), x1: Math.max(...r.map((q) => q[0])), y0: Math.min(...r.map((q) => q[1])), y1: Math.max(...r.map((q) => q[1])) }; };
 
@@ -10,6 +11,7 @@ const compBox = (c: Comp) => { const r = compRect(c); return { x0: Math.min(...r
 export function featAt(b: Board, f: Feat): { x?: number; y?: number } | null {
   if (f.k === 'edge') { const bb = bbox(b.outline); return f.at === 'x0' ? { x: bb.x0 } : f.at === 'x1' ? { x: bb.x1 } : f.at === 'y0' ? { y: bb.y0 } : f.at === 'y1' ? { y: bb.y1 } : null; }
   if (f.k === 'hole') { const h = b.holes.find((x) => x.id === f.id); return h ? { x: h.x, y: h.y } : null; }
+  if (f.k === 'corner') { const q = f.i != null ? b.outline[f.i] : undefined; return q ? { x: q[0], y: q[1] } : null; }
   const c = b.comps.find((x) => x.id === f.id);
   if (!c) return null;
   if (f.at === 'c') return { x: c.x, y: c.y };
@@ -17,7 +19,8 @@ export function featAt(b: Board, f: Feat): { x?: number; y?: number } | null {
   return f.at === 'x0' ? { x: r.x0 } : f.at === 'x1' ? { x: r.x1 } : f.at === 'y0' ? { y: r.y0 } : { y: r.y1 };
 }
 
-/** The nearest feature to a point, within tol mm: hole centres, part centres and sides, the board's edges. */
+/** The nearest feature to a point, within tol mm: hole centres, part centres and sides, the outline's corners, the
+ * board's edges. */
 export function pickFeat(b: Board, p: V2, tol: number): Feat | null {
   let best: { f: Feat; d: number } | null = null;
   const take = (f: Feat, d: number, bias = 0) => { if (d - bias < tol && (!best || d - bias < best.d)) best = { f, d: d - bias }; };
@@ -29,6 +32,8 @@ export function pickFeat(b: Board, p: V2, tol: number): Feat | null {
     if (inY) { take({ k: 'comp', id: c.id, at: 'x0' }, Math.abs(p[0] - r.x0)); take({ k: 'comp', id: c.id, at: 'x1' }, Math.abs(p[0] - r.x1)); }
     if (inX) { take({ k: 'comp', id: c.id, at: 'y0' }, Math.abs(p[1] - r.y0)); take({ k: 'comp', id: c.id, at: 'y1' }, Math.abs(p[1] - r.y1)); }
   }
+  // the outline's real corners (not the little steps of its arcs), ahead of the edges they sit on
+  b.outline.forEach((q, i) => { if (isCorner(b.outline, i)) take({ k: 'corner', i, at: 'c' }, Math.hypot(p[0] - q[0], p[1] - q[1]), tol * 0.35); });
   const bb = bbox(b.outline);
   take({ k: 'edge', at: 'x0' }, Math.abs(p[0] - bb.x0)); take({ k: 'edge', at: 'x1' }, Math.abs(p[0] - bb.x1));
   take({ k: 'edge', at: 'y0' }, Math.abs(p[1] - bb.y0)); take({ k: 'edge', at: 'y1' }, Math.abs(p[1] - bb.y1));
@@ -63,6 +68,13 @@ export function setDim(b: Board, d: Dim, value: number): boolean {
     const k = d.axis;
     if (f.k === 'hole') { const h = b.holes.find((x) => x.id === f.id); if (h) h[k] = Math.round((h[k] + by) * 100) / 100; return !!h; }
     if (f.k === 'comp') { const c = b.comps.find((x) => x.id === f.id); if (c) c[k] = Math.round((c[k] + by) * 100) / 100; return !!c; }
+    if (f.k === 'corner' && f.i != null && b.outline[f.i]) {
+      // a corner moves on its own; not if that would make the outline cross itself or a cut-out
+      const j = k === 'x' ? 0 : 1, next = b.outline.map((q, m) => (m === f.i ? (j ? [q[0], Math.round((q[1] + by) * 1e4) / 1e4] : [Math.round((q[0] + by) * 1e4) / 1e4, q[1]]) : q) as V2);
+      if (shapeProblem(next, b.cutouts)) return false;
+      b.outline = next;
+      return true;
+    }
     return false;
   };
   if (d.b.k !== 'edge') return moveFeat(d.b, delta);
@@ -143,4 +155,20 @@ export function layoutDims(b: Board, px: number, opt: { avoid?: DimBox[]; last?:
   }
   last.forEach((q) => (q.d.off != null ? hand(q) : put(q, q.anchor + gap, 0.5, true)));
   return (b.dims ?? []).map((d) => out.get(d.id)).filter(Boolean) as DimDraw[];
+}
+
+/** After the outline changed, dimensions to its corners follow them: the same corner where the number of corners stayed
+ * the same (a corner was dragged), else the corner now at the same place; one whose corner went is removed. */
+export function followCorners(b: Board, prev: V2[]) {
+  if (!b.dims?.some((d) => d.a.k === 'corner' || d.b.k === 'corner')) return;
+  const same = prev.length === b.outline.length;
+  const find = (f: Feat): Feat | null => {
+    if (f.k !== 'corner') return f;
+    if (same) return f.i != null && f.i < b.outline.length ? f : null;
+    const q = f.i != null ? prev[f.i] : undefined;
+    if (!q) return null;
+    const i = b.outline.findIndex((p) => Math.abs(p[0] - q[0]) < 1e-6 && Math.abs(p[1] - q[1]) < 1e-6);
+    return i >= 0 ? { ...f, i } : null;
+  };
+  b.dims = b.dims.flatMap((d) => { const a = find(d.a), c = find(d.b); return a && c ? [{ ...d, a, b: c }] : []; });
 }
