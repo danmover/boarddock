@@ -60,6 +60,7 @@ interface Ctx {
   pos: MF[]; // added to the holder
   neg: MF[]; // cut from the holder
   late: MF[]; // added after the cuts (cradles etc. carry their own cuts)
+  hard: MF[]; // cut from everything, late parts too: space a mechanism needs (the release rod's tunnel)
   keep: CS[]; // zones the base pattern must avoid
   blocked: { poly: Loop; why: string }[]; // wall stretches used by openings/features (tabs and labels avoid them)
   parts: PartOut[];
@@ -67,6 +68,7 @@ interface Ctx {
   standoffs: { x: number; y: number; r: number }[];
   keepouts: { rect: Loop; need: number; why: string }[];
   dock: DockSite | null;
+  ear?: EarSite | null; // lying flat: where the dock's ear is
   mid: string; // module id
   frame: boolean; // frame style: rim, corner guards and ribs instead of a full base and wall
   rimH: number; // frame rim height
@@ -252,7 +254,7 @@ function build(job: Job): ModuleOut {
   const inner = O.offset(H.gap, 'Round');
   const outer = O.offset(H.gap + H.wall, 'Round');
   const frame = (H.style ?? 'frame') === 'frame';
-  const C: Ctx = { p, job, H, b, base, s, zb, zt, zw, O, inner, outer, warnings, checks, pos: [], neg: [], late: [], keep: [], blocked: [], parts: [], ghosts: [], standoffs: [], keepouts, dock: site,
+  const C: Ctx = { p, job, H, b, base, s, zb, zt, zw, O, inner, outer, warnings, checks, pos: [], neg: [], late: [], hard: [], keep: [], blocked: [], parts: [], ghosts: [], standoffs: [], keepouts, dock: site, ear,
     mid: p.modules[job.mi]?.id ?? `m${job.mi}`, frame, rimH: Math.min(zb - 0.3, base + 1.2), ribNodes: [], features: [], plugs: [] };
   checks.push({ group: 'Board', name: 'Clearance under the board', value: `${round(s, 1)} mm`, status: 'info', detail: needMax ? `tallest underside item needs ${round(needMax, 1)} mm (${keepouts.sort((a, c) => c.need - a.need)[0].why}); deeper items get pockets in the base` : 'nothing under the board' });
 
@@ -311,6 +313,8 @@ function build(job: Job): ModuleOut {
   let holder = unionMF(C.pos);
   if (C.neg.length) holder = holder.subtract(unionMF(C.neg));
   if (C.late.length) holder = unionMF([holder, ...C.late]);
+  // nothing added late (a tie anchor, a tower's arm) may fill the release rod's tunnel
+  if (C.hard.length) holder = holder.subtract(unionMF(C.hard));
   const pieces = holder.decompose();
   if (pieces.length > 1) {
     // keep the main body, report stray islands (can happen with odd user geometry)
@@ -716,16 +720,23 @@ function tieAnchor(C: Ctx, at: V2, edgeConn: { d: V2; half: number; sEdge: numbe
     q = pick;
     n = edgeConn.d;
   } else {
+    // (a plug from above: the nearest stretch of wall, but not by the dock's edge, beside a flat dock's ear or where
+    // something else already is, and not so far off that the cable would reach it the long way round)
+    const free = (pt: V2) => (!C.dock || C.dock.L0 - (pt[0] * C.dock.n[0] + pt[1] * C.dock.n[1]) > 9)
+      && (!C.ear || C.ear.L0 - (pt[0] * C.ear.n[0] + pt[1] * C.ear.n[1]) > 9 || Math.abs(pt[0] * C.ear.e[0] + pt[1] * C.ear.e[1] - C.ear.tc) > EAR.hx + 6)
+      && !C.blocked.some((bl) => inside(pt, bl.poly));
     let best = { d: Infinity, q: at as V2, n: [0, -1] as V2 };
     for (let i = 0; i < b.outline.length; i++) {
       const a = b.outline[i], c = b.outline[(i + 1) % b.outline.length];
-      const dx = c[0] - a[0], dy = c[1] - a[1], L2 = dx * dx + dy * dy || 1;
-      const tt = Math.max(0, Math.min(1, ((at[0] - a[0]) * dx + (at[1] - a[1]) * dy) / L2));
-      const pq: V2 = [a[0] + tt * dx, a[1] + tt * dy];
-      const dd = Math.hypot(pq[0] - at[0], pq[1] - at[1]);
-      const L = Math.sqrt(L2);
-      if (dd < best.d) best = { d: dd, q: pq, n: [dy / L, -dx / L] };
+      const dx = c[0] - a[0], dy = c[1] - a[1], L2 = dx * dx + dy * dy || 1, L = Math.sqrt(L2);
+      for (let k = 0; k <= Math.ceil(L); k++) {
+        const tt = Math.min(1, k / Math.max(1, L));
+        const pq: V2 = [a[0] + tt * dx, a[1] + tt * dy];
+        const dd = Math.hypot(pq[0] - at[0], pq[1] - at[1]);
+        if (dd < best.d && free(pq)) best = { d: dd, q: pq, n: [dy / L, -dx / L] };
+      }
     }
+    if (best.d > 40) return; // nowhere near: the plug does without one
     q = best.q;
     n = best.n;
   }
@@ -1749,7 +1760,9 @@ function arrangeFeatures(C: Ctx) {
       const d: V2 = [cen[0] - q[0], cen[1] - q[1]];
       const L = Math.hypot(d[0], d[1]) || 1;
       const u: V2 = [d[0] / L, d[1] / L];
-      const arm = orientedBox(q, u, 0, L, -2.5, 2.5, 0, Math.min(C.zw, 6)).subtract(ext(C.inner, -1, 100));
+      // (and clear of the peg socket: the arm starts at the tower's middle, over the socket)
+      let arm = orientedBox(q, u, 0, L, -2.5, 2.5, 0, Math.min(C.zw, 6)).subtract(ext(C.inner, -1, 100));
+      if (socket) arm = arm.subtract(pegSocket(q));
       C.late.push(tw, arm);
       C.blocked.push({ poly: orientedRect(q, u, -4, 8, -5, 5), why: 'tower' });
       feat(C, 'tower', [[q[0] - 3.5, q[1] - 3.5], [q[0] + 3.5, q[1] + 3.5]], 0, height + (peg ? 4 : 0));
@@ -1794,6 +1807,7 @@ function dockFeatures(C: Ctx, s: DockSite) {
   // drops in past it from above)
   C.pos.push(f.add.transform(D as any).subtract(ext(C.inner, C.zb - 0.2, C.zt + 60)));
   C.neg.push(f.cut.transform(D as any));
+  C.hard.push(f.tunnel.transform(D as any));
   C.keep.push(poly(tsPoly(s, s.tc - HD.spineHx - 1.2, s.tc + HD.spineHx + 1.2, -1, s.far + 1)), poly(tsPoly(s, s.tc - HD.base.hx - 1.2, s.tc + HD.base.hx + 1.2, -1, s.ped + 1.5)));
   const r = rod(f.zg1, s.side);
   C.parts.push(part('rod', 'Release rod + button', r.m.transform(D as any), ID, '#ff5d6c', 1, { kind: 'rod', module: C.mid }, { seq: 3.5, dir: [-s.n[0], -s.n[1], 0] }));
@@ -1828,6 +1842,7 @@ function earFeatures(C: Ctx, s: EarSite) {
   const f = flatHolderDock(EAR.len + s.inset + H.wall * 0.7, C.job.dock?.fit ?? 0);
   C.pos.push(f.add.transform(D as any));
   C.neg.push(f.cut.transform(D as any));
+  C.hard.push(f.cut.transform(D as any)); // (the key's dovetail groove and the rod's tunnel)
   // the key and the rod print lying down as a standing holder's tongue and rod do (socket y up): the tongue flat, its
   // layers along it; the dovetail and the tunnel stand straight up; the rod on its side
   const PR = inv(dockFrame('bottom', 0, 0)), toHolder = mul(D, dockFrame('bottom', 0, 0));

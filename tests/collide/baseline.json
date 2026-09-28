@@ -2,10 +2,6 @@
  "racks": {
   "L-shaped board": {
    "cats": {
-    "holder-holder": [
-     4.9,
-     0.7
-    ],
     "holder-board": [
      0.3,
      0.45
@@ -353,17 +349,13 @@
   },
   "example_dual_swd standing": {
    "cats": {
-    "holder-holder": [
-     31.5,
-     2.2
-    ],
     "holder-board": [
-     0.6,
+     0.3,
      0.45
     ],
     "rail/stand": [
      0.8,
-     6.4
+     1
     ]
    },
    "issues": []
@@ -401,10 +393,6 @@
   },
   "example_jtag standing": {
    "cats": {
-    "holder-holder": [
-     30.1,
-     1.1
-    ],
     "holder-board": [
      0,
      0.05
@@ -507,28 +495,24 @@
   "laid out by hand, then changed": {
    "cats": {
     "holder-holder": [
-     195.4,
-     2.7
+     0.1,
+     0.55
     ],
     "holder-board": [
-     5,
-     0.6
+     0.4,
+     0.45
     ],
     "holder-plug": [
      8,
      0.5
     ],
-    "cap/cradle-plug": [
-     97.8,
-     2.89
-    ],
     "cable-cable": [
-     0,
-     0.5
+     1.7,
+     1.12
     ],
-    "cable-stand/rail": [
-     0,
-     0.17
+    "tag": [
+     12.8,
+     1.71
     ],
     "rail/stand": [
      2.5,
@@ -938,11 +922,11 @@
   "probes and adapters": {
    "cats": {
     "holder-holder": [
-     345.4,
-     4
+     7.6,
+     1.68
     ],
     "holder-board": [
-     1.2,
+     0.9,
      0.45
     ],
     "holder-plug": [
@@ -954,12 +938,12 @@
      3.5
     ],
     "cable-cable": [
-     1.2,
-     1.52
+     1.6,
+     1.14
     ],
     "tag": [
-     50.7,
-     2.38
+     104.6,
+     3.01
     ],
     "rail/stand": [
      1.7,
@@ -1328,8 +1312,8 @@
   "stacks": {
    "cats": {
     "holder-holder": [
-     98.2,
-     4
+     4.6,
+     2.48
     ],
     "holder-board": [
      42.6,

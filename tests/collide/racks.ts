@@ -144,7 +144,8 @@ const together: Rack[] = [
       freeze(p);
       const [pi, uno, mega, , esp] = p.modules;
       // lay a board flat, dock one by another edge, turn a dock, swap a dock's front and back
-      const a = mountOf(p, mega.id); a.slots[a.slots.findIndex((s) => s.module === mega.id)] = { module: mega.id, edge: 'left', lie: 'flat' };
+      // (lying flat, the edge is BoardDock's pick, as with the toggle: every edge of a Mega has plugs or headers)
+      const a = mountOf(p, mega.id); a.slots[a.slots.findIndex((s) => s.module === mega.id)] = { module: mega.id, edge: 'auto', lie: 'flat' };
       const b = mountOf(p, uno.id); const kb = b.slots.findIndex((s) => s.module === uno.id); b.slots[kb] = { ...b.slots[kb], edge: (b.slots[kb].edge === 'bottom' ? 'right' : 'bottom') as EdgeName };
       const c = mountOf(p, esp.id); c.turn = ((c.turn + 90) % 360) as 0 | 90 | 180 | 270;
       const d = mountOf(p, pi.id); while (d.slots.length < 2) d.slots.push({ module: null, edge: 'auto' }); d.slots.reverse();

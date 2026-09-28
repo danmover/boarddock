@@ -230,11 +230,12 @@ export function holderDock(far: number, pedestal: number, side = 0, fit = 0) {
     // grip bar: rounded, with a shallow finger scoop in the face the fingers pull on (matches the button's dish)
     extXZ(roundCS(rect2(g0, zg0, g1, zg1), 1.2).subtract(circle2((g0 + g1) / 2, zg0 - ((g1 - g0) ** 2 / 4 + 0.64) / 1.6 + 0.8, ((g1 - g0) ** 2 / 4 + 0.64) / 1.6, 256)), HD.backY, spineY1),
   ]);
+  const tunnel = box(-HD.tunnelHx, HD.tunnelY[0], -0.2, HD.tunnelHx, HD.tunnelY[1], zg1 + 0.2); // release-rod tunnel
   const cut = unionMF([
-    box(-HD.tunnelHx, HD.tunnelY[0], -0.2, HD.tunnelHx, HD.tunnelY[1], zg1 + 0.2), // release-rod tunnel
+    tunnel,
     box(-HD.voidHx, HD.backY - 0.1, Math.max(HD.base.t, pedestal) + 1.5, HD.voidHx, HD.voidY1, zg0 - 1.5), // back channel (saves filament)
   ]);
-  return { add, cut, zg0, zg1 };
+  return { add, cut, tunnel, zg0, zg1 };
 }
 
 /**
@@ -257,7 +258,7 @@ export function flatHolderDock(reach: number, fit = 0) {
     extXZ(rect2(-HD.base.hx, 0, HD.base.hx, EAR.ped), HD.backY, HD.base.y1), // pedestal on the socket top
     extXZ(dove(0), HD.backY, HD.base.y1),
   ]).subtract(tunnel);
-  return { add: ear, cut, key, top };
+  return { add: ear, cut, tunnel, key, top };
 }
 
 /** Release rod with its button head, socket-local (rest position). */
