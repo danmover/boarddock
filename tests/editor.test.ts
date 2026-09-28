@@ -2,7 +2,7 @@
 // demo boards and a drawn board.
 import { describe, it, expect } from 'vitest';
 import { TEMPLATES } from '../src/model/templates';
-import { layoutDims, type DimBox } from '../src/model/dims';
+import { layoutDims, lineMates, setDim, type DimBox } from '../src/model/dims';
 import { boardCopper, partPins } from '../src/model/copper';
 import { alignPhoto, fitPhoto, scalePhoto, snapBox, snapLines } from '../src/model/editorgeo';
 import { PALETTE, demoBoard, paletteFor } from '../src/model/palette';
@@ -61,6 +61,23 @@ describe('dimension layout', () => {
     const b = pi();
     b.dims!.push({ id: 'dx', a: { k: 'edge', at: 'x0' }, b: { k: 'comp', id: 'nope', at: 'c' }, axis: 'x' } as Dim);
     expect(layoutDims(b, 0.1).map((q) => q.id)).not.toContain('dx');
+  });
+});
+
+describe('measuring a hole of a pattern', () => {
+  it('can take the holes in line with it along, so the pattern stays square', () => {
+    const b = T('rpi4'), [h0, h1, h2, h3] = b.holes; // (3.5,3.5) (61.5,3.5) (3.5,52.5) (61.5,52.5)
+    const d: Dim = { id: 'dx', a: { k: 'hole', id: h0.id, at: 'c' }, b: { k: 'hole', id: h1.id, at: 'c' }, axis: 'x' };
+    expect(lineMates(b, d)).toEqual([h3.id]);
+    const one = structuredClone(b);
+    setDim(one, d, 60);
+    expect(one.holes[1].x).toBeCloseTo(63.5, 6);
+    expect(one.holes[3].x).toBeCloseTo(61.5, 6); // alone: only the measured hole
+    setDim(b, d, 60, true);
+    expect(b.holes[1].x).toBeCloseTo(63.5, 6);
+    expect(b.holes[3].x).toBeCloseTo(63.5, 6); // together: its column too
+    expect(b.holes[2].x).toBeCloseTo(3.5, 6);
+    void h2;
   });
 });
 

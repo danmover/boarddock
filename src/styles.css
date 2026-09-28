@@ -1079,3 +1079,4 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 .bcheck li.bad .bcheck-text::before { content: "● "; color: var(--bad); }
 .bcheck li.warn .bcheck-text::before { content: "● "; color: var(--warn); }
 .bcheck .linkbtn { background: none; border: 0; padding: 0; color: var(--accent); font: inherit; font-size: 12px; cursor: pointer; }
+.dimedit-mates { display: flex; gap: 6px; align-items: center; font-size: 11.5px; color: var(--muted); margin-top: 4px; }

@@ -60,21 +60,38 @@ export function measure(b: Board, d: Dim): number | null {
 
 /** Make a dimension read `value`: move what it measures to (the second feature, or the first if the second is the
  * board's edge); two edges of the board stretch the board. Mutates the board; false if nothing can move. */
-export function setDim(b: Board, d: Dim, value: number): boolean {
-  const ok = applyDim(b, d, value);
+/**
+ * The holes in line with the hole a dimension moves (the same distance along its axis: the rest of its column or
+ * row in a pattern), which can move with it so the pattern stays square.
+ */
+export function lineMates(b: Board, d: Dim): string[] {
+  const moving = d.b.k !== 'edge' ? d.b : d.a.k !== 'edge' ? d.a : null, fixed = moving === d.b ? d.a : d.b;
+  if (!moving || moving.k !== 'hole') return [];
+  const h = b.holes.find((x) => x.id === moving.id);
+  if (!h) return [];
+  return b.holes.filter((x) => x.id !== h.id && !(fixed.k === 'hole' && fixed.id === x.id) && Math.abs(x[d.axis] - h[d.axis]) < 0.3).map((x) => x.id);
+}
+
+export function setDim(b: Board, d: Dim, value: number, together = false): boolean {
+  const mates = together ? lineMates(b, d) : [];
+  const ok = applyDim(b, d, value, mates);
   // a box's port (or its size) set with a dimension is written into the box, so the next layout keeps it
   if (ok) boxFromEdits(b);
   return ok;
 }
 
-function applyDim(b: Board, d: Dim, value: number): boolean {
+function applyDim(b: Board, d: Dim, value: number, mates: string[] = []): boolean {
   const pa = featAt(b, d.a), pc = featAt(b, d.b);
   const va = pa?.[d.axis], vc = pc?.[d.axis];
   if (va == null || vc == null || !(value >= 0)) return false;
   const sgn = vc - va < 0 ? -1 : 1, delta = sgn * value - (vc - va);
   const moveFeat = (f: Feat, by: number) => {
     const k = d.axis;
-    if (f.k === 'hole') { const h = b.holes.find((x) => x.id === f.id); if (h) h[k] = Math.round((h[k] + by) * 100) / 100; return !!h; }
+    if (f.k === 'hole') {
+      const h = b.holes.find((x) => x.id === f.id);
+      for (const x of b.holes) if (x === h || mates.includes(x.id)) x[k] = Math.round((x[k] + by) * 100) / 100;
+      return !!h;
+    }
     if (f.k === 'comp') { const c = b.comps.find((x) => x.id === f.id); if (c) c[k] = Math.round((c[k] + by) * 100) / 100; return !!c; }
     if (f.k === 'corner' && f.i != null && b.outline[f.i]) {
       // a corner moves on its own; not if that would make the outline cross itself or a cut-out
