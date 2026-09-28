@@ -348,6 +348,7 @@ canvas.heat { width: 100%; max-height: 420px; object-fit: contain; border-radius
 .selbar b { font-size: 12px; color: var(--accent); margin: 0 6px 0 4px; }
 .editor .hud { position: absolute; bottom: 12px; left: 12px; right: 12px; font-size: 11.3px; color: var(--muted); padding: 6px 11px; display: flex; justify-content: space-between; gap: 12px; }
 .editor .hud .xy { color: var(--accent); }
+.editor .placebar { position: absolute; left: 50%; bottom: 52px; transform: translateX(-50%); z-index: 6; display: flex; align-items: center; gap: 10px; padding: 6px 8px 6px 12px; font-size: 12.5px; white-space: nowrap; max-width: calc(100% - 16px); }
 .editor .legend2 { position: absolute; bottom: 52px; left: 12px; padding: 6px 10px; display: flex; gap: 12px; flex-wrap: wrap; font-size: 11.5px; color: var(--muted); z-index: 5; }
 .editor .legend2 i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
 .empty-note { position: absolute; inset: 0; display: grid; place-items: center; color: var(--subtle); font-size: 13px; pointer-events: none; }
@@ -360,6 +361,14 @@ canvas.heat { width: 100%; max-height: 420px; object-fit: contain; border-radius
 .bigstat div { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 8px 10px; }
 .bigstat b { display: block; font-family: var(--mono); font-size: 17px; font-weight: 600; letter-spacing: -0.5px; }
 .bigstat span { font-size: 11px; color: var(--subtle); }
+/* Check: the tiles are filters */
+.bigstat.tiles button { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 8px 10px; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+.bigstat.tiles button:hover { border-color: var(--line-2); }
+.linkbtn { background: none; border: 0; padding: 0 2px; color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.bigstat.tiles button.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.reminders { border: 1px solid var(--line); border-radius: var(--r); padding: 8px 11px; margin: 0 0 10px; font-size: 12.3px; }
+.reminders summary { cursor: pointer; color: var(--muted); }
+.reminders .checkrow { margin-top: 6px; }
 
 .swatches { display: flex; gap: 7px; flex-wrap: wrap; }
 .swatches button { width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--line-2); cursor: pointer; box-shadow: inset 0 -3px 6px rgba(0, 0, 0, 0.25); transition: border-color 0.12s, box-shadow 0.12s, transform 0.08s; }
@@ -581,6 +590,15 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
   .stats { display: none; }
   .stage .tools { top: 56px; right: 8px; max-width: calc(100% - 16px); }
   .brand .word { display: none; }
+  /* Start on a phone: the library is the page, not a box inside the 3D view's strip; the side panel follows it */
+  .main:has(.stage > .start) { grid-template-rows: auto max-content; }
+  .stage:has(> .start) { overflow: visible; }
+  .stage > .start { position: static; overflow: visible; }
+  .nophone { display: none; }
+  /* the view tabs stay on one line (they scroll sideways), and the editors' toolbars sit below them, not on them */
+  .stage .tabs .seg { flex-wrap: nowrap; }
+  .stage .tabs .seg button { flex: none; }
+  .howto-steps[open] summary { display: block; }
 }
 
 /* box editor */
@@ -779,6 +797,7 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 .bnum.on { background: var(--accent); border-color: var(--accent); color: #fff; }
 
 .editor.wiring .toolbar { top: 58px; }
+.editor.wiring .wlabel { fill: var(--muted); paint-order: stroke; stroke: var(--viewer); stroke-width: 3px; pointer-events: none; }
 .tsel2 { width: auto !important; height: 28px !important; font-size: 12.5px !important; padding: 0 22px 0 8px !important; background-position: right 6px center !important; border: none !important; background-color: transparent !important; }
 .wfind { width: 130px; height: 28px !important; font-size: 12px !important; padding: 0 8px !important; }
 
@@ -858,6 +877,8 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 .start-draw-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 .start-help { margin-top: 26px; color: var(--muted); font-size: 12.5px; }
 .start-help summary { cursor: pointer; font-weight: 650; color: var(--fg); }
+.howto-steps summary { cursor: pointer; font-size: 12.5px; color: var(--muted); margin-bottom: 8px; }
+.howto-steps[open] summary { display: none; }
 .howto .steps4 { list-style: none; margin: 0 0 12px; padding: 0; counter-reset: s; display: flex; flex-direction: column; gap: 8px; }
 .howto .steps4 li { counter-increment: s; display: grid; grid-template-columns: 28px 1fr; gap: 2px 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); }
 .howto .steps4 li::before { content: counter(s); grid-row: span 2; width: 26px; height: 26px; border-radius: 99px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); font-weight: 700; font-family: var(--mono); font-size: 12px; }
@@ -1107,3 +1128,27 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 .modecmp tbody th { font-weight: 600; white-space: nowrap; }
 .modecmp tr.on th, .modecmp tr.on td { color: var(--accent); }
 .modecmp td.hint { margin: 0; color: var(--subtle); }
+
+/* phones: the ⋯ menu in the top bar */
+.phonemenu { display: none; position: relative; }
+.phonemenu summary { list-style: none; display: grid; place-items: center; font-size: 18px; line-height: 1; cursor: pointer; }
+.phonemenu summary::-webkit-details-marker { display: none; }
+.phonemenu-list { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; display: flex; flex-direction: column; min-width: 200px; padding: 4px; }
+.phonemenu-list button { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 10px; background: none; border: 0; border-radius: var(--r); color: var(--fg); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.phonemenu-list button:hover:not(:disabled) { background: var(--surface-3); }
+.phonemenu-list button:disabled { opacity: 0.45; }
+.phonemenu-list svg { width: 16px; height: 16px; flex: none; }
+.phonemenu-list button { white-space: nowrap; }
+@media (max-width: 860px) { .phonemenu { display: block; } .app:not(.empty) .acts > .iconbtn[title='Light / dark'] { display: none; } }
+
+/* phones: the editors' toolbars sit below the view tabs, not on them */
+@media (max-width: 860px) { .editor .toolbar, .board-editor .toolbar { top: 54px; } .editor.wiring .toolbar { top: 58px; } }
+
+/* fingers, not a mouse: bigger targets for the small buttons */
+@media (pointer: coarse) {
+  .bchip, .tbtn, .btn.small, .stepper button, .iconbtn { min-height: 40px; }
+  .bchip { height: auto; }
+  /* no hover on a touch screen: the tiles' + shows all the time */
+  .ltile-qty { opacity: 1; }
+  .ltile-qty .qbtn { min-width: 34px; min-height: 34px; }
+}

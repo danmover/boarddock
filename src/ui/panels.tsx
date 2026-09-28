@@ -22,11 +22,13 @@ import type { ClipFeaResult } from '../fea/clipfea';
 import { clipDims } from '../cad/dinclip';
 import { RackBuilder } from './RackBuilder';
 import { duplicateModule, markBuilt, unmarkBuilt } from './panelOps';
+import { removeItems } from './pickOps';
 import { delta, partsFor, type Delta } from '../model/built';
 import { baseOf as stackBase, ridersOf } from '../model/holes';
 import { DockFeaSection } from './DockFea';
 import { mainsBudget, mainsText, powerBudget, powerText } from '../model/power';
 import { saveBoard } from '../model/myboards';
+import { ackNote, summarizeChecks } from '../model/checkSummary';
 import { boardSig, useKeptPicture } from './pics';
 import { paletteFor } from '../model/palette';
 import { PartPic } from './Toolbox';
@@ -45,14 +47,18 @@ export function ImportPanel() {
   const view = useApp((s) => s.view);
   if (!hasProject) return (
     <div className="howto">
+      {/* on a phone the four steps fold away under the library, which is what you came for */}
+      <details className="howto-steps" open={!window.matchMedia?.('(max-width: 860px)').matches}>
+      <summary>How it works, in four steps</summary>
       <ol className="steps4">
         <li><b>Bring your boards in</b><span>Drop their design files, pick them from the library, or draw one: in the middle of the window.</span></li>
         <li><b>Check each board</b><span>Its plugs, holes and tall parts, in the board editor with a toolbox of parts.</span></li>
         <li><b>Cables and rails</b><span>Auto-connect wires them up; every board docks on a DIN rail with its plugs reachable.</span></li>
         <li><b>Print and build</b><span>Plates to print, cables to buy, and the assembly step by step.</span></li>
       </ol>
-      <p className="hint"><b>You need</b> a 3D printer and a length of DIN rail (the 35 mm metal strip from electrical cabinets, a few dollars a metre, cut with a hacksaw), or pick <b>Loose holders</b> in the Rails step and skip the rail.</p>
-      <p className="hint">Press <kbd>?</kbd> any time for the keyboard shortcuts. Files never leave your computer.</p>
+      </details>
+      <p className="hint"><b>You need</b> a 3D printer and a length of DIN rail (TS35 top-hat: the 35 mm metal strip from electrical cabinets, a few dollars a metre, cut with a hacksaw), or pick <b>Loose holders</b> in the Rails step and skip the rail.</p>
+      <p className="hint"><span className="nophone">Press <kbd>?</kbd> any time for the keyboard shortcuts. </span>Files never leave your computer.</p>
     </div>
   );
   return (
@@ -91,7 +97,8 @@ function RackSummary() {
   const res = useApp((s) => s.result);
   const d = res ? delta(p, res) : null;
   const rails = res?.report.panel?.rails.length ?? 0;
-  const nl = (p.links ?? []).length, warn = res?.report.warnings.length ?? 0;
+  const sum = summarizeChecks(p, res?.report);
+  const nl = (p.links ?? []).length, bad = sum.failing.length, warn = sum.nLook;
   const plugs = p.modules.reduce((a, m) => a + m.board.comps.filter((c) => c.conn).length, 0);
   const when = p.built ? new Date(p.built.at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : null;
   const s = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
@@ -100,7 +107,7 @@ function RackSummary() {
     { step: 'board', label: 'Boards', state: `${rackCount(p)}, ${s(plugs, 'plug')}`, done: p.modules.length > 0 },
     { step: 'plugs', label: 'Cables', state: nl ? s(nl, 'cable') : 'none wired yet', done: nl > 0 },
     { step: 'mount', label: 'Rails', state: p.layout === 'panel' ? (rails ? `on ${s(rails, 'rail')}` : 'laying out…') : 'loose holders', done: p.layout !== 'panel' || rails > 0 },
-    { step: 'check', label: 'Check', state: warn ? s(warn, 'note') : 'nothing to look at', done: !warn, tone: warn ? 'warn' : undefined },
+    { step: 'check', label: 'Check', state: bad ? `${bad} failing${warn ? `, ${warn} to look at` : ''}` : warn ? `${warn} to look at` : 'nothing to look at', done: !bad && !warn, tone: bad || warn ? 'warn' : undefined },
     { step: 'export', label: 'Print', state: p.built ? (d?.any ? `What's new: ${s(d.plan.length, 'step')}, ${s(d.parts.reduce((a, x) => a + x.qty, 0), 'part')} to print` : `built ${when}`) : 'not printed yet', done: !!p.built && !d?.any },
   ];
   return (
@@ -250,7 +257,12 @@ export function BoardPanel() {
     if (picked && tab !== 'sel') { back.current = tab; setTab('sel'); }
     else if (!picked && tab === 'sel') setTab(back.current);
   }, [picked]);
-  useEffect(() => { setTab(box ? 'box' : 'parts'); back.current = box ? 'box' : 'parts'; }, [m.id]);
+  // another board: the same tab when it has one (Headers, Holes), else its first
+  useEffect(() => {
+    const t = back.current, has = t === 'board' || (box ? t === 'box' : t === 'parts' || t === 'holes') || (t === 'headers' && debugHeaders(b).length + uartHeaders(b).length > 0);
+    const next = has ? t : box ? 'box' : 'parts';
+    setTab(next); back.current = next;
+  }, [m.id]);
   const nHeaders = debugHeaders(b).length + uartHeaders(b).length;
   const shown = b.comps.filter((c) => !c.hidden);
   const tabs: [BTab, string, number | null][] = [
@@ -307,8 +319,11 @@ function BoardCard() {
         <button className="btn small" onClick={() => { const ok = saveBoard(b); toast(ok ? `Saved ${b.name} to My boards: the library lists it for any rack.` : 'This browser would not store it (private window, or storage full).'); }} title="Keep this board to add again to any rack">Save to My boards</button>
         {!box && <NewVersionButton moduleId={m.id} small />}
         {p.modules.length > 1 && <button className="btn small" onClick={() => store.set({ addSheet: true, replaceMode: true })} title="Pick another board from the library (or its files) to take this one's place: its dock, stack, holder settings and the cables to plugs it also has stay">Replace with…</button>}
+        {p.modules.length > 1 && <button className="btn small ghost" onClick={() => removeItems([{ kind: 'module', id: m.id }])} title="Take this board out of the rack (Undo brings it back)"><Icon d={I.trash} /> Remove</button>}
       </div>
-      {b.notes.length > 0 && <div className="warns">{b.notes.map((n, i) => <div key={i}>{n}</div>)}</div>}
+      {b.notes.some((n) => !b.ack?.includes(n)) && <div className="warns">{b.notes.filter((n) => !b.ack?.includes(n)).map((n, i) => (
+        <div key={i}>{n} <button className="linkbtn" title="Tick it off once you've done it" onClick={() => edit((q) => ackNote(q, [m.id], n))}>Done</button></div>
+      ))}</div>}
     </div>
   );
 }
@@ -1039,11 +1054,23 @@ export function CheckPanel() {
   const [feaBusy, setFeaBusy] = useState<string | null>(null);
   const [feaErr, setFeaErr] = useState<string | null>(null);
   const [fine, setFine] = useState(false);
+  // the tiles filter the list: every check, only passing, only the ones to look at (failing ones always show on top)
+  const [only, setOnly] = useState<'all' | 'ok' | 'warn' | 'bad'>('all');
+  const sum = useMemo(() => summarizeChecks(p, res?.report), [p, res]);
   const groups = useMemo(() => {
     const g = new Map<string, NonNullable<typeof res>['report']['checks']>();
-    for (const c of res?.report.checks ?? []) (g.get(c.group) ?? g.set(c.group, []).get(c.group)!).push(c);
+    for (const c of res?.report.checks ?? []) {
+      if (c.status === 'bad' || (only !== 'all' && c.status !== only)) continue;
+      (g.get(c.group) ?? g.set(c.group, []).get(c.group)!).push(c);
+    }
     return [...g.entries()];
-  }, [res]);
+  }, [res, only]);
+  const tile = (k: 'ok' | 'warn' | 'bad', n: number, color: string, label: string) => (
+    <button className={only === k ? 'on' : ''} aria-pressed={only === k} onClick={() => setOnly(only === k ? 'all' : k)} title={only === k ? 'Show every check' : `Show only the checks ${label}`}>
+      <b style={{ color }}>{n}</b><span>{label}</span>
+    </button>
+  );
+  const show = (module?: string) => { if (!module) return; select([{ kind: 'module', id: module }]); store.set({ view: 'assembly' }); };
   const mat = MATERIALS[activeModule(p).holder.material];
   const run = async () => {
     setFeaErr(null);
@@ -1059,19 +1086,36 @@ export function CheckPanel() {
   };
   return (
     <div>
-      <div className="bigstat">
-        <div><b style={{ color: 'var(--good)' }}>{res?.report.checks.filter((c) => c.status === 'ok').length ?? 0}</b><span>passing</span></div>
-        <div><b style={{ color: 'var(--warn)' }}>{(res?.report.checks.filter((c) => c.status === 'warn').length ?? 0) + (res?.report.warnings.length ?? 0)}</b><span>to look at</span></div>
-        <div><b style={{ color: 'var(--bad)' }}>{res?.report.checks.filter((c) => c.status === 'bad').length ?? 0}</b><span>failing</span></div>
+      <div className="bigstat tiles">
+        {tile('ok', sum.passing.length, 'var(--good)', 'passing')}
+        {tile('warn', sum.nLook, 'var(--warn)', 'to look at')}
+        {tile('bad', sum.failing.length, 'var(--bad)', 'failing')}
       </div>
-      {res?.report.warnings.length ? <div className="warns">{res.report.warnings.map((w, i) => <div key={i}>{w}</div>)}</div> : null}
-      {groups.map(([g, list]) => (
+      {sum.failing.length > 0 && (
+        <Section title="Failing">
+          {sum.failing.map((c, i) => (
+            <div key={i} className="checkrow"><div className="grow">{c.name}<div className="hint">{c.group}{c.detail ? ` · ${c.detail}` : ''}</div>{c.module && <button className="btn small ghost" style={{ marginTop: 4 }} onClick={() => show(c.module)}><Icon d={I.cube} /> Show in 3D</button>}</div><Chip status={c.status}>{c.value}</Chip></div>
+          ))}
+        </Section>
+      )}
+      {only !== 'ok' && sum.warnings.length > 0 && <div className="warns">{sum.warnings.map((w, i) => <div key={i}>{w}</div>)}</div>}
+      {only === 'bad' && !sum.failing.length && <p className="hint">Nothing is failing.</p>}
+      {only !== 'bad' && groups.map(([g, list]) => (
         <Section key={g} title={g}>
           {list.map((c, i) => (
             <div key={i} className="checkrow"><div className="grow">{c.name}{c.detail && <div className="hint">{c.detail}</div>}</div><Chip status={c.status}>{c.value}</Chip></div>
           ))}
         </Section>
       ))}
+      {sum.reminders.length > 0 && (
+        <details className="reminders">
+          <summary>{sum.reminders.length} reminder{sum.reminders.length === 1 ? '' : 's'} from the boards' templates</summary>
+          {sum.reminders.map((r, i) => (
+            <div key={i} className="checkrow"><div className="grow hint" style={{ marginTop: 0 }}>{r.text}</div>
+              <button className="btn small" title="Tick it off once you've done it: it stops showing here" onClick={() => edit((q) => ackNote(q, r.modules, r.note))}><Icon d={I.check} /> Done</button></div>
+          ))}
+        </details>
+      )}
       <p className="hint">Hand calculations for every spring and snap, plus finite-element models of the clips. Linear and idealised: print the test-fit kit before a batch.</p>
       <PrintCheckSection />
       {p.layout === 'panel' && <DockFeaSection />}
@@ -1380,7 +1424,7 @@ function shopping(p: Project, res: Res, d: Delta | null, tot: { g: number; m: nu
     ...d.spareCables.map((c) => `Cable ${c.no != null ? `#${c.no} ` : ''}(${c.a} to ${c.b}) is no longer used`),
   ] });
   const rails = d ? d.rails.map((r) => r.length) : (res.report.panel?.rails ?? []).map((r) => r.length);
-  if (rails.length) out.push({ head: 'Rails', items: count(rails.map((l) => `TS35 × 7.5 top-hat rail, cut to ${Math.round(l)} mm`)) });
+  if (rails.length) out.push({ head: 'Rails', items: count(rails.map((l) => `DIN rail (TS35 top-hat, 35 × 7.5 mm), cut to ${Math.round(l)} mm`)) });
   // the same cable list as Plugs › Cables to buy (a probe's ribbon and a plug pack's lead come with them)
   const cl = cableLines(p, d ? d.cables : res.report.cables ?? [], !!d);
   if (cl.buy.length) out.push({ head: 'Cables', items: cl.buy });
@@ -1483,7 +1527,8 @@ function ModulePicker() {
   if (p.modules.length <= 10) return (
     <div className="boardchips" role="tablist" aria-label="Boards">
       {p.modules.map((m, i) => (
-        <button key={m.id} role="tab" aria-selected={p.active === i} className={`bchip ${p.active === i ? 'on' : ''}`} title={m.board.name} onClick={() => pick(i)}>
+        <button key={m.id} role="tab" aria-selected={p.active === i} className={`bchip ${p.active === i ? 'on' : ''}`} title={`${m.board.name} · right-click to remove`} onClick={() => pick(i)}
+          onContextMenu={(e) => { e.preventDefault(); if (p.modules.length > 1 && confirm(`Remove ${m.board.name} from the rack? Undo brings it back.`)) removeItems([{ kind: 'module', id: m.id }]); }}>
           {dot(i)}{shortName(m.board.name)}
         </button>
       ))}
@@ -1506,7 +1551,7 @@ function ModulePicker() {
       {add}
       {sub.length > 1 && (
         <div className="bsub" aria-label={`${show} boards`}>
-          {sub.map((i) => { const nm = p.modules[i].board.name, n = nm === show ? '1' : nm.slice(show.length).trim(); return <button key={i} className={`bnum ${p.active === i ? 'on' : ''}`} title={nm} onClick={() => pick(i)}>{/^\d+$/.test(n) ? n : shortName(nm)}</button>; })}
+          {sub.map((i) => { const nm = p.modules[i].board.name, n = nm === show ? '1' : nm.slice(show.length).trim().replace(/^#/, ''); return <button key={i} className={`bnum ${p.active === i ? 'on' : ''}`} title={nm} onClick={() => pick(i)}>{/^\d+$/.test(n) ? n : shortName(nm)}</button>; })}
         </div>
       )}
     </div>

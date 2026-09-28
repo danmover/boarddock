@@ -110,6 +110,7 @@ export interface Board {
   comps: Comp[];
   source: string;
   notes: string[];
+  ack?: string[]; // notes the user has ticked off ("measure yours": done), kept out of the Check step's reminders
   kind?: 'pcb' | 'box'; // box: a closed device (USB hub, charger) held by low guards and strap loops; thickness = its height
   box?: BoxSpec; // box: its size and ports, from which outline, thickness and port parts are generated
   color?: string; // box colour in the 3D view

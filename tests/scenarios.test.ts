@@ -83,10 +83,12 @@ describe('layout', () => {
 
 describe('names and history', () => {
   it('numbers copies and keeps the kind', () => {
-    expect(uniqueName(['Raspberry Pi 5'], 'Raspberry Pi 5')).toBe('Raspberry Pi 5 2');
+    expect(uniqueName(['Raspberry Pi 5'], 'Raspberry Pi 5')).toBe('Raspberry Pi 5 #2');
+    expect(uniqueName(['Pico', 'Pico #2'], 'Pico')).toBe('Pico #3');
     const p = rack(['rpi4', 'pico']);
     p.modules.push(newModule({ ...T('rpi4'), name: 'Raspberry Pi 4B 2' }));
     expect(kindName(p, 'Raspberry Pi 4B 2')).toBe('Raspberry Pi 4B');
+    expect(kindName(p, 'Raspberry Pi 4B #2')).toBe('Raspberry Pi 4B');
     expect(kindName(p, 'Raspberry Pi 5')).toBe('Raspberry Pi 5');
     expect(sameKind(p, 'Raspberry Pi 4B').length).toBe(2);
     expect(rackName(p)).toBe('Rack, 3 boards');

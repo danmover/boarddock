@@ -6,8 +6,13 @@ import { toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.j
 import type { Ghost } from '../model/types';
 import type { PicPart } from '../worker/client';
 import { surface } from './Viewer3D';
+import { store } from '../state';
 
-let R: { renderer: THREE.WebGLRenderer; scene: THREE.Scene; env: THREE.Texture } | null = null;
+// The renderer, lights, floor and materials are made once and kept: making them new for every picture made three.js
+// compile its shaders and resize its buffers each time, which held the window up while boards were added.
+type Kit = { renderer: THREE.WebGLRenderer; scene: THREE.Scene; env: THREE.Texture; hemi: THREE.HemisphereLight; key: THREE.DirectionalLight; rim: THREE.DirectionalLight; floor: THREE.Mesh; size: string };
+let R: Kit | null = null;
+const mats = new Map<string, THREE.Material>();
 function setup() {
   if (R) return R;
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
@@ -20,7 +25,17 @@ function setup() {
   const env = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
   scene.environment = env;
   scene.environmentIntensity = 0.75;
-  R = { renderer, scene, env };
+  const hemi = new THREE.HemisphereLight(0xf4f7ff, 0x3a4048, 0.8);
+  const key = new THREE.DirectionalLight(0xfff6ec, 2.6);
+  key.castShadow = true;
+  key.shadow.mapSize.set(512, 512);
+  key.shadow.radius = 6; key.shadow.bias = -0.0005; key.shadow.normalBias = 0.4;
+  const rim = new THREE.DirectionalLight(0xa9d4ff, 0.8);
+  // a soft contact shadow on an invisible floor
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.ShadowMaterial({ opacity: 0.22 }));
+  floor.receiveShadow = true;
+  scene.add(hemi, key, key.target, rim, floor);
+  R = { renderer, scene, env, hemi, key, rim, floor, size: '' };
   return R;
 }
 
@@ -34,8 +49,8 @@ export function picture(key: string, make: () => Promise<PicPart[]>, w = 320, h 
   try { const s = sessionStorage.getItem(`bd.pic.${key}`); if (s) { const p = Promise.resolve(s); cache.set(key, p); return p; } } catch { /* private mode */ }
   const job = queue.then(async () => {
     const parts = await make();
-    // let clicks and typing through between pictures: each render holds the main thread while it draws
-    await new Promise((r) => setTimeout(r, 16));
+    // let clicks and typing through between pictures, and wait while the rack builds (the pictures can wait)
+    await quiet();
     const url = await render(parts, w, h, view);
     try { sessionStorage.setItem(`bd.pic.${key}`, url); } catch { /* full */ }
     return url;
@@ -46,11 +61,16 @@ export function picture(key: string, make: () => Promise<PicPart[]>, w = 320, h 
   return job;
 }
 
+/** Until the app is idle: not building, no new scene being drawn, and the browser has a spare moment. */
+async function quiet() {
+  for (let k = 0; k < 600 && (store.get().building || store.get().rendering); k++) await new Promise((r) => setTimeout(r, 100));
+  await new Promise<void>((r) => ('requestIdleCallback' in window ? (window as any).requestIdleCallback(() => r(), { timeout: 400 }) : setTimeout(r, 16)));
+}
+
 async function render(parts: PicPart[], w: number, h: number, view: [number, number, number]): Promise<string> {
-  const { renderer, scene } = setup();
-  const dpr = 2;
-  renderer.setPixelRatio(dpr);
-  renderer.setSize(w, h, false);
+  const { renderer, scene, key, rim, floor } = R ?? setup();
+  // resizing the drawing buffer is slow: only when a picture of another size comes up
+  if (R!.size !== `${w}x${h}`) { renderer.setPixelRatio(2); renderer.setSize(w, h, false); R!.size = `${w}x${h}`; }
   const root = new THREE.Group();
   const made: { dispose(): void }[] = [];
   for (const q of parts) {
@@ -59,32 +79,27 @@ async function render(parts: PicPart[], w: number, h: number, view: [number, num
     g.setIndex(new THREE.BufferAttribute(q.mesh.idx, 1));
     if (q.smooth) g = toCreasedNormals(g, (40 * Math.PI) / 180);
     else g.computeVertexNormals();
-    const m = surface(q.mat as Ghost['mat'], q.color, q.opacity, false, !q.mat, !!q.smooth);
+    const mk = `${q.mat ?? ''}|${q.color}|${q.opacity}|${!!q.smooth}`;
+    let m = mats.get(mk);
+    if (!m) mats.set(mk, (m = surface(q.mat as Ghost['mat'], q.color, q.opacity, false, !q.mat, !!q.smooth)));
     const mesh = new THREE.Mesh(g, m);
     if (q.M) { mesh.matrixAutoUpdate = false; mesh.matrix.fromArray(q.M); }
     mesh.castShadow = mesh.receiveShadow = true;
     root.add(mesh);
-    made.push(g, m);
+    made.push(g);
   }
   scene.add(root);
   root.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(root), c = box.getCenter(new THREE.Vector3()), r = box.getSize(new THREE.Vector3()).length() / 2 || 10;
-  // light and a soft contact shadow on an invisible floor
-  const hemi = new THREE.HemisphereLight(0xf4f7ff, 0x3a4048, 0.8);
-  const key = new THREE.DirectionalLight(0xfff6ec, 2.6);
+  // light and the floor, placed for this picture
   key.position.set(c.x + r * 1.2, c.y - r * 0.8, c.z + r * 2.4);
   key.target.position.copy(c);
-  key.castShadow = true;
-  key.shadow.mapSize.set(1024, 1024);
   Object.assign(key.shadow.camera, { left: -r * 1.6, right: r * 1.6, top: r * 1.6, bottom: -r * 1.6, near: 0.1, far: r * 8 });
   key.shadow.camera.updateProjectionMatrix();
-  key.shadow.radius = 6; key.shadow.bias = -0.0005; key.shadow.normalBias = 0.4;
-  const rim = new THREE.DirectionalLight(0xa9d4ff, 0.8);
   rim.position.set(c.x - r * 2, c.y + r * 1.5, c.z + r);
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(r * 8, r * 8), new THREE.ShadowMaterial({ opacity: 0.22 }));
+  floor.scale.set(r * 8, r * 8, 1);
   floor.position.set(c.x, c.y, box.min.z - 0.02);
-  floor.receiveShadow = true;
-  scene.add(hemi, key, key.target, rim, floor);
+  floor.updateMatrixWorld();
   const cam = new THREE.PerspectiveCamera(24, w / h, 0.1, r * 40);
   cam.up.set(0, 0, 1);
   const d = new THREE.Vector3(...view).normalize();
@@ -106,8 +121,7 @@ async function render(parts: PicPart[], w: number, h: number, view: [number, num
   cam.position.copy(c).addScaledVector(d, dist);
   cam.lookAt(c);
   renderer.render(scene, cam);
-  scene.remove(root, hemi, key, key.target, rim, floor);
-  floor.geometry.dispose(); (floor.material as THREE.Material).dispose(); key.shadow.map?.dispose();
+  scene.remove(root);
   for (const x of made) x.dispose();
   // encode off the main thread (toBlob; toDataURL blocks), as WebP: a third of the PNG's size, transparency kept
   const blob = await new Promise<Blob | null>((ok) => renderer.domElement.toBlob(ok, 'image/webp', 0.9));

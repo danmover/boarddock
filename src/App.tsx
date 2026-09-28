@@ -16,6 +16,7 @@ import { describe, removeItems } from './ui/pickOps';
 import { Icon, I } from './ui/icons';
 import { WiringView } from './ui/WiringView';
 import { rackCount, rackName } from './model/diff';
+import { summarizeChecks } from './model/checkSummary';
 
 const STEPS: { id: Step; label: string; title: string; text: string }[] = [
   { id: 'import', label: 'Start', title: 'Bring a board in', text: 'Drop a KiCad, Altium, Eagle or Gerber export, or start from a known board.' },
@@ -36,6 +37,7 @@ export function App() {
   const result = useApp((s) => s.result);
   const printParts = useApp((s) => s.printParts);
   const building = useApp((s) => s.building);
+  const rendering = useApp((s) => s.rendering);
   const error = useApp((s) => s.error);
   const theme = useApp((s) => s.theme);
   const sel = useApp((s) => s.sel);
@@ -96,6 +98,8 @@ export function App() {
       if (e.key === '?' || (e.key === '/' && e.shiftKey)) setKeys((k) => !k);
       if (!cmd && e.key.toLowerCase() === 'a' && project && !store.get().addSheet) { e.preventDefault(); store.set({ addSheet: true }); }
       if (e.key === 'Escape') setKeys(false);
+      // 1-7: the steps (not while the rails view uses the keys for its docks, nor in the board editor)
+      if (!cmd && !e.altKey && project && /^[1-7]$/.test(e.key) && store.get().view !== 'panel') { goStep(STEPS[+e.key - 1].id); return; }
       const v = store.get().view;
       if (v === 'assembly') {
         const p3 = store.get().sel.filter((s) => s.kind === 'module' || s.kind === 'mount' || s.kind === 'rail' || s.kind === 'feature' || s.kind === 'link' || s.kind === 'railstand');
@@ -125,13 +129,17 @@ export function App() {
     return { g, n, plates, min };
   }, [result, project?.printer.bed[0], project?.printer.bed[1]]);
 
+  // the print view's parts: one object per change, so the 3D view doesn't rebuild on every render of the app
+  const shown = useMemo(() => (printParts && result ? { ...result, parts: printParts } : result), [printParts, result]);
+
   const panel = { import: <ImportPanel />, board: <BoardPanel />, plugs: <PlugsPanel />, holder: <HolderPanel />, mount: <MountPanel />, check: <CheckPanel />, export: <ExportPanel /> }[step];
-  const warnCount = result?.report.warnings.length ?? 0;
-  const badCount = result?.report.checks.filter((c) => c.status === 'bad').length ?? 0;
+  // one count everywhere (Start, the step bar, the stats and Check): failing checks, and what to look at
+  const checkSum = useMemo(() => summarizeChecks(project, result?.report), [project, result]);
+  const warnCount = checkSum.nLook, badCount = checkSum.failing.length;
   const si = STEPS.findIndex((s) => s.id === step);
   const S = STEPS[si];
   // Start shows the library, Board the board editor; the other steps the rack (in 3D, unless you picked another view)
-  const goStep = (id: Step) => store.set({ step: id, ...(id === 'import' ? { view: 'library' as const } : id === 'board' ? { view: 'editor' as const } : view === 'library' || view === 'editor' ? { view: 'assembly' as const } : {}) });
+  const goStep = (id: Step) => store.set({ step: id, ...(id === 'import' ? { view: 'library' as const } : id === 'board' ? { view: 'editor' as const } : ['library', 'editor'].includes(store.get().view) ? { view: 'assembly' as const } : {}) });
   const views: [typeof view, string][] = project ? [...(step === 'import' ? [['library', 'Add boards'] as [typeof view, string]] : []), ['assembly', '3D'], ...(project.layout === 'panel' ? [['panel', 'Rails'] as [typeof view, string]] : []), ['wiring', 'Wiring'], ['print', 'Plates'], ['editor', 'Board']] : [];
 
   return (
@@ -155,8 +163,8 @@ export function App() {
         {project && <button className="btn small soft addboard" onClick={() => store.set({ addSheet: true })} title="Add a board (A)" aria-label="Add a board"><Icon d={I.plus} /><span>Board</span></button>}
         <nav className="stepper" ref={navRef}>
           {STEPS.map((s, i) => (
-            <button key={s.id} className={`${step === s.id ? 'on' : i < si ? 'done' : ''} ${s.id === 'check' && badCount > 0 ? 'flag bad' : s.id === 'check' && warnCount > 0 ? 'flag' : ''}`} disabled={!project && s.id !== 'import'} onClick={() => goStep(s.id)} title={s.title}>
-              <span className="n">{i < si && step !== s.id ? <Icon d={I.check} /> : s.id === 'check' && badCount + warnCount > 0 && step !== s.id ? '!' : i + 1}</span>
+            <button key={s.id} className={`${step === s.id ? 'on' : i < si ? 'done' : ''} ${s.id === 'check' && badCount > 0 ? 'flag bad' : ''}`} disabled={!project && s.id !== 'import'} onClick={() => goStep(s.id)} title={s.title}>
+              <span className="n">{i < si && step !== s.id ? <Icon d={I.check} /> : s.id === 'check' && badCount > 0 && step !== s.id ? '!' : i + 1}</span>
               <span className="l">{s.label}</span>
             </button>
           ))}
@@ -165,13 +173,23 @@ export function App() {
           {project && (
             <>
               <div className="status" title={error ?? (result ? `Built in ${result.report.timeMs} ms` : '')}>
-                <span className={`dot ${error ? 'err' : building ? 'busy' : result ? 'ok' : ''}`} />
-                <span className="st">{error ? 'Build failed' : building ? 'Building…' : result ? 'Up to date' : ''}</span>
+                <span className={`dot ${error ? 'err' : building || rendering ? 'busy' : result ? 'ok' : ''}`} />
+                <span className="st">{error ? 'Build failed' : building ? 'Building…' : rendering ? 'Rendering…' : result ? 'Up to date' : ''}</span>
               </div>
               <button className="iconbtn" disabled={!canUndo} onClick={undo} title="Undo (⌘Z)"><Icon d={I.undo} /></button>
               <button className="iconbtn" disabled={!canRedo} onClick={redo} title="Redo (⇧⌘Z)"><Icon d={I.redo} /></button>
               <button className="iconbtn" onClick={saveProject} title="Save project (⌘S)"><Icon d={I.save} /></button>
               <button className="iconbtn" onClick={() => { if (confirm('Start a new rack? This one stays only in the project file you saved (⌘S saves it now).')) closeProject(); }} title="New rack"><Icon d={I.newdoc} /></button>
+              {/* on a phone Redo, Save and New rack have no room in the bar: they live in this menu */}
+              <details className="phonemenu" onClick={(e) => { if ((e.target as HTMLElement).tagName === 'BUTTON') (e.currentTarget as HTMLDetailsElement).open = false; }}>
+                <summary className="iconbtn" title="More" aria-label="More">⋯</summary>
+                <div className="phonemenu-list floating">
+                  <button disabled={!canRedo} onClick={redo}><Icon d={I.redo} /> Redo</button>
+                  <button onClick={saveProject}><Icon d={I.save} /> Save the project file</button>
+                  <button onClick={() => { if (confirm('Start a new rack? This one stays only in the project file you saved.')) closeProject(); }}><Icon d={I.newdoc} /> New rack</button>
+                  <button onClick={() => { const t = theme === 'dark' ? 'light' : 'dark'; store.set({ theme: t }); try { localStorage.setItem('boarddock.theme', t); } catch { /* private mode */ } }}><Icon d={theme === 'dark' ? I.sun : I.moon} /> {theme === 'dark' ? 'Light' : 'Dark'} theme</button>
+                </div>
+              </details>
             </>
           )}
           <button className="iconbtn" onClick={() => { const t = theme === 'dark' ? 'light' : 'dark'; store.set({ theme: t }); try { localStorage.setItem('boarddock.theme', t); } catch { /* private mode */ } }} title="Light / dark"><Icon d={theme === 'dark' ? I.sun : I.moon} /></button>
@@ -204,7 +222,7 @@ export function App() {
               <div className="tabs"><div className="seg">{views.map(([k, l]) => <button key={k} className={view === k ? 'on' : ''} onClick={() => store.set({ view: k })}>{l}</button>)}</div></div>
               {view === 'library' ? <StartStage /> : view === 'editor' ? <BoardEditor tool={tool} setTool={setTool} /> : view === 'wiring' ? <WiringView /> : view === 'panel' && project.layout === 'panel' ? <PanelEditor /> : (
                 <>
-                  <Viewer3D result={view === 'print' && printParts && result ? { ...result, parts: printParts } : result} mode={view === 'print' ? 'print' : 'assembly'} bed={project.printer.bed} spacing={project.printer.spacing} theme={theme} camera={cam} overhangs={view === 'print' && overhangs}
+                  <Viewer3D result={view === 'print' ? shown : result} mode={view === 'print' ? 'print' : 'assembly'} bed={project.printer.bed} spacing={project.printer.spacing} theme={theme} camera={cam} overhangs={view === 'print' && overhangs}
                     layers={layers} sel={sel} onPick={(it, add) => (it ? select([it], add ? 'toggle' : 'set') : !add && select([]))} label={(it) => describe(store.get().project!, it)} />
                   <div className="tools">
                     <div className="tgroup floating">
@@ -231,7 +249,7 @@ export function App() {
                       <span><b>{stats.plates}</b>plate{stats.plates > 1 ? 's' : ''}</span>
                       <span><b>{stats.g.toFixed(0)}</b>g</span>
                       <span title="Rough estimate, slicer numbers are the real ones"><b>{fmtTime(stats.min)}</b></span>
-                      {(warnCount > 0 || badCount > 0) && <span className="warn" onClick={() => store.set({ step: 'check' })}><b>{badCount + warnCount}</b>notes</span>}
+                      {(warnCount > 0 || badCount > 0) && <span className="warn" onClick={() => store.set({ step: 'check' })}><b>{badCount || warnCount}</b>{badCount ? 'failing' : 'to look at'}</span>}
                     </div>
                   )}
                   {error && <div className="floating err" style={{ position: 'absolute', left: '50%', top: 60, transform: 'translateX(-50%)', zIndex: 7 }}>{error}</div>}
@@ -298,7 +316,12 @@ const KEYS: [string, string][] = [
   ['⌘Z / ⇧⌘Z', 'undo / redo'], ['⌘S', 'save the project file'], ['Click, Shift-click', 'select in 3D, add to the selection'],
   ['Delete', 'remove the selection'], ['Esc', 'clear the selection'], ['Double-click', 'fly to a part'],
   ['R / ⇧R', 'turn the selected docks (Rails view)'], ['F', 'swap front and back boards (Rails view)'], ['Arrows, ⇧Arrows', 'move docks 1 / 10 mm (Rails view)'],
-  ['A', 'add a board, from any step'], ['⌘A', 'select every dock (Rails view)'], ['?', 'show or hide this list'],
+  ['A', 'add a board, from any step'], ['⌘A', 'select every dock (Rails view)'], ['1 – 7', 'go to that step'], ['?', 'show or hide this list'],
+];
+// the board editor's own keys (they work while nothing is selected there)
+const EDITOR_KEYS: [string, string][] = [
+  ['V', 'select and move'], ['H', 'pan (or hold Space)'], ['M', 'measure'], ['T', 'show or hide the toolbox'],
+  ['Arrows, ⇧Arrows', 'nudge the selection 0.1 / 1 mm'], ['Alt-drag', 'move freely, without snapping'], ['R / ⇧R', 'turn the selected parts'], ['⌘D', 'duplicate the selection'], ['⌘A', 'select every hole and part'],
 ];
 function Shortcuts({ onClose }: { onClose: () => void }) {
   return (
@@ -306,6 +329,8 @@ function Shortcuts({ onClose }: { onClose: () => void }) {
       <div className="keys floating" onClick={(e) => e.stopPropagation()}>
         <div className="keys-head"><b>Keyboard shortcuts</b><button className="toast-x" onClick={onClose}>×</button></div>
         <div className="keys-grid">{KEYS.map(([k, t]) => <Fragment key={k}><kbd>{k}</kbd><span>{t}</span></Fragment>)}</div>
+        <div className="keys-head" style={{ marginTop: 12 }}><b>Board editor</b></div>
+        <div className="keys-grid">{EDITOR_KEYS.map(([k, t]) => <Fragment key={k}><kbd>{k}</kbd><span>{t}</span></Fragment>)}</div>
       </div>
     </div>
   );

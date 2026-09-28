@@ -316,8 +316,8 @@ export function duplicateModule(i: number) {
   edit((q) => {
     const src = q.modules[i];
     const copy = { ...structuredClone(src), id: Math.random().toString(36).slice(2, 9) };
-    // the same numbering as adding one: "Raspberry Pi 4B" -> "Raspberry Pi 4B 2"
-    const all = q.modules.map((x) => x.board.name), m = /^(.*) (?:(\d+)|\((\d+)\))$/.exec(src.board.name);
+    // the same numbering as adding one: "Raspberry Pi 4B" -> "Raspberry Pi 4B #2"
+    const all = q.modules.map((x) => x.board.name), m = /^(.*) (?:#?(\d+)|\((\d+)\))$/.exec(src.board.name);
     copy.board.name = uniqueName(all, m && all.includes(m[1]) ? m[1] : src.board.name);
     q.modules.splice(i + 1, 0, copy);
     q.active = i + 1;
@@ -439,6 +439,8 @@ export function bedNote(p: Project, boards: { name: string; outline: [number, nu
  */
 export function placementNote(p: Project, ids?: string[]): string {
   if (p.layout !== 'panel') return '';
+  // an unbuilt rack that lays itself out: nothing to say (the add toast stays short)
+  if (p.panel.auto && !p.built) return '';
   if (p.panel.auto) return ' Auto-arrange lays out the whole rack again with it (mark the rack as built in Export to keep boards where they are).';
   const r = rep(), labels = mountLabels(r);
   const spots = (ids ?? []).map((id) => {

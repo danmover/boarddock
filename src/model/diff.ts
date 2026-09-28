@@ -55,9 +55,9 @@ export function rackCount(p: Project): string {
   return `${boards} board${boards === 1 ? '' : 's'}${probes ? ` + ${probes} probe${probes === 1 ? '' : 's'}` : ''}`;
 }
 
-/** A board's kind by name: "Raspberry Pi 4B 3" is a "Raspberry Pi 4B" when the rack has one by that name. */
+/** A board's kind by name: "Raspberry Pi 4B #3" is a "Raspberry Pi 4B" when the rack has one by that name. */
 export function kindName(p: Project, name: string): string {
-  const m = /^(.*) (\d+)$/.exec(name);
+  const m = /^(.*) #?(\d+)$/.exec(name); // "#2" now; plain "2" in racks saved before
   return m && p.modules.some((x) => x.board.name === m[1]) ? m[1] : name;
 }
 

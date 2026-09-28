@@ -33,6 +33,7 @@ export interface State {
   sel: Sel;
   result: GenResult | null;
   building: boolean;
+  rendering: boolean; // the 3D view is compiling shaders for a new scene (the old one stays up meanwhile)
   error: string | null;
   showGhosts: boolean;
   theme: 'dark' | 'light';
@@ -74,6 +75,7 @@ let state: State = {
   sel: [],
   result: null,
   building: false,
+  rendering: false,
   error: null,
   showGhosts: true,
   replaceMode: false,
@@ -170,11 +172,11 @@ export function editMod(fn: (m: Module, p: Project) => void) {
   edit((p) => fn(activeModule(p), p));
 }
 
-/** `base`, or "base 2", "base 3"… whichever is not taken yet. */
+/** `base`, or "base #2", "base #3"… whichever is not taken yet ("Pi 5 2" read like a product name; "#2" can't). */
 export function uniqueName(taken: Iterable<string>, base: string): string {
   const t = new Set(taken);
   let name = base;
-  for (let k = 2; t.has(name); k++) name = `${base} ${k}`;
+  for (let k = 2; t.has(name); k++) name = `${base} #${k}`;
   return name;
 }
 
@@ -189,10 +191,10 @@ export function setBoard(b: Board) {
   if (cur) {
     p = structuredClone(cur);
     const m = activeModule(p);
-    // the same kind of board keeps its number ("Raspberry Pi 4B 2" stays that); anything else gets a free name
+    // the same kind of board keeps its number ("Raspberry Pi 4B #2" stays that); anything else gets a free name
     const old = m.board.name;
     const others = p.modules.filter((x) => x !== m).map((x) => x.board.name);
-    const name = old === b.name || old.startsWith(`${b.name} `) && /^\d+$/.test(old.slice(b.name.length + 1)) ? old : uniqueName(others, b.name);
+    const name = old === b.name || old.startsWith(`${b.name} `) && /^#?\d+$/.test(old.slice(b.name.length + 1)) ? old : uniqueName(others, b.name);
     if (name !== b.name) b = { ...b, name };
     // the new board takes the old one's place and id: its dock, the boards stacked on it and its cables stay;
     // only cables to plugs the new board doesn't have are dropped
@@ -259,7 +261,7 @@ export function putBoards(bs: Board[], replace: boolean, opts: { stay?: boolean 
   const p = structuredClone(cur);
   const first = p.modules.length;
   for (const b0 of bs) {
-    // a second Pi 4B becomes "Raspberry Pi 4B 2", so every list, label and cable says which one
+    // a second Pi 4B becomes "Raspberry Pi 4B #2", so every list, label and cable says which one
     const name = uniqueName(p.modules.map((m) => m.board.name), b0.name);
     const b = name === b0.name ? b0 : { ...b0, name };
     p.modules.push(newModule(b, activeModule(p).holder));

@@ -354,6 +354,7 @@ export function PanelEditor() {
                 const [lx, ly] = spot ?? [cx, cy];
                 return (
                   <g key={q.id}>
+                    <title>{`${name}: docked by its ${q.edge} edge.\nIts plugs: ◉ faces you, easy to reach · ✓ reachable from the side · ⚠ points at the next dock · ✕ points into the table or wall`}</title>
                     {dirs.map((d) => {
                       const list = q.access.filter((a) => a.dir === d);
                       if (!list.length) return null;
