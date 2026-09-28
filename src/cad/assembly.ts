@@ -5,8 +5,9 @@ import { bbox, round } from '../geom/poly';
 import { buildModule, computeLevels, transformMesh, type ArrangeHooks, type Job } from './generate';
 import { box, cyl, freeAll, poly, rect2, toMesh, unionMF } from './kernel';
 import { generatePanel, moveAnim } from './panelgen';
-import { hangingCable, tubeMesh } from './boardviz';
-import { plugRole } from '../model/links';
+import { leadStub, moveFx, powerFx } from './boardviz';
+import { poweredBoards } from '../model/lights';
+import { offRackTo, plugRole } from '../model/links';
 import { dir as dirM, pt as ptM } from '../geom/mat';
 import { printability } from './export';
 
@@ -164,9 +165,10 @@ function generateLoose(p: Project): GenResult {
     // its cable hanging off to the table; a free port stays empty
     const used = (ref: string) => (p.links ?? []).some((l) => [l.a, l.b].some((e) => e.module === mods[i].id && e.ref === ref));
     const wanted = (ref: string) => { const c = mods[i].board.comps.find((x) => x.ref === ref.replace(/:2$/, '')); return !!c?.conn && (used(ref) || (mods[i].board.kind === 'box' ? plugRole(mods[i], c) === 'other' : !!c.conn.cradle)); };
+    let powered: Set<string> | undefined;
     for (const g of o.ghosts) {
       if (g.tag?.kind === 'plug') { const r = g.tag.refs?.[0] ?? ''; if (!wanted(/upper/.test(g.name) ? `${r}:2` : r) && !(!/upper|lower/.test(g.name) && wanted(`${r}:2`))) continue; }
-      ghosts.push({ ...g, mesh: transformMesh(g.mesh, T[i]), anim: re(moveAnim(g.anim, T[i]), g.tag) });
+      ghosts.push({ ...g, mesh: transformMesh(g.mesh, T[i]), anim: re(moveAnim(g.anim, T[i]), g.tag), fx: moveFx(powerFx(g.fx, (powered ??= poweredBoards(p)).has(mods[i].id), used), T[i]) });
     }
     for (const pe of o.plugs) {
       if (!wanted(pe.ref)) continue;
@@ -184,14 +186,16 @@ function generateLoose(p: Project): GenResult {
     checks.push(...o.checks.map((c) => ({ ...c, module: mods[i].id, group: multi ? `${mods[i].board.name} · ${c.group}` : c.group })));
   });
   parts.push(...extra);
-  // the cables hang to the table the holders stand on
-  if (hanging.length) {
-    let floor = Infinity;
-    for (const pt of parts) [pt.toAssembly, ...(pt.instances ?? [])].forEach((T) => { for (let k = 2; k < pt.mesh.pos.length; k += 3) floor = Math.min(floor, T[2] * pt.mesh.pos[k - 2] + T[6] * pt.mesh.pos[k - 1] + T[10] * pt.mesh.pos[k] + T[14]); });
-    if (!isFinite(floor)) floor = 0;
-    const mid = [hanging.reduce((a, h) => a + h.p[0], 0) / hanging.length, hanging.reduce((a, h) => a + h.p[1], 0) / hanging.length];
-    for (const h of hanging) ghosts.push({ name: `off-rack cable ${h.module}/${h.ref}`, mesh: tubeMesh(hangingCable(h.p, h.d, h.cable, floor, mid), Math.max(1.1, h.cable / 2)), color: '#2b2e33', opacity: 1, tag: { kind: 'plug', module: h.module, refs: [h.ref.replace(/:2$/, '')] }, anim: { seq: 1e6 + 90, dir: [0, 0, 1], dist: 0, grow: true }, mat: 'cable', smooth: true });
+  // loose holders: each lead is a short stretch out of its plug that fades away, with a dotted line on the way it
+  // goes and where to (the other board, a screen, the wall), rather than a cable hanging in the air
+  for (const h of hanging) {
+    const ref = h.ref.replace(/:2$/, ''), m = mods.find((x) => x.id === h.module), c = m?.board.comps.find((x) => x.ref === ref);
+    const l = (p.links ?? []).find((q) => [q.a, q.b].some((e) => e.module === h.module && e.ref === h.ref));
+    const other = l ? (l.a.module === h.module && l.a.ref === h.ref ? l.b : l.a) : null, om = other && mods.find((x) => x.id === other.module);
+    const label = om ? `to the ${om.board.name} ${other!.ref.replace(/:2$/, '')}` : m && c ? offRackTo(m, c) : 'off the rack';
+    ghosts.push(leadStub(`off-rack cable ${h.module}/${h.ref}`, h.p, h.d, h.cable, label, { kind: 'plug', module: h.module, refs: [ref] }, { seq: 1e6 + 90, dir: [0, 0, 1], dist: 0, grow: true }));
   }
+
   if (ghosts.some((g) => g.tag?.kind === 'rail')) steps.push({ seq: 0, text: 'Your DIN rail: each holder hooks over its top edge and clicks in at the bottom; pull the tab to take it off.' });
   if (ghosts.some((g) => g.tag?.kind === 'stand')) steps.push({ seq: 1e6 + 50, text: 'Slide the holder onto its stand post.' });
   if (ghosts.some((g) => g.tag?.kind === 'plug')) steps.push({ seq: 1e6 + 90, text: 'Plug in the cables.' });

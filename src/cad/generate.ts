@@ -13,7 +13,7 @@ import { box, circle2, csLoops, cyl, ext, extCh, freeAll, K, orientedBox, poly, 
 import { buildClip, clipDims, clipSlots, hookOffset4, railProfile } from './dinclip';
 import { textCS, textWidth } from './font';
 import { computeLevels } from './levels';
-import { boardDetail, plugDetail, plugUp } from './boardviz';
+import { boardDetail, moveFx, plugDetail, plugUp } from './boardviz';
 import { DOCK_MIN_ZB, flatHolderDock, gripSpan, holderDock, HD, rod } from './dock';
 import { EAR, TONGUE } from './dockdims';
 import { dockFrame, dockSite, earSite, flatFrame, type DockSite, type EarSite } from './dockplan';
@@ -1224,7 +1224,7 @@ function railGhost(C: Ctx, T: number[], W: number) {
   const L = Math.max(80, W + 60);
   const rail = unionMF(railProfile().map((l) => poly(l, 'NonZero').extrude(L).translate([0, 0, -(L - W) / 2])));
   const u = [T[0], T[1], T[2]]; // clip u axis: from the rail towards the holder
-  C.ghosts.push({ name: 'DIN rail', mesh: transformMesh(meshFrom(rail), T), color: '#94a3b8', opacity: 0.55, tag: { kind: 'rail' }, anim: { seq: 0, dir: [-u[0], -u[1], -u[2]] } });
+  C.ghosts.push({ name: 'DIN rail', mesh: transformMesh(meshFrom(rail), T), color: '#c5ccd4', opacity: 0.85, mat: 'metal', tag: { kind: 'rail' }, anim: { seq: 0, dir: [-u[0], -u[1], -u[2]] } });
 }
 
 export function transformMesh(m: MeshData, T: number[]): MeshData {
@@ -1366,7 +1366,7 @@ function boltedGhosts(C: Ctx, bo: NonNullable<Job['bolted']>[number]) {
   const z0 = C.zt + dz, z1 = z0 + b.thickness;
   const tag: PickTag = { kind: 'board', module: mid }, anim: Anim = { seq: 4.5 + 2 * (C.job.level ?? 0), dir: [0, 0, 1] };
   const T = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, dx, dy, 0, 1];
-  for (const g of boardDetail(b, z0, z1, tag, anim)) C.ghosts.push({ ...g, mesh: transformMesh(g.mesh, T) });
+  for (const g of boardDetail(b, z0, z1, tag, anim)) C.ghosts.push({ ...g, mesh: transformMesh(g.mesh, T), fx: moveFx(g.fx, T) });
   // standoffs where the holes line up with the board below
   const posts: MF[] = [];
   for (const h of b.holes) {

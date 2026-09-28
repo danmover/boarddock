@@ -17,6 +17,8 @@ import { packPlates, placedMesh, printability, type Plate } from '../cad/export'
 import type { Layer, SelItem } from '../state';
 import { featureItem } from './pickOps';
 import { KIND_COLOR } from '../model/links';
+import { liveFx } from './liveFx';
+import { growTo } from './cableGrow';
 
 interface Props {
   result: GenResult | null;
@@ -38,7 +40,7 @@ const LAYER: Record<PickTag['kind'], Layer> = {
   shoe: 'docks', socket: 'docks', cap: 'caps', rail: 'rails', board: 'boards', parts: 'boards', plug: 'plugs', cable: 'cables', railstand: 'rails', cabletag: 'cables',
 };
 
-interface Obj { mesh: THREE.Mesh; tag?: PickTag; anim?: Anim; rank: number; base: THREE.Matrix4; ghost: boolean; moves: { rank: number; dir: number[]; dist?: number; style?: Motion['style']; rot?: Motion['rot'] }[]; show: number }
+interface Obj { mesh: THREE.Mesh; tag?: PickTag; anim?: Anim; lag?: number; rank: number; base: THREE.Matrix4; ghost: boolean; moves: { rank: number; dir: number[]; dist?: number; style?: Motion['style']; rot?: Motion['rot'] }[]; show: number }
 
 function rigidInverse(m: number[]): number[] {
   const r = [m[0], m[4], m[8], 0, m[1], m[5], m[9], 0, m[2], m[6], m[10], 0, 0, 0, 0, 1];
@@ -113,6 +115,22 @@ function backdrop(theme: 'dark' | 'light') {
 const ease = (x: number) => 1 - Math.pow(1 - x, 3);
 
 
+/**
+ * A printed part's look: the fine lines of its layers (0.2 mm, across the way it printed: its own z), fading out when
+ * they get too small to see so they never shimmer.
+ */
+function printed<T extends THREE.MeshStandardMaterial>(m: T): T {
+  m.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying float vPrintZ;').replace('#include <begin_vertex>', '#include <begin_vertex>\nvPrintZ = position.z;');
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying float vPrintZ;').replace('#include <color_fragment>', `#include <color_fragment>
+      float lz = vPrintZ / 0.2, fw = fwidth(lz), f = fract(lz);
+      float groove = 1.0 - smoothstep(0.0, 0.22 + fw, min(f, 1.0 - f));
+      diffuseColor.rgb *= 1.0 - 0.13 * groove * (1.0 - smoothstep(0.25, 0.7, fw));`);
+  };
+  m.customProgramCacheKey = () => 'printed-layers';
+  return m;
+}
+
 /** Physically based look per surface kind (boards, pads, connector shells, plastics). */
 export function surface(mat: Ghost['mat'] | undefined, color: string, opacity: number, ghost: boolean, board: boolean, smooth = false): THREE.MeshStandardMaterial {
   const base = { color, flatShading: !smooth, transparent: opacity < 1, opacity, depthWrite: opacity >= 0.9, side: THREE.DoubleSide, emissive: new THREE.Color(0x4c8dff), emissiveIntensity: 0 };
@@ -123,14 +141,14 @@ export function surface(mat: Ghost['mat'] | undefined, color: string, opacity: n
     case 'box': return new THREE.MeshPhysicalMaterial({ ...base, roughness: 0.38, metalness: 0, clearcoat: 0.3, clearcoatRoughness: 0.5 });
     case 'gold': return new THREE.MeshStandardMaterial({ ...base, metalness: 1, roughness: 0.3 });
     case 'metal': return new THREE.MeshStandardMaterial({ ...base, metalness: 0.9, roughness: 0.32 });
-    case 'led': return new THREE.MeshStandardMaterial({ ...base, roughness: 0.2, emissive: new THREE.Color(color), emissiveIntensity: 0.55 });
+    case 'led': return new THREE.MeshStandardMaterial({ ...base, roughness: 0.12, metalness: 0 }); // a clear lens: the live view lights it
     // moulded plugs: satin plastic with a light gloss; cable jackets: matt
     case 'plug': return new THREE.MeshPhysicalMaterial({ ...base, roughness: 0.5, metalness: 0, clearcoat: 0.25, clearcoatRoughness: 0.45 });
     case 'cable': return new THREE.MeshStandardMaterial({ ...base, roughness: 0.62, metalness: 0 });
     case 'red': return new THREE.MeshStandardMaterial({ ...base, roughness: 0.5, metalness: 0 });
     case 'chip': case 'black': return new THREE.MeshStandardMaterial({ ...base, roughness: 0.5, metalness: 0.05 });
     case 'silk': return new THREE.MeshStandardMaterial({ ...base, roughness: 0.75 });
-    case undefined: return new THREE.MeshStandardMaterial({ ...base, roughness: board ? 0.42 : 0.5, metalness: board ? 0.05 : 0 });
+    case undefined: return board || ghost ? new THREE.MeshStandardMaterial({ ...base, roughness: board ? 0.42 : 0.5, metalness: board ? 0.05 : 0 }) : printed(new THREE.MeshStandardMaterial({ ...base, roughness: 0.46, metalness: 0 }));
     default: return new THREE.MeshStandardMaterial({ ...base, roughness: 0.55 });
   }
 }
@@ -142,6 +160,11 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
   // t: animation time in steps (Infinity = assembled); on: playing; until: pause when t reaches it (one step at a time)
   const [play, setPlay] = useState<{ on: boolean; t: number; n: number; until?: number }>({ on: false, t: Infinity, n: 0 });
   const [explode, setExplode] = useState(0);
+  // the live touches (blinking lights, pulses along cables): on unless turned off, remembered
+  const [live, setLive] = useState(() => { try { return localStorage.getItem('boarddock.live') !== 'off'; } catch { return true; } });
+  const liveRef = useRef(live);
+  liveRef.current = live;
+  useEffect(() => { try { localStorage.setItem('boarddock.live', live ? 'on' : 'off'); } catch { /* private window */ } const c = ctx.current; if (c) { c.fx?.setLive(live); c.invalidate(); } }, [live]);
   const cb = useRef({ onPick, label });
   cb.current = { onPick, label };
 
@@ -196,6 +219,8 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
     gtao.updateGtaoMaterial({ radius: 6, distanceExponent: 1.4, thickness: 2, scale: 1.1, samples: 12 });
     gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 12 });
     composer.addPass(gtao);
+    const aoRender = gtao.render.bind(gtao);
+    gtao.render = (...a: Parameters<typeof aoRender>) => { const fx = ctx.current?.fx; fx?.hide(true); aoRender(...a); fx?.hide(false); };
     const outline = new OutlinePass(new THREE.Vector2(4, 4), scene, camera);
     outline.edgeStrength = 4;
     outline.edgeGlow = 0.35;
@@ -235,6 +260,13 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
         c.dirty = true;
       }
       if (c.onFrame?.(now)) c.dirty = true;
+      if (c.fx?.tick(now)) c.dirty = true;
+      if (c.intro) {
+        const k = (now - c.intro.t0) / 700;
+        if (!Number.isFinite(c.anim?.t ?? Infinity)) for (const o of c.intro.objs as Obj[]) growTo(o.mesh, k);
+        if (k >= 1) c.intro = null;
+        c.dirty = true;
+      }
       const moved = controls.update();
       if (!c.dirty && !moved) return;
       c.dirty = false;
@@ -361,6 +393,8 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
     if (!c) return;
     const { world, camera, controls } = c;
     buildNo++;
+    c.fx?.dispose();
+    c.fx = null;
     for (const o of c.objs as Obj[]) { world.remove(o.mesh); (o.mesh.material as THREE.Material).dispose(); o.mesh.children.forEach((k: any) => k.material?.dispose?.()); }
     c.objs = [];
     c.hover = null;
@@ -399,7 +433,12 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
         add(m, p.color, 1, p.toAssembly, p.tag, p.anim, false);
         (p.instances ?? []).forEach((T, k) => add(m, p.color, 1, T, p.tags?.[k] ?? p.tag, p.anims?.[k] ?? p.anim, false));
       }
-      for (const gh of result.ghosts) add(gh.mesh, gh.color, gh.opacity, null, gh.tag, gh.anim, true, false, gh.mat, !!gh.smooth);
+      const fxItems: { gh: Ghost; mesh: THREE.Object3D }[] = [];
+      for (const gh of result.ghosts) {
+        add(gh.mesh, gh.color, gh.opacity, null, gh.tag, gh.anim, true, false, gh.mat, !!gh.smooth);
+        if (gh.fx) fxItems.push({ gh, mesh: (c.objs as Obj[])[c.objs.length - 1].mesh });
+      }
+      c.fx = liveFx(fxItems, liveRef.current);
       // animation ranks: every distinct step (moves and appearances) in order
       const movesOf = (a?: Anim): Motion[] => [...(a?.pre ?? []), { seq: a?.seq ?? 0, dir: a?.dir ?? [0, 0, 1], dist: a?.dist, style: a?.style, rot: a?.rot }];
       const seqs = [...new Set((c.objs as Obj[]).flatMap((o) => [...movesOf(o.anim).map((m) => m.seq), ...(o.anim?.show != null ? [o.anim.show] : [])]))].sort((a, b) => a - b);
@@ -410,6 +449,16 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
         o.rank = rk(o.anim?.seq ?? 0);
         o.show = o.anim?.show != null ? rk(o.anim.show) : Math.min(...o.moves.map((m) => m.rank));
       }
+      // the cables of one step are drawn out one after another (the wires of one cable together)
+      const byRank = new Map<number, string[]>();
+      for (const o of c.objs as Obj[]) if (o.anim?.grow) { const k = o.tag?.refs?.[0] ?? o.mesh.uuid, l = byRank.get(o.rank) ?? byRank.set(o.rank, []).get(o.rank)!; if (!l.includes(k)) l.push(k); }
+      for (const o of c.objs as Obj[]) if (o.anim?.grow) { const l = byRank.get(o.rank)!, k = o.tag?.refs?.[0] ?? o.mesh.uuid; o.lag = l.length > 1 ? (0.45 * l.indexOf(k)) / (l.length - 1) : 0; }
+      // a cable that wasn't there before draws itself out from plug to plug
+      const was: Set<string> = c.cableIds ?? new Set();
+      const ids = new Set((c.objs as Obj[]).filter((o) => o.tag?.kind === 'cable').map((o) => o.tag!.refs?.[0] ?? ''));
+      const fresh = c.cableIds ? (c.objs as Obj[]).filter((o) => o.tag?.kind === 'cable' && o.anim?.grow && !was.has(o.tag.refs?.[0] ?? '')) : [];
+      c.cableIds = ids;
+      c.intro = fresh.length && fresh.length <= 12 ? { t0: performance.now(), objs: fresh } : null;
       c.ranks = seqs.length;
       c.phases = seqs;
       const cf = result.report.clipFrame;
@@ -631,6 +680,7 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
           ) : (
             <>
               <button className="stepbtn wide" title="Step through the assembly one step at a time" onClick={nextStep}>Steps</button>
+              <button className={`stepbtn wide live${live ? ' on' : ''}`} aria-pressed={live} title={live ? 'Switched on: lights blink and pulses run along the cables. Click to hold still.' : 'Switch it on: LEDs blink the way they do, boards without power stay dark, pulses run along the cables'} onClick={() => setLive(!live)}><i />Live</button>
               <label title="Pull the parts apart along the way they go together">Explode<input type="range" min={0} max={1} step={0.01} value={explode} onChange={(e) => setExplode(+e.target.value)} /></label>
             </>
           )}
@@ -683,7 +733,7 @@ function applyPose(c: any) {
     R.identity();
     if (Number.isFinite(t)) {
       if (t - o.show <= 0) shown = false;
-      if (grow) g = Math.max(0, Math.min(1, t - o.rank));
+      if (grow) g = Math.max(0, Math.min(1, (t - o.rank - (o.lag ?? 0)) / 0.55)); // each cable of a step in turn, drawn out along its way
       else for (const m of o.moves) {
         const dist = m.dist ?? D, k = remaining(m.style, t - m.rank, dist);
         if (k !== 0) off.addScaledVector(new THREE.Vector3(m.dir[0], m.dir[1], m.dir[2]), dist * k);
@@ -702,8 +752,7 @@ function applyPose(c: any) {
       }
     }
     if (grow) {
-      const geo = o.mesh.geometry as THREE.BufferGeometry, all = geo.index?.count ?? 0;
-      geo.setDrawRange(0, g >= 1 ? Infinity : Math.floor((all * g) / 60) * 60);
+      growTo(o.mesh, g);
       if (g <= 0) shown = false;
     }
     o.mesh.userData.animHidden = !shown;

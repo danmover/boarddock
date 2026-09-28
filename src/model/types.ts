@@ -345,6 +345,11 @@ export interface PartOut {
   displayMesh?: MeshData; // what the 3D view shows instead of `mesh` (same frame), e.g. without a print-in-place lever
 }
 
+/** How a light behaves: on, a steady blink, a heartbeat, flickering activity, slow breathing, a relay chase, a rainbow. */
+export type LightPattern = 'on' | 'blink' | 'heartbeat' | 'activity' | 'breathe' | 'chase' | 'rainbow';
+/** A light on a board or box (an LED), where it is and how it behaves. */
+export interface Light { p: number[]; colour: string; pattern: LightPattern; r: number; i: number; name?: string; n?: number[]; bottom?: boolean; ref?: string }
+
 export interface Ghost {
   name: string;
   mesh: MeshData;
@@ -354,6 +359,8 @@ export interface Ghost {
   anim?: Anim;
   mat?: 'mask' | 'gold' | 'metal' | 'black' | 'chip' | 'white' | 'silk' | 'led' | 'passive' | 'blue' | 'plug' | 'cable' | 'copper' | 'trace' | 'tin' | 'box' | 'red';
   smooth?: boolean; // round things (plugs, cables): smooth shading, no outline edges
+  // the 3D view's live touches: lights that glow and blink (dark: the board has no power), data running along a cable
+  fx?: { lights?: Light[]; dark?: boolean; flow?: { pts: number[][]; r: number; colour: string; on: boolean; slow?: boolean }; fade?: { p: number[]; d: number[]; len: number; dash: number; label?: string; colour: string } };
 }
 
 /** A pickable feature fused into a holder (cradle, pin, finger...), as a box in the holder frame. */

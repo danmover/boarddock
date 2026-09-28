@@ -41,6 +41,9 @@ export function segInBox(p: number[], q: number[], b: Box, pad: number): [number
   return [t0, t1];
 }
 
+/** How far a cable runs straight out of its plug before it bends: past the plug's boot, then room for a bend of about
+ * four diameters (a cable bent tighter right at the plug looks and is wrong). */
+export const lead = (radius: number) => Math.max(14, 10 + 8 * radius);
 const add = (a: number[], b: number[], s = 1) => [a[0] + b[0] * s, a[1] + b[1] * s, a[2] + b[2] * s];
 const dist = (a: number[], b: number[]) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 export const routeLength = (r: Route) => r.pts.reduce((s, q, i) => (i ? s + dist(q, r.pts[i - 1]) : 0), 0);
@@ -76,7 +79,7 @@ export function hits(r: Route, obs: Obstacle[], ends: CableEnd[], radius: number
 
 /** Ways out of a plug to the street level zc: each ends with the drop column reaching zc. */
 export function escapes(e: CableEnd, own: Box | null, zc: number, radius: number, stations: number[] = []): Route[] {
-  const p1 = add(e.p, e.d, 14);
+  const p1 = add(e.p, e.d, lead(radius));
   const out: Route[] = [];
   const drop = (pts: number[][]): Route => {
     const last = pts[pts.length - 1];
@@ -87,7 +90,7 @@ export function escapes(e: CableEnd, own: Box | null, zc: number, radius: number
     out.push(drop([p1]));
     out.push(drop([p1, add(p1, e.d, 18)]));
     // a plug facing something close (the next dock along the rail): out a little, then off to one side and down
-    const h = Math.hypot(e.d[0], e.d[1]) || 1, side = [-e.d[1] / h, e.d[0] / h, 0], p0 = add(e.p, e.d, 5);
+    const h = Math.hypot(e.d[0], e.d[1]) || 1, side = [-e.d[1] / h, e.d[0] / h, 0], p0 = add(e.p, e.d, Math.max(5, lead(radius) / 2));
     for (const s of [1, -1]) for (const k of [14, 28, 44]) out.push(drop([p0, add(p0, side, s * k)]));
   } else {
     // a plug pointing up or down: go straight, or step off the board sideways at the plug's height first (just
@@ -97,7 +100,8 @@ export function escapes(e: CableEnd, own: Box | null, zc: number, radius: number
       const edge = s > 0 ? own[k + 3] : own[k];
       const need = (edge - p1[k]) * s + radius + 3;
       if (need <= 0 || need > 90) continue;
-      for (const more of [0, 12]) { const q = [...p1]; q[k] += s * (need + more); out.push(drop([p1, q])); }
+      // (at least a U-turn's width: up out of the plug and back down is a bend of four diameters each way)
+      for (const more of [0, 12]) { const q = [...p1]; q[k] += s * Math.max(need + more, 16 * radius + more); out.push(drop([p1, q])); }
     }
   }
   // a drop column that lands on a sleeper steps along the rail before it goes down
@@ -225,3 +229,4 @@ export function ribbonRoute(A: RibbonEnd, B: RibbonEnd, t: number, rw: number, o
   }
   return best!;
 }
+

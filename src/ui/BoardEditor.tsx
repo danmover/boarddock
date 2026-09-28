@@ -15,6 +15,7 @@ import { ROLE_INFO } from '../model/holes';
 import { PALETTE } from '../model/palette';
 import { axisOf, featAt, layoutDims, measure, pickFeat, setDim, type DimBox } from '../model/dims';
 import { boardCopper } from '../model/copper';
+import { boardLights } from '../model/lights';
 import { headerPins } from '../model/probes';
 import { plugName } from '../model/links';
 import { alignPhoto, edgeGaps, fitPhoto, itemsBox, scalePhoto, snapBox, snapLines, type Box2 } from '../model/editorgeo';
@@ -400,6 +401,8 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
   const dimsDraw = useMemo(() => layoutDims(b, px, { avoid: sizeBoxes, last: dimLast ?? undefined }), [b.dims, b.holes, b.comps, b.outline, px, sizeBoxes, dimLast]);
   // copper as a few paths (one per side and width), not thousands of elements: the board's own tracks, else plausible
   // ones from each plug to the main chip and between neighbours (model/copper), redrawn as parts move
+  // its LEDs, lit and doing what they do (with the tracks: the look-real layer)
+  const lamps = useMemo(() => boardLights(b), [b]);
   const copper = useMemo(() => {
     const cu = boardCopper(b);
     const g = new Map<string, { d: string[]; w: number; bottom: boolean }>();
@@ -511,6 +514,9 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
           <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0L10,5L0,10z" fill="var(--copper)" /></marker>
           <marker id="darr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,1L10,5L0,9z" fill="var(--coral)" /></marker>
           <marker id="garr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,1L10,5L0,9z" fill="var(--accent)" /></marker>
+          {[...new Set(lamps.map((q) => q.colour))].map((col) => (
+            <radialGradient key={col} id={`lamp${col.slice(1)}`}><stop offset="0" stopColor="#fff" stopOpacity={0.95} /><stop offset="0.2" stopColor={col} stopOpacity={0.9} /><stop offset="0.55" stopColor={col} stopOpacity={0.28} /><stop offset="1" stopColor={col} stopOpacity={0} /></radialGradient>
+          ))}
         </defs>
         <rect x={vb.x - vb.w * 2} y={vb.y - vb.h * 2} width={vb.w * 5} height={vb.h * 5} fill="url(#g10)" />
         {levels && <path d={path(b.outline)} fill="none" stroke="var(--accent)" strokeOpacity={0.18} strokeWidth={(H.gap + H.wall) * 2} strokeLinejoin="round" />}
@@ -537,6 +543,18 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
         </g>}
         {b.comps.filter((c) => !c.hidden && c.conn?.entry === 'edge').map((c) => plugArrow(c))}
         {b.comps.filter((c) => !c.hidden).map((c) => partSvg(c))}
+        {showCu && lamps.length > 0 && <g style={{ pointerEvents: 'none' }}>
+          {lamps.map((q, i) => {
+            // a template board's LEDs are not parts: draw the little LED itself too
+            const drawn = b.comps.some((c) => c.kind === 'led' && !c.hidden);
+            return (
+              <g key={i}>
+                {!drawn && <g transform={`translate(${q.p[0]},${-q.p[1]})`}><rect x={-0.8} y={-0.4} width={1.6} height={0.8} fill="#e9e5dc" /><rect x={-0.8} y={-0.4} width={0.25} height={0.8} fill="#c9cdd2" /><rect x={0.55} y={-0.4} width={0.25} height={0.8} fill="#c9cdd2" /></g>}
+                <circle cx={q.p[0]} cy={-q.p[1]} r={Math.max(1.6, q.r * 3.4)} fill={`url(#lamp${q.colour.slice(1)})`} className={`lamp lamp-${q.pattern}`} style={{ animationDelay: `${q.pattern === 'chase' ? q.i * 0.8 : -((q.i * 0.37 + q.p[0] * 0.013) % 1.7)}s` }}><title>{q.name ? `${q.name} light` : 'light'}</title></circle>
+              </g>
+            );
+          })}
+        </g>}
         {<g style={{ pointerEvents: 'none' }}>
           {plugLabels.map((q, i) => (
             <g key={i} transform={`translate(${q.x},${-q.y}) rotate(${-q.deg})`}>

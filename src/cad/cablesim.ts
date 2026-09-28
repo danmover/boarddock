@@ -2,8 +2,11 @@
 // cable's way (out of its plug, down to its street, along it and back up), then this lets them all settle together.
 // Each cable is a chain of beads; over a few dozen rounds, beads of two cables that touch push apart (one lies over
 // the other where they cross, side by side where they run together), beads inside a holder, dock or plug are pushed
-// out, every chain keeps its length, and bends ease out. The ends stay in their plugs. Ribbons and other fixed runs
-// take part as things the rest settle round. Rack frame: u along the rails, v across them, z up (mm). Pure.
+// out, every chain keeps its length, and bends ease out. The ends stay in their plugs. Like real cables they have
+// weight (a span in the air sags, a cable leaving a plug droops towards the floor), a little slack (they are never
+// pulled taut), and stiffness that grows with thickness (a thick power lead bends in wide curves, never tighter than
+// a few times its own width; a jumper wire bends tight). Ribbons and other fixed runs take part as things the rest
+// settle round. Rack frame: u along the rails, v across them, z up (mm). Pure.
 
 export type Box = number[]; // [u0, v0, z0, u1, v1, z1]
 
@@ -15,12 +18,18 @@ export interface SimCable {
   fixed?: boolean; // doesn't move (a ribbon): the others settle round it
   mods?: string[]; // the boards at its ends: their own holders don't push it within `own` mm of that end
   plugs?: string[]; // its own plugs: never push it
+  grip?: number[][]; // where a comb or clip holds it (it stays in the slot there)
+  stiff?: [number, number]; // mm beyond each pin where it keeps close to the shape it was laid in (springy, not held)
+  floor?: number; // the lowest its middle can hang (where the streets are); default: the lowest point of its planned way
 }
 export interface SimObstacle { box: Box; module?: string; plug?: string; stand?: boolean }
-export interface SimResult { paths: number[][][]; touching: [string, string][]; inside: string[] }
+export interface SimResult { paths: number[][][]; touching: [string, string][]; inside: string[]; kinked: string[] }
 
 const STEP = 2.5; // bead spacing
 const GAP = 0.25; // clearance kept between two cables
+const SLACK = 0.03; // cables are a few per cent longer than the shortest way: they lie, not stretch
+const SAG = 0.8; // how far weight pulls a free bead down each round (mm)
+const BEND = 3; // tightest bend, in cable diameters
 
 const sub = (a: number[], b: number[]) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const len = (a: number[]) => Math.hypot(a[0], a[1], a[2]);
@@ -49,11 +58,20 @@ export function resample(pts: number[][], step = STEP): number[][] {
  */
 export function settleCables(cables: SimCable[], obs: SimObstacle[], rounds = 60): SimResult {
   const beads = cables.map((c) => resample(c.pts));
-  const rest = beads.map((b) => b.map((_, i) => (i ? len(sub(b[i], b[i - 1])) : 0)));
+  const plan = beads.map((b) => b.map((q) => q.slice())); // where each bead was laid: the side of anything it is pushed back to
   // arc length of every bead from each end, and which are held in their plugs
   const arc = beads.map((b) => { const s = [0]; for (let i = 1; i < b.length; i++) s.push(s[i - 1] + len(sub(b[i], b[i - 1]))); return s; });
   const held = cables.map((c, k) => { const s = arc[k], L = s[s.length - 1]; return s.map((x) => c.fixed || x <= c.pin[0] || L - x <= c.pin[1]); });
-  const floor = beads.map((b) => Math.min(...b.map((q) => q[2])));
+  // a comb holds the bead in its slot, and the one each side
+  cables.forEach((C, k) => { for (const g of C.grip ?? []) { let bi = -1, bd = 3; beads[k].forEach((q, i) => { const dd = len(sub(q, g)); if (dd < bd) { bd = dd; bi = i; } }); if (bi >= 0) for (const j of [bi - 1, bi, bi + 1]) if (j >= 0 && j < beads[k].length) held[k][j] = true; } });
+  // rest lengths: the free stretch a few per cent longer than laid (the held ends are exactly as laid, so their share
+  // of the slack doesn't all bunch up in the middle)
+  const rest = beads.map((b, c) => b.map((_, i) => (i ? len(sub(b[i], b[i - 1])) * (cables[c].fixed || held[c][i] || held[c][i - 1] ? 1 : 1 + SLACK) : 0)));
+  const floor = beads.map((b, c) => Math.min(cables[c].floor ?? Infinity, ...b.map((q) => q[2])));
+  // how much of its weight each bead hangs on (none by the plugs, all from a few diameters out)
+  const carry = cables.map((C, k) => { const S = arc[k], L = S[S.length - 1], ramp = 40; return S.map((x) => { const e = Math.min(x - C.pin[0] - (C.stiff?.[0] ?? 12 * C.r), L - x - C.pin[1] - (C.stiff?.[1] ?? 12 * C.r)); return Math.max(0, Math.min(1, e / ramp)); }); });
+  // and how firmly each keeps to where it was laid (its stiff stretches out of the plugs, easing off beyond them)
+  const keep = cables.map((C, k) => { const S = arc[k], L = S[S.length - 1]; return S.map((x) => { const e = Math.min(x - C.pin[0] - (C.stiff?.[0] ?? 0), L - x - C.pin[1] - (C.stiff?.[1] ?? 0)); return C.stiff ? 0.12 * Math.max(0, Math.min(1, 1 - e / 20)) : 0; }); });
   const rMax = Math.max(1, ...cables.map((c) => c.r));
 
   // obstacles on a coarse grid, so each bead only looks at the few near it
@@ -66,13 +84,13 @@ export function settleCables(cables: SimCable[], obs: SimObstacle[], rounds = 60
       for (let j = Math.floor((b[1] - g) / OC); j <= Math.floor((b[4] + g) / OC); j++)
         for (let k = Math.floor((b[2] - g) / OC); k <= Math.floor((b[5] + g) / OC); k++) { const key = okey(i, j, k); const l = ogrid.get(key); if (l) l.push(n); else ogrid.set(key, [n]); }
   });
+  const inBox = (q: number[], b: Box, r: number) => q[0] > b[0] - r && q[0] < b[3] + r && q[1] > b[1] - r && q[1] < b[4] + r && q[2] > b[2] - r && q[2] < b[5] + r;
+  // its own plugs never push it; its own board's holder only lets it be where it was laid (the way out of the plug),
+  // never lets it sink in further
   const ownOk = (c: number, i: number, o: SimObstacle) => {
     const C = cables[c];
     if (o.plug && C.plugs?.includes(o.plug)) return true;
-    if (!o.module || !C.mods?.includes(o.module)) return false;
-    // its own board's holder is fine close to the end it plugs into there
-    const s = arc[c][i], L = arc[c][arc[c].length - 1], near = 26;
-    return (C.mods[0] === o.module && s < near + C.pin[0]) || (C.mods[C.mods.length - 1] === o.module && L - s < near + C.pin[1]);
+    return !!o.module && !!C.mods?.includes(o.module) && inBox(plan[c][i], o.box, C.r - 0.5);
   };
   const pushOut = (c: number, i: number) => {
     const q = beads[c][i], r = cables[c].r;
@@ -83,10 +101,14 @@ export function settleCables(cables: SimCable[], obs: SimObstacle[], rounds = 60
       const o = obs[n], b = o.box;
       if (q[0] <= b[0] - r || q[0] >= b[3] + r || q[1] <= b[1] - r || q[1] >= b[4] + r || q[2] <= b[2] - r || q[2] >= b[5] + r) continue;
       if (ownOk(c, i, o)) continue;
-      // out through the nearest face (never down through the floor it lies on)
+      // back out on the side it was laid (so it never pops through a thin board to the far side), by the shortest
+      // way on that side; if it was laid inside (its route was already through it), the nearest face, never down
       const pen = [q[0] - (b[0] - r), b[3] + r - q[0], q[1] - (b[1] - r), b[4] + r - q[1], q[2] - (b[2] - r), b[5] + r - q[2]];
-      let best = 5, bv = pen[5];
-      for (let f = 0; f < 6; f++) if (f !== 4 && pen[f] < bv) { bv = pen[f]; best = f; }
+      const P = plan[c][i], was = [P[0] <= b[0] - r, P[0] >= b[3] + r, P[1] <= b[1] - r, P[1] >= b[4] + r, P[2] <= b[2] - r, P[2] >= b[5] + r];
+      const sides = was.some(Boolean);
+      let best = -1, bv = Infinity;
+      for (let f = 0; f < 6; f++) if ((sides ? was[f] : f !== 4) && pen[f] < bv) { bv = pen[f]; best = f; }
+      if (best < 0) continue;
       const ax = best >> 1, sg = best & 1 ? 1 : -1;
       q[ax] += sg * (bv + 0.05);
       moved = true;
@@ -98,8 +120,8 @@ export function settleCables(cables: SimCable[], obs: SimObstacle[], rounds = 60
   const CC = Math.max(4, 2 * rMax + GAP + 1);
   const ckey = (q: number[]) => `${Math.floor(q[0] / CC)},${Math.floor(q[1] / CC)},${Math.floor(q[2] / CC)}`;
 
-  for (let round = 0; round < rounds; round++) {
-    // 1. cables that touch push apart
+  // cables that touch push apart
+  const pushApart = () => {
     const grid = new Map<string, [number, number][]>();
     beads.forEach((b, c) => b.forEach((q, i) => { const k = ckey(q); const l = grid.get(k); if (l) l.push([c, i]); else grid.set(k, [[c, i]]); }));
     beads.forEach((b, c) => b.forEach((q, i) => {
@@ -129,33 +151,132 @@ export function settleCables(cables: SimCable[], obs: SimObstacle[], rounds = 60
           // how far apart they already are that way
           const sep = dot(d, n), move = need - sep;
           if (move <= 0) continue;
-          const w1 = h1 ? 0 : h2 ? 1 : 0.5, w2 = 1 - w1;
-          for (let a = 0; a < 3; a++) { q[a] -= n[a] * move * w1; p2[a] += n[a] * move * w2; }
+          let w1 = h1 ? 0 : h2 ? 1 : 0.5, w2 = 1 - w1, m = move;
+          // never through the floor: the one that would go under goes over instead
+          if ((w1 > 0 && q[2] - n[2] * m * w1 < floor[c] - 0.01) || (w2 > 0 && p2[2] + n[2] * m * w2 < floor[c2] - 0.01)) {
+            n = n.map((v) => -v);
+            m = need - dot(d, n);
+            if (w1 > 0 && w2 > 0) { const up = n[2] > 0 ? 'p2' : 'q'; w1 = up === 'q' ? 1 : 0; w2 = 1 - w1; }
+          }
+          // spread along each cable (a cable is pushed aside as a curve, not a single dent)
+          const shove = (cc: number, ii: number, s2: number) => {
+            const b = beads[cc];
+            for (const [o, f] of [[0, 1], [-1, 0.5], [1, 0.5], [-2, 0.2], [2, 0.2]] as const) {
+              const j = ii + o;
+              if (j < 0 || j >= b.length || held[cc][j]) continue;
+              for (let a = 0; a < 3; a++) b[j][a] += n[a] * m * s2 * f;
+            }
+          };
+          if (w1 > 0) shove(c, i, -w1);
+          if (w2 > 0) shove(c2, i2, w2);
         }
       }
     }));
-    // 2. out of holders, docks and plugs, and never below where the cable was laid
-    beads.forEach((b, c) => b.forEach((_, i) => { if (!held[c][i]) pushOut(c, i); }));
-    // 3. every chain keeps its length (it can't stretch), and bends ease out
+  };
+
+  // first, cables laid on top of one another (two out of neighbouring plugs down the same way) are eased apart, side
+  // by side, keeping their lengths; that is the shape each then keeps near its plugs
+  for (let k = 0; k < (rounds ? 24 : 0); k++) {
+    pushApart();
     beads.forEach((b, c) => {
       if (cables[c].fixed) return;
-      for (let pass = 0; pass < 2; pass++) for (let i = 1; i < b.length; i++) {
-        const d = sub(b[i], b[i - 1]), D = len(d), L0 = rest[c][i];
-        if (D < 1e-9) continue;
-        const e = (D - L0) / D, h0 = held[c][i - 1], h1 = held[c][i];
-        if (h0 && h1) continue;
-        const w0 = h0 ? 0 : h1 ? 1 : 0.5, w1 = 1 - w0;
-        for (let a = 0; a < 3; a++) { b[i - 1][a] += d[a] * e * w0; b[i][a] -= d[a] * e * w1; }
+      for (let i = 1; i < b.length; i++) {
+        const d = sub(b[i], b[i - 1]), D = len(d), h0 = held[c][i - 1], h1 = held[c][i];
+        if (D < 1e-9 || (h0 && h1)) continue;
+        const e = (D - len(sub(plan[c][i], plan[c][i - 1]))) / D, w0 = h0 ? 0 : h1 ? 1 : 0.5;
+        for (let a = 0; a < 3; a++) { b[i - 1][a] += d[a] * e * w0; b[i][a] -= d[a] * e * (1 - w0); }
       }
+      b.forEach((_, i) => { if (!held[c][i]) pushOut(c, i); });
+    });
+  }
+  const shape = beads.map((b) => b.map((q) => q.slice()));
+
+  for (let round = 0; round < rounds; round++) {
+    // 0. weight: every free bead is pulled down (the floor, holders and other cables hold it up)
+    const g = SAG * Math.min(1, 3.3 * (1 - round / Math.max(1, rounds))); // full weight, easing off over the last rounds so it comes to rest
+    // (near a plug a cable is carried by its own stiffness: weight takes over only a few diameters out)
+    beads.forEach((b, c) => { if (!cables[c].fixed) b.forEach((q, i) => { if (!held[c][i]) q[2] = Math.max(floor[c], q[2] - g * carry[c][i]); }); });
+    // 1. every chain keeps its length (it can't stretch) and its stiffness: bends ease out (stiffer the thicker it
+    // is), and nowhere tighter than it can bend, not even where it leaves a plug. A few passes, so weight and
+    // stiffness settle into a smooth hang rather than a kink by the plug.
+    beads.forEach((b, c) => {
+      if (cables[c].fixed) return;
+      const k0 = Math.min(0.25, 0.02 + 0.05 * cables[c].r), tight = STEP / (BEND * 2 * cables[c].r); // turn per bead (rad) at the tightest bend
+      const H = held[c];
+      for (let pass = 0; pass < 8; pass++) {
+        // (each way in turn, so a pull at one end reaches the other within the pass)
+        for (let k2 = 1; k2 < b.length; k2++) {
+          const i = pass % 2 ? b.length - k2 : k2;
+          const d = sub(b[i], b[i - 1]), D = len(d), L0 = rest[c][i];
+          if (D < 1e-9) continue;
+          const e = (D - L0) / D, h0 = H[i - 1], h1 = H[i];
+          if (h0 && h1) continue;
+          // the bead ahead in the sweep takes the whole step (follow the leader: a long chain comes to its length in
+          // a few sweeps, where splitting each step between the two would take hundreds)
+          const lead = pass % 2 ? i - 1 : i, w0 = h0 ? 0 : h1 ? 1 : lead === i - 1 ? 1 : 0, w1 = 1 - w0;
+          for (let a = 0; a < 3; a++) { b[i - 1][a] += d[a] * e * w0; b[i][a] -= d[a] * e * w1; }
+        }
+        for (let i = 1; i + 1 < b.length; i++) {
+          if (H[i - 1] && H[i] && H[i + 1]) continue;
+          const u = unit(sub(b[i], b[i - 1])), w = unit(sub(b[i + 1], b[i])), turn = Math.acos(Math.max(-1, Math.min(1, dot(u, w))));
+          const over = turn > tight ? 1 - tight / turn : 0;
+          if (!H[i]) {
+            // a free bead: towards the middle of its neighbours (always a little, a lot where it bends too tight)
+            const k = Math.min(0.9, (pass ? 0 : k0) + over); // stiffness once a round (more straightens it like a string pulled taut)
+            for (let a = 0; a < 3; a++) b[i][a] += k * ((b[i - 1][a] + b[i + 1][a]) / 2 - b[i][a]);
+            // and its free neighbours the other way, so the bend spreads along the cable instead of just moving
+            if (over > 0) for (const j2 of [i - 1, i + 1]) if (!H[j2]) for (let a = 0; a < 3; a++) b[j2][a] -= 0.25 * over * ((b[i - 1][a] + b[i + 1][a]) / 2 - b[i][a]);
+          } else if (over > 0) {
+            // the last bead the plug holds: the free one after it goes back towards the plug's line
+            const f = H[i + 1] ? b[i - 1] : b[i + 1], h0 = H[i + 1] ? b[i + 1] : b[i - 1];
+            if (H[i + 1] === H[i - 1]) continue;
+            const t = unit(sub(b[i], h0)), d0 = len(sub(f, b[i]));
+            for (let a = 0; a < 3; a++) f[a] += Math.min(0.9, over * 1.5) * (b[i][a] + t[a] * d0 - f[a]);
+          }
+        }
+        for (let i = 0; i < b.length; i++) {
+          if (H[i]) continue;
+          if (keep[c][i]) for (let a = 0; a < 3; a++) b[i][a] += keep[c][i] * (shape[c][i][a] - b[i][a]);
+          if (b[i][2] < floor[c]) b[i][2] = floor[c];
+        }
+      }
+    });
+    // 2. then what touches: cables push apart, and out of holders, docks and plugs, never below where it was laid
+    pushApart();
+    beads.forEach((b, c) => b.forEach((_, i) => { if (!held[c][i]) pushOut(c, i); }));
+  }
+  // a last push apart and out of everything, so nothing ends up inside a holder or another cable
+  pushApart();
+  beads.forEach((b, c) => b.forEach((_, i) => { if (!held[c][i]) pushOut(c, i); }));
+
+  // 3. last, the ripples out: every free bead eased towards its neighbours a few times over, each step kept only
+  // where it leaves the bead clear of everything (holders, plugs, other cables), so a cable over a box's edge drapes
+  // over it rather than stepping down it bead by bead
+  {
+    const grid = new Map<string, [number, number][]>();
+    beads.forEach((b, c) => b.forEach((q, i) => { const k = ckey(q); const l = grid.get(k); if (l) l.push([c, i]); else grid.set(k, [[c, i]]); }));
+    const clear = (c: number, i: number, q: number[]) => {
+      const r = cables[c].r;
+      for (const n of ogrid.get(okey(Math.floor(q[0] / OC), Math.floor(q[1] / OC), Math.floor(q[2] / OC))) ?? []) if (inBox(q, obs[n].box, r - 0.1) && !ownOk(c, i, obs[n])) return false;
+      if (q[2] < floor[c] - 1e-6) return false;
+      const gi = Math.floor(q[0] / CC), gj = Math.floor(q[1] / CC), gk = Math.floor(q[2] / CC);
+      for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) for (let dk = -1; dk <= 1; dk++) for (const [c2, i2] of grid.get(`${gi + di},${gj + dj},${gk + dk}`) ?? []) {
+        if (c2 === c) continue;
+        if (len(sub(beads[c2][i2], q)) < r + cables[c2].r + 0.05) return false;
+      }
+      return true;
+    };
+    for (let it = 0; it < 16; it++) beads.forEach((b, c) => {
+      if (cables[c].fixed) return;
       for (let i = 1; i + 1 < b.length; i++) {
         if (held[c][i]) continue;
-        for (let a = 0; a < 3; a++) b[i][a] += 0.12 * ((b[i - 1][a] + b[i + 1][a]) / 2 - b[i][a]);
-        if (b[i][2] < floor[c]) b[i][2] = floor[c];
+        const mid = b[i].map((_, a) => (b[i - 1][a] + b[i + 1][a]) / 2);
+        const target = keep[c][i] > 0.1 && clear(c, i, shape[c][i]) ? shape[c][i] : mid; // its stiff stretch: back to the shape it was laid in, if that's free
+        const nq = b[i].map((v, a) => v + 0.5 * (target[a] - v));
+        if (clear(c, i, nq)) b[i] = nq;
       }
     });
   }
-  // a last push out of everything, so nothing ends up inside a holder
-  beads.forEach((b, c) => b.forEach((_, i) => { if (!held[c][i]) pushOut(c, i); }));
 
   // what still touches, for the report
   const touching = new Set<string>(), inside = new Set<string>();
@@ -174,5 +295,12 @@ export function settleCables(cables: SimCable[], obs: SimObstacle[], rounds = 60
       if (q[0] > bx[0] - r && q[0] < bx[3] + r && q[1] > bx[1] - r && q[1] < bx[4] + r && q[2] > bx[2] - r && q[2] < bx[5] + r && !ownOk(c, i, obs[n])) inside.add(cables[c].id);
     }
   }));
-  return { paths: beads, touching: [...touching].map((k) => k.split('|') as [string, string]), inside: [...inside] };
+  // and where one still bends tighter than a cable can (squeezed between things)
+  const kinked = cables.filter((C, c) => !C.fixed && beads[c].some((_, i) => {
+    const b = beads[c];
+    if (i < 1 || i + 1 >= b.length || held[c][i]) return false;
+    const u = unit(sub(b[i], b[i - 1])), w = unit(sub(b[i + 1], b[i]));
+    return Math.acos(Math.max(-1, Math.min(1, dot(u, w)))) > (1.6 * STEP) / (BEND * 2 * C.r);
+  })).map((C) => C.id);
+  return { paths: beads, touching: [...touching].map((k) => k.split('|') as [string, string]), inside: [...inside], kinked };
 }

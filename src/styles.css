@@ -4,6 +4,7 @@
    for boards in the 3D view only.
    ===================================================================================================== */
 :root {
+  --led-on: #38e05a;
   --bg: #0a0c0f;
   --surface: #111418;
   --panel: var(--surface);
@@ -1044,3 +1045,22 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
   .sb-num input[type='text'] { width: 50px; }
 }
 @media (max-width: 860px) { .board-editor .toolbar .tbtn { padding: 0 7px; } }
+
+/* LEDs lit in the board editor (with the tracks), doing what they do; the 3D view's Live switch */
+.lamp { mix-blend-mode: screen; }
+.lamp-blink { animation: lampBlink 2s steps(1, end) infinite; }
+@keyframes lampBlink { 0% { opacity: 1; } 50% { opacity: 0; } }
+.lamp-heartbeat { animation: lampBeat 1.25s steps(1, end) infinite; }
+@keyframes lampBeat { 0% { opacity: 1; } 6.4% { opacity: 0; } 17.6% { opacity: 1; } 24% { opacity: 0; } }
+.lamp-activity { animation: lampAct 1.7s steps(1, end) infinite; }
+@keyframes lampAct { 0% { opacity: 1; } 4% { opacity: 0; } 9% { opacity: 1; } 12% { opacity: 0.2; } 20% { opacity: 1; } 23% { opacity: 0; } 41% { opacity: 1; } 44% { opacity: 0; } 63% { opacity: 1; } 66% { opacity: 0; } 80% { opacity: 1; } 84% { opacity: 0; } }
+.lamp-breathe { animation: lampBreathe 3.2s ease-in-out infinite; }
+@keyframes lampBreathe { 0%, 100% { opacity: 0.15; } 50% { opacity: 1; } }
+.lamp-chase { animation: lampChase 4.8s steps(1, end) infinite; }
+@keyframes lampChase { 0% { opacity: 1; } 16.6% { opacity: 0; } 66.6% { opacity: 1; } }
+.lamp-rainbow { animation: lampRainbow 5.5s linear infinite; }
+@keyframes lampRainbow { to { filter: hue-rotate(360deg); } }
+.player .live { display: inline-flex; align-items: center; }
+.player .live i { display: inline-block; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); margin-right: 6px; vertical-align: 1px; }
+.player .live.on i { background: var(--led-on); box-shadow: 0 0 6px var(--led-on); animation: lampBeat 1.25s steps(1, end) infinite; }
+@media (prefers-reduced-motion: reduce) { .lamp, .player .live.on i { animation: none !important; } }

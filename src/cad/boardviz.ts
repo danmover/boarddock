@@ -1,7 +1,8 @@
 // Display models of a board for the 3D view: soldermask with gold pads and silkscreen, and every part shaped
 // after what it is (metal connector shells with their openings, headers with gold pins, chips with legs, jacks,
 // LEDs, passives), plus realistic plugs with cables. Built once per board (the module cache keeps them).
-import type { Anim, Board, Comp, Ghost, MeshData, PickTag, V2 } from '../model/types';
+import type { Anim, Board, Comp, Ghost, Light, MeshData, PickTag, V2 } from '../model/types';
+import { boardLights, boxLight, LED_COLOUR } from '../model/lights';
 import { bbox, compRect, extentAlong, inside, rad } from '../geom/poly';
 import { textStrokes, textWidth } from './font';
 import { headerPins } from '../model/probes';
@@ -15,6 +16,7 @@ type Mat = NonNullable<Ghost['mat']>;
 class Bin {
   meshes = new Map<Mat, MeshData[]>();
   solids = new Map<Mat, MF[]>();
+  lights: Light[] = []; // what glows (on the 'led' ghost, for the 3D view)
   add(mat: Mat, m: MF) { (this.solids.get(mat) ?? this.solids.set(mat, []).get(mat)!).push(m); }
   box(mat: Mat, T: number[], x0: number, y0: number, z0: number, x1: number, y1: number, z1: number) {
     (this.meshes.get(mat) ?? this.meshes.set(mat, []).get(mat)!).push(boxMesh(T, x0, y0, z0, x1, y1, z1));
@@ -27,7 +29,7 @@ class Bin {
       const sol = this.solids.get(mat);
       if (sol?.length) list.push(toMesh(sol.length === 1 ? sol[0] : K().Manifold.compose(sol)));
       if (!list.length) continue;
-      out.push({ name: `${name} ${mat}`, mesh: merge(list), color: color[mat] ?? MAT_COLOR[mat], opacity: mat === 'led' ? 0.85 : 1, tag, anim, mat, ...(smooth ? { smooth } : {}) });
+      out.push({ name: `${name} ${mat}`, mesh: merge(list), color: color[mat] ?? MAT_COLOR[mat], opacity: mat === 'led' ? 0.9 : 1, tag, anim, mat, ...(smooth ? { smooth } : {}), ...(mat === 'led' && this.lights.length ? { fx: { lights: this.lights } } : {}) });
     }
     return out;
   }
@@ -35,7 +37,7 @@ class Bin {
 
 export const MAT_COLOR: Record<Mat, string> = {
   mask: '#15603a', gold: '#d9aa3c', metal: '#c9d0d8', black: '#1d2024', chip: '#25282d', white: '#ece9e2', silk: '#f2f2ea',
-  led: '#ffe066', passive: '#b89a6a', blue: '#2f5bd8', plug: '#2f3338', cable: '#24272b', copper: '#c87533',
+  led: '#efece4', passive: '#b89a6a', blue: '#2f5bd8', plug: '#2f3338', cable: '#24272b', copper: '#c87533',
   trace: '#2f9e63', tin: '#c9ced4', box: '#2b2f36', red: '#b8322b',
 };
 
@@ -68,6 +70,29 @@ function frameOf(c: Comp, z: number, below: boolean): number[] {
 }
 
 const tf = (m: MF, T: number[]) => m.transform(T as any);
+/** A point, and a direction, carried by a 4x4 transform (column-major). */
+const at = (T: number[], q: number[]) => [T[0] * q[0] + T[4] * q[1] + T[8] * q[2] + T[12], T[1] * q[0] + T[5] * q[1] + T[9] * q[2] + T[13], T[2] * q[0] + T[6] * q[1] + T[10] * q[2] + T[14]];
+const along = (T: number[], v: number[]) => [T[0] * v[0] + T[4] * v[1] + T[8] * v[2], T[1] * v[0] + T[5] * v[1] + T[9] * v[2], T[2] * v[0] + T[6] * v[1] + T[10] * v[2]];
+
+/**
+ * A board's lights as it sits in a rack: dark when the board has no power; a jack's lights only while a cable is in
+ * that jack (`plugged`).
+ */
+export function powerFx(fx: Ghost['fx'], powered: boolean, plugged: (ref: string) => boolean): Ghost['fx'] {
+  if (!fx?.lights) return fx;
+  return { ...fx, dark: !powered, lights: fx.lights.filter((l) => !l.ref || plugged(l.ref)) };
+}
+
+/** Lights (and a cable's flow) moved with the ghost they belong to. */
+export function moveFx(fx: Ghost['fx'], T: number[]): Ghost['fx'] {
+  if (!fx) return fx;
+  return {
+    ...fx,
+    ...(fx.lights ? { lights: fx.lights.map((l) => ({ ...l, p: at(T, l.p), ...(l.n ? { n: along(T, l.n) } : {}) })) } : {}),
+    ...(fx.flow ? { flow: { ...fx.flow, pts: fx.flow.pts.map((q) => at(T, q)) } } : {}),
+    ...(fx.fade ? { fade: { ...fx.fade, p: at(T, fx.fade.p), d: along(T, fx.fade.d) } } : {}),
+  };
+}
 
 /** Which local side of the part the plug enters: +y, -y, +x or -x. */
 function mouthSide(c: Comp): 'py' | 'ny' | 'px' | 'nx' {
@@ -197,9 +222,20 @@ function partDetail(bin: Bin, c: Comp, zt: number, zb: number) {
       for (let c2 = 0; c2 < 8; c2++) { const cx = -3.57 + c2 * 1.02; B('gold', cx - 0.2, hy - depth + 0.4, h - 3.3, cx + 0.2, hy - depth + 5, h - 2.55); }
       bin.box('led', T, -hx + 0.8, hy - 0.2, h - 2.1, -hx + 3.2, hy + 0.15, h - 0.6);
       bin.box('led', T, hx - 3.2, hy - 0.2, h - 2.1, hx - 0.8, hy + 0.15, h - 0.6);
+      // the jack's link light (green, on while a cable is in) and activity light (amber, flickering with traffic)
+      const n = along(T, [0, 1, 0]);
+      bin.lights.push({ p: at(T, [-hx + 2, hy + 0.2, h - 1.35]), n, colour: LED_COLOUR.green, pattern: 'on', r: 0.9, i: 0, name: `${c.ref} link`, ref: c.ref });
+      bin.lights.push({ p: at(T, [hx - 2, hy + 0.2, h - 1.35]), n, colour: LED_COLOUR.amber, pattern: 'activity', r: 0.9, i: 1, name: `${c.ref} activity`, ref: c.ref });
     } else {
       B('black', -hx + t, hy - depth, t, hx - t, hy - depth + 0.3, h - t);
     }
+    return;
+  }
+  if (c.kind === 'switch' && Math.min(w, l) >= 3 && Math.abs(w - l) < 1.5) {
+    // a tactile switch: black body, metal frame, round plunger
+    B('black', -hx, -hy, 0, hx, hy, h * 0.55);
+    B('metal', -hx + 0.2, -hy + 0.2, h * 0.55, hx - 0.2, hy - 0.2, h * 0.62);
+    bin.add('black', tf(cyl(0, 0, h * 0.62, h, Math.min(w, l) * 0.28, Math.min(w, l) * 0.28, 20), T));
     return;
   }
   if (c.kind === 'switch') {
@@ -208,7 +244,20 @@ function partDetail(bin: Bin, c: Comp, zt: number, zb: number) {
     B('white', -s, -s, h * 0.6, s, s, h);
     return;
   }
-  if (c.kind === 'led') { bin.box('led', T, -hx, -hy, 0, hx, hy, h); return; }
+  if (c.kind === 'led') {
+    if (h > 3 && Math.abs(w - l) < 1) {
+      // a through-hole LED: a coloured-clear dome on a collar
+      const r = Math.min(w, l) / 2;
+      bin.add('led', tf(cyl(0, 0, 0.8, h - r * 0.9, r * 0.9, r * 0.9, 24).add(K().Manifold.sphere(r * 0.9, 24).translate([0, 0, h - r * 0.9])), T));
+      bin.add('led', tf(cyl(0, 0, 0, 0.8, r, r, 24), T));
+      return;
+    }
+    // a surface-mount LED: white body, tinned ends, the clear lens on top
+    const long = w >= l, e = Math.min(0.35, (long ? w : l) * 0.18);
+    if (long) { B('white', -hx + e, -hy, 0, hx - e, hy, h * 0.55); B('tin', -hx, -hy, 0, -hx + e, hy, h * 0.6); B('tin', hx - e, -hy, 0, hx, hy, h * 0.6); B('led', -hx + e, -hy + 0.05, h * 0.55, hx - e, hy - 0.05, h); }
+    else { B('white', -hx, -hy + e, 0, hx, hy - e, h * 0.55); B('tin', -hx, -hy, 0, hx, -hy + e, h * 0.6); B('tin', -hx, hy - e, 0, hx, hy, h * 0.6); B('led', -hx + 0.05, -hy + e, h * 0.55, hx - 0.05, hy - e, h); }
+    return;
+  }
   if (c.kind === 'hot') {
     B('chip', -hx, -hy, 0, hx, hy, Math.max(0.2, h - 0.6));
     B('metal', -hx + 0.6, -hy + 0.6, Math.max(0.2, h - 0.6), hx - 0.6, hy - 0.6, h);
@@ -239,6 +288,7 @@ function partDetail(bin: Bin, c: Comp, zt: number, zb: number) {
   if (/relay/i.test(pkgName)) { B('blue', -hx, -hy, 0, hx, hy, h); B('white', -hx * 0.7, -hy * 0.5, h, hx * 0.1, hy * 0.5, h + 0.02); return; }
   if (/trimmer|pot\b|potentiometer/i.test(pkgName)) { B('blue', -hx, -hy, 0, hx, hy, h * 0.6); bin.add('white', tf(cyl(0, 0, h * 0.6, h, Math.min(w, l) * 0.32, Math.min(w, l) * 0.32, 24), T)); return; }
   if (/coin|cr2032|battery/i.test(pkgName)) { B('black', -hx, -hy, 0, hx, hy, h * 0.55); bin.add('metal', tf(cyl(0, -hy * 0.1, h * 0.55, h, Math.min(w, l) * 0.42, Math.min(w, l) * 0.42, 32), T)); return; }
+  if (/crystal|xtal|hc.?49|\bY\d/i.test(`${pkgName} ${c.ref}`)) { B('metal', -hx, -hy, 0, hx, hy, h); return; }
   // generic: ICs with legs, or small passives with metal ends
   if (Math.min(w, l) >= 3 && h <= 4) {
     const leg = 0.55, legH = Math.min(0.45, h * 0.5);
@@ -251,6 +301,21 @@ function partDetail(bin: Bin, c: Comp, zt: number, zb: number) {
       else { B('metal', -hx, u - 0.2, 0, -hx + leg + 0.2, u + 0.2, legH); B('metal', hx - leg - 0.2, u - 0.2, 0, hx, u + 0.2, legH); }
     }
     B('silk', -hx + leg + 0.5, -hy + leg + 0.5, h, -hx + leg + 1.1, -hy + leg + 1.1, h + 0.02);
+    // the part number printed on the top, as makers do
+    const mark = (c.value || '').replace(/\s+/g, ' ').trim().slice(0, 12);
+    if (mark && (w - 2 * leg) * (l - 2 * leg) > 20 && /^[A-Za-z0-9][\w\- .+/]*$/.test(mark)) {
+      const inner = Math.max(w, l) - 2 * leg - 1.6, hg = Math.min(1.2, (Math.min(w, l) - 2 * leg) * 0.28, inner / Math.max(3, mark.length) / 0.75);
+      if (hg >= 0.5) {
+        // along the chip's long side, centred on its top
+        const tw = textWidth(mark, hg), sw = Math.max(0.1, hg * 0.12), rot = l > w;
+        for (const [a, b] of textStrokes(mark, hg)) {
+          const ax = a[0] - tw / 2, ay = a[1] - hg / 2, bx = b[0] - tw / 2, by = b[1] - hg / 2;
+          const [p0, p1] = rot ? [[-ay, ax], [-by, bx]] : [[ax, ay], [bx, by]];
+          const dx = p1[0] - p0[0], dy = p1[1] - p0[1], L = Math.hypot(dx, dy), an = Math.atan2(dy, dx);
+          bin.box('silk', mulT(T, [Math.cos(an), Math.sin(an), 0, 0, -Math.sin(an), Math.cos(an), 0, 0, 0, 0, 1, 0, p0[0], p0[1], h, 1]), -sw / 2, -sw / 2, 0, L + sw / 2, sw / 2, 0.03);
+        }
+      }
+    }
     return;
   }
   if (Math.max(w, l) < 7 && h <= 3) {
@@ -349,7 +414,14 @@ export function boardDetail(b: Board, zb: number, zt: number, tag: PickTag, anim
       // a USB-A's tongue in the upper half of its mouth (the lower half upside down), its metal shell above and below
       if (t === 'usb_a') { bin.box('white', T, -0.7, -pw / 2 + 1.6, 0.2, 0.1, pw / 2 - 1.6, 1.9); bin.box('metal', T, -0.2, -pw / 2 - 0.4, -ph / 2 - 0.4, 0.12, pw / 2 + 0.4, -ph / 2); bin.box('metal', T, -0.2, -pw / 2 - 0.4, ph / 2, 0.12, pw / 2 + 0.4, ph / 2 + 0.4); }
       // an RJ45's latch notch at the top of its mouth (at the bottom upside down)
-      if (t === 'rj45') bin.box('box', T, -0.7, -2, ph / 2 - 1.4, 0.1, 2, ph / 2 + 0.01);
+      if (t === 'rj45') {
+        bin.box('box', T, -0.7, -2, ph / 2 - 1.4, 0.1, 2, ph / 2 + 0.01);
+        // link and activity lights in the top corners of the jack's mouth
+        for (const [k, y] of [[0, -(pw / 2 - 1.1)], [1, pw / 2 - 1.1]] as const) {
+          bin.box('led', T, -0.1, y - 0.7, ph / 2 - 1.6, 0.14, y + 0.7, ph / 2 - 0.4);
+          bin.lights.push({ p: at(T, [0.16, y, ph / 2 - 1]), n: along(T, [1, 0, 0]), colour: k ? LED_COLOUR.amber : LED_COLOUR.green, pattern: k ? 'activity' : 'on', r: 0.8, i: k, name: `${c.ref} ${k ? 'activity' : 'link'}`, ref: c.ref });
+        }
+      }
       if (t === 'barrel') bin.box('metal', T, -0.7, -0.8, -0.8, 0.1, 0.8, 0.8);
     }
     // ports in the top face: the opening, the tongue and the shell rim (a mains outlet: its face and slots)
@@ -364,6 +436,7 @@ export function boardDetail(b: Board, zb: number, zt: number, tag: PickTag, anim
     }
     const bb = bbox(b.outline);
     bin.box('led', [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, bb.x0 + 6, (bb.y0 + bb.y1) / 2, zt, 1], -1, -1, -0.02, 1, 1, 0.3);
+    bin.lights.push({ p: [bb.x0 + 6, (bb.y0 + bb.y1) / 2, zt + 0.32], ...boxLight(b), r: 1.1, i: 0, name: 'status' });
     const nm = b.name.slice(0, 20), nh = Math.min(3.5, (bb.y1 - bb.y0) * 0.12);
     silkText(bin, nm, [(bb.x0 + bb.x1) / 2 - textWidth(nm, nh) / 2, (bb.y0 + bb.y1) / 2 - nh / 2], nh, zt);
     return bin.ghosts('board', tag, anim, { box: b.color ?? '#2b2f36', silk: b.color && lum(b.color) > 0.6 ? '#3a3f47' : '#e9e7e2' });
@@ -392,6 +465,16 @@ export function boardDetail(b: Board, zb: number, zt: number, tag: PickTag, anim
   for (const c of list) {
     if (small && c.w * c.l < 2) continue;
     partDetail(bin, c, zt, zb);
+  }
+  // the lights: an LED part's lens is drawn with the part; a template board's LEDs (not parts) drawn here
+  const hasLed = list.some((c) => c.kind === 'led');
+  for (const L of boardLights(b)) {
+    if (!hasLed) {
+      const T = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, L.p[0], L.p[1], zt, 1];
+      bin.box('white', T, -0.6, -0.4, 0, 0.6, 0.4, 0.28); bin.box('tin', T, -0.8, -0.4, 0, -0.6, 0.4, 0.3); bin.box('tin', T, 0.6, -0.4, 0, 0.8, 0.4, 0.3);
+      bin.box('led', T, -0.6, -0.35, 0.28, 0.6, 0.35, 0.5);
+    }
+    bin.lights.push({ ...L, p: [L.p[0], L.p[1], zt + (hasLed ? L.p[2] : 0.5) + 0.02], ...(L.bottom ? { n: [0, 0, -1] } : {}) });
   }
   // copper: the board's own tracks (KiCad), else plausible ones between the parts' pins
   const cu = boardCopper(b), tr = cu.tracks;
@@ -680,28 +763,16 @@ function plugAt(T: number[], p: PlugSize, tag: PickTag, anim: Anim, type: string
  * a bend down, and along the table away from the rack. p, d: the boot's end and the plug's direction; floor: the
  * table's height.
  */
-export function hangingCable(p: number[], d: number[], cable: number, floor: number, centre?: number[]): number[][] {
-  const r = Math.max(1.1, cable / 2);
-  const bend = Math.max(12, 6 * r);
-  const h = Math.hypot(d[0], d[1]);
-  // horizontal way out: along the plug, or (for a plug pointing up or down) away from the middle of the rack, so it
-  // falls clear of the neighbours
-  const aw = centre ? [p[0] - centre[0], p[1] - centre[1]] : [1, 0], la = Math.hypot(aw[0], aw[1]);
-  const out = h > 0.2 ? [d[0] / h, d[1] / h, 0] : la > 1 ? [aw[0] / la, aw[1] / la, 0] : [1, 0, 0];
-  const z0 = floor + r + 0.2;
-  const pts: number[][] = [p];
-  if (d[2] > 0.5) {
-    // pointing up: rise a little, arc over and down
-    pts.push([p[0] + d[0] * 10, p[1] + d[1] * 10, p[2] + 10], [p[0] + out[0] * bend * 1.6, p[1] + out[1] * bend * 1.6, p[2] + 14]);
-  } else pts.push([p[0] + d[0] * 8, p[1] + d[1] * 8, p[2] + d[2] * 8]);
-  const last = pts[pts.length - 1];
-  const fall = Math.max(0, last[2] - z0);
-  // a cable droops: it curves over and falls, landing a little further out than it left
-  const reach = Math.min(60, 8 + fall * 0.35);
-  if (fall > 1) pts.push([last[0] + out[0] * reach, last[1] + out[1] * reach, z0]);
-  const end = pts[pts.length - 1];
-  pts.push([end[0] + out[0] * 45, end[1] + out[1] * 45, z0]);
-  return filletPath(pts, bend);
+/**
+ * A lead that leaves the rack (to a screen, a supply, the wall), drawn as a short stretch out of its plug that fades
+ * away, then a dotted line on the way it goes and where to: nothing to route, so no cable hangs about in the air.
+ */
+export function leadStub(name: string, p: number[], d: number[], cable: number, label: string, tag: PickTag, anim: Anim): Ghost {
+  const r = Math.max(1.1, cable / 2), len = Math.max(30, 10 + 10 * r);
+  return {
+    name, mesh: tubeMesh([p, [p[0] + d[0] * len, p[1] + d[1] * len, p[2] + d[2] * len]], r, 16), color: '#2b2e33', opacity: 1, tag, anim, mat: 'cable', smooth: true,
+    fx: { fade: { p, d, len, dash: 34, label, colour: '#8b95a3' } },
+  };
 }
 
 /**

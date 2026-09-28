@@ -3,24 +3,27 @@
 // reports plug access, collisions, rail lengths and the parts list.
 import type { Anim, Check, EdgeName, Feature, GenResult, Ghost, Link, MeshData, Module, Motion, PanelReport, PartOut, PickTag, Project, Rail, RailMount, V2 } from '../model/types';
 
+/** The pulses' colours along each kind of cable in the live 3D view. */
+const FLOW_COLOUR: Partial<Record<NonNullable<Link['kind']>, string>> = { power: '#ffb347', usb: '#8fd3ff', net: '#7cc4ff', video: '#c7a8ff', audio: '#7fe8d4', debug: '#ffd166', uart: '#ffd166' };
 const CABLE_ORDER: NonNullable<Link['kind']>[] = ['mains', 'power', 'usb', 'net', 'video', 'audio', 'wire', 'debug', 'uart', 'jumper'];
 // assembly steps after every board's (boards use 300 + 10 per seat): cables, the other plugs, caps
 const CABLE_SEQ = 1e6, PLUG_SEQ = 1e6 + 90, CAP_SEQ = 1e6 + 100, TAG_SEQ = 1e6 + 110;
 import { MATERIALS } from '../model/library';
 import { bbox, round } from '../geom/poly';
 import { basis, dir, I4, inv, mul, pt as ptM, rotZ, tr, type M4 } from '../geom/mat';
-import { filletPath, hangingCable, ribbonMesh, sphereMesh, tubeMesh } from './boardviz';
-import { baseRef, cableNumbers, cablePurpose, cableToBuy, KIND_COLOR, KIND_NAME, plugRole, refText } from '../model/links';
+import { filletPath, leadStub, moveFx, powerFx, ribbonMesh, sphereMesh, tubeMesh } from './boardviz';
+import { poweredBoards } from '../model/lights';
+import { baseRef, cableFlow, cableNumbers, offRackTo, cablePurpose, cableToBuy, KIND_COLOR, KIND_NAME, plugRole, refText } from '../model/links';
 import { cableTag } from './cabletag';
 import { powerBudget, powerText } from '../model/power';
 import { buildModule, builtLevels, transformMesh, type ArrangeHooks, type ModuleOut } from './generate';
 import { baseOf, ridersOf, stackLayers, type StackLayer } from '../model/holes';
-import { freeAll, toMesh, type MF } from './kernel';
+import { box, freeAll, toMesh, unionMF, type MF } from './kernel';
 import { END_POSE, LEN_X, rail as railSolid, shoe, shoeBody, shoeLever, SHOE_LEVER, socket, SOCKET_Z } from './dock';
 import { EAR } from './dockdims';
 import { autoAssign, bestDock, classify, clipToRail, dockSite, EDGES, edgeNormal, plugDirs, railMatrix, slotMatrix, withRiders } from './dockplan';
 import { capStress, pieceMesh, planStands, railI, standBoxes, STAND, type StandLane } from './railstand';
-import { assemble, bestRoute, escapes, hits, ribbonRoute, slope, type Box, type CableEnd, type Choice, type Obstacle, type RibbonEnd, type Route } from './cableroute';
+import { assemble, bestRoute, escapes, hits, lead, ribbonRoute, slope, type Box, type CableEnd, type Choice, type Obstacle, type RibbonEnd, type Route } from './cableroute';
 import { settleCables } from './cablesim';
 import { isDebugPort, isProbe, isUartPort, jumperToBuy, jumperWiring, ribbonOf, uartWiring } from '../model/probes';
 
@@ -127,7 +130,8 @@ const emptyBox = () => [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Inf
 const railCache = new Map<number, MeshData>();
 function railMesh(len: number): MeshData {
   let m = railCache.get(len);
-  if (!m) { m = toMesh(railSolid(len)); railCache.set(len, m); if (railCache.size > 32) railCache.delete(railCache.keys().next().value!); }
+  // shown as the rail you buy: zinc-plated steel with its row of mounting slots down the middle
+  if (!m) { const slots: MF[] = []; for (let x = -len / 2 + 12.5; x + 7.5 <= len / 2; x += 25) slots.push(box(x - 7.5, -2.6, -1, x + 7.5, 2.6, 2)); m = toMesh(slots.length ? railSolid(len).subtract(unionMF(slots)) : railSolid(len)); railCache.set(len, m); if (railCache.size > 32) railCache.delete(railCache.keys().next().value!); }
   return m;
 }
 
@@ -481,6 +485,7 @@ export function generatePanel(p: Project): GenResult {
     return m.board.kind === 'box' ? ['other', 'mains-in'].includes(plugRole(m, c)) : !!c.conn.cradle;
   };
   const hang = new Set<string>();
+  const powered = poweredBoards({ ...p, links: live }); // for the lights: boards with no power stay dark
   // assembly steps: stands 100-130, docks 200-210, each board 300 + 10k (+1 rod, +2 board, +3 stack, +4 into its dock),
   // cables CABLE_SEQ + kind (power first), then other plugs, then caps
   const steps: NonNullable<GenResult['steps']> = [];
@@ -556,7 +561,8 @@ export function generatePanel(p: Project): GenResult {
               const mine = g.tag.module === L.mod.id;
               a = { ...IN, pre: [mine ? boardIn : { seq: b0 + 3, dir: nrm, dist: 25, style: 'press' }, ...(mine ? layerPre : [])], show: mine ? (li > 0 ? b0 + 3 : b0 + 2) : b0 + 3 };
             }
-            ghosts.push({ ...g, mesh: transformMesh(g.mesh, L.T), anim: a });
+            const on = powered.has(g.tag?.module ?? ''), mod = g.tag?.module ?? '';
+            ghosts.push({ ...g, mesh: transformMesh(g.mesh, L.T), anim: a, fx: moveFx(powerFx(g.fx, on, (ref) => linked.has(`${mod}/${ref}`)), L.T) });
           }
           features.push(...L.out.features);
           frames[L.mod.id] = L.T;
@@ -591,7 +597,7 @@ export function generatePanel(p: Project): GenResult {
     }
     for (const r of rails) {
       const m = railMesh(r.length!);
-      ghosts.push({ name: `DIN rail ${r.id}`, mesh: transformMesh(m, mul(railMatrix(r), tr(r.length! / 2, 0, 0))), color: '#94a3b8', opacity: 0.6, tag: { kind: 'rail', rail: r.id }, anim: { seq: 110, dir: [0, 0, 1], dist: 60 } });
+      ghosts.push({ name: `DIN rail ${r.id}`, mesh: transformMesh(m, mul(railMatrix(r), tr(r.length! / 2, 0, 0))), color: '#c5ccd4', opacity: 1, mat: 'metal', tag: { kind: 'rail', rail: r.id }, anim: { seq: 110, dir: [0, 0, 1], dist: 60 } });
     }
   } finally {
     freeAll();
@@ -736,13 +742,18 @@ export function generatePanel(p: Project): GenResult {
     const simIn = routes.map((q, i) => {
       const { l, A, B, d } = q, kind = l.kind ?? 'usb';
       const r = kind === 'debug' ? Math.min(3, Math.min(ribbonWidth(l.a), ribbonWidth(l.b)) / 2) : kind === 'jumper' ? Math.max(1, (l.wires?.length ?? 1) * 0.8) : d / 2;
-      return { id: l.id, pts: planned[i].path, r, pin: [10, 10] as [number, number], fixed: kind === 'debug', mods: [l.a.module, l.b.module], plugs: [A.plug, B.plug] };
+      // out of each plug the cable keeps the shape it was laid in (straight out, then its first bend): stiffness rules
+      // there; the rest settles with the other cables
+      const hold = lead(d / 2) + 1.6 * Math.min(25, Math.max(10, 4 * d));
+      // where its street passes through a stand's comb, the comb holds it
+      const rt = planned[i].route, grip = rt.kinds.flatMap((k, j) => (k === 'street' ? stations.filter((u) => u > Math.min(rt.pts[j][0], rt.pts[j + 1][0]) + 4 && u < Math.max(rt.pts[j][0], rt.pts[j + 1][0]) - 4).map((u) => [u, rt.pts[j][1], rt.pts[j][2]]) : []));
+      return { id: l.id, pts: planned[i].path, r, grip, pin: [10, 10] as [number, number], stiff: [hold - 10, hold - 10] as [number, number], fixed: kind === 'debug', mods: [l.a.module, l.b.module], plugs: [A.plug, B.plug], floor: q.zc };
     });
     const laidOut = settleCables(simIn, obs, 0).touching.length; // where the planned routes met, before settling
     const sim = settleCables(simIn, obs);
     const nameOfLink = (id: string) => { const l = routes.find((q) => q.l.id === id)?.l; return l ? `${nameOf2(l.a.module)} ${l.a.ref}` : id; };
     if (sim.touching.length) warnings.push(`${sim.touching.length} pair${sim.touching.length > 1 ? 's' : ''} of cables still press on each other after settling (${sim.touching.slice(0, 3).map(([a, b]) => `${nameOfLink(a)} and ${nameOfLink(b)}`).join('; ')}): give them more room, or connect other plugs.`);
-    if (routes.length) checks.push({ group: 'Panel', name: 'Cables settled', value: sim.touching.length ? `${sim.touching.length} pair${sim.touching.length > 1 ? 's' : ''} pressing` : 'none through another', status: sim.touching.length ? 'warn' : 'ok', detail: `every cable was let settle with the others${laidOut ? ` (their planned routes met in ${laidOut} place${laidOut > 1 ? 's' : ''})` : ''}: where two cross one lies over the other, where they run together they lie side by side, and each keeps its length and stays in its plugs. Ribbons stay where they were laid and the rest settle round them.` });
+    if (routes.length) checks.push({ group: 'Panel', name: 'Cables settled', value: sim.touching.length ? `${sim.touching.length} pair${sim.touching.length > 1 ? 's' : ''} pressing` : 'none through another', status: sim.touching.length ? 'warn' : 'ok', detail: `every cable was let settle with the others${laidOut ? ` (their planned routes met in ${laidOut} place${laidOut > 1 ? 's' : ''})` : ''}: where two cross one lies over the other, where they run together they lie side by side, each keeps its length and stays in its plugs, runs straight out of them before it bends, sags a little where it hangs free and sits in the stands' combs. Ribbons stay where they were laid and the rest settle round them.${sim.kinked.length ? ` ${sim.kinked.length} still bend${sim.kinked.length > 1 ? '' : 's'} tighter than a cable likes somewhere (squeezed between plugs close together): ${sim.kinked.slice(0, 3).map(nameOfLink).join('; ')}.` : ''}` });
     for (const [qi, q] of routes.entries()) {
       const { l, ch, d, free } = q;
       const { route, vl, hit } = planned[qi];
@@ -752,12 +763,15 @@ export function generatePanel(p: Project): GenResult {
       const kind = l.kind ?? 'usb';
       const anim: Anim = { seq: cableSeq(kind), dir: [0, 0, 1], dist: 0, grow: true };
       const EA = ends.get(`${l.a.module}/${l.a.ref}`)!, EB = ends.get(`${l.b.module}/${l.b.ref}`)!;
+      // the 3D view's live touch: pulses running along the cable the way power or data goes, once its source has power
+      const fl = cableFlow(p, l), fwd = fl.from.module === l.a.module && fl.from.ref === l.a.ref;
+      const flow = (pts: number[][], r: number): Ghost['fx'] => ({ flow: { pts: fwd ? pts : [...pts].reverse(), r, colour: FLOW_COLOUR[kind] ?? '#9fd8ff', on: powered.has(fl.from.module), slow: kind === 'power' } });
       if (kind === 'debug') {
         // a flat grey ribbon as wide as the narrower end's connector, square across both sockets, its pin 1 edge red
         const rw = Math.min(ribbonWidth(l.a), ribbonWidth(l.b));
         const wOf = (E: typeof EA) => E.w ?? (Math.abs(E.d[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0]);
         const land = { side: wOf(EB), from: free?.[0] ?? 0, to: free?.[1] ?? Infinity };
-        ghosts.push({ name: `cable ${l.id}`, mesh: ribbonMesh(path, rw, 0.9, wOf(EA), 0, land), color: KIND_COLOR.debug, opacity: 1, tag: { kind: 'cable', refs: [l.id] }, anim, mat: 'cable', smooth: true });
+        ghosts.push({ name: `cable ${l.id}`, mesh: ribbonMesh(path, rw, 0.9, wOf(EA), 0, land), color: KIND_COLOR.debug, opacity: 1, tag: { kind: 'cable', refs: [l.id] }, anim, mat: 'cable', smooth: true, fx: flow(path, 1.3) });
         ghosts.push({ name: `cable ${l.id} stripe`, mesh: ribbonMesh(path, 1.2, 1.0, wOf(EA), rw / 2 - 0.6, land), color: '#b8322b', opacity: 1, tag: { kind: 'cable', refs: [l.id] }, anim, mat: 'red', smooth: true });
       } else if (kind === 'jumper') {
         // loose jumper wires side by side, each from the housing on its pin at one end to the one at the other,
@@ -790,7 +804,7 @@ export function generatePanel(p: Project): GenResult {
         const wires = (EA.wires ?? EB.wires)!, atA = !!EA.wires;
         const { L, part } = slicer(atA ? [...path].reverse() : path); // runs from the USB end to the header
         const cut = Math.max(L * 0.5, L - 110), fan = Math.max(cut + 1, L - 26);
-        ghosts.push({ name: `cable ${l.id}`, mesh: tubeMesh(part(0, cut), d / 2), color: KIND_COLOR[kind], opacity: 1, tag: { kind: 'cable', refs: [l.id] }, anim, mat: 'cable', smooth: true });
+        ghosts.push({ name: `cable ${l.id}`, mesh: tubeMesh(part(0, cut), d / 2), color: KIND_COLOR[kind], opacity: 1, tag: { kind: 'cable', refs: [l.id] }, anim, mat: 'cable', smooth: true, fx: flow(atA ? [...part(0, cut)].reverse() : part(0, cut), d * 0.7) });
         // the loose wires run on together side by side, then each goes down onto its pin
         const E = atA ? EA : EB, side = E.w ?? [1, 0, 0];
         wires.forEach((w2, i) => {
@@ -798,7 +812,7 @@ export function generatePanel(p: Project): GenResult {
           const wp = filletPath([...run, w2.p.map((v, j) => v + E.d[j] * 10), w2.p], 5);
           ghosts.push({ name: `cable ${l.id} wire ${i}`, mesh: tubeMesh(wp, 0.7, 8), color: w2.colour, opacity: 1, tag: { kind: 'cable', refs: [l.id] }, anim, mat: 'cable', smooth: true });
         });
-      } else ghosts.push({ name: `cable ${l.id}`, mesh: tubeMesh(path, d / 2), color: KIND_COLOR[kind], opacity: 1, tag: { kind: 'cable', refs: [l.id] }, anim, mat: 'cable', smooth: true });
+      } else ghosts.push({ name: `cable ${l.id}`, mesh: tubeMesh(path, d / 2), color: KIND_COLOR[kind], opacity: 1, tag: { kind: 'cable', refs: [l.id] }, anim, mat: 'cable', smooth: true, fx: flow(path, d * 0.7) });
       const clash = [...new Set(hit.map((h) => h.ob.label))];
       for (const h of hit.slice(0, 3)) ghosts.push({ name: `clash ${l.id}`, mesh: sphereMesh(xy(h.at), Math.max(3, d * 0.9)), color: '#ff3b3b', opacity: 0.55, tag: { kind: 'cable', refs: [l.id] }, anim: { seq: cableSeq(kind), dir: [0, 0, 1], dist: 0 } });
       // a point and direction s mm along the cable
@@ -866,15 +880,14 @@ export function generatePanel(p: Project): GenResult {
   }
 
   // ---- cables that leave the rack (to a screen, a supply, the mains): out of the plug, a bend down, along the table ----
-  const floorZ = stands ? -STAND.H : 0;
-  const allEnds = [...ends.values()];
-  const mid = allEnds.length ? [allEnds.reduce((a, e) => a + e.p[0], 0) / allEnds.length, allEnds.reduce((a, e) => a + e.p[1], 0) / allEnds.length] : [0, 0];
   for (const k of hang) {
     const e = ends.get(k);
     if (!e) continue;
-    const i = k.indexOf('/'), module = k.slice(0, i), ref = k.slice(i + 1);
-    ghosts.push({ name: `off-rack cable ${k}`, mesh: tubeMesh(hangingCable(e.p, e.d, e.cable, floorZ, mid), Math.max(1.1, e.cable / 2)), color: '#2b2e33', opacity: 1, tag: { kind: 'plug', module, refs: [baseRef(ref)] }, anim: { seq: PLUG_SEQ, dir: [0, 0, 1], dist: 0, grow: true }, mat: 'cable', smooth: true });
+    const i = k.indexOf('/'), module = k.slice(0, i), ref = k.slice(i + 1), m = mods.get(module)?.m, c = m?.board.comps.find((x) => x.ref === baseRef(ref));
+    ghosts.push(leadStub(`off-rack cable ${k}`, e.p, e.d, e.cable, m && c ? offRackTo(m, c) : 'off the rack', { kind: 'plug', module, refs: [baseRef(ref)] }, { seq: PLUG_SEQ, dir: [0, 0, 1], dist: 0, grow: true }));
   }
+
+
 
   // ---- table stands: sleepers across the rails, with cable combs where the streets cross them ----
   let standOut: PanelReport['stands'];

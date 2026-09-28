@@ -56,6 +56,27 @@ describe('cables settling', () => {
   });
 });
 
+describe('cables with weight', () => {
+  it('a span in the air sags towards the floor, keeps its ends in the plugs and bends no tighter than it can', () => {
+    const pts = [[0, 0, 60], [200, 0, 60]];
+    const res = settleCables([{ id: 'a', pts, r: 2, pin: [10, 10], floor: 0 }], []);
+    const path = res.paths[0], mid = path[Math.floor(path.length / 2)];
+    expect(mid[2]).toBeLessThan(55); // it sags
+    expect(path[0]).toEqual([0, 0, 60]);
+    expect(path[path.length - 1]).toEqual([200, 0, 60]);
+    // never tighter than about three diameters (a little give for the discrete beads)
+    for (let i = 1; i + 1 < path.length; i++) {
+      const u = path[i].map((v, j) => v - path[i - 1][j]), w = path[i + 1].map((v, j) => path[i + 1][j] - path[i][j]);
+      const a = Math.acos(Math.max(-1, Math.min(1, (u[0] * w[0] + u[1] * w[1] + u[2] * w[2]) / (Math.hypot(...u) * Math.hypot(...w)))));
+      expect(Math.hypot(...u) / Math.max(1e-6, a)).toBeGreaterThan(3 * 4 * 0.6);
+    }
+  });
+  it('lying on the floor it stays there', () => {
+    const res = settleCables([{ id: 'a', pts: [[0, 0, 5], [100, 0, 5]], r: 2, pin: [5, 5] }], []);
+    expect(Math.min(...res.paths[0].map((q) => q[2]))).toBeGreaterThanOrEqual(5 - 1e-9);
+  });
+});
+
 describe('a busy rack settles', () => {
   it('no two cables pass through each other and none goes through a holder', async () => {
     const { initKernel } = await import('../src/cad/kernel');

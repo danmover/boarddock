@@ -63,6 +63,18 @@ export function plugRole(m: Module, c: Comp): PlugRole {
   return 'other';
 }
 
+/** Where a lead that leaves the rack goes, in a few words for the 3D view ("to a screen", "to the wall"...). */
+export function offRackTo(m: Module, c: Comp): string {
+  const t = c.conn?.type ?? '', role = plugRole(m, c);
+  if (t.startsWith('hdmi')) return 'to a screen';
+  if (role === 'mains-in' || t.startsWith('iec') || t === 'mains_lead') return 'to the wall';
+  if (t === 'rj45') return 'to the network';
+  if (t === 'audio35') return 'to speakers';
+  if (role === 'power-in' || role === 'power-in-dc' || t === 'barrel' || role === 'other') return 'to its power supply';
+  if (/usb/.test(t)) return 'to a computer';
+  return 'off the rack';
+}
+
 export function linkKind(ra: PlugRole, rb: PlugRole): Link['kind'] {
   const r = [ra, rb];
   if (r.includes('mains-in') || r.includes('mains-out')) return 'mains';
