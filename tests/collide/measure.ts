@@ -1,8 +1,9 @@
 // Things inside other things, measured exactly: every printed part, board, plug, rail, stand and cable a rack build
 // gives out, turned into a solid in the rack's frame (manifold-3d), and each pair that meets intersected. What is left
 // is sorted by what met what, with the few contacts a real rack has on purpose taken out (a plug in its own jack, a
-// board on its own holder's pins, a cable in its own comb). No bounding boxes are used for what is counted: they only
-// pick which pairs to intersect.
+// board on its own holder's pins, a cable in its own plugs, a DIN clip's hooks in its own holder, a rail end touching
+// its end block's crush ribs and stop). No bounding boxes are used for what is counted: they only pick which pairs to
+// intersect.
 import { K, freeAll, type MF } from '../../src/cad/kernel';
 import { compRect } from '../../src/geom/poly';
 import { mul as mulM } from '../../src/cad/assembly';
@@ -173,15 +174,32 @@ function allowed(p: Project, r: GenResult) {
   return { jack, pins, cradles };
 }
 
-/** A solid's pieces: volume, thinnest extent and middle of each. */
+/**
+ * How thick a piece is: the widest ball that fits in it, found slice by slice (each slice shrunk inwards until it is
+ * gone) and no more than the piece's height. A cable right through another is a cable's width deep; a sliver where two
+ * faces just meet, however it bends round a corner, is as deep as it is thin.
+ */
+export function thicknessOf(q: MF): number {
+  const b = q.boundingBox(), h = b.max[2] - b.min[2];
+  let best = 0;
+  for (let i = 1; i <= 5; i++) {
+    const cs = q.slice(b.min[2] + (h * i) / 6);
+    if (cs.isEmpty()) continue;
+    let lo = 0, hi = Math.min(b.max[0] - b.min[0], b.max[1] - b.min[1]) / 2 + 0.01;
+    for (let k = 0; k < 12; k++) { const mid = (lo + hi) / 2; const o = cs.offset(-mid, 'Round'); if (o.isEmpty() || o.area() < 1e-6) hi = mid; else lo = mid; }
+    best = Math.max(best, 2 * lo);
+  }
+  return Math.min(h, best);
+}
+
+/** A solid's pieces: volume, depth (its thickness) and middle of each. */
 function pieces(m: MF): { vol: number; depth: number; at: number[] }[] {
   const out: { vol: number; depth: number; at: number[] }[] = [];
   for (const q of m.decompose()) {
     const v = q.volume();
     if (v < 1e-3) continue;
     const b = q.boundingBox();
-    const ext = [0, 1, 2].map((k) => b.max[k] - b.min[k]);
-    out.push({ vol: v, depth: Math.min(...ext), at: [0, 1, 2].map((k) => Math.round(((b.max[k] + b.min[k]) / 2) * 10) / 10) });
+    out.push({ vol: v, depth: thicknessOf(q), at: [0, 1, 2].map((k) => Math.round(((b.max[k] + b.min[k]) / 2) * 10) / 10) });
   }
   return out;
 }
@@ -199,6 +217,8 @@ export function measure(p: Project, r: GenResult): Measured {
   let pairs = 0;
   const note = (cat: string, a: Solid, b: Solid, m: MF) => {
     for (const q of pieces(m)) {
+      // a rail end pushed into its end block: the crush ribs and the stop behind it touch it (under 0.1 mm), by design
+      if (cat === 'rail/stand' && [a.cls, b.cls].includes('rail') && [a.cls, b.cls].includes('stand') && q.depth < 0.1) continue;
       const t = cats[cat];
       t.vol += q.vol; t.depth = Math.max(t.depth, q.depth); t.n++;
       all.push({ cat, a: a.name, b: b.name, vol: q.vol, depth: q.depth, at: q.at });

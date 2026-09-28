@@ -4,11 +4,7 @@
    "cats": {
     "holder-board": [
      0.3,
-     0.45
-    ],
-    "rail/stand": [
-     0.8,
-     0.89
+     0.37
     ]
    },
    "issues": []
@@ -17,7 +13,7 @@
    "cats": {
     "holder-holder": [
      0.1,
-     0.55
+     0.17
     ],
     "holder-board": [
      0,
@@ -29,15 +25,11 @@
     ],
     "cable-cable": [
      7.3,
-     2.53
+     1.13
     ],
     "cable-stand/rail": [
      10.4,
      1.6
-    ],
-    "rail/stand": [
-     0.8,
-     0.89
     ]
    },
    "issues": []
@@ -62,11 +54,7 @@
     ],
     "tag": [
      2.4,
-     1.49
-    ],
-    "rail/stand": [
-     3.4,
-     0.98
+     1.11
     ]
    },
    "issues": []
@@ -75,7 +63,7 @@
    "cats": {
     "holder-holder": [
      0.1,
-     0.55
+     0.17
     ],
     "holder-board": [
      0,
@@ -83,11 +71,7 @@
     ],
     "tag": [
      17.9,
-     3
-    ],
-    "rail/stand": [
-     0.8,
-     1
+     1.3
     ]
    },
    "issues": []
@@ -96,7 +80,7 @@
    "cats": {
     "holder-board": [
      0.3,
-     0.45
+     0.37
     ]
    },
    "issues": []
@@ -105,7 +89,7 @@
    "cats": {
     "holder-board": [
      0.3,
-     0.45
+     0.37
     ]
    },
    "issues": []
@@ -115,10 +99,6 @@
     "holder-board": [
      0,
      0.05
-    ],
-    "rail/stand": [
-     0.8,
-     1
     ]
    },
    "issues": []
@@ -127,11 +107,7 @@
    "cats": {
     "holder-board": [
      0.6,
-     0.45
-    ],
-    "rail/stand": [
-     0.8,
-     1
+     0.37
     ]
    },
    "issues": []
@@ -140,7 +116,7 @@
    "cats": {
     "holder-holder": [
      0.1,
-     0.55
+     0.17
     ],
     "holder-board": [
      0,
@@ -152,15 +128,11 @@
     ],
     "cable-cable": [
      8.5,
-     1.77
+     0.94
     ],
     "cable-stand/rail": [
      10,
      0.61
-    ],
-    "rail/stand": [
-     4.2,
-     1
     ]
    },
    "issues": [
@@ -172,15 +144,15 @@
    "cats": {
     "holder-holder": [
      0.1,
-     0.55
+     0.17
     ],
     "holder-board": [
      0.6,
-     0.6
+     0.5
     ],
     "cable-cable": [
      0,
-     1.02
+     0.1
     ],
     "cable-stand/rail": [
      0.1,
@@ -188,10 +160,6 @@
     ],
     "tag": [
      0,
-     0.41
-    ],
-    "rail/stand": [
-     1.7,
      0.09
     ]
    },
@@ -201,7 +169,7 @@
    "cats": {
     "holder-holder": [
      0.1,
-     0.55
+     0.17
     ],
     "holder-board": [
      0,
@@ -213,19 +181,15 @@
     ],
     "cable-holder": [
      3.2,
-     0.78
+     0.72
     ],
     "cable-cable": [
      0.8,
-     1.02
+     0.33
     ],
     "cable-stand/rail": [
      18,
      1.03
-    ],
-    "rail/stand": [
-     3.4,
-     0.89
     ]
    },
    "issues": [
@@ -252,7 +216,7 @@
    "cats": {
     "holder-board": [
      1,
-     0.6
+     0.5
     ]
    },
    "issues": []
@@ -261,7 +225,7 @@
    "cats": {
     "holder-board": [
      1,
-     0.6
+     0.5
     ]
    },
    "issues": []
@@ -270,11 +234,7 @@
    "cats": {
     "holder-board": [
      1,
-     0.6
-    ],
-    "rail/stand": [
-     0.8,
-     0.89
+     0.5
     ]
    },
    "issues": []
@@ -284,10 +244,6 @@
     "holder-board": [
      0,
      0.05
-    ],
-    "rail/stand": [
-     0.8,
-     0.89
     ]
    },
    "issues": []
@@ -296,7 +252,7 @@
    "cats": {
     "holder-board": [
      0.3,
-     0.45
+     0.37
     ]
    },
    "issues": []
@@ -305,7 +261,7 @@
    "cats": {
     "holder-board": [
      0.3,
-     0.45
+     0.37
     ]
    },
    "issues": []
@@ -318,11 +274,7 @@
     ],
     "holder-board": [
      0.6,
-     0.45
-    ],
-    "rail/stand": [
-     0.8,
-     6.4
+     0.37
     ]
    },
    "issues": []
@@ -331,11 +283,7 @@
    "cats": {
     "holder-board": [
      0.3,
-     0.45
-    ],
-    "rail/stand": [
-     0.8,
-     1
+     0.37
     ]
    },
    "issues": []
@@ -344,7 +292,7 @@
    "cats": {
     "holder-board": [
      0.6,
-     0.45
+     0.37
     ]
    },
    "issues": []
@@ -353,7 +301,7 @@
    "cats": {
     "holder-board": [
      0.6,
-     0.45
+     0.37
     ]
    },
    "issues": []
@@ -362,10 +310,10 @@
    "cats": {
     "holder-board": [
      0.3,
-     0.45
+     0.37
     ],
     "rail/stand": [
-     0.8,
+     0.2,
      0.31
     ]
    },
@@ -376,10 +324,6 @@
     "holder-board": [
      0,
      0.05
-    ],
-    "rail/stand": [
-     0.8,
-     1
     ]
    },
    "issues": []
@@ -407,10 +351,6 @@
     "holder-board": [
      0.1,
      0.05
-    ],
-    "rail/stand": [
-     0.8,
-     1
     ]
    },
    "issues": []
@@ -420,10 +360,6 @@
     "holder-board": [
      0.1,
      0.05
-    ],
-    "rail/stand": [
-     0.8,
-     1
     ]
    },
    "issues": []
@@ -451,10 +387,6 @@
     "holder-board": [
      0.1,
      0.05
-    ],
-    "rail/stand": [
-     0.8,
-     0.98
     ]
    },
    "issues": []
@@ -464,10 +396,6 @@
     "holder-board": [
      0.1,
      0.05
-    ],
-    "rail/stand": [
-     0.8,
-     0.98
     ]
    },
    "issues": []
@@ -476,11 +404,11 @@
    "cats": {
     "holder-holder": [
      0.1,
-     0.55
+     0.17
     ],
     "holder-board": [
      0.4,
-     0.45
+     0.37
     ],
     "holder-plug": [
      6,
@@ -488,11 +416,7 @@
     ],
     "cable-cable": [
      1.7,
-     1.12
-    ],
-    "rail/stand": [
-     2.5,
-     1
+     0.58
     ]
    },
    "issues": []
@@ -501,7 +425,7 @@
    "cats": {
     "holder-board": [
      0.6,
-     0.45
+     0.37
     ]
    },
    "issues": []
@@ -510,7 +434,7 @@
    "cats": {
     "holder-board": [
      0.6,
-     0.45
+     0.37
     ]
    },
    "issues": []
@@ -519,11 +443,7 @@
    "cats": {
     "holder-board": [
      0.4,
-     0.45
-    ],
-    "rail/stand": [
-     0.8,
-     1
+     0.37
     ]
    },
    "issues": []
@@ -532,11 +452,7 @@
    "cats": {
     "holder-board": [
      0.3,
-     0.45
-    ],
-    "rail/stand": [
-     0.8,
-     0.89
+     0.37
     ]
    },
    "issues": []
@@ -545,7 +461,7 @@
    "cats": {
     "holder-board": [
      0.5,
-     0.6
+     0.5
     ]
    },
    "issues": []
@@ -554,7 +470,7 @@
    "cats": {
     "holder-board": [
      0.5,
-     0.6
+     0.5
     ]
    },
    "issues": []
@@ -563,11 +479,7 @@
    "cats": {
     "holder-board": [
      0.5,
-     0.6
-    ],
-    "rail/stand": [
-     0.8,
-     0.89
+     0.5
     ]
    },
    "issues": []
@@ -576,11 +488,7 @@
    "cats": {
     "holder-board": [
      0.5,
-     0.6
-    ],
-    "rail/stand": [
-     0.8,
-     1
+     0.5
     ]
    },
    "issues": []
@@ -594,21 +502,11 @@
    "issues": []
   },
   "net_switch5 lying flat": {
-   "cats": {
-    "rail/stand": [
-     0.8,
-     0.89
-    ]
-   },
+   "cats": {},
    "issues": []
   },
   "net_switch5 standing": {
-   "cats": {
-    "rail/stand": [
-     0.8,
-     0.89
-    ]
-   },
+   "cats": {},
    "issues": []
   },
   "net_switch8 DIN flat clip": {
@@ -620,28 +518,18 @@
    "issues": []
   },
   "net_switch8 lying flat": {
-   "cats": {
-    "rail/stand": [
-     0.8,
-     1
-    ]
-   },
+   "cats": {},
    "issues": []
   },
   "net_switch8 standing": {
-   "cats": {
-    "rail/stand": [
-     0.8,
-     1
-    ]
-   },
+   "cats": {},
    "issues": []
   },
   "no table stands": {
    "cats": {
     "holder-holder": [
      0.1,
-     0.55
+     0.17
     ],
     "holder-board": [
      0,
@@ -656,15 +544,11 @@
    "cats": {
     "holder-holder": [
      0.2,
-     0.55
+     0.17
     ],
     "holder-board": [
      0.6,
-     0.6
-    ],
-    "rail/stand": [
-     0.8,
-     1
+     0.5
     ]
    },
    "issues": []
@@ -678,21 +562,11 @@
    "issues": []
   },
   "pb4 lying flat": {
-   "cats": {
-    "rail/stand": [
-     0.8,
-     1
-    ]
-   },
+   "cats": {},
    "issues": []
   },
   "pb4 standing": {
-   "cats": {
-    "rail/stand": [
-     0.8,
-     1
-    ]
-   },
+   "cats": {},
    "issues": []
   },
   "pb4ang DIN flat clip": {
@@ -704,21 +578,11 @@
    "issues": []
   },
   "pb4ang lying flat": {
-   "cats": {
-    "rail/stand": [
-     0.8,
-     0.09
-    ]
-   },
+   "cats": {},
    "issues": []
   },
   "pb4ang standing": {
-   "cats": {
-    "rail/stand": [
-     0.8,
-     0.09
-    ]
-   },
+   "cats": {},
    "issues": []
   },
   "pb4sw DIN flat clip": {
@@ -730,21 +594,11 @@
    "issues": []
   },
   "pb4sw lying flat": {
-   "cats": {
-    "rail/stand": [
-     0.8,
-     0.98
-    ]
-   },
+   "cats": {},
    "issues": []
   },
   "pb4sw standing": {
-   "cats": {
-    "rail/stand": [
-     0.8,
-     0.98
-    ]
-   },
+   "cats": {},
    "issues": []
   },
   "pb4usb DIN flat clip": {
@@ -756,21 +610,11 @@
    "issues": []
   },
   "pb4usb lying flat": {
-   "cats": {
-    "rail/stand": [
-     0.8,
-     0.98
-    ]
-   },
+   "cats": {},
    "issues": []
   },
   "pb4usb standing": {
-   "cats": {
-    "rail/stand": [
-     0.8,
-     0.98
-    ]
-   },
+   "cats": {},
    "issues": []
   },
   "pb6 DIN flat clip": {
@@ -782,28 +626,18 @@
    "issues": []
   },
   "pb6 lying flat": {
-   "cats": {
-    "rail/stand": [
-     0.8,
-     0.98
-    ]
-   },
+   "cats": {},
    "issues": []
   },
   "pb6 standing": {
-   "cats": {
-    "rail/stand": [
-     0.8,
-     0.98
-    ]
-   },
+   "cats": {},
    "issues": []
   },
   "pico DIN flat clip": {
    "cats": {
     "holder-board": [
      0.3,
-     0.45
+     0.37
     ]
    },
    "issues": []
@@ -812,7 +646,7 @@
    "cats": {
     "holder-board": [
      0.3,
-     0.45
+     0.37
     ]
    },
    "issues": []
@@ -822,10 +656,6 @@
     "holder-board": [
      0,
      0.05
-    ],
-    "rail/stand": [
-     0.8,
-     0.89
     ]
    },
    "issues": []
@@ -834,15 +664,11 @@
    "cats": {
     "holder-holder": [
      0.1,
-     0.55
+     0.17
     ],
     "holder-board": [
      0,
      0.05
-    ],
-    "rail/stand": [
-     0.8,
-     0.89
     ]
    },
    "issues": []
@@ -870,10 +696,6 @@
     "holder-board": [
      0,
      0.05
-    ],
-    "rail/stand": [
-     0.8,
-     4.99
     ]
    },
    "issues": []
@@ -883,10 +705,6 @@
     "holder-board": [
      0,
      0.05
-    ],
-    "rail/stand": [
-     0.8,
-     1
     ]
    },
    "issues": []
@@ -895,11 +713,11 @@
    "cats": {
     "holder-holder": [
      7.6,
-     1.68
+     0.19
     ],
     "holder-board": [
      0.9,
-     0.45
+     0.37
     ],
     "holder-plug": [
      4.3,
@@ -907,14 +725,14 @@
     ],
     "cable-cable": [
      1.6,
-     1.14
+     0.3
     ],
     "tag": [
      49.7,
-     1.78
+     1.34
     ],
     "rail/stand": [
-     1.7,
+     0.4,
      0.31
     ]
    },
@@ -924,7 +742,7 @@
    "cats": {
     "holder-board": [
      0.6,
-     0.45
+     0.37
     ]
    },
    "issues": []
@@ -933,7 +751,7 @@
    "cats": {
     "holder-board": [
      0.6,
-     0.45
+     0.37
     ]
    },
    "issues": []
@@ -942,11 +760,7 @@
    "cats": {
     "holder-board": [
      0.6,
-     0.45
-    ],
-    "rail/stand": [
-     0.8,
-     0.89
+     0.37
     ]
    },
    "issues": []
@@ -955,11 +769,7 @@
    "cats": {
     "holder-board": [
      0.6,
-     0.45
-    ],
-    "rail/stand": [
-     0.8,
-     1
+     0.37
     ]
    },
    "issues": []
@@ -1000,11 +810,11 @@
    "cats": {
     "holder-holder": [
      0.1,
-     0.55
+     0.17
     ],
     "holder-board": [
      0.8,
-     0.6
+     0.5
     ],
     "holder-plug": [
      6,
@@ -1012,15 +822,11 @@
     ],
     "cable-plug": [
      15.9,
-     1.1
+     0.76
     ],
     "cable-cable": [
      0.6,
-     1.11
-    ],
-    "rail/stand": [
-     1.7,
-     1
+     0.17
     ]
    },
    "issues": [
@@ -1031,7 +837,7 @@
    "cats": {
     "holder-board": [
      0.3,
-     0.45
+     0.37
     ]
    },
    "issues": []
@@ -1040,7 +846,7 @@
    "cats": {
     "holder-board": [
      0.3,
-     0.45
+     0.37
     ]
    },
    "issues": []
@@ -1049,11 +855,7 @@
    "cats": {
     "holder-board": [
      0.6,
-     0.45
-    ],
-    "rail/stand": [
-     0.8,
-     1
+     0.37
     ]
    },
    "issues": []
@@ -1063,10 +865,6 @@
     "holder-board": [
      0,
      0.05
-    ],
-    "rail/stand": [
-     0.8,
-     0.09
     ]
    },
    "issues": []
@@ -1075,7 +873,7 @@
    "cats": {
     "holder-board": [
      6.1,
-     0.6
+     0.5
     ],
     "holder-plug": [
      12.6,
@@ -1083,14 +881,10 @@
     ],
     "cable-cable": [
      0.4,
-     0.97
+     0.42
     ],
     "cable-stand/rail": [
      13.7,
-     1
-    ],
-    "rail/stand": [
-     5.1,
      1
     ]
    },
@@ -1102,11 +896,11 @@
    "cats": {
     "holder-holder": [
      0.1,
-     0.55
+     0.17
     ],
     "holder-board": [
      1,
-     0.6
+     0.5
     ],
     "holder-plug": [
      6,
@@ -1118,15 +912,11 @@
     ],
     "cable-cable": [
      0.6,
-     1.17
+     0.46
     ],
     "cable-stand/rail": [
      2.4,
-     1.06
-    ],
-    "rail/stand": [
-     2.5,
-     1
+     0.77
     ]
    },
    "issues": [
@@ -1155,11 +945,7 @@
    "cats": {
     "holder-board": [
      0.2,
-     0.4
-    ],
-    "rail/stand": [
-     0.8,
-     0.89
+     0.32
     ]
    },
    "issues": []
@@ -1169,10 +955,6 @@
     "holder-board": [
      0,
      0.05
-    ],
-    "rail/stand": [
-     0.8,
-     1
     ]
    },
    "issues": []
@@ -1200,10 +982,6 @@
     "holder-board": [
      0,
      0.05
-    ],
-    "rail/stand": [
-     0.8,
-     1
     ]
    },
    "issues": []
@@ -1213,10 +991,6 @@
     "holder-board": [
      0,
      0.05
-    ],
-    "rail/stand": [
-     0.8,
-     1
     ]
    },
    "issues": []
@@ -1244,10 +1018,6 @@
     "holder-board": [
      0,
      0.05
-    ],
-    "rail/stand": [
-     0.8,
-     0.09
     ]
    },
    "issues": []
@@ -1257,10 +1027,6 @@
     "holder-board": [
      0,
      0.05
-    ],
-    "rail/stand": [
-     0.8,
-     1
     ]
    },
    "issues": []
@@ -1269,7 +1035,7 @@
    "cats": {
     "holder-holder": [
      4.6,
-     2.48
+     0.74
     ],
     "holder-board": [
      42.6,
@@ -1278,10 +1044,6 @@
     "board-board": [
      4.2,
      0.3
-    ],
-    "rail/stand": [
-     0.8,
-     1
     ]
    },
    "issues": []
@@ -1290,7 +1052,7 @@
    "cats": {
     "holder-board": [
      0.3,
-     0.45
+     0.37
     ]
    },
    "issues": []
@@ -1299,27 +1061,17 @@
    "cats": {
     "holder-board": [
      0.3,
-     0.45
+     0.37
     ]
    },
    "issues": []
   },
   "uno lying flat": {
-   "cats": {
-    "rail/stand": [
-     0.8,
-     1
-    ]
-   },
+   "cats": {},
    "issues": []
   },
   "uno standing": {
-   "cats": {
-    "rail/stand": [
-     0.8,
-     0.89
-    ]
-   },
+   "cats": {},
    "issues": []
   },
   "usb_charger DIN flat clip": {
@@ -1331,21 +1083,11 @@
    "issues": []
   },
   "usb_charger lying flat": {
-   "cats": {
-    "rail/stand": [
-     0.8,
-     4.99
-    ]
-   },
+   "cats": {},
    "issues": []
   },
   "usb_charger standing": {
-   "cats": {
-    "rail/stand": [
-     0.8,
-     4.99
-    ]
-   },
+   "cats": {},
    "issues": []
   },
   "usb_charger6 DIN flat clip": {
@@ -1357,21 +1099,11 @@
    "issues": []
   },
   "usb_charger6 lying flat": {
-   "cats": {
-    "rail/stand": [
-     0.8,
-     1
-    ]
-   },
+   "cats": {},
    "issues": []
   },
   "usb_charger6 standing": {
-   "cats": {
-    "rail/stand": [
-     0.8,
-     1
-    ]
-   },
+   "cats": {},
    "issues": []
   },
   "usb_hub DIN flat clip": {
@@ -1383,21 +1115,11 @@
    "issues": []
   },
   "usb_hub lying flat": {
-   "cats": {
-    "rail/stand": [
-     0.8,
-     1
-    ]
-   },
+   "cats": {},
    "issues": []
   },
   "usb_hub standing": {
-   "cats": {
-    "rail/stand": [
-     0.8,
-     1
-    ]
-   },
+   "cats": {},
    "issues": []
   },
   "usb_hub7 DIN flat clip": {
@@ -1409,21 +1131,11 @@
    "issues": []
   },
   "usb_hub7 lying flat": {
-   "cats": {
-    "rail/stand": [
-     0.8,
-     0.09
-    ]
-   },
+   "cats": {},
    "issues": []
   },
   "usb_hub7 standing": {
-   "cats": {
-    "rail/stand": [
-     0.8,
-     0.09
-    ]
-   },
+   "cats": {},
    "issues": []
   },
   "usb_hubc DIN flat clip": {
@@ -1435,23 +1147,13 @@
    "issues": []
   },
   "usb_hubc lying flat": {
-   "cats": {
-    "rail/stand": [
-     0.8,
-     1
-    ]
-   },
+   "cats": {},
    "issues": [
     "fails Check: USB-C hub · Board: Box ports"
    ]
   },
   "usb_hubc standing": {
-   "cats": {
-    "rail/stand": [
-     0.8,
-     1
-    ]
-   },
+   "cats": {},
    "issues": [
     "fails Check: USB-C hub · Board: Box ports"
    ]
@@ -1460,11 +1162,11 @@
    "cats": {
     "holder-holder": [
      0.1,
-     0.55
+     0.17
     ],
     "holder-board": [
      0.4,
-     0.45
+     0.37
     ],
     "holder-plug": [
      4.3,
@@ -1472,11 +1174,7 @@
     ],
     "cable-cable": [
      0.1,
-     1.08
-    ],
-    "rail/stand": [
-     1.7,
-     1
+     0.13
     ]
    },
    "issues": []
