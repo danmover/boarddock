@@ -185,5 +185,8 @@ describe('assembly', () => {
     q.links = numberLinks([link(pl.find((x) => x.module === q.modules[0] && x.role === 'mains-in')!.ref, pl.find((x) => x.module === q.modules[1] && x.role === 'mains-out')!.ref, 'mains')]);
     const r2 = generatePanel(q);
     expect(r2.report.checks.some((c) => c.name === 'Powerboard into powerboard' && c.status === 'bad')).toBe(true);
+    // a distribution board's input terminal with nothing on it
+    const r3 = generatePanel(rack(['power_dist']));
+    expect(r3.report.checks.find((c) => c.name === 'DC inputs with no supply')?.value).toMatch(/IN/);
   }, 120_000);
 });
