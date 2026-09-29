@@ -13,7 +13,7 @@ import { boxFromEdits } from '../model/boxes';
 import { activeModule, commitFrom, editMod, isSel, select, store, toast, useApp, type SelItem } from '../state';
 import { ROLE_INFO } from '../model/holes';
 import { PALETTE } from '../model/palette';
-import { axisOf, featAt, layoutDims, lineMates, measure, pickFeat, setDim, type DimBox } from '../model/dims';
+import { axisOf, featAt, layoutDims, lineMates, measure, pickFeat, setDim, type DimBox, type DimMove } from '../model/dims';
 import { boardCopper } from '../model/copper';
 import { boardLights } from '../model/lights';
 import { headerPins } from '../model/probes';
@@ -96,6 +96,7 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
   const [dimA, setDimA] = useState<Feat | null>(null);
   const [editDim, setEditDim] = useState<{ id: string; v: string } | null>(null);
   const [together, setTogether] = useState(true); // a measured hole takes the holes in line with it along
+  const [moveEnd, setMoveEnd] = useState<DimMove>('b'); // which end a typed measurement moves
   const [hov, setHov] = useState<{ kind: string; id: string; x: number; y: number } | null>(null);
   const [snapF, setSnapF] = useState<Feat | null>(null);
   const [guides, setGuides] = useState<{ gx: number | null; gy: number | null; box: Box2 } | null>(null);
@@ -731,7 +732,7 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
           const v = parseFloat(editDim.v.replace(',', '.'));
           if (!(v > 0)) { toast('Type a length in mm.'); return; }
           let ok = false;
-          editMod((m) => { const dd = size ? dm : (m.board.dims ?? []).find((x) => x.id === dm.id); if (dd) ok = setDim(m.board, dd, v, together); });
+          editMod((m) => { const dd = size ? dm : (m.board.dims ?? []).find((x) => x.id === dm.id); if (dd) ok = setDim(m.board, dd, v, together, ends ? moveEnd : 'b'); });
           if (!ok) toast('Nothing to move there: put a dimension from an edge to a hole or a part.');
           setEditDim(null);
         };
@@ -750,7 +751,11 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
         const far = labW[o] >= (dd ? (dd.A[o] + dd.B[o]) / 2 : dm.axis === 'x' ? (bb.y0 + bb.y1) / 2 : (bb.x0 + bb.x1) / 2) ? 1 : -1; // (world direction)
         const outward: 1 | -1 = dm.axis === 'x' ? (far > 0 ? -1 : 1) : far;
         const pos = dimPopupAt([sx, sy], dm.axis, outward, popSize, { w: wr?.width ?? 800, h: wr?.height ?? 600 });
-        const what = size ? (editDim.id === '@w' ? 'the board gets that wide (its right side moves)' : 'the board gets that tall (its top moves)') : dm.b.k === 'edge' && dm.a.k === 'edge' ? 'the board’s size' : `moves the ${dm.b.k !== 'edge' ? 'second' : 'first'} one to it`;
+        // which end moves: a choice where both could (two holes or parts; the board's own width or height)
+        const ends = size || (dm.a.k !== 'edge' && dm.b.k !== 'edge');
+        const endNames: [DimMove, string][] = size ? (editDim.id === '@w' ? [['b', 'Right side'], ['a', 'Left side'], ['both', 'Both sides']] : [['b', 'Top'], ['a', 'Bottom'], ['both', 'Both']]) : [['b', 'Second'], ['a', 'First'], ['both', 'Both, half each']];
+        const mv = ends ? moveEnd : 'b';
+        const what = size ? `the board gets that ${editDim.id === '@w' ? 'wide' : 'tall'}: ${mv === 'both' ? 'both sides move, half each (the middle stays)' : `its ${endNames.find((x) => x[0] === mv)![1].toLowerCase()} moves`}` : dm.b.k === 'edge' && dm.a.k === 'edge' ? 'the board’s size' : ends ? (mv === 'both' ? 'moves both, half each' : `moves the ${mv === 'a' ? 'first' : 'second'} one to it`) : `moves the ${dm.b.k !== 'edge' ? 'second' : 'first'} one to it`;
         return (
           <div ref={dimPop} className="dimedit floating" style={pos} onPointerDown={(e) => e.stopPropagation()}>
             <div className="dimedit-row">
@@ -760,7 +765,8 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
               <button className="btn small ghost icon" onClick={() => setEditDim(null)} title="Esc" aria-label="Close">✕</button>
             </div>
             <small>{what}</small>
-            {!size && (() => { const n = lineMates(b, dm).length; return n > 0 && <label className="dimedit-mates"><input type="checkbox" checked={together} onChange={(e) => setTogether(e.target.checked)} /> and the {n} hole{n > 1 ? 's' : ''} in line with it (keeps the pattern square)</label>; })()}
+            {ends && <div className="seg" aria-label="Which end moves">{endNames.map(([k, n]) => <button key={k} className={mv === k ? 'on' : ''} aria-pressed={mv === k} onClick={() => setMoveEnd(k)}>{n}</button>)}</div>}
+            {!size && (() => { const n = lineMates(b, dm, mv).length; return n > 0 && <label className="dimedit-mates"><input type="checkbox" checked={together} onChange={(e) => setTogether(e.target.checked)} /> and the {n} hole{n > 1 ? 's' : ''} in line with it (keeps the pattern square)</label>; })()}
             {!size && <div className="dimedit-row">
               {dm.off != null && <button className="btn small ghost" onClick={() => editMod((m) => { const dd = (m.board.dims ?? []).find((x) => x.id === dm.id); if (dd) { delete dd.off; delete dd.t; } })} title="Let it find its own place again">Put back</button>}
               {(b.dims ?? []).some((x) => x.off != null) && <button className="btn small ghost" onClick={() => editMod((m) => { for (const dd of m.board.dims ?? []) { delete dd.off; delete dd.t; } })} title="Every dimension back to its own place, none on another">Tidy all</button>}

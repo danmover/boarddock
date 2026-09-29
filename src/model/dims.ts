@@ -64,23 +64,27 @@ export function measure(b: Board, d: Dim): number | null {
  * The holes in line with the hole a dimension moves (the same distance along its axis: the rest of its column or
  * row in a pattern), which can move with it so the pattern stays square.
  */
-export function lineMates(b: Board, d: Dim): string[] {
-  const moving = d.b.k !== 'edge' ? d.b : d.a.k !== 'edge' ? d.a : null, fixed = moving === d.b ? d.a : d.b;
+export function lineMates(b: Board, d: Dim, move: DimMove = 'b'): string[] {
+  if (move === 'both') return [];
+  const moving = move === 'a' && d.a.k !== 'edge' ? d.a : d.b.k !== 'edge' ? d.b : d.a.k !== 'edge' ? d.a : null, fixed = moving === d.b ? d.a : d.b;
   if (!moving || moving.k !== 'hole') return [];
   const h = b.holes.find((x) => x.id === moving.id);
   if (!h) return [];
   return b.holes.filter((x) => x.id !== h.id && !(fixed.k === 'hole' && fixed.id === x.id) && Math.abs(x[d.axis] - h[d.axis]) < 0.3).map((x) => x.id);
 }
 
-export function setDim(b: Board, d: Dim, value: number, together = false): boolean {
-  const mates = together ? lineMates(b, d) : [];
-  const ok = applyDim(b, d, value, mates);
+/** Which end of a dimension moves when it is set: the second (as drawn), the first, or both, half each. */
+export type DimMove = 'a' | 'b' | 'both';
+
+export function setDim(b: Board, d: Dim, value: number, together = false, move: DimMove = 'b'): boolean {
+  const mates = together ? lineMates(b, d, move) : [];
+  const ok = applyDim(b, d, value, mates, move);
   // a box's port (or its size) set with a dimension is written into the box, so the next layout keeps it
   if (ok) boxFromEdits(b);
   return ok;
 }
 
-function applyDim(b: Board, d: Dim, value: number, mates: string[] = []): boolean {
+function applyDim(b: Board, d: Dim, value: number, mates: string[] = [], move: DimMove = 'b'): boolean {
   const pa = featAt(b, d.a), pc = featAt(b, d.b);
   const va = pa?.[d.axis], vc = pc?.[d.axis];
   if (va == null || vc == null || !(value >= 0)) return false;
@@ -102,12 +106,19 @@ function applyDim(b: Board, d: Dim, value: number, mates: string[] = []): boolea
     }
     return false;
   };
+  // (half each, to the 0.01 mm the positions are kept to)
+  const half = Math.round((delta / 2) * 100) / 100;
+  if (d.a.k !== 'edge' && d.b.k !== 'edge') {
+    if (move === 'a') return moveFeat(d.a, -delta);
+    if (move === 'both') { const pa0 = structuredClone(b); if (moveFeat(d.a, -half) && moveFeat(d.b, delta - half)) return true; Object.assign(b, pa0); return false; }
+  }
   if (d.b.k !== 'edge') return moveFeat(d.b, delta);
   if (d.a.k !== 'edge') return moveFeat(d.a, -delta);
-  // two edges: the board gets wider or taller; everything past the middle moves with the far edge
+  // two edges: the board gets wider or taller; everything past the middle moves with the edge that moves (both sides,
+  // half each: the middle stays)
   const i = d.axis === 'x' ? 0 : 1, bb = bbox(b.outline), mid = i ? (bb.y0 + bb.y1) / 2 : (bb.x0 + bb.x1) / 2;
-  const side = Math.sign(vc - mid) || 1;
-  const shift = (v: number) => ((v - mid) * side > 0 ? v + delta : v);
+  const sb = Math.sign(vc - mid) || 1, sa = Math.sign(va - mid) || -sb;
+  const shift = (v: number) => (move === 'both' ? ((v - mid) * sb > 0 ? v + delta - half : (v - mid) * sa > 0 ? v - half : v) : move === 'a' ? ((v - mid) * sa > 0 ? v - delta : v) : (v - mid) * sb > 0 ? v + delta : v);
   b.outline = b.outline.map((q) => (i ? [q[0], shift(q[1])] : [shift(q[0]), q[1]]) as V2);
   b.cutouts = b.cutouts.map((l) => l.map((q) => (i ? [q[0], shift(q[1])] : [shift(q[0]), q[1]]) as V2));
   return true;

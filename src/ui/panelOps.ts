@@ -441,6 +441,7 @@ export function markBuilt() {
 }
 
 export function unmarkBuilt() {
+  if (!confirm("Forget that this rack is built? Export will list everything to print, cut and buy again, and new boards no longer keep to the free spots. ⌘Z undoes it.")) return;
   edit((p) => { delete p.built; });
 }
 

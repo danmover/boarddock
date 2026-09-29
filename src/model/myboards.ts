@@ -20,7 +20,21 @@ export function saveBoard(b: Board): boolean {
   return write(list);
 }
 
-export function forgetBoard(id: string) { write(myBoards().filter((x) => x.id !== id)); }
+/** Take a board off My boards; what was taken and where, so it can be put back (Undo). */
+export function forgetBoard(id: string): { entry: SavedBoard; at: number } | null {
+  const list = myBoards(), at = list.findIndex((x) => x.id === id);
+  if (at < 0) return null;
+  const [entry] = list.splice(at, 1);
+  write(list);
+  return { entry, at };
+}
+
+/** Put a board taken off My boards back where it was. */
+export function restoreBoard(f: { entry: SavedBoard; at: number }) {
+  const list = myBoards().filter((x) => x.id !== f.entry.id);
+  list.splice(Math.min(f.at, list.length), 0, f.entry);
+  write(list);
+}
 
 /** A fresh copy to add to a rack (new ids for its parts and holes, so two copies never share one). */
 export function copyOf(s: SavedBoard): Board {

@@ -5,6 +5,8 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { act, useRef, useState, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { Section, useModalFocus } from '../src/ui/controls';
+import { forgetBoard, myBoards, restoreBoard, saveBoard } from '../src/model/myboards';
+import { TEMPLATES } from '../src/model/templates';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 let root: Root | null = null, host: HTMLElement | null = null;
@@ -107,5 +109,18 @@ describe('a modal window', () => {
     expect(document.activeElement).toBe(opener);
     const e = key('Tab');
     expect(e.defaultPrevented).toBe(false);
+  });
+});
+
+describe('My boards', () => {
+  it('puts a board taken off My boards back where it was (Undo)', () => {
+    localStorage.clear();
+    for (const id of ['uno', 'pico', 'esp32']) saveBoard(TEMPLATES.find((t) => t.id === id)!.make());
+    const names = myBoards().map((x) => x.name);
+    const f = forgetBoard(myBoards()[1].id)!;
+    expect(myBoards().map((x) => x.name)).toEqual([names[0], names[2]]);
+    restoreBoard(f);
+    expect(myBoards().map((x) => x.name)).toEqual(names);
+    expect(forgetBoard('nothing')).toBeNull();
   });
 });

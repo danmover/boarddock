@@ -4,12 +4,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Board } from '../model/types';
 import { LIBRARY_SHELVES, TEMPLATES, shelfOf, type Shelf } from '../model/templates';
-import { copyOf, forgetBoard, myBoards, type SavedBoard } from '../model/myboards';
+import { copyOf, forgetBoard, myBoards, restoreBoard, type SavedBoard } from '../model/myboards';
 import { boardPicture } from '../worker/client';
 import { boardSig, useKeptPicture } from './pics';
 import { BoardThumb } from './panels';
 import { Icon, I } from './icons';
 import { bbox } from '../geom/poly';
+import { toast } from '../state';
 
 function SavedThumb({ s }: { s: SavedBoard }) {
   const url = useKeptPicture(`mine:${s.id}:${boardSig(s.board)}`, () => boardPicture(s.board), 280, 180, [0.5, -1, 0.8], 0);
@@ -68,7 +69,7 @@ export function Library({ onAdd, dense }: { onAdd: (bs: Board[]) => void; dense?
           <h4>My boards</h4>
           <div className="lgrid">
             {saved.map((s) => tile(`mine:${s.id}`, s.name, `${kindOf(s.board)} · ${s.board.comps.filter((c) => c.conn).length} plugs`, <SavedThumb s={s} />,
-              <button className="ltile-x" title="Remove it from My boards" aria-label={`Forget ${s.name}`} onClick={() => { forgetBoard(s.id); setMine(myBoards()); }}>×</button>))}
+              <button className="ltile-x" title="Remove it from My boards" aria-label={`Forget ${s.name}`} onClick={() => { const f = forgetBoard(s.id); setMine(myBoards()); if (f) toast(`${s.name} is off My boards.`, { label: 'Undo', run: () => { restoreBoard(f); setMine(myBoards()); } }); }}>×</button>))}
           </div>
         </section>
       )}
