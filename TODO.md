@@ -22,7 +22,7 @@ Still to do, most serious first:
 
 ## 2. Started before, not finished
 
-- Collisions left after the collision test (`npm run collisions`; baseline 394 mm³ over 140 racks, from 8272; 1 layout problem):
+- Collisions left after the collision test (`npm run collisions`; baseline 384.7 mm³ over 140 racks, from 8272; 1 layout problem):
   - Cables where they cross under a rail or at its edge (cables into rails 154 mm³, 110 in the Pi cluster, up to 1.2 mm; cable into cable 47 mm³, up to 3.6 mm): a street is 8 mm under a rail's underside, so a 6 mm Ethernet cable has 2 mm to spare and one can't lie over another there; cables going up to a plug also pass through a rail's lip overhang. Decided (29 Sep): router changes, keeping crossings and rises out from under the rails (not taller stands); and cable management to neaten it all: cables that run together zip-tied into bundles, and anything else that tidies them. Also here: cables that run beside a stand's comb instead of in it (from the second round's smaller things). Tried and taken out, as each made the matrix worse: cables back to the side they were laid on, crossing beads kept further apart, and no brushing a rail's box.
   - The switch's uplink to your router (its lead leaving the rack) moved cables on two racks: the boxes rack +52.6 mm³ (a Pi 4's power and Ethernet cables crossing under rail 1, 3.2 mm deep) and the busy rack +3.3 mm³. Baseline updated with it; the crossing is the one above.
   - Cable tags where no spot along a crowded cable is clear (80 mm³ in 6 racks, most in the probes and back-to-back racks).
