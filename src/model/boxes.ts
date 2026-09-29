@@ -420,6 +420,16 @@ export function ownSupply(box: Module): Board | null {
   return b;
 }
 
+/** A DC plug pack at this voltage (the 12 V one's shape, its output set), for a board whose DC jack takes less than 12 V. */
+export function dcPack(volts: number, amps = 1): Board {
+  const b = makeBox('dc_pack_12v', `DC plug pack, ${volts} V ${amps} A`);
+  const s = b.box!;
+  s.groups = s.groups.map((x) => (x.role === 'dc-out' ? { ...x, volts, amps } : x));
+  applyBox(b, s);
+  b.notes = [`A plug pack: it plugs straight into a powerboard's outlet (or the wall), its own lead goes to a board's ${volts} V DC jack (a barrel plug, 5.5 × 2.1 mm on most). BoardDock can't check polarity: check the labels match before you plug it in. Set its figures under Box to match the label on yours.`];
+  return b;
+}
+
 /** What you can build a box from scratch as, and what each starts with (a typical port or two, to change). */
 export const BOX_KINDS: Record<'hub' | 'charger' | 'supply', { name: string; what: string; color: string; size: [number, number, number]; groups: () => BoxPortGroup[] }> = {
   hub: { name: 'USB hub', what: 'a hub: devices plug into it, it goes to a computer or a board', color: '#2b2f36', size: [100, 30, 22], groups: () => [g('usb_a', 4, 'front', 'hub-down'), g('usb_c', 1, 'left', 'hub-up')] },

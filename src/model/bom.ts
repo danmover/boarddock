@@ -8,7 +8,7 @@ import { cableLines } from './cablelist';
 import { stackHardware, baseOf } from './holes';
 import { adapterFor, isProbe } from './probes';
 import { isPlugPack } from './powerdata';
-import { baseRef, isAccessory } from './links';
+import { baseRef, findModule, isAccessory } from './links';
 import { strapBoxes } from './built';
 import type { GenResult, Module, Project } from './types';
 
@@ -91,7 +91,7 @@ export function billOfMaterials(p: Project, res: GenResult): BomGroup[] {
   const adapters = new Map<string, string[]>();
   for (const l of p.links ?? []) {
     if (l.kind !== 'debug') continue;
-    const end = (r: typeof l.a) => { const m = p.modules.find((x) => x.id === r.module); return m && { m, c: m.board.comps.find((x) => x.ref === baseRef(r.ref)) }; };
+    const end = (r: typeof l.a) => { const m = findModule(p, r.module); return m && { m, c: m.board.comps.find((x) => x.ref === baseRef(r.ref)) }; };
     const A = end(l.a), B = end(l.b);
     if (!A?.c || !B?.c) continue;
     const [pr, bd] = isProbe(A.m) ? [A, B] : [B, A];

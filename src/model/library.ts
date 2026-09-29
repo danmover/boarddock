@@ -2,7 +2,7 @@
 // Dimensions are typical catalogue values; every one is editable in the app because real parts vary.
 import { PRINTERS_DB, printerByName } from './printers';
 import { applyHoleRoles } from './holes';
-import { DEBUG_HINT, isDebugPort, isUartPort, numberLinks } from './links';
+import { DEBUG_HINT, isDebugPort, isUartPort, numberLinks, SOCKET_NAME } from './links';
 import type { ArrangeSettings, Board, Comp, CompKind, ConnSetup, HolderSettings, Material, Module, MountSettings, PanelSettings, PlugSpec, PrinterSettings, Project, StandSettings } from './types';
 
 export interface ConnType {
@@ -124,8 +124,7 @@ export interface PkgGuess { w: number; l: number; h: number; kind?: CompKind; th
 
 const num = (s: string | undefined) => (s ? parseFloat(s.replace(',', '.')) : NaN);
 
-/** A socket (female) header by its name: KiCad's PinSocket, "female", Samtec's and Sullins' socket series, Würth's. */
-export const SOCKET_NAME = /socket|female|receptacle|\b(PPTC|PPPC|NPTC|NPPC|LPPB|SSW|SSQ|SSM|SLW|BCS|ESW|ESQ|CES|SFM|FLE|CLP)[-\d]|\b6130\d\d[12]1821\b/i;
+export { SOCKET_NAME };
 
 /** Connector types that are through-hole unless their name says SMD. */
 const THT = new Set(['usb_a', 'usb_a_dual', 'usb_b', 'rj45', 'rj11', 'dsub', 'xt60', 'xt30', 'iec_c14', 'minidin', 'xlr', 'banana', 'm12', 'toslink', 'pcie', 'barrel', 'rca', 'bnc', 'terminal', 'microfit', 'minifit', 'kk254', 'jst_xh', 'jst_ph', 'idc', 'idc_ra', 'header']);

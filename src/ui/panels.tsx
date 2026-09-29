@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { zipSync, strToU8 } from 'fflate';
 import type { Board, Comp, Hole, HoleRole, Module, PartOut, Project, V2 } from '../model/types';
 import { applyHoleRoles, boltedOn, detectHoleRoles, ROLE_INFO, stackHardware } from '../model/holes';
-import { allPlugs, baseRef, canCable, connectNote, findModule, offRackModule, powerShort, refText, cableNumbers, cablePurpose, shortName, strongerPower, KIND_COLOR, linkKind, linkOf, plugName, plugRole, plugsOf, portBudget, sameRef } from '../model/links';
+import { allPlugs, baseRef, canCable, connectNote, findModule, offRackModule, powerShort, refText, cableNumbers, cablePurpose, shortName, strongerPower, times, hubOffer, KIND_COLOR, linkKind, linkOf, plugName, plugRole, plugsOf, portBudget, sameRef } from '../model/links';
 import { cableLines } from '../model/cablelist';
 import { addAccessory, addJLinks, addLinks, addSerialAdapters, addUartCables, plugPlaces, rebalancePower, removeLinks, setLink } from './linkOps';
 import { adapterFor, debugHeaders, isDebugPort, isProbe, isUartPort, markDebug, ribbonOf, uartHeaders, uartPins, type DebugKind } from '../model/probes';
@@ -452,7 +452,7 @@ function DebugProbes() {
   const m = activeModule(p);
   const heads = debugHeaders(m.board), uarts = uartHeaders(m.board);
   if (!heads.length && !uarts.length) return null;
-  const other = (c: Comp) => { const l = linkOf(p, { module: m.id, ref: c.ref }); const o = l && (l.a.module === m.id ? l.b : l.a); return o ? { m: p.modules.find((x) => x.id === o.module), ref: o.ref, link: l.id } : null; };
+  const other = (c: Comp) => { const l = linkOf(p, { module: m.id, ref: c.ref }); const o = l && (l.a.module === m.id ? l.b : l.a); return o ? { m: findModule(p, o.module), ref: o.ref, link: l.id } : null; };
   const freeDbg = heads.filter((c) => !other(c)), freeUart = uarts.filter((c) => !other(c));
   const kindOf = (x: Module) => x.board.name.replace(/\s*\(.*\)$/, '');
   const row = (c: Comp, chip: ReactNode, extra?: ReactNode) => (
@@ -629,7 +629,7 @@ export function PlugsPanel() {
 
 /** Every cable in the project: what goes where, how long, what to buy. */
 const NO_CABLES: NonNullable<NonNullable<ReturnType<typeof store.get>['result']>['report']['cables']> = [];
-function CablesSection() {
+export function CablesSection() {
   const p = useApp((s) => s.project)!;
   // no `?? []` inside the selector: a new array on every read makes the store re-render forever before the first build
   const cables = useApp((s) => s.result?.report.cables) ?? NO_CABLES;
@@ -655,7 +655,7 @@ function CablesSection() {
               return (
                 <div key={l.id} className={`item ${isSel(sel, l.id) ? 'sel' : ''}`} onClick={() => select([{ kind: 'link', id: l.id }])}>
                   <span className="cno" style={{ background: KIND_COLOR[l.kind ?? 'usb'] }}>{nos.get(l.id)}</span>
-                  <span className="grow"><b>{nm(l.a)}</b> <small>to</small> <b>{nm(l.b)}</b><small className="cpurpose">{cablePurpose(p, l).text}</small></span>
+                  <span className="grow"><b>{nm(l.a)}</b> <small>to</small> <b>{nm(l.b)}</b><small className="cpurpose">{cablePurpose(p, l).text}</small>{l.auto && l.why && <small className="cpurpose cwhy">{l.why}</small>}</span>
                   {c ? <span className="chip">{Math.round(c.length / 10)} cm</span> : <span className="chip">{[l.a, l.b].some((r) => offRackModule(findModule(p, r.module))) ? 'off the rack' : 'not on the rails'}</span>}
                   <button className="btn small ghost icon" title="Remove the cable" onClick={(e) => { e.stopPropagation(); removeLinks([l.id]); }}><Icon d={I.x} /></button>
                 </div>
@@ -789,13 +789,13 @@ function PortBudget({ budget }: { budget: ReturnType<typeof portBudget> }) {
   const p = useApp((s) => s.project)!;
   const { devices, usbPorts, powerIns, powerOuts, weak, unwired } = budget;
   const short = useMemo(() => powerShort(p), [p.links, p.modules]);
-  const wires = unwired.length > 0 && <p className="hint">Not wired yet: {unwired.map((u) => `${u.name} (${u.refs.join(', ')})`).join('; ')}. Auto-connect leaves wires and jumper headers to you: connect them in the Wiring view or with “Cable to” on the connector.</p>;
+  const wires = unwired.length > 0 && <p className="hint">Not wired yet: {unwired.map((u) => `${times(u.name, u.count)} (${u.refs.join(', ')})`).join('; ')}. Auto-connect leaves wires and jumper headers to you: connect them in the Wiring view or with “Cable to” on the connector.</p>;
   if (!devices.length && !powerIns.length && !weak.length) return <><p className="hint">{usbPorts.length ? `${usbPorts.length} USB port${usbPorts.length > 1 ? 's' : ''} still free` : 'No USB ports left over'}{powerOuts.length ? `, ${powerOuts.length} charger port${powerOuts.length > 1 ? 's' : ''} free` : ''}.</p>{wires}</>;
   const named = (id: string) => (TEMPLATES.find((t) => t.id === id)?.name ?? id).replace(/ \(.*$/, '');
   const them = devices.length > 1 ? 'them' : 'it';
   return (
     <div className="warns" style={{ marginTop: 8 }}>
-      {devices.length > 0 && <div>{devices.length} USB plug{devices.length > 1 ? 's' : ''} waiting for a port ({devices.map((d) => `${d.module.board.name} ${d.comp.ref}`).join(', ')}); {usbPorts.length} free on the rack.{devices.length > usbPorts.length && <> Plug {them} into your computer (Auto-connect does it), or <button className="btn small" style={{ marginLeft: 4 }} onClick={() => addAccessory(devices.length - usbPorts.length > 3 ? 'usb_hub7' : 'usb_hub')}>Add a USB hub</button></>}</div>}
+      {devices.length > 0 && <div>{devices.length} USB plug{devices.length > 1 ? 's' : ''} waiting for a port ({devices.map((d) => `${d.module.board.name} ${d.comp.ref}`).join(', ')}); {usbPorts.length} free on the rack.{devices.length > usbPorts.length && <> Plug {them} into your computer (Auto-connect does it), or <button className="btn small" style={{ marginLeft: 4 }} onClick={() => addAccessory(hubOffer(devices.length - usbPorts.length).id, hubOffer(devices.length - usbPorts.length).count)} title={`${devices.length - usbPorts.length} plugs have no port: ${hubOffer(devices.length - usbPorts.length).count * hubOffer(devices.length - usbPorts.length).ports} hub ports cover them. Each hub's uplink goes to a free port of the rack, or to your computer.`}>Add {hubOffer(devices.length - usbPorts.length).count > 1 ? `${hubOffer(devices.length - usbPorts.length).count} USB hubs` : 'a USB hub'}</button></>}</div>}
       {wires}
       {(powerIns.length > 0 || weak.length > 0) && <div>
         {powerIns.length > 0 && `${powerIns.length} board${powerIns.length > 1 ? 's need' : ' needs'} power (${powerIns.map((d) => d.module.board.name).join(', ')})`}{powerIns.length > 0 && weak.length > 0 && '; '}
@@ -1521,7 +1521,7 @@ export function shopping(p: Project, res: Res, d: Delta | null, tot: { g: number
   const adapters = new Map<string, string[]>();
   for (const l of p.links ?? []) {
     if (l.kind !== 'debug') continue;
-    const end = (r: typeof l.a) => { const m = p.modules.find((x) => x.id === r.module); return m && { m, c: m.board.comps.find((x) => x.ref === baseRef(r.ref)) }; };
+    const end = (r: typeof l.a) => { const m = findModule(p, r.module); return m && { m, c: m.board.comps.find((x) => x.ref === baseRef(r.ref)) }; };
     const A = end(l.a), B = end(l.b);
     if (!A?.c || !B?.c || !mods.some((m) => m === A.m || m === B.m)) continue;
     const [pr, bd] = isProbe(A.m) ? [A, B] : [B, A];
