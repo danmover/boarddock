@@ -2,6 +2,7 @@
 // pegs, part leads and the standoffs of a board stacked on top stay free and get clearance underneath.
 import type { Board, Hole, HoleRole, Loop, Module, Project, V2 } from './types';
 import { bbox, compRect, extentAlong, inside, rad, round, segDist } from '../geom/poly';
+import { holderParts } from './cards';
 
 export interface HoleGuess { id: string; role: HoleRole; why: string; sure: boolean }
 
@@ -226,7 +227,7 @@ export function stackNeed(below: Board, upper: Board): { need: number; under: { 
   const a = stackAlign(below, upper);
   const foot = upper.outline.map(([x, y]) => [x + a.dx, y + a.dy] as V2);
   let under: { ref: string; h: number } | null = null;
-  for (const c of below.comps) {
+  for (const c of holderParts(below)) {
     if (c.hidden || c.side !== 'top' || c.h <= 0) continue;
     const shapes: Loop[] = [compRect(c)];
     let h = c.h;
@@ -240,7 +241,7 @@ export function stackNeed(below: Board, upper: Board): { need: number; under: { 
     if ((!under || h > under.h) && shapes.some((q) => overlaps(q, foot))) under = { ref: c.ref, h: round(h, 1) };
   }
   // under the top board: its parts on that side, and the leads of its through-hole parts (about 1.6 mm)
-  const beneath = Math.max(0, ...upper.comps.filter((c) => !c.hidden && c.side === 'bottom').map((c) => c.h), ...upper.comps.filter((c) => !c.hidden && c.side === 'top' && c.tht).map(() => 1.6));
+  const beneath = Math.max(0, ...holderParts(upper).filter((c) => !c.hidden && c.side === 'bottom').map((c) => c.h), ...upper.comps.filter((c) => !c.hidden && c.side === 'top' && c.tht).map(() => 1.6));
   return { need: round((under?.h ?? 0) + beneath + 1, 1), under };
 }
 

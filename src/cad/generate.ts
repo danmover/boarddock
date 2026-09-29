@@ -7,6 +7,7 @@ import { DEBUG_TYPES, isDebugPort } from '../model/links';
 import { headerPins, UART_WIRES, uartPins } from '../model/probes';
 import { baseRef, isBox } from '../model/links';
 import { DEFAULT_FEATURES, MATERIALS } from '../model/library';
+import { holderParts } from '../model/cards';
 import { usedRefs } from '../model/portuse';
 import { bbox, centroid, compRect, extentAlong, inside, rad, rayExit, round, segDist } from '../geom/poly';
 import type { CS, MF } from './kernel';
@@ -244,7 +245,7 @@ function build(job: Job): ModuleOut {
 
   // ---- clearance under the board ----
   const keepouts: Ctx['keepouts'] = [];
-  for (const c of b.comps) {
+  for (const c of holderParts(b)) {
     if (c.side === 'bottom' && c.h > 0) keepouts.push({ rect: compRect(c, 0.5), need: c.h + 0.5, why: `${c.ref} (bottom, ${round(c.h, 1)} mm)` });
     if (c.side === 'top' && c.tht) keepouts.push({ rect: compRect(c, 0.6), need: H.leadLen + 0.4, why: `${c.ref} leads` });
   }
@@ -764,7 +765,7 @@ function tieAnchor(C: Ctx, at: V2, edgeConn: { d: V2; half: number; sEdge: numbe
 function overhangs(C: Ctx) {
   // component bodies that stick out past the board edge need openings in the wall
   const { b, zt, zb } = C;
-  for (const c of b.comps) {
+  for (const c of holderParts(b)) {
     if (c.hidden || c.h <= 0) continue;
     const r = compRect(c, 0.4);
     if (r.every((pt) => inside(pt, b.outline))) continue;
@@ -798,7 +799,7 @@ function edgeSites(C: Ctx, need: number, extraBlocked: Loop[] = [], checkComps =
       const q = add(a, d, s);
       const zone = orientedRect(q, d, 0, need, -(H.gap + H.wall + 1), 2.5); // local t = inward
       const conflict = C.blocked.some((bl) => polysOverlap(zone, bl.poly)) || extraBlocked.some((bl) => polysOverlap(zone, bl)) ||
-        (checkComps && b.comps.some((cc) => cc.side === 'top' && !cc.hidden && cc.h > 0 && polysOverlap(zone, compRect(cc, 0.3))));
+        (checkComps && holderParts(b).some((cc) => cc.side === 'top' && !cc.hidden && cc.h > 0 && polysOverlap(zone, compRect(cc, 0.3))));
       if (!conflict) sites.push({ q, d, n, seg: i, len, free: s });
     }
   }
@@ -896,7 +897,7 @@ function leafSites(C: Ctx, L: number, lipLen: number, taken: Loop[]): LeafSite[]
   const dense = perimeter(C.b.outline, 0.5).map((x) => x.p);
   const cen = centroid(C.b.outline);
   const sc = L - 0.3 - lipLen / 2;
-  const tops = C.b.comps.filter((cc) => cc.side === 'top' && !cc.hidden && cc.h > 0).map((cc) => compRect(cc, 0.3));
+  const tops = holderParts(C.b).filter((cc) => cc.side === 'top' && !cc.hidden && cc.h > 0).map((cc) => compRect(cc, 0.3));
   const out: LeafSite[] = [];
   for (const { p, d } of ring) {
     const nu: V2 = [-d[1], d[0]]; // into the board
@@ -1148,7 +1149,7 @@ function seats(C: Ctx) {
     for (let t = (25 - run) % 25; t < L; t += 25) cand.push([a[0] + ((c[0] - a[0]) * t) / L, a[1] + ((c[1] - a[1]) * t) / L]);
     run = (run + L) % 25;
   }
-  const clear = (q: V2) => !C.keepouts.some((k) => rectDist(q, k.rect) < 3.2) && !b.comps.some((c) => !c.hidden && c.side === 'bottom' && inside(q, compRect(c, 3)));
+  const clear = (q: V2) => !C.keepouts.some((k) => rectDist(q, k.rect) < 3.2) && !holderParts(b).some((c) => !c.hidden && c.side === 'bottom' && inside(q, compRect(c, 3)));
   const band = C.O.offset(-0.02, 'Round').subtract(C.O.offset(-RIM_IN - 1.0, 'Round'));
   const pads: CS[] = [];
   for (const q of cand) {
@@ -1762,7 +1763,7 @@ function slotBody(C: Ctx) {
   // the stop at the closed end
   C.pos.push(orientedBox([0, 0], open, u0 - gw, u0 - H.gap, t0 - gw, t1 + gw, 0, zTop));
   // no lip over a part standing at an edge (an adapter's USB socket, its pins): the slot is open there
-  for (const c of C.b.comps) if (!c.hidden && c.side === 'top' && c.h > 0.5) C.neg.push(ext(poly(compRect(c, 0.6)), zt + 0.05, zTop + 2));
+  for (const c of holderParts(C.b)) if (!c.hidden && c.side === 'top' && c.h > 0.5) C.neg.push(ext(poly(compRect(c, 0.6)), zt + 0.05, zTop + 2));
   C.checks.push({ group: 'Holder', name: 'Slot', value: `${round(zt - zb, 1)} mm, open ${Math.abs(open[1]) > 0.7 ? (open[1] > 0 ? 'at the back' : 'at the front') : open[0] > 0 ? 'at the right' : 'at the left'}`, status: 'info', detail: `the board slides in from the open end, under a lip along each side, down onto its rim: there is no room for spring clips on it. In its column the holder above keeps it in (the top one: the release button over it). Not printed and tried yet.` });
 }
 

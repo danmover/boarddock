@@ -11,6 +11,7 @@ const CABLE_ORDER: NonNullable<Link['kind']>[] = ['power', 'usb', 'net', 'video'
 // wall last of all
 const CABLE_SEQ = 1e6, PLUG_SEQ = 1e6 + 90, CAP_SEQ = 1e6 + 100, TAG_SEQ = 1e6 + 110, WALL_SEQ = 1e6 + 120;
 import { MATERIALS } from '../model/library';
+import { holderParts } from '../model/cards';
 import { bbox, round } from '../geom/poly';
 import { basis, dir, I4, inv, mul, pt as ptM, rotZ, tr, type M4 } from '../geom/mat';
 import { filletPath, leadStub, moveFx, powerFx, ribbonMesh, sphereMesh, tubeMesh } from './boardviz';
@@ -79,7 +80,7 @@ function stackPlan(p: Project, layers: StackLayer[], dockEdge: EdgeName | null) 
   const facts = layers.map((L) => {
     const m = L.mod, bb = bbox(m.board.outline), gw = m.holder.gap + m.holder.wall, lv = builtLevels(m.board, m.holder, L === layers[0] ? dockEdge : null);
     let top = lv.topMax;
-    for (const bo of L.bolted) top = Math.max(top, lv.zt + bo.dz + bo.mod.board.thickness + Math.max(0, ...bo.mod.board.comps.filter((c) => !c.hidden && c.side === 'top').map((c) => c.h)));
+    for (const bo of L.bolted) top = Math.max(top, lv.zt + bo.dz + bo.mod.board.thickness + Math.max(0, ...holderParts(bo.mod.board).filter((c) => !c.hidden && c.side === 'top').map((c) => c.h)));
     return { bb, gw, lv, top };
   });
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;

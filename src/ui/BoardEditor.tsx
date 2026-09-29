@@ -17,6 +17,7 @@ import { axisOf, featAt, layoutDims, lineMates, measure, pickFeat, setDim, type 
 import { boardCopper } from '../model/copper';
 import { boardLights } from '../model/lights';
 import { headerPins } from '../model/probes';
+import { cardOf } from '../model/cards';
 import { plugName } from '../model/links';
 import { alignPhoto, dimPopupAt, edgeGaps, fitPhoto, itemsBox, scalePhoto, snapBox, snapLines, type Box2 } from '../model/editorgeo';
 import { PART_DRAG, Toolbox } from './Toolbox';
@@ -455,6 +456,8 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
     const pitchPx = (c.conn?.type === 'swd10' ? 1.27 : 2.54) / Math.max(px, 1e-6);
     return (
       <g key={c.id} data-id={ghostly ? undefined : c.id} data-kind={ghostly ? undefined : 'comp'} style={{ cursor: ghostly ? 'none' : 'move', pointerEvents: ghostly ? 'none' : undefined }} opacity={ghostly ? 0.65 : 1}>
+        {/* the card in a card socket (M.2, PCIe, DIMM): not drawn in 3D, but the holder keeps clear of its box */}
+        {!ghostly && (() => { const k = cardOf(c, b); return k && <polygon points={compRect(k).map(([x, y]) => `${x},${-y}`).join(' ')} fill="none" stroke="var(--silk)" strokeOpacity={0.7} strokeWidth={fs(1)} strokeDasharray={`${fs(5)} ${fs(3)}`} style={{ pointerEvents: 'none' }}><title>{`Card in ${c.ref}: the holder keeps clear of it`}</title></polygon>; })()}
         {!bottom && !ghostly && !L.metal && <rect transform={T} x={-c.w / 2 - 0.45} y={-c.l / 2 - 0.45} width={c.w + 0.9} height={c.l + 0.9} rx={L.round ? rr + 0.45 : 0.2} fill="none" stroke="var(--silk)" strokeOpacity={0.55} strokeWidth={0.15} style={{ pointerEvents: 'none' }} />}
         {pads.length > 0 && pitchPx * 0.5 > 1.2 && <g transform={T} style={{ pointerEvents: 'none' }}>{pads.map((q, i) => <rect key={i} x={q.x - q.w / 2} y={q.y - q.h / 2} width={q.w} height={q.h} fill="#c9cdd2" />)}</g>}
         <g filter={shadow}>

@@ -8,7 +8,7 @@ import { textStrokes, textWidth } from './font';
 import { headerPins } from '../model/probes';
 import { kkPitch, nameCircuits, SOCKET_NAME, wtbPitch } from '../model/library';
 import { boardCopper } from '../model/copper';
-import { box, circle2, cyl, ext, poly, toMesh, type MF } from './kernel';
+import { box, circle2, cyl, ext, poly, toMesh, unionCS, unionMF, type MF } from './kernel';
 import { K } from './kernel';
 
 type Mat = NonNullable<Ghost['mat']>;
@@ -244,8 +244,24 @@ function partDetail(bin: Bin, c: Comp, zt: number, zb: number) {
   if (c.kind === 'header' || type === 'header' || ((!type || type === 'custom') && /pin.?header|pin.?socket|conn_\d+x\d+|idc/i.test(name))) {
     const socket = SOCKET_NAME.test(name);
     const baseH = socket ? h : Math.min(2.5, h);
-    B('black', -hx, -hy, 0, hx, hy, baseH);
     const nx = Math.max(1, Math.round(w / 2.54)), ny = Math.max(1, Math.round(l / 2.54));
+    if (socket && nx * ny <= 120 && h > 2) {
+      // a socket: the black body with a bore for each pin, a gold ring round it on top (as the board editor's gold
+      // dots), the contact's cup down in it
+      const depth = Math.min(3, h * 0.6), bores: MF[] = [], rings: MF[] = [], cups: MF[] = [];
+      for (let i = 0; i < nx; i++) for (let j = 0; j < ny; j++) {
+        const px = (i - (nx - 1) / 2) * 2.54, py = (j - (ny - 1) / 2) * 2.54;
+        bores.push(cyl(px, py, h - depth, h + 0.1, 0.55, 0.55, 14));
+        rings.push(cyl(px, py, h - 0.02, h + 0.05, 0.95, 0.95, 14));
+        cups.push(cyl(px, py, h - depth, h - depth + 0.4, 0.5, 0.5, 14));
+      }
+      const bore = unionMF(bores);
+      bin.add('black', tf(box(-hx, -hy, 0, hx, hy, h).subtract(bore), T));
+      bin.add('gold', tf(unionMF(rings).subtract(bore), T));
+      bin.add('gold', tf(unionMF(cups), T));
+      return;
+    }
+    B('black', -hx, -hy, 0, hx, hy, baseH);
     if (nx * ny <= 120) for (let i = 0; i < nx; i++) for (let j = 0; j < ny; j++) {
       const px = (i - (nx - 1) / 2) * 2.54, py = (j - (ny - 1) / 2) * 2.54;
       if (socket) B('chip', px - 0.5, py - 0.5, h - 0.02, px + 0.5, py + 0.5, h + 0.01);
@@ -332,6 +348,41 @@ function partDetail(bin: Bin, c: Comp, zt: number, zb: number) {
   }
   if (c.conn?.entry === 'edge' || c.kind === 'connector') {
     const metalShell = /usb|hdmi|microsd|sma|rj45|^(dp|sd)$/.test(type) || /usb|hdmi|sd/i.test(name);
+    if ((type === 'sma' || type === 'xlr' || type === 'm12' || type === 'minidin') && Math.min(w, h) > 3 && l > 4) {
+      // a round connector: a block on the board, and out past its edge the metal barrel, threaded on an SMA and an M12,
+      // plain on an XLR and a mini-DIN, with its contacts in the mouth (one, three, a ring of four or more, a ring of six)
+      const R = Math.min(h / 2, w / 2, type === 'sma' ? 99 : type === 'xlr' ? Math.min(w, h) / 2 - 0.6 : type === 'm12' ? Math.min(w, h) * 0.375 : Math.min(w, h) * 0.4);
+      const zc = Math.max(R, Math.min(h - R, c.conn?.zc || h / 2));
+      const bl = Math.min(l * (type === 'sma' ? 0.7 : type === 'minidin' ? 0.6 : 0.55), type === 'sma' ? 7 : type === 'xlr' ? 14 : type === 'm12' ? 11 : 9), y0 = hy - bl;
+      const wall = type === 'sma' ? 0.9 : type === 'xlr' ? 1 : type === 'm12' ? 1.2 : 0.6, rec = type === 'sma' ? 1.6 : type === 'xlr' ? 4 : type === 'm12' ? 3 : 2.5;
+      const thread = type === 'sma' || type === 'm12', pitch = type === 'sma' ? 0.8 : 1;
+      B(type === 'xlr' || type === 'm12' ? 'black' : 'metal', -hx, -hy, 0, hx, y0, h);
+      const ring: MF[] = [cylY(0, zc, thread ? R - 0.25 : R, y0, hy)];
+      if (thread) for (let y = y0 + 0.5; y + 0.45 < hy - 0.1; y += pitch) ring.push(cylY(0, zc, R, y, y + 0.45));
+      bin.add('metal', tf(unionMF(ring).subtract(cylY(0, zc, R - wall, y0 + 1, hy + 1)), T));
+      const ri = R - wall, face = hy - rec;
+      bin.add(type === 'sma' ? 'white' : 'black', tf(cylY(0, zc, ri, y0 + 1, face), T));
+      // the contacts: tubes standing a little proud of the insert's face
+      const n = type === 'sma' ? 1 : type === 'xlr' ? 3 : Math.max(3, Math.min(type === 'm12' ? 8 : 9, pinCount(c, name, type === 'm12' ? 4 : 6)));
+      const ringN = type === 'sma' ? 0 : type === 'xlr' ? 3 : type === 'm12' && n >= 5 ? n - 1 : n, rr = ri * (type === 'minidin' ? 0.6 : type === 'm12' ? 0.6 : 0.45);
+      const at2: [number, number][] = type === 'sma' || (type === 'm12' && n >= 5) ? [[0, 0]] : [];
+      for (let k = 0; k < ringN; k++) { const an = rad((type === 'xlr' ? 30 : 90) + (360 * (k + (type === 'minidin' ? 0.5 : type === 'm12' ? 0.5 : 0))) / ringN); at2.push([rr * Math.cos(an), rr * Math.sin(an)]); }
+      const cr = type === 'sma' ? 0.75 : type === 'xlr' ? 1.1 : type === 'm12' ? 0.6 : 0.5;
+      for (const [px, pz] of at2) bin.add('gold', tf(cylY(px, zc + pz, cr, face - 0.05, face + 0.4).subtract(cylY(px, zc + pz, cr * 0.5, face + 0.1, face + 1)), T));
+      // the key (an XLR's latch slot, a mini-DIN's and an M12's keyway) at the top of the mouth
+      if (type !== 'sma') B(type === 'xlr' ? 'metal' : 'black', -Math.min(1.2, ri * 0.15), y0 + 1, zc + ri - Math.min(1.6, ri * 0.25), Math.min(1.2, ri * 0.15), face + 0.2, zc + ri);
+      return;
+    }
+    if (type === 'iec_c7' && w > 3 && h > 3 && l > 4) {
+      // the figure-8 socket: two round lobes side by side (the mouth and the body's own outline), two pin blades inside
+      const fig = (ww: number, hh: number) => { const r = hh / 2, d = Math.max(0, ww / 2 - r); return unionCS([circle2(-d, 0, r, 32), circle2(d, 0, r, 32)]); };
+      const wall = Math.min(0.6, h / 6), depth = Math.min(l * 0.75, 10);
+      const at3 = (y: number) => [-1, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, y, h / 2, 1] as any;
+      bin.add('black', tf(ext(fig(w, h), 0, l).transform(at3(-hy)).subtract(ext(fig(w - 2 * wall, h - 2 * wall), 0, depth + 1).transform(at3(hy - depth))), T));
+      const d = Math.max(0, w / 2 - h / 2);
+      for (const sx of [-1, 1]) B('gold', sx * d - 0.4, hy - depth + 0.3, h / 2 - Math.min(1.6, h / 5), sx * d + 0.4, hy - 1.5, h / 2 + Math.min(1.6, h / 5));
+      return;
+    }
     if (type === 'barrel' || type === 'audio35') {
       // the bore on the plug's axis (6.5 mm up on a barrel jack), so the plug drawn in it lines up
       const r = Math.min(w, h) * (type === 'barrel' ? 0.34 : 0.26), zc = Math.max(r + 0.4, Math.min(h - r - 0.4, c.conn?.zc || h / 2));
@@ -437,7 +488,7 @@ function partDetail(bin: Bin, c: Comp, zt: number, zb: number) {
     B('metal', -hx + 0.6, -hy + 0.6, Math.max(0.2, h - 0.6), hx - 0.6, hy - 0.6, h);
     return;
   }
-  if (c.kind === 'module') {
+  if (c.kind === 'module' && !/relay/i.test(`${c.pkg} ${c.value ?? ''}`)) { // (a relay tagged a module is drawn as the relay it is, below)
     B('mask', -hx, -hy, 0, hx, hy, Math.min(1, h));
     if (h > 1.2) B('metal', -hx + 0.8, -hy + 0.8, Math.min(1, h), hx - 0.8, hy - 0.8, h);
     return;
@@ -669,6 +720,8 @@ export function boardDetail(b: Board, zb: number, zt: number, tag: PickTag, anim
       bin.box('black', T, -q * 0.6, -q * 0.6, 0.0, q * 0.6, q * 0.6, 0.06);
     }
   }
+  // (what the silkscreen text takes, so the board's name and the plugs' labels keep clear of it)
+  const taken: { x0: number; y0: number; x1: number; y1: number }[] = [];
   // silkscreen: what each pin of a named header is (GND, TX, RX…), beside it, as boards have them printed
   for (const c of list) {
     if (c.side !== 'top' || !c.conn || !['header', 'pins_ra', 'jst_ph', 'jst_xh'].includes(c.conn.type)) continue;
@@ -684,9 +737,17 @@ export function boardDetail(b: Board, zb: number, zt: number, tag: PickTag, anim
       if (!q.net) continue;
       const t = short(q.net), tw = textWidth(t, hgt);
       const cx = q.x + dx * off, cy = q.y + dy * off;
-      // across a row that runs along x the names sit under the pins, centred; beside a row along y, to its side
-      const o: [number, number] = Math.abs(dy) > 0.7 ? [cx - tw / 2, dy < 0 ? cy - hgt : cy] : [dx < 0 ? cx - tw : cx, cy - hgt / 2];
-      silkText(bin, t, o, hgt, zt);
+      if (Math.abs(dy) > 0.7) {
+        // across a row that runs along x the names sit under the pins, turned 90 degrees and reading up (four letters
+        // are wider than the pitch), as boards print them; beside a row along y, to its side
+        const y0 = dy < 0 ? cy - tw : cy;
+        silkText(bin, t, [cx + hgt / 2, y0], hgt, zt, 90);
+        taken.push({ x0: cx - hgt / 2, y0, x1: cx + hgt / 2, y1: y0 + tw });
+      } else {
+        const o: [number, number] = [dx < 0 ? cx - tw : cx, cy - hgt / 2];
+        silkText(bin, t, o, hgt, zt);
+        taken.push({ x0: o[0], y0: o[1], x1: o[0] + tw, y1: o[1] + hgt });
+      }
     }
   }
   // silkscreen: reference designators beside the bigger parts, and the board name in a free corner
@@ -699,11 +760,11 @@ export function boardDetail(b: Board, zb: number, zt: number, tag: PickTag, anim
     const o: [number, number] = [bb2.x0, bb2.y1 + 0.3];
     if (!inside([o[0] + tw, o[1] + hgt], b.outline) || !inside(o, b.outline)) continue;
     silkText(bin, c.ref, o, hgt, zt);
+    taken.push({ x0: o[0], y0: o[1], x1: o[0] + tw, y1: o[1] + hgt });
     labels++;
   }
   // what each plug on an edge is, printed just inside it (on the plug the plug would hide it), along the edge
   const rects = list.filter((c) => c.side === 'top').map((c) => ({ c, r: bbox(compRect(c, 0.3)) }));
-  const taken: { x0: number; y0: number; x1: number; y1: number }[] = [];
   for (const c of list) {
     if (c.side !== 'top' || c.conn?.entry !== 'edge') continue;
     const d = [Math.cos(rad(c.conn.angle)), Math.sin(rad(c.conn.angle))], t = [-d[1], d[0]];
@@ -723,7 +784,7 @@ export function boardDetail(b: Board, zb: number, zt: number, tag: PickTag, anim
   }
   const bbB = bbox(b.outline), nameH = Math.min(2.2, (bbB.y1 - bbB.y0) * 0.05);
   const nm = b.name.slice(0, 28), nw = textWidth(nm, nameH);
-  const spot = findFree(b, list, nw, nameH, taken); // (clear of the plugs' labels too)
+  const spot = findFree(b, list, nw, nameH, taken); // (clear of the part labels, pin names and plugs' labels too)
   if (spot) silkText(bin, nm, spot, nameH, zt);
   // (a bare box, or a board with a colour of its own: a J-Link, an adapter, drawn in its solder mask's colour)
   return bin.ghosts('board', tag, anim, b.color ? { mask: b.color } : {});

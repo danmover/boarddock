@@ -6,6 +6,7 @@ import { bbox, compRect, extentAlong, rad, uid } from '../geom/poly';
 import { basis, dir, I4, inv, mul, rotZ, tr, type M4 } from '../geom/mat';
 import { DOCK_MIN_ZB, EAR, gripSpan, HD, headSpan, SOCKET_Z, SPINE_TOP, TONGUE } from './dockdims';
 import { MATERIALS } from '../model/library';
+import { holderParts } from '../model/cards';
 import { computeLevels } from './levels';
 import { holdOf } from './grip';
 import { baseOf, columnOf, isSmall, ridersOf } from '../model/holes';
@@ -127,7 +128,7 @@ export interface Orientation { edge: EdgeName; turn: Turn; score: number; access
 function holderSize(m: Module) {
   const bb = bbox(m.board.outline);
   const gw = m.holder.gap + m.holder.wall;
-  const top = Math.max(0, ...m.board.comps.filter((c) => c.side === 'top' && !c.hidden).map((c) => c.h));
+  const top = Math.max(0, ...holderParts(m.board).filter((c) => c.side === 'top' && !c.hidden).map((c) => c.h));
   return { x: bb.x1 - bb.x0 + 2 * gw, y: bb.y1 - bb.y0 + 2 * gw, z: 12 + m.board.thickness + top };
 }
 
@@ -168,7 +169,7 @@ export function dockSite(b: Board, H: HolderSettings, edge: EdgeName, shift = 0)
     return { t0: Math.min(...t), t1: Math.max(...t), s0: Math.min(...s), s1: Math.max(...s) };
   };
   const posts = b.holes.filter((h) => h.use !== 'none').map((h) => ({ t: de([h.x, h.y]), s: L0 - dn([h.x, h.y]), r: h.d / 2 + 2.2 }));
-  const under = b.comps.filter((c) => !c.hidden && ((c.side === 'bottom' && c.h > 0) || (c.side === 'top' && c.tht)))
+  const under = holderParts(b).filter((c) => !c.hidden && ((c.side === 'bottom' && c.h > 0) || (c.side === 'top' && c.tht)))
     .map((c) => ({ ...ts(compRect(c, 0.5)), need: c.side === 'bottom' ? c.h + 0.5 : H.leadLen + 0.4 }));
   const plugs = plugZones(b, dn, de, L0);
   const ov = (a0: number, a1: number, b0: number, b1: number) => a0 < b1 && b0 < a1;

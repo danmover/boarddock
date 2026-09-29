@@ -26,7 +26,7 @@ export function edgeConnector(b: Board, typeId: string, at: V2): Comp {
   const t = connById(typeId);
   const e = nearestEdge(at, b.outline);
   const angle = Math.round(deg(Math.atan2(e.n[1], e.n[0])) * 10) / 10 + 0; // (+0: never -0)
-  const pre = /^usb/.test(typeId) ? 'USB' : typeId === 'barrel' ? 'DC' : /^hdmi/.test(typeId) ? 'HDMI' : typeId === 'rj45' ? 'ETH' : typeId === 'audio35' ? 'AUD' : typeId === 'microsd' ? 'SD' : typeId === 'sma' ? 'ANT' : typeId === 'terminal' ? 'TB' : 'J';
+  const pre = /^usb/.test(typeId) ? 'USB' : typeId === 'barrel' ? 'DC' : /^hdmi/.test(typeId) ? 'HDMI' : typeId === 'rj45' ? 'ETH' : typeId === 'audio35' ? 'AUD' : typeId === 'microsd' ? 'SD' : typeId === 'sma' || typeId === 'rf_mini' ? 'ANT' : typeId === 'terminal' ? 'TB' : 'J';
   const c: Comp = { id: uid('c'), ref: nextRef(b, pre), pkg: t.name, side: 'top', x: 0, y: 0, rot: angle - 90, w: t.body.w, l: t.body.l, h: t.body.h, kind: 'connector', tht: false, conn: connSetup(t, angle) };
   // slide it along the edge to the click, the nearest point on that edge
   const ext = extentAlong(c, angle);
@@ -49,6 +49,8 @@ const EDGE_GROUP: Record<string, PaletteGroup> = {
   hdmi_a: 'Video, network and audio', hdmi_mini: 'Video, network and audio', hdmi_micro: 'Video, network and audio', rj45: 'Video, network and audio', audio35: 'Video, network and audio', sma: 'Video, network and audio', microsd: 'Video, network and audio',
   xt60: 'USB and power', xt30: 'USB and power', dp: 'Video, network and audio', rj11: 'Video, network and audio', rca: 'Video, network and audio', bnc: 'Video, network and audio', sd: 'Video, network and audio',
   qwiic: 'Headers and wires', pins_ra: 'Headers and wires', wtb_side: 'Headers and wires', idc_ra: 'Headers and wires', fpc: 'Headers and wires', dsub: 'Headers and wires', custom: 'Other',
+  iec_c14: 'USB and power', banana: 'USB and power', xlr: 'Video, network and audio', toslink: 'Video, network and audio', sfp: 'Video, network and audio', minidin: 'Video, network and audio',
+  rf_mini: 'Video, network and audio', sim: 'Video, network and audio', m12: 'Headers and wires', sata: 'Other',
 };
 
 const header = (rows: number, n: number): PaletteItem => ({
@@ -71,9 +73,9 @@ const tall = (id: string, label: string, pre: string, pkg: string, w: number, l:
   make: (b, at) => ({ comp: part(b, at, pre, pkg, w, l, h, kind) }),
 });
 /** An upright connector sized for its footprint name (its pins say how wide). */
-const upright = (id: string, type: string, label: string, pkg: string, hint: string, kind: Comp['kind'] = 'connector', tht = true): PaletteItem => {
+const upright = (id: string, type: string, label: string, pkg: string, hint: string, kind: Comp['kind'] = 'connector', tht = true, group: PaletteGroup = 'Headers and wires'): PaletteItem => {
   const t = sizedConn(connById(type), pkg);
-  return { id, group: 'Headers and wires', label, hint, size: mm(t.body.w, t.body.l, t.body.h), make: (b, at) => ({ comp: { ...topConnector(b, type, at, { pkg, w: t.body.w, l: t.body.l, h: t.body.h, kind, tht }), conn: connSetup(t, 0) } }) };
+  return { id, group, label, hint, size: mm(t.body.w, t.body.l, t.body.h), make: (b, at) => ({ comp: { ...topConnector(b, type, at, { pkg, w: t.body.w, l: t.body.l, h: t.body.h, kind, tht }), conn: connSetup(t, 0) } }) };
 };
 const debug = (id: string, type: string, label: string, pkg: string, hint: string, tht: boolean): PaletteItem => {
   const t = connById(type);
@@ -95,6 +97,11 @@ export const PALETTE: PaletteItem[] = [
   upright('fan4', 'kk254', 'Fan header 4-pin', 'Molex_KK-254_AE-6410-04A_1x04_P2.54mm_Vertical', 'a fan or a KK plug goes in from above'),
   upright('mfit4', 'microfit', 'Molex Micro-Fit 2 × 2', 'Molex_Micro-Fit_3.0_43045-0400_2x02_P3.00mm_Vertical', 'power in from above (3 mm)'),
   upright('ufl', 'ufl', 'u.FL antenna socket', 'U.FL_Hirose_U.FL-R-SMT-1_Vertical', 'a thin antenna lead snaps on from above', 'connector', false),
+  upright('b2b', 'b2b', 'Board-to-board connector', 'Board-to-Board_Mezzanine_Vertical', 'another board mates on it, no cable: put the two in a stack', 'connector', false, 'Other'),
+  upright('m2', 'm2', 'M.2 card socket', 'M.2_Socket_Key-M_2280', 'a card lies over the board from it: the holder keeps clear of the card (mini PCIe: name it so)', 'connector', false, 'Other'),
+  upright('pcie4', 'pcie', 'PCIe slot x4', 'PCIe_x4_Slot_Vertical', 'a card stands up from it: the holder keeps clear of the card', 'connector', true, 'Other'),
+  upright('sodimm', 'dimm', 'SO-DIMM socket', 'SO-DIMM_DDR4_Socket', 'a memory module lies over the board from it: the holder keeps clear of it', 'connector', false, 'Other'),
+  upright('pogo', 'pogo', 'Spring-pin (pogo) pads', 'Pogo_Pads_1x04_P2.54mm', 'no connector: a test jig presses spring pins onto the pads', 'connector', false, 'Other'),
   debug('dbg_swd10', 'swd10', 'Debug 10-pin, 1.27 mm', 'PinHeader_2x05_P1.27mm_Vertical_SMD', 'SWD: a J-Link plugs in with its ribbon', false),
   debug('dbg_jtag20', 'jtag20', 'Debug 20-pin, 2.54 mm', 'IDC-Header_2x10_P2.54mm_Vertical', "JTAG box header: a J-Link's own ribbon plugs straight in", true),
   debug('dbg_tag', 'tagconnect', 'Tag-Connect pads', 'Tag-Connect_TC2050', 'no connector: the Tag-Connect cable clips on from above', false),
@@ -121,7 +128,7 @@ export function paletteFor(c: Comp): PaletteItem | undefined {
   if (t === 'jtag20') return PALETTE.find((x) => x.id === 'dbg_jtag20');
   if (t === 'tagconnect') return PALETTE.find((x) => x.id === 'dbg_tag');
   if (t === 'idc') return PALETTE.find((x) => x.id === (Math.max(c.w, c.l) > 24 ? 'idc16' : 'idc10'));
-  const up = ({ idc: 'idc10', jst_gh: 'gh4', picoblade: 'pico4', kk254: 'fan4', microfit: 'mfit4', ufl: 'ufl' } as Record<string, string>)[t ?? ''];
+  const up = ({ idc: 'idc10', jst_gh: 'gh4', picoblade: 'pico4', kk254: 'fan4', microfit: 'mfit4', ufl: 'ufl', b2b: 'b2b', m2: 'm2', pcie: 'pcie4', dimm: 'sodimm', pogo: 'pogo' } as Record<string, string>)[t ?? ''];
   if (up) return PALETTE.find((x) => x.id === up);
   if (t === 'jst_ph' || t === 'jst_xh') return PALETTE.find((x) => x.id === `jst_${t.slice(4)}${Math.max(2, Math.min(4, Math.round((Math.max(c.w, c.l) - 3.9) / (t === 'jst_ph' ? 2 : 2.5)) + 1))}`) ?? PALETTE.find((x) => x.id === `jst_${t.slice(4)}3`);
   if (t === 'header' || c.kind === 'header') {

@@ -49,9 +49,9 @@ describe('toolbox pictures', () => {
       const demo = demoBoard(it), c = demo.comps[0];
       if (!c) continue;
       const [w, l, h] = it.size.split('×').map(Number);
-      const got = above(pictureOf(demo), demo.thickness, c.x, c.y, 30);
+      const got = above(pictureOf(demo), demo.thickness, c.x, c.y, 80); // (an SO-DIMM socket is 70 mm wide)
       freeAll();
-      if (it.id === 'dbg_tag') { expect(got.h, 'Tag-Connect: pads, flat on the board').toBeLessThan(0.1); continue; }
+      if (it.id === 'dbg_tag' || it.id === 'pogo') { expect(got.h, 'pads, flat on the board').toBeLessThan(0.1); continue; }
       // (a right-angle header's pins run out past its plastic; an audio jack's collar stands proud of its front)
       const lx = it.id === 'edge_pins_ra' ? 7.5 : it.id === 'edge_audio35' ? 1.7 : 0.3;
       expect(Math.abs(got.w - w), `${it.id} width ${got.w.toFixed(2)} vs ${w}`).toBeLessThan(0.3);
