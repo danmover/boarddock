@@ -29,8 +29,8 @@ export function cableLines(p: Project, cables: CableOut[], onlyNew = false): Cab
     const A = end(l.a), B = end(l.b), [lead, outlet] = A.role === 'mains-in' ? [A, B] : [B, A];
     const who = lead.m?.board.name ?? 'it', where = outlet.m?.board.name ?? 'its outlet';
     if (lead.m && isPlugPack(lead.m.board)) { comes.push(`${tag(no(l))}the ${who} plugs straight into the ${where}: no lead`); return; }
-    if (lead.type !== 'iec_c7') { comes.push(`${tag(no(l))}the ${who}'s own lead into the ${where}`); return; }
-    add(`mains lead, figure-8 (C7) to ${PLUG[outlet.type] ?? 'AU'} plug, ${len != null ? `${len} m or longer` : 'long enough to reach'} (most chargers come with one)`, [no(l)]);
+    if (lead.type !== 'iec_c7' && lead.type !== 'iec_c14') { comes.push(`${tag(no(l))}the ${who}'s own lead into the ${where}`); return; }
+    add(lead.type === 'iec_c14' ? `mains lead, kettle-type (C13) to ${PLUG[outlet.type] ?? 'AU'} plug, ${len != null ? `${len} m or longer` : 'long enough to reach'}` : `mains lead, figure-8 (C7) to ${PLUG[outlet.type] ?? 'AU'} plug, ${len != null ? `${len} m or longer` : 'long enough to reach'} (most chargers come with one)`, [no(l)]);
   };
   for (const c of cables) {
     const l = links.find((x) => x.id === c.id);

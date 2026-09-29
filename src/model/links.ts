@@ -57,7 +57,7 @@ export function plugRole(m: Module, c: Comp): PlugRole {
   if (t === 'rj45' || t === 'sfp') return 'net';
   if (t.startsWith('hdmi') || t === 'dp') return 'video';
   if (t === 'audio35' || t === 'rca' || t === 'toslink' || t === 'xlr') return 'audio';
-  if (t === 'terminal' || t === 'header' || t === 'idc' || t === 'idc_ra') return 'wire';
+  if (t === 'terminal' || t === 'header' || t === 'idc' || t === 'idc_ra' || t === 'banana') return 'wire';
   // a barrel jack is a 7-12 V input: optional when the board also takes power over USB (an Arduino), and never fed from 5 V USB
   if (t === 'barrel') return charger || m.board.comps.some((x) => x.conn && /usb_(b|micro_b|mini_b|c)$/.test(x.conn.type)) ? 'other' : 'power-in-dc';
   if (t === 'usb_a' || t === 'usb_a_dual') return hub ? 'hub-down' : charger ? 'power-out' : 'host';
@@ -203,9 +203,11 @@ export function refusal(p: Project, a: PlugInfo, b: PlugInfo): string | null {
   // (an Arduino's barrel jack, on a board that also takes power over USB, is a DC input you may leave empty: a supply's lead goes in it)
   const dcLead = (x: PlugInfo, y: PlugInfo) => x.role === 'dc-out' && optionalDc(y);
   if (!compatible(a.role, b.role) && !dcLead(a, b) && !dcLead(b, a)) return `${a.label} is ${ROLE_SAYS[a.role]}, and ${b.label} is ${ROLE_SAYS[b.role]}: they don't plug into each other.`;
+  // TOSLINK is optical digital audio: it goes to another TOSLINK, and never straight to an analog jack
+  if (a.role === 'audio' && b.role === 'audio' && (a.comp.conn?.type === 'toslink') !== (b.comp.conn?.type === 'toslink')) return `${a.label} and ${b.label}: TOSLINK is optical digital audio, so it goes to another TOSLINK, not to an analog jack (that takes a converter box).`;
   // a barrel jack takes a supply's plug, or a pigtail lead to screw terminals: never header pins (a Pi's GPIO)
   const dcIn = a.role === 'power-in-dc' ? a : b.role === 'power-in-dc' ? b : null, w = a.role === 'wire' ? a : b.role === 'wire' ? b : null;
-  if (dcIn && w && dcIn.comp.conn?.type === 'barrel' && w.comp.conn?.type !== 'terminal') return `${dcIn.label} is a barrel jack: it takes a supply's plug, or a pigtail lead to screw terminals, not header pins.`;
+  if (dcIn && w && dcIn.comp.conn?.type === 'barrel' && w.comp.conn?.type !== 'terminal' && w.comp.conn?.type !== 'banana') return `${dcIn.label} is a barrel jack: it takes a supply's plug, or a pigtail lead to screw terminals, not header pins.`;
   const [taker, src] = a.role === 'power-in' ? [a, b] : b.role === 'power-in' ? [b, a] : [null, null];
   if (taker && src) {
     if (src.module.id === PC) return `Your computer's USB port can't power the ${shortName(taker.module.board.name)}: give it a charger port or a supply.`;
@@ -453,7 +455,9 @@ export function autoLinks(p: Project, at?: PlugAt): Link[] {
 
   // 4. each board's Ethernet to a switch in the rack, when there is one
   const sw = free('net').filter((x) => isSwitch(x.module.board));
-  if (sw.length) for (const [n, s] of pairUp(free('net').filter((x) => !isSwitch(x.module.board) && !isAccessory(x.module.board)), sw, reach))
+  // (a board with an RJ45 uses that, not an SFP cage: a cage needs a module bought for it)
+  const lan = (x: PlugInfo) => x.comp.conn?.type !== 'sfp' || !x.module.board.comps.some((c) => c.conn?.type === 'rj45' && !c.hidden);
+  if (sw.length) for (const [n, s] of pairUp(free('net').filter((x) => !isSwitch(x.module.board) && !isAccessory(x.module.board) && lan(x)), sw, reach))
     take(n, s, `The ${nm(n)}'s Ethernet to the nearest free port of the ${nm(s)} (${cm(n, s)}).`);
 
   // 5. a DC supply's lead to a DC input, only where both say the same voltage (BoardDock can't check the rest: those
