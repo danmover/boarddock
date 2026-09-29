@@ -196,7 +196,8 @@ describe('connectors as Allegro libraries name them', () => {
     all('dsub', ['DB15', 'VGA_DB15HD', 'SUBD9', 'SUB-D_9', 'L717SDE09P', '172-E09-2', 'DE-9']);
     all('barrel', ['KLDHCX-0202-A', 'PWR_JACK', 'DCPWR', 'EJ508A', 'PJ1-063', 'DC POWER 2.1MM', 'DC-005']);
     all('fpc', ['FH28-30S-0.5SH', 'XF2M-2415-1A']);
-    all('sma', ['73251-1150', 'MMCX_VERT', 'SMB_RA', 'SMA_EDGE']); // MMCX, MCX and SMB come as (slightly big) SMAs
+    all('sma', ['73251-1150', 'SMA_EDGE']);
+    all('rf_mini', ['MMCX_VERT', 'SMB_RA', 'MCX']);
     all('jst_xh', ['B2B-EH-A']);
     all('jst_ph', ['DF11-8DP-2DS', 'DF3-2P-2DS']);
     all('picoblade', ['DF13-4P-1.25DSA', 'Molex_Pico-EZmate_78171']);
@@ -211,7 +212,7 @@ describe('connectors as Allegro libraries name them', () => {
 
   it('chips, diodes and other parts named like connectors stay plain', () => {
     for (const [pkg, ref] of [['SMA', 'D1'], ['DO-214AC_SMA', 'D2'], ['SMA_Diode', 'D3'], ['SMB', 'D4'], ['SMBJ5.0A', 'D5'], ['TRS3232', 'U1'], ['HDMI_ESD_TPD12S016', 'U2'], ['USB4640', 'U3'], ['USB3300', 'U4'], ['TB6612FNG', 'U5'],
-      ['SPH0645LM4H', 'MK1'], ['MCXN947', 'U6'], ['ETHERNET_PHY', 'U7'], ['MAX3232_RS232', 'U8'], ['AUDIO_CODEC', 'U9'], ['DisplayPort_ESD', 'U10'], ['SIM7100', 'U11'], ['SFPD', 'U12']]) plain(pkg, ref);
+      ['SPH0645LM4H', 'MK1'], ['MCXN947', 'U6'], ['MCXA153', 'U6'], ['SIM800L', 'U6'], ['PEX8747', 'U6'], ['PCIE_SWITCH', 'U6'], ['M2', 'H1'], ['DIMM_TEMP_SENSOR_TS3', 'U6'], ['ETHERNET_PHY', 'U7'], ['MAX3232_RS232', 'U8'], ['AUDIO_CODEC', 'U9'], ['DisplayPort_ESD', 'U10'], ['SIM7100', 'U11'], ['SFPD', 'U12']]) plain(pkg, ref);
   });
 
   it('a bare word names a connector only on a connector\'s reference', () => {
@@ -236,5 +237,52 @@ describe('connectors as Allegro libraries name them', () => {
     expect(role('J2')).toBe('net');
     expect(compatible(role('J2'), role('J5'))).toBe(true); // an SFP link to an RJ45 (a media converter)
     expect([offRackTo(m, comp('J1')), offRackTo(m, comp('J2')), offRackTo(m, comp('J4'))]).toEqual(['to a drive', 'to the network', 'to the wall']);
+  });
+});
+
+describe('the connector families left over: mezzanines, card sockets, round connectors', () => {
+  beforeAll(async () => { await initKernel(); });
+  const board = (): Board => ({ name: 'T', outline: [[0, 0], [160, 0], [160, 90], [0, 90]], thickness: 1.6, holes: [], cutouts: [], comps: [], source: 't', notes: [] } as unknown as Board);
+  const part = (pkg: string, ref = 'J1') => classify({ id: ref, ref, pkg, side: 'top', x: 30, y: 45, rot: 0, w: 1, l: 1, h: 1, kind: 'generic', tht: false } as Comp, false);
+
+  it('board-to-board connectors are a type of their own, no cable goes to them', () => {
+    for (const n of ['SAMTEC_QSH-060-01-L-D-A', 'QSH060', 'QTE-040-03-F-D-A', 'SEAM-50-02.0-S-08-2-A-K-TR', 'Hirose_DF40C-60DP-0.4V', 'DF12(3.0)-40DP-0.5V', 'Molex_SlimStack_54722', 'MEZZANINE_CONN']) expect(type(n), n).toBe('b2b');
+    expect(type('JST_B2B-XH-A')).toBe('jst_xh'); // "B2B" in a JST name is its two pins, not a board-to-board
+    const m = newModule({ ...board(), comps: [part('SAMTEC_QSH-060-01-L-D-A')] } as unknown as Board);
+    expect(offRackTo(m, m.board.comps[0])).toMatch(/no cable/);
+  });
+
+  it('card sockets by name, slots sized for their lanes', () => {
+    for (const [n, id] of [['SIM_CARD', 'sim'], ['NANO_SIM', 'sim'], ['M.2_KEY_M', 'm2'], ['M2_KEY_E', 'm2'], ['NGFF', 'm2'], ['MINI_PCIE', 'm2'], ['PCIE_X1', 'pcie'], ['PCI_EXPRESS_X16', 'pcie'], ['SODIMM_DDR4', 'dimm'], ['DDR4_DIMM', 'dimm'], ['POGO_PIN', 'pogo']]) expect(type(n), n).toBe(id);
+    const w = (n: string) => guessPackage(n, 'J1').w;
+    expect([w('PCIE_X1'), w('PCIE_X4'), w('PCIE_X8'), w('PCI_EXPRESS_X16')]).toEqual([25, 39, 56, 89]);
+    expect([w('SODIMM_DDR4'), w('DDR4_DIMM'), w('MINI_PCIE')]).toEqual([70, 137, 30]);
+    expect(type('SIM800L', 'U1')).toBeUndefined(); // a modem chip, not a slot
+  });
+
+  it('XLR, banana, M12 and TOSLINK, with the roles they have', () => {
+    for (const [n, id] of [['XLR', 'xlr'], ['NEUTRIK_NC3FAH', 'xlr'], ['BANANA_JACK', 'banana'], ['BINDING_POST', 'banana'], ['M12_4P', 'm12'], ['M8_3P', 'm12'], ['TOSLINK', 'toslink'], ['TORX147L', 'toslink']]) expect(type(n), n).toBe(id);
+    const m = newModule({ ...board(), comps: [part('TOSLINK', 'J1'), part('RCJ-014', 'J2'), part('BANANA_JACK', 'J3'), part('M12_4P', 'J4'), part('XLR', 'J5')] } as unknown as Board);
+    const comp = (r: string) => m.board.comps.find((c) => c.ref === r)!;
+    expect(compatible(plugRole(m, comp('J1')), plugRole(m, comp('J2')))).toBe(true); // an optical lead to an audio one: a converter
+    expect(plugRole(m, comp('J5'))).toBe('audio');
+    expect([offRackTo(m, comp('J3')), offRackTo(m, comp('J4'))]).toEqual(['to an instrument or supply', 'to a sensor or machine']);
+  });
+
+  it('every one of them is drawn, and a 3.96 mm header has its pins at 3.96 mm', () => {
+    const b = board();
+    b.comps = ['SAMTEC_QSH-060-01-L-D-A', 'M.2_KEY_M', 'PCIE_X1', 'DDR4_DIMM', 'POGO_PIN', 'XLR', 'M12_4P', 'SIM_CARD', 'MMCX_VERT', 'SATA_7P'].map((n, i) => ({ ...part(n, `J${i + 1}`), x: 20 + i * 12, y: 45 }));
+    const ghosts = pictureOf(b);
+    expect(ghosts.length).toBeGreaterThan(0);
+    for (const g of ghosts) for (const v of g.mesh.pos) expect(Number.isFinite(v)).toBe(true);
+    const kk = (pkg: string) => {
+      const c = { ...part(pkg), x: 80, y: 45 }, bb = board();
+      bb.comps = [c];
+      const xs: number[] = [];
+      for (const g of pictureOf(bb)) if (g.mat === 'gold') for (let i = 0; i < g.mesh.pos.length; i += 3) xs.push(g.mesh.pos[i]);
+      return Math.max(...xs) - Math.min(...xs);
+    };
+    expect(kk('B4P-VH')).toBeGreaterThan(3 * 3.96); // four pins, 3.96 apart
+    expect(kk('Molex_KK-254_AE-6410-04A_1x04_P2.54mm_Vertical')).toBeLessThan(3 * 2.54 + 1);
   });
 });

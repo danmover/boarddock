@@ -50,7 +50,8 @@ export const CONNECTORS: ConnType[] = [
   { id: 'sd', name: 'SD card slot', entry: 'edge', body: { w: 28, l: 29, h: 3 }, zc: 1.5, overhang: 0, plug: { w: 24, h: 2.1, len: 10, cable: 0 }, match: /\bsd[\s_-]?(card|slot|socket|conn)|sdcard|\bsd_(kyocera|te|molex)|2041021|67840/i, cradle: false, note: 'Opening sized for card access and a fingertip, no cradle.' },
   { id: 'bnc', name: 'BNC', entry: 'edge', body: { w: 14.5, l: 22, h: 14.5 }, zc: 7.25, overhang: 11, plug: { w: 14.5, h: 14.5, len: 32, cable: 5 }, match: /\bbnc|031-5431|\b5227161/i, cradle: false, note: 'Its bayonet holds the plug: no cap.' },
   { id: 'ufl', name: 'u.FL / IPEX (antenna lead)', entry: 'top', body: { w: 3, l: 3, h: 1.25 }, zc: 0, overhang: 0, plug: { w: 2.2, h: 2.2, len: 2.2, cable: 1.2 }, match: /\bu\.?fl\b|u\.fl|\bw\.fl|\bx\.fl|ipex|\bmhf\d?\b|\bi-pex|\bu-fl/i, cradle: false, note: 'A thin lead snaps onto it from above, off to an antenna: leave room over it.' },
-  { id: 'sma', name: 'SMA / RP-SMA (edge)', entry: 'edge', body: { w: 6.4, l: 10, h: 6.4 }, zc: 0, overhang: 7, plug: { w: 9, h: 9, len: 16, cable: 3 }, match: /rp[\s_-]?sma|132134|132289|\b1321\d\d|901-144|consma|\bsma-j|73251|73386|\bmmcx/i, weak: /\bsma\b|sma_|\bsmb(?![a-z])|\bmcx\b/i, cradle: false, note: 'Also stands for MMCX, MCX and SMB (a little smaller).' },
+  { id: 'sma', name: 'SMA / RP-SMA (edge)', entry: 'edge', body: { w: 6.4, l: 10, h: 6.4 }, zc: 0, overhang: 7, plug: { w: 9, h: 9, len: 16, cable: 3 }, match: /rp[\s_-]?sma|132134|132289|\b1321\d\d|901-144|consma|\bsma-j|73251|73386/i, weak: /\bsma\b|sma_/i, cradle: false },
+  { id: 'rf_mini', name: 'MMCX / MCX / SMB (small coax)', entry: 'edge', body: { w: 6, l: 8, h: 5.5 }, zc: 2.75, overhang: 0, plug: { w: 7, h: 7, len: 14, cable: 2.5 }, match: /\bmmcx|73386-|\b1[0-9]{2}-?mmcx/i, weak: /\bmcx\b|\bsmb(?![a-z])|smb_/i, cradle: false, note: 'Its lead snaps on: add a tie anchor.' },
   { id: 'fpc', name: 'FFC / FPC flat cable (latching)', entry: 'edge', body: { w: 21, l: 5.5, h: 2.5 }, zc: 1.2, overhang: 0, plug: { w: 16, h: 0.6, len: 12, cable: 0.6 }, match: /\bfpc|\bffc|\bzif\b|\bfh(12|19|26|28|29|33|34|35|41|52)|\bxf2[a-z]|52559|52610|503480|54548|84952|84953|\bafc\d\d|\bcsi[\s_-]?(conn|camera)|camera[\s_-]?conn|display[\s_-]?conn/i, cradle: false, note: 'Its latch holds the flat cable: no cap.' },
   { id: 'qwiic', name: 'JST-SH / Qwiic (side)', entry: 'edge', body: { w: 6, l: 4.3, h: 2.9 }, zc: 1.5, overhang: 0, plug: { w: 6.5, h: 3.5, len: 6, cable: 3 }, match: /qwiic|stemma|jst[\s_-]?sh|sm0\dB-SRSS|bm0\dB-SRSS/i, cradle: false },
   { id: 'terminal', name: 'Screw terminal block', entry: 'edge', body: { w: 10.2, l: 7.5, h: 10 }, zc: 3, overhang: 0, plug: { w: 10, h: 4, len: 15, cable: 2 }, match: /terminal[\s_-]?block|screw[\s_-]?terminal|terminalblock|kf301|kf128|kf350|kf2edg|mstb|mkds|\bmc[\s_-]?1,5|wago|phoenix|\bdg30\d|\bdg128|\bxy128|\bwj\d{3}|\bost[tv]|691\d{9}|1935\d{3}|1729\d{3}|282834|282836|1776275|\btb00\d|\bmc00\d{4}\b|\bterm[\s_-]?bl(oc)?k|\btblock|conn[\s_-]?term|\bbl[zp]{0,2}[\s_-]?[35]\.\d{1,2}|\bsl[\s_-]?(3\.5|5\.08|3\.81)|\bptsm|\bptr[\s_-]?ak|\bak[\s_-]?[359]\d\d\b|\bctb\d|\bdg[\s_-]?3\d\d|\bdb127/i, weak: /\btb[\s_-]?\d|\bterm[\s_-]?\d|(?:^|\s)(17|18|19)\d{5}(?:\s|$)/i, cradle: false, note: 'Wires only: add a tie anchor.' },
@@ -82,6 +83,18 @@ export const CONNECTORS: ConnType[] = [
   { id: 'mains_lead', name: 'Mains lead (fixed)', entry: 'edge', body: { w: 10, l: 10, h: 10 }, zc: 0, overhang: 0, plug: { w: 12, h: 12, len: 22, cable: 7.5 }, match: /$^/, cradle: false },
   { id: 'iec_c14', name: 'Mains inlet (IEC C14)', entry: 'edge', body: { w: 28, l: 24, h: 20 }, zc: 10, overhang: 0, plug: { w: 28, h: 20, len: 40, cable: 8 }, match: /iec[\s_-]?(60320[\s_-]?)?c?[\s_-]?(14|13|16|18|20)\b|\bc14\b|appliance[\s_-]?inlet|iec[\s_-]?(inlet|socket)/i, cradle: false, note: 'The lead is held by friction: add a tie anchor for it.' },
   { id: 'iec_c7', name: 'Mains (figure-8, C7)', entry: 'edge', body: { w: 11.5, l: 12, h: 8 }, zc: 4, overhang: 0, plug: { w: 13, h: 9, len: 30, cable: 6 }, match: /iec[\s_-]?60320|figure[\s_-]?8/i, cradle: false },
+  // recognised by name only (not in the toolbox): typical sizes, every one editable. What plugs into these is a lead, a card or a board.
+  { id: 'xlr', name: 'XLR (3-pin audio)', entry: 'edge', body: { w: 24, l: 26, h: 24 }, zc: 12, overhang: 2, plug: { w: 26, h: 26, len: 50, cable: 8 }, match: /\bxlr|\bnc[35][mf][a-z]{1,3}\b|neutrik/i, cradle: false, note: 'Its latch holds the plug: add a tie anchor for the cable.' },
+  { id: 'banana', name: '4 mm banana jack / binding post', entry: 'edge', body: { w: 10, l: 12, h: 10 }, zc: 5, overhang: 2, plug: { w: 12, h: 12, len: 28, cable: 4 }, match: /banana|binding[\s_-]?post|test[\s_-]?jack/i, cradle: false },
+  { id: 'm12', name: 'M12 / M8 circular (sensor)', entry: 'edge', body: { w: 16, l: 20, h: 16 }, zc: 8, overhang: 2, plug: { w: 18, h: 18, len: 35, cable: 6 }, match: /\bm12[\s_-]?(conn|sensor|circular|[458][\s_-]?p|[abd][\s_-]?cod)|\bm8[\s_-]?(conn|sensor|circular|[34][\s_-]?p)|circular[\s_-]?conn/i, cradle: false, note: 'Its knurled nut holds the plug: no cap, add a tie anchor.' },
+  { id: 'toslink', name: 'TOSLINK (optical audio)', entry: 'edge', body: { w: 14, l: 15, h: 12 }, zc: 6, overhang: 0, plug: { w: 12, h: 12, len: 22, cable: 4 }, match: /toslink|\btorx|\btotx|\bjis[\s_-]?f05/i, cradle: false },
+  { id: 'sim', name: 'SIM card slot', entry: 'edge', body: { w: 15, l: 16, h: 2 }, zc: 1, overhang: 0, plug: { w: 13, h: 6, len: 8, cable: 0 }, match: /(nano|micro|mini)[\s_-]?sim|sim[\s_-]?(card|slot|holder|socket|tray|conn)/i, weak: /\bsim\b/i, cradle: false, note: 'Opening sized for card access and a fingertip, no cradle.' },
+  // (a card in these lies over the board or stands up from it: only the socket is drawn, so keep clear of the card yourself)
+  { id: 'b2b', name: 'Board-to-board (mezzanine)', entry: 'top', body: { w: 20, l: 6, h: 5 }, zc: 0, overhang: 0, plug: { w: 20, h: 6, len: 3, cable: 0 }, match: /\b(qs[he]|qt[he]|qms|qfs|seam|seaf|erm[58]|erf[58]|bs[he]|bt[he]|lshm)-?\d{2,3}|\bdf(12|17|37|40)[a-z]?[\s(_-]|slim[\s_-]?stack|mezzanine|board[\s_-]?to[\s_-]?board/i, cradle: false, note: 'Another board mates on it: no cable goes here (put the two in a stack).' },
+  { id: 'm2', name: 'M.2 / mini PCIe card socket', entry: 'top', body: { w: 22, l: 5, h: 4 }, zc: 0, overhang: 0, plug: { w: 22, h: 3.5, len: 3, cable: 0 }, match: /\bm\.?2[\s_-]?(key|socket|conn|slot|card)|\bngff\b|mini[\s_-]?pci[\s_-]?e|\bmpcie/i, weak: /\bm\.2\b/i, cradle: false, note: 'The card lies over the board: keep clear of it.' },
+  { id: 'pcie', name: 'PCIe slot', entry: 'top', body: { w: 89, l: 7.5, h: 11 }, zc: 0, overhang: 0, plug: { w: 89, h: 2, len: 3, cable: 0 }, match: /pci[\s_-]?e(xpress)?[\s_-]?x(1|4|8|16)(?!\d)|pcie[\s_-]?(slot|socket|conn|edge)|pci[\s_-]?express[\s_-]?(slot|socket|conn)/i, cradle: false, note: 'The card stands up from the board: keep clear of it.' },
+  { id: 'dimm', name: 'DIMM / SO-DIMM socket', entry: 'top', body: { w: 137, l: 9.5, h: 10 }, zc: 0, overhang: 0, plug: { w: 137, h: 2, len: 3, cable: 0 }, match: /sodimm|so[\s_-]dimm|dimm[\s_-]?(socket|slot|conn)|ddr[2-5][\s_-]?dimm/i, weak: /(?:^|[^a-z])dimm(?![a-z])/i, cradle: false, note: 'The module stands up or lies over the board: keep clear of it.' },
+  { id: 'pogo', name: 'Spring-pin (pogo) pads', entry: 'top', body: { w: 10, l: 2.5, h: 0.1 }, zc: 0, overhang: 0, plug: { w: 10, h: 2.5, len: 5, cable: 0 }, match: /pogo/i, cradle: false, note: 'Pads only: a test fixture presses spring pins onto them.' },
   { id: 'custom', name: 'Custom connector', entry: 'edge', body: { w: 10, l: 8, h: 5 }, zc: 2.5, overhang: 0.5, plug: { w: 12, h: 8, len: 20, cable: 4 }, match: /$^/, cradle: true },
 ];
 
@@ -115,7 +128,7 @@ const num = (s: string | undefined) => (s ? parseFloat(s.replace(',', '.')) : Na
 export const SOCKET_NAME = /socket|female|receptacle|\b(PPTC|PPPC|NPTC|NPPC|LPPB|SSW|SSQ|SSM|SLW|BCS|ESW|ESQ|CES|SFM|FLE|CLP)[-\d]|\b6130\d\d[12]1821\b/i;
 
 /** Connector types that are through-hole unless their name says SMD. */
-const THT = new Set(['usb_a', 'usb_a_dual', 'usb_b', 'rj45', 'rj11', 'dsub', 'xt60', 'xt30', 'iec_c14', 'minidin', 'barrel', 'rca', 'bnc', 'terminal', 'microfit', 'minifit', 'kk254', 'jst_xh', 'jst_ph', 'idc', 'idc_ra', 'header']);
+const THT = new Set(['usb_a', 'usb_a_dual', 'usb_b', 'rj45', 'rj11', 'dsub', 'xt60', 'xt30', 'iec_c14', 'minidin', 'xlr', 'banana', 'm12', 'toslink', 'pcie', 'barrel', 'rca', 'bnc', 'terminal', 'microfit', 'minifit', 'kk254', 'jst_xh', 'jst_ph', 'idc', 'idc_ra', 'header']);
 
 /**
  * How many pins a connector's name says it has: "1x04" or "2x05", JST's "B4B-" and "SM04B-", the circuits in a Molex
@@ -152,14 +165,22 @@ export function wtbPitch(name: string): number {
   return 2;
 }
 
+/** A KK / JST-VH header's pitch: 3.96 mm for the big ones, else 2.54. */
+export const kkPitch = (name: string) => (/396|3\.96|-VH|26-?(48|60)/i.test(name) ? 3.96 : 2.54);
+
 /** A connector type sized for the number of pins its name says (a 2 x 8 box header, a 6-pin JST): body and plug as wide as that. */
 export function sizedConn(t: ConnType, name: string): ConnType {
+  const wide = (w: number, l = t.body.l, h = t.body.h): ConnType => ({ ...t, body: { w, l, h }, plug: { ...t.plug, w } });
+  // (slot lengths from the lanes: x1 25 mm, x4 39, x8 56, x16 89; an SO-DIMM socket about 70 mm; a mini PCIe card 30 mm wide)
+  if (t.id === 'pcie') { const m = /(?:^|[^a-z])x(1|4|8|16)(?!\d)/i.exec(name); return wide(({ 1: 25, 4: 39, 8: 56, 16: 89 } as Record<number, number>)[m ? +m[1] : 16]); }
+  if (t.id === 'dimm' && /so[\s_-]?dimm/i.test(name)) return wide(70, 6, 5.2);
+  if (t.id === 'm2' && /mini[\s_-]?pci|mpcie/i.test(name)) return wide(30);
   const n = nameCircuits(name);
   if (!n || n > 80) return t;
   let w = t.body.w;
   const f = WTB[t.id];
   // (the bigger pitches inside a family: KK / JST-VH 3.96 mm, Nano-Fit 2.5, Ultra-Fit 3.5, Mega-Fit 5.7)
-  const pitch = !f ? 0 : t.id === 'kk254' && /396|3\.96|-VH|26-?(48|60)/i.test(name) ? 3.96 : t.id === 'microfit' && /nano/i.test(name) ? 2.5 : t.id === 'minifit' && /ultra/i.test(name) ? 3.5 : t.id === 'minifit' && /mega|76829/i.test(name) ? 5.7 : f.pitch;
+  const pitch = !f ? 0 : t.id === 'kk254' ? kkPitch(name) : t.id === 'microfit' && /nano/i.test(name) ? 2.5 : t.id === 'minifit' && /ultra/i.test(name) ? 3.5 : t.id === 'minifit' && /mega|76829/i.test(name) ? 5.7 : f.pitch;
   if (f) { const rows = f.rows === 2 && !/43650|1x\d/i.test(name) && n > 1 ? 2 : 1; w = (Math.ceil(n / rows) - 1) * pitch + f.pad; }
   else if (t.id === 'idc' || t.id === 'idc_ra') w = Math.ceil(n / 2) * 2.54 + 7.6;
   else if (t.id === 'wtb_side') w = (n - 1) * wtbPitch(name) + 4;

@@ -6,7 +6,7 @@ import { boardLights, boxLight, LED_COLOUR } from '../model/lights';
 import { bbox, compRect, extentAlong, inside, rad } from '../geom/poly';
 import { textStrokes, textWidth } from './font';
 import { headerPins } from '../model/probes';
-import { nameCircuits, SOCKET_NAME, wtbPitch } from '../model/library';
+import { kkPitch, nameCircuits, SOCKET_NAME, wtbPitch } from '../model/library';
 import { boardCopper } from '../model/copper';
 import { box, circle2, cyl, ext, poly, toMesh, type MF } from './kernel';
 import { K } from './kernel';
@@ -196,10 +196,10 @@ function partDetail(bin: Bin, c: Comp, zt: number, zb: number) {
   }
   if (type === 'kk254') {
     // a Molex KK (or a fan) header: a low base, the polarising wall along one side, tall square pins
-    const long = w >= l, n = pinCount(c, name, Math.max(2, Math.round(Math.max(w, l) / 2.54))), base = Math.min(3.2, h * 0.35);
+    const long = w >= l, kp = kkPitch(name), n = pinCount(c, name, Math.max(2, Math.round(Math.max(w, l) / kp))), base = Math.min(3.2, h * 0.35);
     B('white', -hx, -hy, 0, hx, hy, base);
     if (long) B('white', -hx, -hy, base, hx, -hy + 1, h * 0.8); else B('white', -hx, -hy, base, -hx + 1, hy, h * 0.8);
-    for (let i = 0; i < n; i++) { const u = (i - (n - 1) / 2) * 2.54, [px, py] = long ? [u, 0.4] : [0.4, u]; B('gold', px - 0.32, py - 0.32, base, px + 0.32, py + 0.32, h - 0.3); }
+    for (let i = 0; i < n; i++) { const u = (i - (n - 1) / 2) * kp, [px, py] = long ? [u, 0.4] : [0.4, u]; B('gold', px - 0.32, py - 0.32, base, px + 0.32, py + 0.32, h - 0.3); }
     return;
   }
   if (type === 'ufl') {
@@ -208,6 +208,25 @@ function partDetail(bin: Bin, c: Comp, zt: number, zb: number) {
     const R = Math.min(hx, hy) * 0.7;
     bin.add('metal', tf(cyl(0, 0, 0.3, h, R, R, 24).subtract(cyl(0, 0, 0.5, h + 1, R - 0.25, R - 0.25, 24)), T));
     bin.add('gold', tf(cyl(0, 0, 0.3, h - 0.3, 0.2, 0.2, 12), T));
+    return;
+  }
+  if (type === 'b2b' || type === 'm2' || type === 'pcie' || type === 'dimm') {
+    // a board-to-board connector or a card socket: a black body with a slot along its top, a row of contacts down each side of it
+    const long = w >= l, len = long ? w : l, wid = long ? l : w, wall = Math.min(1, wid * 0.22), pitch = type === 'pcie' || type === 'dimm' ? 1.27 : type === 'm2' ? 1 : 0.8;
+    let body = box(-hx, -hy, 0, hx, hy, h);
+    if (h > 1.5 && wid > 2 * wall + 0.6) body = body.subtract(box(-hx + (long ? wall : wall), -hy + wall, h * 0.4, hx - wall, hy - wall, h + 1));
+    bin.add('black', tf(body, T));
+    const n = Math.min(60, Math.max(1, Math.floor((len - 2 * wall) / pitch)));
+    for (let i = 0; i < n; i++) for (const j of [-1, 1]) {
+      const u = (i - (n - 1) / 2) * pitch, v = j * (wid / 2 - wall - 0.25), [px, py] = long ? [u, v] : [v, u];
+      B('gold', px - 0.15, py - 0.15, h * 0.4, px + 0.15, py + 0.15, h - 0.2);
+    }
+    return;
+  }
+  if (type === 'pogo') {
+    // pads for spring pins: a row of round pads on the board's face
+    const n = Math.min(16, pinCount(c, name, Math.max(1, Math.round(Math.max(w, l) / 2.54)))), long = w >= l;
+    for (let i = 0; i < n; i++) { const u = (i - (n - 1) / 2) * 2.54, [px, py] = long ? [u, 0] : [0, u]; bin.add('gold', tf(cyl(px, py, -0.01, 0.035, 0.75, 0.75, 16), T)); }
     return;
   }
   if (type === 'pins_ra') {
@@ -939,7 +958,7 @@ function plugAt(T: number[], p: PlugSize, tag: PickTag, anim: Anim, type: string
       push(type === 'microfit' ? 'black' : 'white', loft(T, rect(-1, x0 + Math.min(10, p.len), W, H, 0.6)));
       body([{ x: x0 + Math.min(10, p.len) - 0.5, w: Math.max(2, W - 2), h: Math.max(2, H * 0.5), r: 1 }, { x: x1 + 6, w: Math.max(2, W - 2), h: Math.max(2, H * 0.5), r: 1 }], 'cable');
       return bin.ghosts('plug', tag, anim, {}, true);
-    case 'microsd':
+    case 'microsd': case 'sim':
       // a card in its slot, a millimetre or two showing
       push('black', loft(T, rect(-13, 1.8, 11, 0.8, 0.3)));
       return bin.ghosts('plug', tag, anim, {}, true);

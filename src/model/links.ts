@@ -40,7 +40,7 @@ const uartNets = (c: Comp) => {
 const plugTypeName: Record<string, string> = {
   usb_c: 'USB-C', usb_micro_b: 'micro-USB', usb_mini_b: 'mini-USB', usb_a: 'USB-A', usb_a_dual: 'USB-A', usb_b: 'USB-B',
   hdmi_micro: 'micro-HDMI', hdmi_mini: 'mini-HDMI', hdmi_a: 'HDMI', rj45: 'RJ45', barrel: 'DC barrel', audio35: '3.5 mm', terminal: 'wires', header: 'jumper',
-  swd10: '10-pin debug', cortex20: '20-pin Cortex debug', jtag20: '20-pin debug', dsub: 'D-sub', dp: 'DisplayPort', rj11: 'RJ11', rca: 'RCA', bnc: 'BNC', sma: 'SMA', ufl: 'u.FL', xt60: 'XT60', xt30: 'XT30', sd: 'SD card', microsd: 'microSD', fpc: 'flat cable', idc: 'ribbon', idc_ra: 'ribbon', wtb_side: 'wire plug', jst_gh: 'JST-GH', jst_zh: 'JST-ZH', jst_ph: 'JST-PH', jst_xh: 'JST-XH', picoblade: 'PicoBlade', kk254: 'KK plug', microfit: 'Micro-Fit', minifit: 'Mini-Fit', tagconnect: 'Tag-Connect', iec_c7: 'mains (C7)', iec_c14: 'mains (C13)', sata: 'SATA', sfp: 'SFP', minidin: 'mini-DIN', pins_ra: 'pins', ac_au: 'AU outlet', ac_uk: 'UK outlet', ac_us: 'US outlet', ac_eu: 'EU outlet', mains_lead: 'mains lead',
+  swd10: '10-pin debug', cortex20: '20-pin Cortex debug', jtag20: '20-pin debug', dsub: 'D-sub', dp: 'DisplayPort', rj11: 'RJ11', rca: 'RCA', bnc: 'BNC', sma: 'SMA', ufl: 'u.FL', xt60: 'XT60', xt30: 'XT30', sd: 'SD card', microsd: 'microSD', fpc: 'flat cable', idc: 'ribbon', idc_ra: 'ribbon', wtb_side: 'wire plug', jst_gh: 'JST-GH', jst_zh: 'JST-ZH', jst_ph: 'JST-PH', jst_xh: 'JST-XH', picoblade: 'PicoBlade', kk254: 'KK plug', microfit: 'Micro-Fit', minifit: 'Mini-Fit', tagconnect: 'Tag-Connect', iec_c7: 'mains (C7)', iec_c14: 'mains (C13)', sata: 'SATA', sfp: 'SFP', minidin: 'mini-DIN', xlr: 'XLR', banana: '4 mm plug', m12: 'M12', toslink: 'TOSLINK', sim: 'SIM card', b2b: 'board-to-board', m2: 'M.2 card', pcie: 'PCIe card', dimm: 'memory module', pogo: 'spring pins', rf_mini: 'MMCX / SMB', pins_ra: 'pins', ac_au: 'AU outlet', ac_uk: 'UK outlet', ac_us: 'US outlet', ac_eu: 'EU outlet', mains_lead: 'mains lead',
 };
 
 export function plugRole(m: Module, c: Comp): PlugRole {
@@ -56,7 +56,7 @@ export function plugRole(m: Module, c: Comp): PlugRole {
   if (t === 'iec_c7' || t === 'iec_c14' || t === 'mains_lead') return 'mains-in';
   if (t === 'rj45' || t === 'sfp') return 'net';
   if (t.startsWith('hdmi') || t === 'dp') return 'video';
-  if (t === 'audio35' || t === 'rca') return 'audio';
+  if (t === 'audio35' || t === 'rca' || t === 'toslink' || t === 'xlr') return 'audio';
   if (t === 'terminal' || t === 'header' || t === 'idc' || t === 'idc_ra') return 'wire';
   // a barrel jack is a 7-12 V input: optional when the board also takes power over USB (an Arduino), and never fed from 5 V USB
   if (t === 'barrel') return charger || m.board.comps.some((x) => x.conn && /usb_(b|micro_b|mini_b|c)$/.test(x.conn.type)) ? 'other' : 'power-in-dc';
@@ -77,9 +77,14 @@ export function offRackTo(m: Module, c: Comp): string {
   if (t.startsWith('hdmi') || t === 'dp') return 'to a screen';
   if (role === 'mains-in' || t.startsWith('iec') || t === 'mains_lead') return 'to the wall';
   if (t === 'rj45' || t === 'sfp') return 'to the network';
-  if (t === 'audio35' || t === 'rca') return 'to speakers';
+  if (t === 'audio35' || t === 'rca' || t === 'xlr') return 'to speakers';
+  if (t === 'toslink') return 'to an amplifier or screen';
+  if (t === 'banana') return 'to an instrument or supply';
+  if (t === 'm12') return 'to a sensor or machine';
+  // (a card, a board or a test fixture goes on these, not a lead)
+  if (['b2b', 'm2', 'pcie', 'dimm', 'sim', 'pogo', 'sd', 'microsd'].includes(t)) return 'no cable: something plugs straight onto it';
   if (t === 'rj11') return 'to the phone line';
-  if (t === 'sma' || t === 'ufl') return 'to its antenna';
+  if (t === 'sma' || t === 'ufl' || t === 'rf_mini') return 'to its antenna';
   if (t === 'bnc') return 'to a scope or instrument';
   if (t === 'dsub') return 'to a computer or instrument';
   if (t === 'sata') return 'to a drive';
