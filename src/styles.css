@@ -163,9 +163,10 @@ svg { flex: none; }
 /* ------------------------------------------------------------------ cards */
 .section { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-card); padding: 12px; margin: 0 0 10px; }
 .section > h3 { margin: -2px 0 10px; font-size: 12.5px; font-weight: 650; letter-spacing: -0.1px; color: var(--fg); display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 26px; }
-.section > h3 > span:first-child { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
-.section > h3 > span:first-child::before { content: ''; width: 3px; height: 12px; border-radius: 2px; background: var(--accent); flex: none; }
-.section.plain > h3 > span:first-child::before { display: none; }
+.section > h3 > span:first-child, .section > h3 > .sect-toggle > span { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
+.section > h3 > .sect-toggle { flex: 1; align-self: stretch; display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: pointer; }
+.section > h3 > span:first-child::before, .section > h3 > .sect-toggle > span::before { content: ''; width: 3px; height: 12px; border-radius: 2px; background: var(--accent); flex: none; }
+.section.plain > h3 > span:first-child::before, .section.plain > h3 > .sect-toggle > span::before { display: none; }
 .section.accent { border-color: var(--accent-line); background: linear-gradient(180deg, var(--accent-soft), transparent 70%), var(--surface-2); }
 
 .row { display: grid; grid-template-columns: 1fr 1fr; gap: 9px 10px; }
@@ -728,6 +729,7 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 /* Add a board sheet */
 .sheet-veil { position: fixed; inset: 0; z-index: 70; background: rgb(8 10 14 / 0.45); display: grid; place-items: center; padding: 16px; animation: rise 0.18s ease-out; }
 .sheet { width: min(760px, 100%); max-height: min(86vh, 900px); display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 24px 60px rgb(0 0 0 / 0.35); overflow: hidden; }
+.sheet:focus-visible { outline: none; }
 .sheet-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 16px 18px 12px; border-bottom: 1px solid var(--line); }
 .sheet-head b { font-size: 17px; letter-spacing: -0.3px; display: block; }
 .sheet-head small { color: var(--muted); font-size: 12.5px; }
@@ -1038,7 +1040,7 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 /* a dimension typed where its label is */
 .editor .dimedit { position: absolute; z-index: 6; width: 236px; display: grid; gap: 4px; padding: 8px; background: var(--glass); backdrop-filter: blur(10px); border: 1px solid var(--accent-line); border-radius: 10px; box-shadow: var(--shadow); }
 .dimedit-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.dimedit input { width: 84px; height: 28px; padding: 0 8px; border-radius: 7px; border: 1px solid var(--line-2); background: var(--surface); color: var(--fg); font-size: 13px; }
+.dimedit input:not([type='checkbox']) { width: 84px; height: 28px; padding: 0 8px; border-radius: 7px; border: 1px solid var(--line-2); background: var(--surface); color: var(--fg); font-size: 13px; }
 .dimedit small { color: var(--muted); font-size: 11px; }
 /* ---- the board editor's Shape tool: a bar under the drawing (modes, then what the selection or tool takes) ---- */
 .shapebar { position: absolute; bottom: 52px; left: 50%; transform: translateX(-50%); z-index: 6; padding: 5px 7px; display: flex; flex-direction: column; gap: 4px; max-width: min(920px, calc(100% - 24px)); width: max-content; }

@@ -4,12 +4,13 @@
 // last in the steps; a mains load per powerboard; "Your computer" off the rack; one cable list everywhere.
 import { describe, it, expect, beforeAll } from 'vitest';
 import { TEMPLATES } from '../src/model/templates';
-import { newModule, newProject } from '../src/model/library';
+import { newModule, newProject, setLayout } from '../src/model/library';
 import { allPlugs, autoLinks, compatible, numberLinks, PC, plugsOf, portBudget, powerFeeds, powerShort, refusal, strongerPower, wiringAdvice } from '../src/model/links';
 import { mainsBudget, powerBudget } from '../src/model/power';
 import { hostTotal, needOf } from '../src/model/powerdata';
 import { cableLines } from '../src/model/cablelist';
 import { autoAssign } from '../src/cad/dockplan';
+import { strapBoxes } from '../src/model/built';
 import { generatePanel } from '../src/cad/panelgen';
 import { initKernel } from '../src/cad/kernel';
 import type { Link, Project } from '../src/model/types';
@@ -189,4 +190,34 @@ describe('assembly', () => {
     const r3 = generatePanel(rack(['power_dist']));
     expect(r3.report.checks.find((c) => c.name === 'DC inputs with no supply')?.value).toMatch(/IN/);
   }, 120_000);
+});
+
+describe('straps on the shopping list', () => {
+  beforeAll(async () => { await initKernel(); });
+  const names = (ms: { board: { name: string } }[]) => ms.map((m) => m.board.name);
+
+  it('are for boxes in a holder on the rack: not a plug pack, a probe or a box off the rails', () => {
+    const p = rack(['rpi5', 'psu_pi5', 'dc_pack_12v', 'pb4', 'usb_hub7', 'jlink']);
+    p.links = numberLinks(autoLinks(p));
+    const r = generatePanel(p);
+    expect(r.report.panel!.unplaced).toEqual([]);
+    expect(names(strapBoxes(p, r.report.panel))).toEqual(['Powerboard, 4 outlets', 'Powered USB hub']);
+    // exactly the boxes the holders were built with strap loops for
+    const looped = r.report.checks.filter((c) => c.name === 'Strap loops').map((c) => c.module).sort();
+    expect(strapBoxes(p, r.report.panel).map((m) => m.id).sort()).toEqual(looped);
+    // a box with no rail yet has no holder to strap it in
+    const q = rack(['rpi5', 'pb4', 'usb_hub7']);
+    q.panel.auto = false;
+    q.panel.rails = []; q.panel.mounts = [];
+    const r2 = generatePanel(q);
+    expect(r2.report.panel!.unplaced.length).toBe(3);
+    expect(strapBoxes(q, r2.report.panel)).toEqual([]);
+    expect(r2.report.checks.some((c) => c.name === 'Strap loops')).toBe(false);
+  }, 120_000);
+
+  it('are for loose holders too, but still not a plug pack', () => {
+    const p = rack(['rpi5', 'psu_pi4', 'usb_hub7', 'jlink']);
+    setLayout(p, 'loose');
+    expect(names(strapBoxes(p))).toEqual(['Powered USB hub']);
+  });
 });

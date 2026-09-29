@@ -1,8 +1,20 @@
 // "Mark as built": remember what was printed, cut and bought, so that after adding a board Export can list just the
 // new parts, the new cables and any rail that has to be longer. Parts are recognised by their geometry, so a holder
 // that did not change is not printed again.
-import type { Built, GenResult, PanelReport, PartOut, Project } from './types';
-import { stackMode } from './holes';
+import type { Built, GenResult, Module, PanelReport, PartOut, Project } from './types';
+import { baseOf, stackMode } from './holes';
+import { isProbe } from './probes';
+import { isPlugPack } from './powerdata';
+
+/**
+ * The boxes that need a hook-and-loop strap: those in a holder with strap loops. A probe slides into a slot instead, a
+ * plug pack sits in an outlet and never gets a holder, and a box not on a rail (or riding one that isn't) has none.
+ * `panel`: the rack's report, for which boards are on the rails; loose holders each get their own.
+ */
+export function strapBoxes(p: Project, panel?: PanelReport | null): Module[] {
+  const seated = p.layout === 'panel' ? new Set((panel?.modules ?? []).map((s) => s.id)) : null;
+  return p.modules.filter((m) => m.board.kind === 'box' && !isProbe(m) && !isPlugPack(m.board) && (!seated || seated.has(baseOf(p, m).id)));
+}
 
 /** Docks and flat clips numbered the way you count them on the rack: rail 1, second dock = "1.2". */
 export function mountLabels(panel: PanelReport | null | undefined): Map<string, string> {

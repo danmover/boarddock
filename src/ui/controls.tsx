@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 
 export function Num({ label, value, onChange, step = 0.1, min, max, unit = 'mm', hint, disabled }: {
   label: string; value: number; onChange: (v: number) => void; step?: number; min?: number; max?: number; unit?: string; hint?: string; disabled?: boolean;
@@ -64,13 +64,46 @@ export function Check({ label, value, onChange, hint }: { label: ReactNode; valu
   );
 }
 
-export function Section({ title, right, children }: { title: string; right?: ReactNode; children: ReactNode }) {
+/** A card with a title; `toggle` puts a checkbox at the right of the title, and the whole title is its label. */
+export function Section({ title, right, toggle, children }: { title: string; right?: ReactNode; toggle?: { value: boolean; onChange: (v: boolean) => void }; children: ReactNode }) {
   return (
     <div className="section">
-      <h3><span>{title}</span>{right}</h3>
+      <h3>{toggle
+        ? <label className="sect-toggle"><span>{title}</span><input type="checkbox" checked={toggle.value} onChange={(e) => toggle.onChange(e.target.checked)} /></label>
+        : <span>{title}</span>}{right}</h3>
       {children}
     </div>
   );
+}
+
+/** What a Tab can land on inside `root`, in order. */
+export function tabbables(root: HTMLElement): HTMLElement[] {
+  return [...root.querySelectorAll<HTMLElement>('a[href], button, input, select, textarea, summary, [tabindex]')]
+    .filter((x) => !x.hasAttribute('disabled') && x.tabIndex >= 0 && !(x instanceof HTMLInputElement && x.type === 'hidden') && !x.closest('[hidden]') && x.getClientRects().length > 0);
+}
+
+/**
+ * A modal's keyboard: when it opens, focus moves onto the dialog itself (give it tabIndex -1: a screen reader reads its
+ * label, and the first Tab lands on its first control); Tab and Shift+Tab wrap round inside it; Escape closes it; and
+ * whichever way it closes, focus goes back to what had it before (the button that opened it).
+ */
+export function useModalFocus(open: boolean, dialog: RefObject<HTMLElement | null>, close: () => void) {
+  const closer = useRef(close);
+  closer.current = close;
+  useEffect(() => {
+    if (!open) return;
+    const opener = document.activeElement as HTMLElement | null;
+    dialog.current?.focus();
+    const k = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closer.current();
+      if (e.key !== 'Tab' || !dialog.current) return;
+      const f = tabbables(dialog.current), last = f.length - 1, i = f.indexOf(document.activeElement as HTMLElement);
+      if (!f.length) { e.preventDefault(); dialog.current.focus(); }
+      else if (e.shiftKey ? i <= 0 : i < 0 || i === last) { e.preventDefault(); f[e.shiftKey ? last : 0].focus(); }
+    };
+    window.addEventListener('keydown', k);
+    return () => { window.removeEventListener('keydown', k); if (opener?.isConnected && opener !== document.body) opener.focus?.(); };
+  }, [open]);
 }
 
 export function Chip({ status, children }: { status?: 'ok' | 'warn' | 'bad' | 'info'; children: ReactNode }) {

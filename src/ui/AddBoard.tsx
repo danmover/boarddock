@@ -12,6 +12,7 @@ import { bedNote, placementNote, settleOverlaps } from './panelOps';
 import { DrawBoard } from './DrawBoard';
 import { Library } from './Library';
 import { Icon, I } from './icons';
+import { useModalFocus } from './controls';
 
 /** "Raspberry Pi 4B", "2 × Raspberry Pi Pico and Relay board", "7 boards". */
 export function countNames(bs: Board[]): string {
@@ -52,27 +53,11 @@ export function AddBoardSheet() {
   const [draw, setDraw] = useState(false);
   const file = useRef<HTMLInputElement>(null);
   const sheet = useRef<HTMLDivElement>(null);
-  const opener = useRef<HTMLElement | null>(null);
   // (replace mode is for this one pick: closing the sheet ends it)
-  const close = () => { store.set({ addSheet: false, replaceMode: false }); opener.current?.focus?.(); };
-  useEffect(() => {
-    if (!open) return;
-    opener.current = document.activeElement as HTMLElement | null;
-    setErr(null); setDraw(false);
-    const k = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close();
-      // keep Tab inside the sheet while it is open
-      if (e.key === 'Tab' && sheet.current) {
-        const f = [...sheet.current.querySelectorAll<HTMLElement>('button, input:not([hidden]), select, [tabindex="0"]')].filter((x) => !x.hasAttribute('disabled') && x.offsetParent);
-        if (!f.length) return;
-        const i = f.indexOf(document.activeElement as HTMLElement);
-        if (e.shiftKey && i <= 0) { e.preventDefault(); f[f.length - 1].focus(); }
-        else if (!e.shiftKey && (i === f.length - 1 || i < 0)) { e.preventDefault(); f[0].focus(); }
-      }
-    };
-    window.addEventListener('keydown', k);
-    return () => window.removeEventListener('keydown', k);
-  }, [open]);
+  const close = () => store.set({ addSheet: false, replaceMode: false });
+  // focus goes into the sheet, stays in it (Tab wraps, Esc closes) and goes back to the button that opened it
+  useModalFocus(open, sheet, close);
+  useEffect(() => { if (open) { setErr(null); setDraw(false); } }, [open]);
   if (!open) return null;
   const add = (bs: Board[]) => { if (replacing && bs.length) { store.set({ addSheet: false }); replaceWith(bs[0]); if (bs.length > 1) addBoards(bs.slice(1)); return; } close(); addBoards(bs); };
   const files = async (fl: FileList | File[]) => {
@@ -81,7 +66,7 @@ export function AddBoardSheet() {
   };
   return (
     <div className="sheet-veil" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}>
-      <div className="sheet wide" role="dialog" aria-modal="true" aria-label={replacing ? `Replace ${target}` : 'Add a board'} ref={sheet}>
+      <div className="sheet wide" role="dialog" aria-modal="true" aria-label={replacing ? `Replace ${target}` : 'Add a board'} tabIndex={-1} ref={sheet}>
         <div className="sheet-head">
           {replacing
             ? <div><b>Replace {target}</b><small>The board you pick takes its place: its dock, its stack, its holder settings and the cables to plugs the new one also has. Click a picture, or drop its files.</small></div>

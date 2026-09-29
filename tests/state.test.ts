@@ -39,6 +39,27 @@ describe('project edits', () => {
     expect(q.links!.length).toBe(n);
   });
 
+  it('starting a rack from several boards opens on the first; adding to a rack opens on the first added', () => {
+    store.set({ project: null, past: [], future: [], sel: [] });
+    putBoards([T('rpi4'), T('uno'), T('pico'), T('uno')], false);
+    let p = store.get().project!;
+    expect(p.modules.map((m) => m.board.name)).toEqual(['Raspberry Pi 4B', 'Arduino Uno R3', 'Raspberry Pi Pico', 'Arduino Uno R3 #2']);
+    expect(p.active).toBe(0);
+    expect(store.get().past.length).toBe(0);
+    // more onto that rack: the first of the new ones is the board being edited
+    putBoards([T('nano'), T('pico')], false, { stay: true });
+    p = store.get().project!;
+    expect(p.modules.length).toBe(6);
+    expect(p.active).toBe(4);
+    // replacing the board being edited with several: the first takes its place and stays the one being edited
+    setActive(1);
+    putBoards([T('nano'), T('rpi4')], true);
+    p = store.get().project!;
+    expect(p.active).toBe(1);
+    expect(p.modules[1].board.name).toMatch(/^Arduino Nano/);
+    expect(p.modules.length).toBe(7);
+  });
+
   it('opening a project file can be undone', () => {
     loadProject(newProject(T('rpi4')));
     edit((p) => { p.modules[0].board.name = 'Mine'; });

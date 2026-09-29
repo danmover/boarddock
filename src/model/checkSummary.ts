@@ -1,4 +1,4 @@
-import type { Check, GenReport, Project } from './types';
+import type { Board, Check, GenReport, Project } from './types';
 
 /** A board's own note (from its template or box: "measure yours"), as the build lists it, and whose it is. */
 export interface Reminder { text: string; note: string; modules: string[] }
@@ -43,4 +43,25 @@ export function ackNote(p: Project, moduleIds: string[], note: string, done = tr
     if (done) a.add(note); else a.delete(note);
     if (a.size) m.board.ack = [...a]; else delete m.board.ack;
   }
+}
+
+/** A note that asks for the board's holes to be measured (the perfboard's): editing a hole is doing just that. */
+const HOLE_NOTE = /measure the hole/i;
+const holesOf = (b: Board) => b.holes.map((h) => `${h.id} ${h.x} ${h.y} ${h.d}`).join(';');
+const shapeOf = (b: Board) => JSON.stringify([b.outline, b.cutouts]);
+
+/**
+ * After an edit (`next` is the copy just made from `prev`): a board whose holes were moved, resized, added or taken
+ * away has had them measured, so its "measure the holes" reminder is ticked off. Not when the outline changed too:
+ * reshaping a board carries its corner holes along, which measures nothing. True when it ticked something off.
+ */
+export function ackMeasuredHoles(prev: Project, next: Project): boolean {
+  let any = false;
+  for (const m of next.modules) {
+    const open = m.board.notes.filter((n) => HOLE_NOTE.test(n) && !m.board.ack?.includes(n));
+    const was = open.length ? prev.modules.find((x) => x.id === m.id)?.board : null;
+    if (!was || holesOf(was) === holesOf(m.board) || shapeOf(was) !== shapeOf(m.board)) continue;
+    for (const n of open) { ackNote(next, [m.id], n); any = true; }
+  }
+  return any;
 }
