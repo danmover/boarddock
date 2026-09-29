@@ -919,6 +919,7 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 .ltile-qty { position: absolute; top: 8px; right: 8px; display: flex; align-items: center; gap: 4px; background: var(--glass); border: 1px solid var(--line); border-radius: 999px; padding: 2px; box-shadow: var(--shadow-sm); opacity: 0; transition: opacity 0.12s; }
 .ltile:hover .ltile-qty, .ltile.on .ltile-qty, .ltile-qty:focus-within { opacity: 1; }
 .ltile-qty b { font-family: var(--mono); font-size: 12px; min-width: 14px; text-align: center; }
+.ltile-com { position: absolute; top: 8px; left: 8px; pointer-events: none; font-size: 9.5px; font-weight: 650; letter-spacing: 0.05em; text-transform: uppercase; padding: 1px 7px; border-radius: 99px; border: 1px solid var(--line); background: var(--glass); color: var(--muted); }
 .ltile-x { position: absolute; top: 8px; left: 8px; width: 22px; height: 22px; border-radius: 99px; border: 1px solid var(--line); background: var(--glass); color: var(--muted); cursor: pointer; opacity: 0; transition: opacity 0.12s; }
 .ltile:hover .ltile-x { opacity: 1; }
 .lib-foot { position: sticky; bottom: 12px; z-index: 4; display: flex; align-items: center; gap: 8px; margin-top: 14px; padding: 10px 12px; border: 1px solid var(--accent-line); border-radius: 14px; background: var(--glass); backdrop-filter: blur(14px); box-shadow: var(--shadow); }

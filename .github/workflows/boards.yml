@@ -1,0 +1,99 @@
+name: Boards
+# Community boards (boards/<slug>/, see boards/README.md). On a pull request that touches them:
+#  - check: read every board with the app's own importers, show the report (job summary, and a file to download),
+#    and run tests/boards.test.ts, which also fails when public/boards/ is not what the folders make.
+#  - ai (optional): add the `boards` label and, if the repository has an ANTHROPIC_API_KEY secret, Claude follows
+#    boards/AGENTS.md on the PR branch (writes the hints, regenerates public/boards/, commits). Forks without the secret,
+#    and pull requests from forks, skip it. See boards/README.md.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+    paths:
+      - 'boards/**'
+      - 'public/boards/**'
+      - 'scripts/boards*'
+      - 'tests/boards.test.ts'
+      - '.github/workflows/boards.yml'
+permissions:
+  contents: read
+concurrency:
+  group: boards-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+jobs:
+  check:
+    if: github.event.action != 'labeled' || github.event.label.name == 'boards'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      # report only (--dry): the test below is what checks that the committed public/boards/ is current
+      - name: Read the boards
+        run: npm run boards -- --dry --report "$RUNNER_TEMP/boards-report.txt"
+      - name: Show the report
+        if: ${{ !cancelled() }}
+        run: |
+          if [ -f "$RUNNER_TEMP/boards-report.txt" ]; then
+            { echo '## Community boards report'; echo; echo '```'; cat "$RUNNER_TEMP/boards-report.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Keep the report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: boards-report
+          path: ${{ runner.temp }}/boards-report.txt
+          if-no-files-found: ignore
+      - name: Test
+        if: ${{ !cancelled() }}
+        run: npx vitest run tests/boards.test.ts
+
+  # the AI job runs only when the `boards` label is added to a pull request from this repository, and only if the key is set
+  gate:
+    if: github.event.action == 'labeled' && github.event.label.name == 'boards' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.key.outputs.run }}
+    steps:
+      - id: key
+        env:
+          KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -n "$KEY" ]; then echo "run=true" >> "$GITHUB_OUTPUT"
+          else echo "run=false" >> "$GITHUB_OUTPUT"; echo "::notice::No ANTHROPIC_API_KEY secret in this repository: the AI job is skipped."; fi
+
+  ai:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            This is pull request #${{ github.event.pull_request.number }}, which adds or changes a community board under boards/.
+            Follow boards/AGENTS.md exactly, step by step. Commit to this branch (${{ github.event.pull_request.head.ref }}), never to main,
+            and finish with the comment that step 9 describes.
+          claude_args: |
+            --max-turns 40
+            --allowedTools "Read,Glob,Grep,Edit,Write,Bash(npm run boards:*),Bash(npx vitest run tests/boards.test.ts),Bash(git diff:*),Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(gh pr comment:*)"
