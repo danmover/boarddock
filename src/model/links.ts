@@ -21,18 +21,23 @@ export const DEBUG_TYPES = new Set(['swd10', 'cortex20', 'jtag20', 'tagconnect']
 export const DEBUG_HINT = /swd|jtag|cortex[\s_-]?debug|j[\s_-]?link|debug|\bdbg|conn_arm|st[\s_-]?link|tag[\s_-]?connect/i;
 /** A name that says serial: UART, a serial console, TX/RX, an FTDI header. */
 export const UART_HINT = /uart|serial|console|ftdi|\btxd?\b.*\brxd?\b|\brxd?\b.*\btxd?\b|\bttl\b/i;
-const pinsOrJst = (t: string) => t === 'header' || t === 'jst_ph' || t === 'jst_xh' || t === 'qwiic';
+const pinsOrJst = (t: string) => ['header', 'jst_ph', 'jst_xh', 'jst_gh', 'jst_zh', 'picoblade', 'kk254', 'wtb_side', 'qwiic'].includes(t);
 const names = (c: Comp) => `${c.ref} ${c.pkg} ${c.value ?? ''}`;
 /** A debug port: a debug connector, a box port made for one, or a pin header named for debugging (a 1 x 4 SWD header). */
 export const isDebugPort = (c: Comp) =>
-  !!c.conn && !c.hidden && (c.role ? c.role === 'debug' : DEBUG_TYPES.has(c.conn.type) || (c.conn.type === 'header' && DEBUG_HINT.test(names(c)) && !UART_HINT.test(names(c))));
+  !!c.conn && !c.hidden && (c.role ? c.role === 'debug' : DEBUG_TYPES.has(c.conn.type) || (/^(header|idc)$/.test(c.conn.type) && DEBUG_HINT.test(names(c)) && !UART_HINT.test(names(c))));
 /** A UART header: pins (or a JST) named for serial, or marked as one by hand. A USB-serial cable plugs in there. */
-export const isUartPort = (c: Comp) => !!c.conn && !c.hidden && (c.role ? c.role === 'uart' : pinsOrJst(c.conn.type) && UART_HINT.test(names(c)));
+export const isUartPort = (c: Comp) => !!c.conn && !c.hidden && (c.role ? c.role === 'uart' : pinsOrJst(c.conn.type) && (UART_HINT.test(names(c)) || uartNets(c)));
+/** A small connector whose pins' nets say serial (TX, RXD, UART0_TX), none of them debug. */
+const uartNets = (c: Comp) => {
+  const nets = (c.pins ?? []).map((q) => q.net ?? '');
+  return nets.length >= 2 && nets.length <= 8 && nets.some((n) => /(^|[^a-z])(u?s?art\d?_?)?(txd?|rxd?)\d?([^a-z]|$)/i.test(n)) && !nets.some((n) => /(^|[^a-z])(swdio|swclk|tms|tck|tdi|tdo)([^a-z]|$)/i.test(n));
+};
 
 const plugTypeName: Record<string, string> = {
   usb_c: 'USB-C', usb_micro_b: 'micro-USB', usb_mini_b: 'mini-USB', usb_a: 'USB-A', usb_a_dual: 'USB-A', usb_b: 'USB-B',
   hdmi_micro: 'micro-HDMI', hdmi_mini: 'mini-HDMI', hdmi_a: 'HDMI', rj45: 'RJ45', barrel: 'DC barrel', audio35: '3.5 mm', terminal: 'wires', header: 'jumper',
-  swd10: '10-pin debug', cortex20: '20-pin Cortex debug', jtag20: '20-pin debug', dsub: 'D-sub', tagconnect: 'Tag-Connect', iec_c7: 'mains (C7)', pins_ra: 'pins', ac_au: 'AU outlet', ac_uk: 'UK outlet', ac_us: 'US outlet', ac_eu: 'EU outlet', mains_lead: 'mains lead',
+  swd10: '10-pin debug', cortex20: '20-pin Cortex debug', jtag20: '20-pin debug', dsub: 'D-sub', dp: 'DisplayPort', rj11: 'RJ11', rca: 'RCA', bnc: 'BNC', sma: 'SMA', ufl: 'u.FL', xt60: 'XT60', xt30: 'XT30', sd: 'SD card', microsd: 'microSD', fpc: 'flat cable', idc: 'ribbon', idc_ra: 'ribbon', wtb_side: 'wire plug', jst_gh: 'JST-GH', jst_zh: 'JST-ZH', jst_ph: 'JST-PH', jst_xh: 'JST-XH', picoblade: 'PicoBlade', kk254: 'KK plug', microfit: 'Micro-Fit', minifit: 'Mini-Fit', tagconnect: 'Tag-Connect', iec_c7: 'mains (C7)', pins_ra: 'pins', ac_au: 'AU outlet', ac_uk: 'UK outlet', ac_us: 'US outlet', ac_eu: 'EU outlet', mains_lead: 'mains lead',
 };
 
 export function plugRole(m: Module, c: Comp): PlugRole {
@@ -47,9 +52,9 @@ export function plugRole(m: Module, c: Comp): PlugRole {
   if (t.startsWith('ac_')) return 'mains-out';
   if (t === 'iec_c7' || t === 'mains_lead') return 'mains-in';
   if (t === 'rj45') return 'net';
-  if (t.startsWith('hdmi')) return 'video';
-  if (t === 'audio35') return 'audio';
-  if (t === 'terminal' || t === 'header') return 'wire';
+  if (t.startsWith('hdmi') || t === 'dp') return 'video';
+  if (t === 'audio35' || t === 'rca') return 'audio';
+  if (t === 'terminal' || t === 'header' || t === 'idc' || t === 'idc_ra') return 'wire';
   // a barrel jack is a 7-12 V input: optional when the board also takes power over USB (an Arduino), and never fed from 5 V USB
   if (t === 'barrel') return charger || m.board.comps.some((x) => x.conn && /usb_(b|micro_b|mini_b|c)$/.test(x.conn.type)) ? 'other' : 'power-in-dc';
   if (t === 'usb_a' || t === 'usb_a_dual') return hub ? 'hub-down' : charger ? 'power-out' : 'host';
@@ -66,10 +71,16 @@ export function plugRole(m: Module, c: Comp): PlugRole {
 /** Where a lead that leaves the rack goes, in a few words for the 3D view ("to a screen", "to the wall"...). */
 export function offRackTo(m: Module, c: Comp): string {
   const t = c.conn?.type ?? '', role = plugRole(m, c);
-  if (t.startsWith('hdmi')) return 'to a screen';
+  if (t.startsWith('hdmi') || t === 'dp') return 'to a screen';
   if (role === 'mains-in' || t.startsWith('iec') || t === 'mains_lead') return 'to the wall';
   if (t === 'rj45') return 'to the network';
-  if (t === 'audio35') return 'to speakers';
+  if (t === 'audio35' || t === 'rca') return 'to speakers';
+  if (t === 'rj11') return 'to the phone line';
+  if (t === 'sma' || t === 'ufl') return 'to its antenna';
+  if (t === 'bnc') return 'to a scope or instrument';
+  if (t === 'dsub') return 'to a computer or instrument';
+  if (t === 'xt60' || t === 'xt30') return 'to its battery';
+  if (t === 'fpc') return 'to its display or camera';
   if (role === 'power-in' || role === 'power-in-dc' || t === 'barrel' || role === 'other') return 'to its power supply';
   if (/usb/.test(t)) return 'to a computer';
   return 'off the rack';

@@ -6,6 +6,7 @@ import { boardLights, boxLight, LED_COLOUR } from '../model/lights';
 import { bbox, compRect, extentAlong, inside, rad } from '../geom/poly';
 import { textStrokes, textWidth } from './font';
 import { headerPins } from '../model/probes';
+import { nameCircuits, SOCKET_NAME, wtbPitch } from '../model/library';
 import { boardCopper } from '../model/copper';
 import { box, circle2, cyl, ext, poly, toMesh, type MF } from './kernel';
 import { K } from './kernel';
@@ -43,7 +44,7 @@ class Bin {
 export const MAT_COLOR: Record<Mat, string> = {
   mask: '#15603a', gold: '#d9aa3c', metal: '#c9d0d8', black: '#1d2024', chip: '#25282d', white: '#ece9e2', silk: '#f2f2ea',
   led: '#efece4', passive: '#b89a6a', blue: '#2f5bd8', plug: '#2f3338', cable: '#24272b', copper: '#c87533',
-  trace: '#2f9e63', tin: '#c9ced4', box: '#2b2f36', red: '#b8322b',
+  trace: '#2f9e63', tin: '#c9ced4', box: '#2b2f36', red: '#b8322b', yellow: '#e2b21c',
 };
 
 function boxMesh(T: number[], x0: number, y0: number, z0: number, x1: number, y1: number, z1: number): MeshData {
@@ -107,6 +108,19 @@ function mouthSide(c: Comp): 'py' | 'ny' | 'px' | 'nx' {
   return Math.abs(dy) >= Math.abs(dx) ? (dy > 0 ? 'py' : 'ny') : dx > 0 ? 'px' : 'nx';
 }
 
+/** Upright wire-to-board sockets: their pitch, wall, colour, and whether their pins are in two rows. */
+const WTB_LOOK: Record<string, { pitch: number; wall: number; mat: Mat; two?: boolean }> = {
+  jst_ph: { pitch: 2, wall: 0.5, mat: 'white' }, jst_xh: { pitch: 2.5, wall: 0.7, mat: 'white' }, jst_gh: { pitch: 1.25, wall: 0.45, mat: 'white' },
+  jst_zh: { pitch: 1.5, wall: 0.45, mat: 'white' }, picoblade: { pitch: 1.25, wall: 0.45, mat: 'white' },
+  microfit: { pitch: 3, wall: 0.8, mat: 'black', two: true }, minifit: { pitch: 4.2, wall: 1, mat: 'white', two: true },
+};
+
+/** A connector's number of pins: its numbered pins, else what its name says, else a guess from its size. */
+function pinCount(c: Comp, name: string, guess: number): number {
+  const n = (c.pins ?? []).filter((q) => /^\d+$/.test(q.n)).length;
+  return Math.max(1, Math.min(80, n >= 2 ? n : nameCircuits(name) || guess));
+}
+
 /** Part detail. Local frame: body [-w/2, w/2] x [-l/2, l/2] x [0, h]; the mouth faces +y after `rot`. */
 function partDetail(bin: Bin, c: Comp, zt: number, zb: number) {
   const below = c.side === 'bottom';
@@ -127,9 +141,10 @@ function partDetail(bin: Bin, c: Comp, zt: number, zb: number) {
   const hx = w / 2, hy = l / 2;
   const B = (mat: Mat, x0: number, y0: number, a0: number, x1: number, y1: number, a1: number) => bin.box(mat, T, x0, y0, a0, x1, y1, a1);
 
-  if (type === 'swd10' || type === 'jtag20') {
+  if (type === 'swd10' || type === 'cortex20' || type === 'jtag20' || type === 'idc') {
     // a shrouded box header: walls round two rows of pins, a key slot in one long wall
-    const pitch = type === 'swd10' ? 1.27 : 2.54, n = type === 'swd10' ? 5 : 10, wall = type === 'swd10' ? 0.55 : 0.9;
+    const fine = type === 'swd10' || type === 'cortex20', pitch = fine ? 1.27 : 2.54, wall = fine ? 0.55 : 0.9;
+    const n = type === 'swd10' ? 5 : type === 'idc' ? Math.max(2, Math.round((Math.max(w, l) - 7.6) / 2.54)) : 10;
     const long = w >= l, ax = long ? hx : hy, ac = long ? hy : hx;
     let shroud = box(-hx, -hy, 0, hx, hy, h).subtract(box(-hx + wall, -hy + wall, 0.8, hx - wall, hy - wall, h + 1));
     const key = Math.min(ax * 0.5, pitch * 2.2);
@@ -154,23 +169,45 @@ function partDetail(bin: Bin, c: Comp, zt: number, zb: number) {
     }
     return;
   }
-  if (type === 'jst_ph' || type === 'jst_xh') {
-    // a top-entry JST: a housing open at the top round its row of pins (the plug goes in from above, as the toolbox
-    // says), a slot in one long wall for the plug's latch; the pins where the board editor draws them
-    const long = w >= l, wall = type === 'jst_ph' ? 0.5 : 0.7, floor = Math.min(1, h * 0.3);
-    const pm = /_P(\d+(?:\.\d+)?)mm/i.exec(c.pkg), pitch = pm ? +pm[1] : type === 'jst_ph' ? 2 : 2.5, n = headerPins(c).length;
-    let shell = box(-hx, -hy, 0, hx, hy, h);
-    if (Math.min(w, l) > 2 * wall + 0.6 && h > floor + 0.5) {
-      const s = Math.min((long ? w : l) * 0.4, 3);
-      shell = shell.subtract(box(-hx + wall, -hy + wall, floor, hx - wall, hy - wall, h + 1))
-        .subtract(long ? box(-s / 2, hy - wall - 0.1, h * 0.5, s / 2, hy + 1, h + 1) : box(hx - wall - 0.1, -s / 2, h * 0.5, hx + 1, s / 2, h + 1));
+  const look = WTB_LOOK[type];
+  if (look) {
+    // an upright wire-to-board socket (JST, Molex): a housing open at the top round its pins (the plug goes in from
+    // above, as the toolbox says), a slot in one long wall for the plug's latch, a latch ramp outside on the big ones
+    const long = w >= l, wall = look.wall, floor = Math.min(1, h * 0.3);
+    const pm = /_P(\d+(?:\.\d+)?)mm/i.exec(c.pkg), pitch = pm ? +pm[1] : look.pitch;
+    const two = !!look.two && Math.min(w, l) > 1.6 * pitch && !/1x\d/i.test(c.pkg);
+    const n = pinCount(c, name, Math.round((Math.max(w, l) - look.pitch) / look.pitch) + 1), k = two ? Math.ceil(n / 2) : n;
+    const s = Math.min((long ? w : l) * 0.4, 3);
+    // (the latch ramp stands inside the part's size: the housing is that much narrower on its side)
+    const lat = two ? 0.9 : 0, ex = long ? 0 : lat, ey = long ? lat : 0;
+    let shell = box(-hx, -hy, 0, hx - ex, hy - ey, h);
+    if (Math.min(w, l) > 2 * wall + 0.6 + lat && h > floor + 0.5) {
+      shell = shell.subtract(box(-hx + wall, -hy + wall, floor, hx - ex - wall, hy - ey - wall, h + 1))
+        .subtract(long ? box(-s / 2, hy - ey - wall - 0.1, h * 0.5, s / 2, hy + 1, h + 1) : box(hx - ex - wall - 0.1, -s / 2, h * 0.5, hx + 1, s / 2, h + 1));
     }
-    bin.add('black', tf(shell, T));
-    const r = type === 'jst_ph' ? 0.25 : 0.32;
-    for (let i = 0; i < n; i++) {
-      const u = (i - (n - 1) / 2) * pitch, [px, py] = long ? [u, 0] : [0, u];
+    bin.add(look.mat, tf(shell, T));
+    if (two) { if (long) B(look.mat, -s / 2, hy - ey, h * 0.45, s / 2, hy, h - 0.6); else B(look.mat, hx - ex, -s / 2, h * 0.45, hx, s / 2, h - 0.6); }
+    const r = Math.min(0.32, pitch * 0.2);
+    for (let i = 0; i < k; i++) for (const j of two ? [-0.5, 0.5] : [0]) {
+      const u = (i - (k - 1) / 2) * pitch, v = j * pitch, [px, py] = long ? [u, v] : [v, u];
       B('gold', px - r, py - r, floor, px + r, py + r, Math.max(floor + 0.3, h - 1.2));
     }
+    return;
+  }
+  if (type === 'kk254') {
+    // a Molex KK (or a fan) header: a low base, the polarising wall along one side, tall square pins
+    const long = w >= l, n = pinCount(c, name, Math.max(2, Math.round(Math.max(w, l) / 2.54))), base = Math.min(3.2, h * 0.35);
+    B('white', -hx, -hy, 0, hx, hy, base);
+    if (long) B('white', -hx, -hy, base, hx, -hy + 1, h * 0.8); else B('white', -hx, -hy, base, -hx + 1, hy, h * 0.8);
+    for (let i = 0; i < n; i++) { const u = (i - (n - 1) / 2) * 2.54, [px, py] = long ? [u, 0.4] : [0.4, u]; B('gold', px - 0.32, py - 0.32, base, px + 0.32, py + 0.32, h - 0.3); }
+    return;
+  }
+  if (type === 'ufl') {
+    // a u.FL: a small square base, the round metal socket on it, its centre contact
+    B('white', -hx, -hy, 0, hx, hy, 0.3);
+    const R = Math.min(hx, hy) * 0.7;
+    bin.add('metal', tf(cyl(0, 0, 0.3, h, R, R, 24).subtract(cyl(0, 0, 0.5, h + 1, R - 0.25, R - 0.25, 24)), T));
+    bin.add('gold', tf(cyl(0, 0, 0.3, h - 0.3, 0.2, 0.2, 12), T));
     return;
   }
   if (type === 'pins_ra') {
@@ -185,8 +222,8 @@ function partDetail(bin: Bin, c: Comp, zt: number, zb: number) {
     }
     return;
   }
-  if (c.kind === 'header' || type === 'header' || /pin.?header|pin.?socket|conn_\d+x\d+|idc/i.test(name)) {
-    const socket = /socket|female/i.test(name);
+  if (c.kind === 'header' || type === 'header' || ((!type || type === 'custom') && /pin.?header|pin.?socket|conn_\d+x\d+|idc/i.test(name))) {
+    const socket = SOCKET_NAME.test(name);
     const baseH = socket ? h : Math.min(2.5, h);
     B('black', -hx, -hy, 0, hx, hy, baseH);
     const nx = Math.max(1, Math.round(w / 2.54)), ny = Math.max(1, Math.round(l / 2.54));
@@ -197,15 +234,93 @@ function partDetail(bin: Bin, c: Comp, zt: number, zb: number) {
     }
     return;
   }
+  if (type === 'idc_ra' || type === 'wtb_side') {
+    // a right-angle socket, its mouth to the edge: walls round the opening (the key slot in a box header's top, a
+    // latch slot in a wire-to-board one's) and the pins lying in it
+    const ribbon = type === 'idc_ra', wall = ribbon ? 0.9 : 0.5;
+    const pitch = ribbon ? 2.54 : wtbPitch(name), rows = ribbon || /2x\d|mini[\s_-]?fit|5569|39-?30|39301/i.test(name) ? 2 : 1;
+    const n = pinCount(c, name, rows * Math.max(1, Math.round((w - (ribbon ? 7.6 : 4)) / pitch) + (ribbon ? 0 : 1))), k = Math.ceil(n / rows);
+    let shell = box(-hx, -hy, 0, hx, hy, h);
+    if (w > 2 * wall + 1 && h > 2 * wall + 1) shell = shell.subtract(box(-hx + wall, -hy + Math.min(1.5, l * 0.3), wall, hx - wall, hy + 1, h - wall));
+    const key = Math.min(hx, pitch * (ribbon ? 2.2 : 1.2));
+    if (h > 2 * wall + 1) shell = shell.subtract(box(-key / 2, hy - Math.min(3, l * 0.4), h - wall - 0.1, key / 2, hy + 1, h + 1));
+    bin.add(ribbon || /micro[\s_-]?fit/i.test(name) ? 'black' : 'white', tf(shell, T));
+    const zc = h / 2, r = Math.min(0.32, pitch * 0.2);
+    for (let i = 0; i < k; i++) for (const j of rows === 2 ? [-0.5, 0.5] : [0]) {
+      const px = (i - (k - 1) / 2) * pitch, pz = zc + j * pitch;
+      B('gold', px - r, -hy + Math.min(1.5, l * 0.3), pz - r, px + r, hy - 1.2, pz + r);
+    }
+    return;
+  }
+  if (type === 'fpc') {
+    // a flat-cable connector: a low housing with its slot to the edge, the latch bar across the mouth, a row of
+    // contacts along the back
+    let housing = box(-hx, -hy, 0, hx, hy - 1.6, h * 0.72);
+    if (w > 3 && h > 1) housing = housing.subtract(box(-hx + 1.2, hy - 4, h * 0.25, hx - 1.2, hy, h * 0.5));
+    bin.add('white', tf(housing, T));
+    B('black', -hx, hy - 1.6, h * 0.1, hx, hy, h);
+    const m = /_P(\d+(?:\.\d+)?)mm/i.exec(c.pkg), pitch = m ? +m[1] : 0.5, n = Math.min(80, pinCount(c, name, Math.max(2, Math.round((w - 5) / pitch) + 1)));
+    for (let i = 0; i < n; i++) { const px = (i - (n - 1) / 2) * pitch; B('gold', px - pitch * 0.22, -hy, 0, px + pitch * 0.22, -hy + 0.8, 0.15); }
+    return;
+  }
+  if (type === 'dsub') {
+    // a right-angle D-sub: the metal flange at the edge, the D-shaped shell out past it round the black insulator,
+    // a hex jackscrew post each side, the plastic body behind
+    const n = w < 35 ? 9 : w < 46 ? 15 : w < 61 ? 25 : 37, top = (Math.ceil(n / 2) - 1) * 2.77 + 5.6, sh = Math.min(7.9, h - 2), zc = h / 2;
+    const D = (tw: number, hh: number) => poly([[-tw / 2 + hh * 0.18, -hh / 2], [tw / 2 - hh * 0.18, -hh / 2], [tw / 2, hh / 2], [-tw / 2, hh / 2]]);
+    const outY = (m: MF, y1: number) => m.transform([1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, y1, zc, 1] as any);
+    const sl = Math.min(6, l * 0.45), fy = hy - sl; // the shell's length out past the flange, where the flange is
+    B('black', -hx + 2.5, -hy, 0, hx - 2.5, fy - 0.8, h - 1);
+    B('metal', -hx, fy - 0.8, 0, hx, fy, h);
+    bin.add('metal', tf(outY(ext(D(top, sh), 0, sl).subtract(ext(D(top - 1.2, sh - 1.2), -1, sl - 0.6)), hy), T));
+    bin.add('black', tf(outY(ext(D(top - 1.3, sh - 1.3), 0, sl - 1), hy - 1), T));
+    for (const sx of [-1, 1]) {
+      const x = sx * Math.min(hx - 2.8, top / 2 + 4.2);
+      bin.add('metal', tf(cyl(0, 0, 0, sl - 1.2, 2.7, 2.7, 6).subtract(cyl(0, 0, 1, sl, 1.3, 1.3, 16)).transform([-1, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, x, fy, zc, 1] as any), T));
+    }
+    return;
+  }
+  if (type === 'bnc') {
+    // a right-angle BNC: its body on the board, the metal barrel out past the edge with its two bayonet studs, the
+    // white insulator and centre pin in its mouth
+    const zc = h / 2, R = Math.max(1.5, Math.min(4.8, h / 2 - 0.5)), bl = Math.min(l * 0.55, 11);
+    B('black', -hx, -hy, 0, hx, hy - bl, h);
+    bin.add('metal', tf(cylY(0, zc, R + 1.4, hy - bl, hy - bl + 2.5), T));
+    bin.add('metal', tf(cylY(0, zc, R, hy - bl, hy).subtract(cylY(0, zc, R - 0.6, hy - bl + 1, hy + 1)), T));
+    bin.add('white', tf(cylY(0, zc, R - 0.6, hy - bl + 1, hy - 1.5).subtract(cylY(0, zc, 0.8, hy - bl, hy)), T));
+    bin.add('gold', tf(cylY(0, zc, 0.5, hy - bl + 1, hy - 1.8), T));
+    for (const sx of [-1, 1]) B('metal', sx > 0 ? R - 0.2 : -R - 1.2, hy - 3.6, zc - 0.6, sx > 0 ? R + 1.2 : -R + 0.2, hy - 2.4, zc + 0.6);
+    return;
+  }
+  if (type === 'rca') {
+    // an RCA jack: a black body, the coloured ring (red or white for sound, yellow for video) and its metal sleeve
+    const R = Math.max(1.5, Math.min(4.1, h / 2 - 0.6)), zc = Math.max(R + 0.8, Math.min(h - R - 0.8, c.conn?.zc ?? h / 2));
+    const ring: Mat = /red|right|\bR\b/i.test(name) ? 'red' : /white|left|\bL\b/i.test(name) ? 'white' : 'yellow';
+    B('black', -hx, -hy, 0, hx, hy - 3, h);
+    bin.add(ring, tf(cylY(0, zc, R + 0.8, hy - 3, hy - 1.2), T));
+    bin.add('metal', tf(cylY(0, zc, R, hy - 3, hy).subtract(cylY(0, zc, R - 0.5, hy - 2.5, hy + 1)), T));
+    bin.add('metal', tf(cylY(0, zc, 1.3, hy - 3, hy - 0.4).subtract(cylY(0, zc, 0.6, hy - 2.5, hy)), T));
+    return;
+  }
+  if (type === 'xt60' || type === 'xt30') {
+    // an XT socket: the yellow housing, its mouth with one corner cut (a plug only goes in one way), two gold sockets
+    const s = type === 'xt60' ? 1 : 0.65, zc = h / 2, mw = Math.max(1, w - 1.6), mh = Math.max(1, h - 1.6), ch = Math.min(2 * s, mh / 2);
+    const mouth = poly([[-mw / 2, -mh / 2], [mw / 2 - ch, -mh / 2], [mw / 2, -mh / 2 + ch], [mw / 2, mh / 2], [-mw / 2, mh / 2]]);
+    const depth = Math.min(l * 0.7, 10 * s);
+    bin.add('yellow', tf(box(-hx, -hy, 0, hx, hy, h).subtract(ext(mouth, 0, depth + 1).transform([1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, hy + 1, zc, 1] as any)), T));
+    for (const sx of [-1, 1]) bin.add('gold', tf(cylY(sx * 3.6 * s, zc, 1.9 * s, hy - depth, hy - 1).subtract(cylY(sx * 3.6 * s, zc, 1.35 * s, hy - depth + 1, hy)), T));
+    return;
+  }
   if (c.conn?.entry === 'edge' || c.kind === 'connector') {
-    const metalShell = /usb|hdmi|microsd|sma|rj45/.test(type) || /usb|hdmi|sd/i.test(name);
+    const metalShell = /usb|hdmi|microsd|sma|rj45|^(dp|sd)$/.test(type) || /usb|hdmi|sd/i.test(name);
     if (type === 'barrel' || type === 'audio35') {
-      const r = Math.min(w, h) * (type === 'barrel' ? 0.34 : 0.26);
+      // the bore on the plug's axis (6.5 mm up on a barrel jack), so the plug drawn in it lines up
+      const r = Math.min(w, h) * (type === 'barrel' ? 0.34 : 0.26), zc = Math.max(r + 0.4, Math.min(h - r - 0.4, c.conn?.zc || h / 2));
       let body = box(-hx, -hy, 0, hx, hy, h);
-      body = body.subtract(cylY(0, h / 2, r, hy - Math.min(l * 0.7, 9), hy + 1));
+      body = body.subtract(cylY(0, zc, r, hy - Math.min(l * 0.7, 9), hy + 1));
       bin.add('black', tf(body, T));
-      bin.add('metal', tf(cylY(0, h / 2, r * 0.35, hy - Math.min(l * 0.7, 9), hy - 1.5), T));
-      if (type === 'audio35') bin.add('black', tf(cylY(0, h / 2, r + 0.9, hy - 0.2, hy + 1.6).subtract(cylY(0, h / 2, r, hy - 1, hy + 2)), T));
+      bin.add('metal', tf(cylY(0, zc, r * 0.35, hy - Math.min(l * 0.7, 9), hy - 1.5), T));
+      if (type === 'audio35') bin.add('black', tf(cylY(0, zc, r + 0.9, hy - 0.2, hy + 1.6).subtract(cylY(0, zc, r, hy - 1, hy + 2)), T));
       return;
     }
     if (type === 'terminal') {
@@ -219,19 +334,20 @@ function partDetail(bin: Bin, c: Comp, zt: number, zb: number) {
       return;
     }
     const t = Math.max(0.3, Math.min(0.6, Math.min(w, h) * 0.08));
-    const depth = Math.min(l * 0.75, type === 'rj45' ? 13 : 7);
+    const depth = Math.min(l * 0.75, type === 'rj45' || type === 'rj11' ? 13 : 7);
     let body = box(-hx, -hy, 0, hx, hy, h);
     let hole: MF;
     if (type === 'usb_c' || type === 'usb_micro_b' || type === 'hdmi_micro') {
       const hh = Math.max(0.6, h - 2 * t), ww = Math.max(1, w - 2 * t), r = Math.min(hh, ww) / 2;
       hole = ext(roundRect(ww, hh, r), 0, depth + 1).transform([-1, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, hy - depth, h / 2, 1] as any);
       body = ext(roundRect(w, h, Math.min(w, h) / 2), 0, l).transform([-1, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, -hy, h / 2, 1] as any);
-    } else if (type === 'rj45') {
+    } else if (type === 'rj45' || type === 'rj11') {
       hole = box(-hx + 2.2, hy - depth, 1.2, hx - 2.2, hy + 1, h - 2.5).add(box(-2, hy - depth, 0.4, 2, hy + 1, 1.3)); // latch slot
-    } else if (type.startsWith('hdmi')) {
-      // HDMI's trapezoid mouth
+    } else if (type.startsWith('hdmi') || type === 'dp') {
+      // HDMI's trapezoid mouth; DisplayPort's has one corner cut
       const ww = w - 2 * t, hh = h - 2 * t, ch = Math.min(1.4, hh * 0.35);
-      hole = ext(poly([[-ww / 2 + ch, 0], [ww / 2 - ch, 0], [ww / 2, ch], [ww / 2, hh], [-ww / 2, hh], [-ww / 2, ch]]), 0, depth + 1).transform([1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, hy + 1, t, 1] as any);
+      const mouth = type === 'dp' ? [[-ww / 2, 0], [ww / 2 - ch, 0], [ww / 2, ch], [ww / 2, hh], [-ww / 2, hh]] : [[-ww / 2 + ch, 0], [ww / 2 - ch, 0], [ww / 2, ch], [ww / 2, hh], [-ww / 2, hh], [-ww / 2, ch]];
+      hole = ext(poly(mouth as [number, number][]), 0, depth + 1).transform([1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, hy + 1, t, 1] as any);
     } else {
       hole = box(-hx + t, hy - depth, t + (type === 'microsd' ? 0 : 0.2), hx - t, hy + 1, h - t);
     }
@@ -248,11 +364,14 @@ function partDetail(bin: Bin, c: Comp, zt: number, zb: number) {
       // shell spring tabs on top
       B('metal', -hx * 0.5, hy - 5, h, -hx * 0.5 + 1.2, hy - 2, h + 0.25); B('metal', hx * 0.5 - 1.2, hy - 5, h, hx * 0.5, hy - 2, h + 0.25);
       B('black', -hx + t, hy - depth, t, hx - t, hy - depth + 0.3, h - t);
-    } else if (type === 'usb_c' || type === 'usb_micro_b' || type === 'hdmi_micro' || type === 'hdmi_mini' || type === 'hdmi_a') {
+    } else if (type === 'usb_c' || type === 'usb_micro_b' || type === 'hdmi_micro' || type === 'hdmi_mini' || type === 'hdmi_a' || type === 'dp') {
       B('black', -hx * 0.62, hy - depth + 0.3, h / 2 - 0.3, hx * 0.62, hy - 0.9, h / 2 + 0.3);
       const nc = type === 'usb_c' ? 6 : 5;
       for (let c2 = 0; c2 < nc; c2++) { const cx = -hx * 0.55 + (hx * 1.1 * (c2 + 0.5)) / nc; B('gold', cx - 0.12, hy - depth + 0.8, h / 2 + 0.3, cx + 0.12, hy - 1.2, h / 2 + 0.36); }
       B('black', -hx + t, hy - depth, t, hx - t, hy - depth + 0.3, h - t);
+    } else if (type === 'rj11') {
+      B('black', -hx + 2.2, hy - depth, 1.2, hx - 2.2, hy - depth + 0.4, h - 2.5);
+      for (let c2 = 0; c2 < 6; c2++) { const cx = (c2 - 2.5) * 1.02; B('gold', cx - 0.2, hy - depth + 0.4, h - 3.3, cx + 0.2, hy - depth + 5, h - 2.55); }
     } else if (type === 'rj45') {
       B('black', -hx + 2.2, hy - depth, 1.2, hx - 2.2, hy - depth + 0.4, h - 2.5);
       for (let c2 = 0; c2 < 8; c2++) { const cx = -3.57 + c2 * 1.02; B('gold', cx - 0.2, hy - depth + 0.4, h - 3.3, cx + 0.2, hy - depth + 5, h - 2.55); }
@@ -762,6 +881,63 @@ function plugAt(T: number[], p: PlugSize, tag: PickTag, anim: Anim, type: string
       metal([pill(-4.4, 3.5, 3.5), pill(x0 + 0.3, 3.5, 3.5), pill(x0 + 0.3, 5, 5), pill(x0 + 1.5, 5, 5)]);
       body(overmold(W, H, W / 2, x0 + 1.5, x1, p.cable));
       break;
+    case 'dp':
+      // DisplayPort: the metal shell, the moulded body, the latch button on top
+      metal(rect(-8.5, x0 + 0.4, 16, 4.6, 0.5));
+      body(overmold(W, H, Math.min(2.5, H / 3), x0, x1, p.cable, 0.3));
+      push('black', loft(T, rect(x0 + 2, x0 + 9, 5, 1, 0.4, H / 2 + 0.1)));
+      break;
+    case 'rj11':
+      push('white', loft(T, rect(-11, x0 + 1.5, 9.6, 6.6, 0.5)));
+      body([{ x: x0, w: 10, h: 7.5, r: 1 }, { x: x0 + 3, w: W, h: H * 0.9, r: 2 }, pill(x0 + p.len * 0.8, p.cable + 2, p.cable + 2), pill(x1, p.cable + 0.6, p.cable + 0.6)]);
+      break;
+    case 'dsub': {
+      // the D-shaped metal shell in the socket, its flange, the hood tapering onto the cable, a thumbscrew each side
+      // into the socket's jackscrew posts
+      const sw = Math.max(10, W - 14.5);
+      metal(rect(-6, x0 + 0.5, sw, 7.2, 1));
+      metal(rect(x0 + 0.5, x0 + 1.3, W, H * 0.8, 1));
+      body([{ x: x0 + 1.3, w: W - 3, h: H * 0.62, r: 2 }, { x: x0 + p.len * 0.45, w: W - 4, h: H * 0.62, r: 2.5 }, { x: x0 + p.len * 0.85, w: Math.max(2 * p.cable + 4, W * 0.4), h: H * 0.55, r: 3 }, pill(x1, p.cable + 2, p.cable + 2), pill(x1 + 6, p.cable + 0.6, p.cable + 0.6)]);
+      for (const y of [-(sw / 2 + 4.2), sw / 2 + 4.2]) {
+        push('metal', loft(T, [pill(-4.5, 2.4, 2.4, { y }), pill(x0 + 3, 2.4, 2.4, { y })]));
+        push('metal', loft(T, [pill(x0 + 3, 5.4, 5.4, { y }), pill(x0 + 9, 5.4, 5.4, { y })]));
+      }
+      break;
+    }
+    case 'xt60': case 'xt30': {
+      // the yellow plug housing, a red and a black lead out of the back
+      const s = type === 'xt60' ? 1 : 0.65;
+      push('yellow', loft(T, rect(-10 * s, x0 + 9 * s, W, H, 1.2 * s)));
+      for (const [y, m] of [[-3.6 * s, 'red'], [3.6 * s, 'cable']] as const) push(m, loft(T, [pill(x0 + 9 * s, Math.max(2, p.cable), Math.max(2, p.cable), { y }), pill(x1 + 10, Math.max(2, p.cable), Math.max(2, p.cable), { y })]));
+      return bin.ghosts('plug', tag, anim, {}, true);
+    }
+    case 'rca':
+      metal([pill(-9, 7.8, 7.8), pill(x0 + 1, 7.8, 7.8)]);
+      body(overmold(W, H, W / 2, x0 + 1, x1, p.cable, 0.35));
+      break;
+    case 'bnc':
+      // the bayonet sleeve, its grip, then the boot
+      metal([pill(-10, 9.6, 9.6), pill(x0 + 9, 9.6, 9.6)]);
+      metal([pill(x0 + 2, 11.4, 11.4), pill(x0 + 7, 11.4, 11.4)]);
+      body([pill(x0 + 9, 8.4, 8.4), pill(x0 + 18, 7, 7), pill(x1, p.cable + 1.2, p.cable + 1.2)], 'black');
+      return bin.ghosts('plug', tag, anim, {}, true);
+    case 'sd':
+      push('blue', loft(T, rect(-27, 2.5, 24, 2.1, 0.6)));
+      return bin.ghosts('plug', tag, anim, {}, true);
+    case 'fpc':
+      // the flat cable: its stiffened end in the slot, then the cable itself
+      push('blue', loft(T, rect(-3.5, x0 + 1, W, 0.35, 0.05)));
+      push('white', loft(T, rect(x0 + 1, x1 + 25, W, 0.25, 0.05)));
+      return bin.ghosts('plug', tag, anim, {}, true);
+    case 'ufl':
+      metal(rect(-1.1, x0 + 0.8, 2.2, 2.2, 1.05));
+      push('cable', loft(T, [pill(x0 + 0.8, 1.6, 1.6), pill(x1, 1.2, 1.2)]));
+      return bin.ghosts('plug', tag, anim, {}, true);
+    case 'microfit': case 'minifit':
+      // a Molex power plug: its housing (black Micro-Fit, natural Mini-Fit), then the bundle of wires
+      push(type === 'microfit' ? 'black' : 'white', loft(T, rect(-1, x0 + Math.min(10, p.len), W, H, 0.6)));
+      body([{ x: x0 + Math.min(10, p.len) - 0.5, w: Math.max(2, W - 2), h: Math.max(2, H * 0.5), r: 1 }, { x: x1 + 6, w: Math.max(2, W - 2), h: Math.max(2, H * 0.5), r: 1 }], 'cable');
+      return bin.ghosts('plug', tag, anim, {}, true);
     case 'microsd':
       // a card in its slot, a millimetre or two showing
       push('black', loft(T, rect(-13, 1.8, 11, 0.8, 0.3)));
@@ -782,12 +958,12 @@ function plugAt(T: number[], p: PlugSize, tag: PickTag, anim: Anim, type: string
       }
       return bin.ghosts('plug', tag, anim, {}, true);
     }
-    case 'qwiic': case 'jst_ph': case 'jst_xh': case 'header':
+    case 'qwiic': case 'jst_ph': case 'jst_xh': case 'jst_gh': case 'jst_zh': case 'picoblade': case 'kk254': case 'wtb_side': case 'header':
       push('white', loft(T, rect(-1, x0 + Math.min(6, p.len), W, H, 0.4)));
       if (type === 'header') push('black', loft(T, rect(-1, x0 + Math.min(12, p.len), W, H, 0.3)));
       body([{ x: x0 + Math.min(6, p.len) - 0.5, w: Math.max(2, W - 1.5), h: 1.2, r: 0.5 }, { x: x1 + 6, w: Math.max(2, W - 1.5), h: 1.2, r: 0.5 }], 'cable');
       return bin.ghosts('plug', tag, anim, {}, true);
-    case 'swd10': case 'jtag20':
+    case 'swd10': case 'cortex20': case 'jtag20': case 'idc': case 'idc_ra':
       // an IDC socket pressed onto a ribbon: its body (the lower part goes into the header's shroud), the cable clamp
       // across its top, and the polarising key on one side
       push('black', loft(T, rect(-2.5, x1 - 1.8, W, H, 0.5)));

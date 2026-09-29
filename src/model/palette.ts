@@ -3,7 +3,7 @@
 // screw sizes. Every one of them is an ordinary part or hole afterwards, editable like one read from a file.
 // Each item also makes a small demo board with just itself on it: that is what its picture shows.
 import type { Board, Comp, Hole, V2 } from './types';
-import { CONNECTORS, connById, connSetup } from './library';
+import { CONNECTORS, connById, connSetup, sizedConn } from './library';
 import { deg, extentAlong, nearestEdge, rad, roundedRectLoop, uid } from '../geom/poly';
 
 export type PaletteGroup = 'USB and power' | 'Video, network and audio' | 'Headers and wires' | 'Debug and serial' | 'Holes' | 'Parts that stand tall' | 'Other';
@@ -47,7 +47,8 @@ const part = (b: Board, at: V2, pre: string, pkg: string, w: number, l: number, 
 const EDGE_GROUP: Record<string, PaletteGroup> = {
   usb_c: 'USB and power', usb_micro_b: 'USB and power', usb_mini_b: 'USB and power', usb_a: 'USB and power', usb_a_dual: 'USB and power', usb_b: 'USB and power', barrel: 'USB and power', terminal: 'USB and power', iec_c7: 'USB and power',
   hdmi_a: 'Video, network and audio', hdmi_mini: 'Video, network and audio', hdmi_micro: 'Video, network and audio', rj45: 'Video, network and audio', audio35: 'Video, network and audio', sma: 'Video, network and audio', microsd: 'Video, network and audio',
-  qwiic: 'Headers and wires', pins_ra: 'Headers and wires', custom: 'Other',
+  xt60: 'USB and power', xt30: 'USB and power', dp: 'Video, network and audio', rj11: 'Video, network and audio', rca: 'Video, network and audio', bnc: 'Video, network and audio', sd: 'Video, network and audio',
+  qwiic: 'Headers and wires', pins_ra: 'Headers and wires', wtb_side: 'Headers and wires', idc_ra: 'Headers and wires', fpc: 'Headers and wires', dsub: 'Headers and wires', custom: 'Other',
 };
 
 const header = (rows: number, n: number): PaletteItem => ({
@@ -69,6 +70,11 @@ const tall = (id: string, label: string, pre: string, pkg: string, w: number, l:
   id, group: 'Parts that stand tall', label, hint, size: mm(w, l, h),
   make: (b, at) => ({ comp: part(b, at, pre, pkg, w, l, h, kind) }),
 });
+/** An upright connector sized for its footprint name (its pins say how wide). */
+const upright = (id: string, type: string, label: string, pkg: string, hint: string, kind: Comp['kind'] = 'connector', tht = true): PaletteItem => {
+  const t = sizedConn(connById(type), pkg);
+  return { id, group: 'Headers and wires', label, hint, size: mm(t.body.w, t.body.l, t.body.h), make: (b, at) => ({ comp: { ...topConnector(b, type, at, { pkg, w: t.body.w, l: t.body.l, h: t.body.h, kind, tht }), conn: connSetup(t, 0) } }) };
+};
 const debug = (id: string, type: string, label: string, pkg: string, hint: string, tht: boolean): PaletteItem => {
   const t = connById(type);
   return { id, group: 'Debug and serial', label, hint, size: mm(t.body.w, t.body.l, t.body.h), make: (b, at) => ({ comp: { ...topConnector(b, type, at, { pkg, w: t.body.w, l: t.body.l, h: t.body.h, tht }), role: 'debug' } }) };
@@ -82,6 +88,13 @@ export const PALETTE: PaletteItem[] = [
   })),
   header(1, 2), header(1, 3), header(1, 4), header(1, 6), header(1, 8), header(1, 10), header(2, 5), header(2, 10), header(2, 20),
   jst('ph', 2), jst('ph', 3), jst('ph', 4), jst('xh', 2), jst('xh', 3), jst('xh', 4),
+  upright('idc10', 'idc', 'Box header 2 × 5 (ribbon)', 'IDC-Header_2x05_P2.54mm_Vertical', 'a ribbon cable pushes in from above'),
+  upright('idc16', 'idc', 'Box header 2 × 8 (ribbon)', 'IDC-Header_2x08_P2.54mm_Vertical', 'a ribbon cable pushes in from above'),
+  upright('gh4', 'jst_gh', 'JST-GH 4-pin', 'JST_GH_BM04B-GHS-TBT_1x04_P1.25mm_Vertical', '1.25 mm, latching (drones, flight controllers)'),
+  upright('pico4', 'picoblade', 'Molex PicoBlade 4-pin', 'Molex_PicoBlade_53047-0410_1x04_P1.25mm_Vertical', '1.25 mm, its plug goes in from above'),
+  upright('fan4', 'kk254', 'Fan header 4-pin', 'Molex_KK-254_AE-6410-04A_1x04_P2.54mm_Vertical', 'a fan or a KK plug goes in from above'),
+  upright('mfit4', 'microfit', 'Molex Micro-Fit 2 × 2', 'Molex_Micro-Fit_3.0_43045-0400_2x02_P3.00mm_Vertical', 'power in from above (3 mm)'),
+  upright('ufl', 'ufl', 'u.FL antenna socket', 'U.FL_Hirose_U.FL-R-SMT-1_Vertical', 'a thin antenna lead snaps on from above', 'connector', false),
   debug('dbg_swd10', 'swd10', 'Debug 10-pin, 1.27 mm', 'PinHeader_2x05_P1.27mm_Vertical_SMD', 'SWD: a J-Link plugs in with its ribbon', false),
   debug('dbg_jtag20', 'jtag20', 'Debug 20-pin, 2.54 mm', 'IDC-Header_2x10_P2.54mm_Vertical', "JTAG box header: a J-Link's own ribbon plugs straight in", true),
   debug('dbg_tag', 'tagconnect', 'Tag-Connect pads', 'Tag-Connect_TC2050', 'no connector: the Tag-Connect cable clips on from above', false),
@@ -107,6 +120,9 @@ export function paletteFor(c: Comp): PaletteItem | undefined {
   if (t === 'swd10') return PALETTE.find((x) => x.id === 'dbg_swd10');
   if (t === 'jtag20') return PALETTE.find((x) => x.id === 'dbg_jtag20');
   if (t === 'tagconnect') return PALETTE.find((x) => x.id === 'dbg_tag');
+  if (t === 'idc') return PALETTE.find((x) => x.id === (Math.max(c.w, c.l) > 24 ? 'idc16' : 'idc10'));
+  const up = ({ idc: 'idc10', jst_gh: 'gh4', picoblade: 'pico4', kk254: 'fan4', microfit: 'mfit4', ufl: 'ufl' } as Record<string, string>)[t ?? ''];
+  if (up) return PALETTE.find((x) => x.id === up);
   if (t === 'jst_ph' || t === 'jst_xh') return PALETTE.find((x) => x.id === `jst_${t.slice(4)}${Math.max(2, Math.min(4, Math.round((Math.max(c.w, c.l) - 3.9) / (t === 'jst_ph' ? 2 : 2.5)) + 1))}`) ?? PALETTE.find((x) => x.id === `jst_${t.slice(4)}3`);
   if (t === 'header' || c.kind === 'header') {
     const m = /(\d+)x(\d+)/.exec(c.pkg), rows = m ? Math.min(+m[1], +m[2]) : 1, n = m ? Math.max(+m[1], +m[2]) : Math.round(Math.max(c.w, c.l) / 2.54);

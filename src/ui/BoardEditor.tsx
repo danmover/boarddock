@@ -23,7 +23,7 @@ import { PART_DRAG, Toolbox } from './Toolbox';
 import { useShapeTool } from './ShapeTool';
 
 export type Tool = 'select' | 'pan' | 'place' | 'measure' | 'shape' | 'photoScale' | 'photoAlign';
-const PIN_TYPES = new Set(['header', 'pins_ra', 'jst_ph', 'jst_xh', 'swd10', 'cortex20', 'jtag20']);
+const PIN_TYPES = new Set(['header', 'pins_ra', 'jst_ph', 'jst_xh', 'jst_gh', 'jst_zh', 'picoblade', 'kk254', 'swd10', 'cortex20', 'jtag20', 'idc']);
 const snap = (v: number) => Math.round(v * 10) / 10;
 const TBX_KEY = 'boarddock.toolbox';
 const CU_KEY = 'boarddock.copper';

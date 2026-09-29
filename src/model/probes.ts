@@ -94,6 +94,11 @@ export function uartPins(c: Comp): { gnd: Pin; rx: Pin; tx: Pin; from: 'set' | '
   const find = (f: (t: string) => boolean) => pins.find((q) => q.net && words(q.net).some(f));
   const [gnd, rx, tx] = [find(NET.gnd), find(NET.rx), find(NET.tx)];
   if (gnd && rx && tx && new Set([gnd, rx, tx]).size === 3) return { gnd, rx, tx, from: 'nets', pins };
+  // ground and TX by their nets, and one other signal (RX by another name, "FDX"): that one is RX, to be checked
+  if (gnd && tx && gnd !== tx && !rx) {
+    const others = pins.filter((q) => q !== gnd && q !== tx && q.net && !words(q.net).some((t) => NET.gnd(t) || /^(v\d*|vcc|vdd|vbus|vin|\d+v\d*|\d*v\d+|pwr|power)$/i.test(t)));
+    if (others.length === 1) return { gnd, rx: others[0], tx, from: 'guess', pins };
+  }
   const six = pins.length === 6 || /ftdi/i.test(`${c.value ?? ''} ${c.ref}`);
   const [g, r, t] = six && pins.length >= 5 ? [1, 4, 5] : [1, 2, 3];
   return { gnd: byN(g) ?? pins[0], rx: byN(r) ?? pins[1], tx: byN(t) ?? pins[2], from: 'guess', pins };

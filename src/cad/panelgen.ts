@@ -158,7 +158,14 @@ export function generatePanel(p: Project): GenResult {
   const ribbonWidth = (r: { module: string; ref: string }) => {
     const c = mods.get(r.module)?.m.board.comps.find((x) => x.ref === baseRef(r.ref));
     const t = c?.conn?.type;
-    return t === 'jtag20' ? 25.4 : t === 'swd10' || t === 'tagconnect' ? 6.4 : Math.min(12, Math.max(2.5, c?.conn?.plug.w ?? 6.4));
+    if (c && (t === 'idc' || t === 'idc_ra')) return Math.max(6.4, Math.round((Math.max(c.w, c.l) - 7.6) / 2.54) * 2.54);
+    return t === 'jtag20' ? 25.4 : t === 'cortex20' ? 12.7 : t === 'swd10' || t === 'tagconnect' ? 6.4 : Math.min(12, Math.max(2.5, c?.conn?.plug.w ?? 6.4));
+  };
+  /** A cable that is a flat ribbon: a debug probe's, or one between two box headers. */
+  const flat = (l: { kind?: string; a: { module: string; ref: string }; b: { module: string; ref: string } }) => {
+    if (l.kind === 'debug') return true;
+    const t = (r: { module: string; ref: string }) => mods.get(r.module)?.m.board.comps.find((x) => x.ref === baseRef(r.ref))?.conn?.type;
+    return /^idc/.test(t(l.a) ?? '') && /^idc/.test(t(l.b) ?? '');
   };
   const mat = MATERIALS[p.modules[0]?.holder.material ?? 'PETG'];
 
@@ -703,7 +710,7 @@ export function generatePanel(p: Project): GenResult {
     };
     // debug ribbons and jumper wires first, shortest first, each going round or over its dock outside or above the
     // ones before it and above any cable rising from a plug under it; then they are in the way of the other cables
-    const near = (l: NonNullable<Project['links']>[number]) => l.kind === 'debug' || l.kind === 'jumper';
+    const near = (l: NonNullable<Project['links']>[number]) => flat(l) || l.kind === 'jumper';
     const rising: Box[] = [];
     for (const l of live) for (const r of [l.a, l.b]) {
       const e = ends.get(`${r.module}/${r.ref}`);
@@ -772,7 +779,7 @@ export function generatePanel(p: Project): GenResult {
       return hs.filter((h) => { const o = h.ob.src && fromMesh(h.ob.src.mesh, h.ob.src.T); return !o || tube.intersect(o).volume() > 0.2; });
     };
     // every cable's planned way, with its bends as a cable takes them (arcs of about four diameters, no kinks)
-    const bendR = (q: (typeof routes)[number]) => (q.l.kind === 'debug' ? 7 : q.l.kind === 'jumper' ? 6 : bendRadius(q.d / 2));
+    const bendR = (q: (typeof routes)[number]) => (flat(q.l) ? 7 : q.l.kind === 'jumper' ? 6 : bendRadius(q.d / 2));
     const lay = () => routes.map((q) => {
       const { l, A, B, ch, d, zc } = q;
       const vl = laneOf.get(l.id)!;
@@ -784,7 +791,7 @@ export function generatePanel(p: Project): GenResult {
       const own = new Set([A.plug, B.plug]), mods = new Set([l.a.module, l.b.module]), rr = d / 2 - 0.8;
       const clear = (arc: number[][]) => arc.every((c) => !obs.some((ob) => /^rail /.test(ob.label) && !(ob.plug && own.has(ob.plug)) && !(ob.module && mods.has(ob.module))
         && c[0] > ob.box[0] - rr && c[0] < ob.box[3] + rr && c[1] > ob.box[1] - rr && c[1] < ob.box[4] + rr && c[2] > ob.box[2] - rr && c[2] < ob.box[5] + rr));
-      return { route, vl, hit: hits(route, obs, [A, B], d / 2), path: filletPath(route.pts, bendR(q), l.kind === 'debug' || l.kind === 'jumper' ? undefined : clear) };
+      return { route, vl, hit: hits(route, obs, [A, B], d / 2), path: filletPath(route.pts, bendR(q), flat(l) || l.kind === 'jumper' ? undefined : clear) };
     });
     // each cable's comb lane: where it runs straight along its street (it has bent away by a bend's radius before the
     // street ends, and a comb there would sit beside it, not round it). With them the stands are known in full (a
@@ -814,13 +821,13 @@ export function generatePanel(p: Project): GenResult {
     // they lie side by side, nothing goes through a holder, a dock, a plug or a ribbon, and the ends stay in their plugs
     const simIn = routes.map((q, i) => {
       const { l, A, B, d } = q, kind = l.kind ?? 'usb';
-      const r = kind === 'debug' ? Math.min(3, Math.min(ribbonWidth(l.a), ribbonWidth(l.b)) / 2) : kind === 'jumper' ? Math.max(1, (l.wires?.length ?? 1) * 0.8) : d / 2;
+      const r = flat(l) ? Math.min(3, Math.min(ribbonWidth(l.a), ribbonWidth(l.b)) / 2) : kind === 'jumper' ? Math.max(1, (l.wires?.length ?? 1) * 0.8) : d / 2;
       // out of each plug the cable keeps the shape it was laid in (straight out, then its first bend): stiffness rules
       // there; the rest settles with the other cables
       const hold = lead(d / 2) + 1.6 * Math.min(25, Math.max(10, 4 * d));
       // where its street passes through a stand's comb, the comb holds it
       const rt = planned[i].route, grip = rt.kinds.flatMap((k, j) => (k === 'street' ? stations.filter((u) => u > Math.min(rt.pts[j][0], rt.pts[j + 1][0]) + bendR(q) + 2 && u < Math.max(rt.pts[j][0], rt.pts[j + 1][0]) - bendR(q) - 2).map((u) => [u, rt.pts[j][1], rt.pts[j][2]]) : []));
-      return { id: l.id, pts: planned[i].path, r, grip, pin: [10, 10] as [number, number], stiff: [hold - 10, hold - 10] as [number, number], fixed: kind === 'debug', mods: [l.a.module, l.b.module], plugs: [A.plug, B.plug], floor: q.zc };
+      return { id: l.id, pts: planned[i].path, r, grip, pin: [10, 10] as [number, number], stiff: [hold - 10, hold - 10] as [number, number], fixed: flat(l), mods: [l.a.module, l.b.module], plugs: [A.plug, B.plug], floor: q.zc };
     });
     const laidOut = settleCables(simIn, obs, 0).touching.length; // where the planned routes met, before settling
     const sim = settleCables(simIn, obs);
@@ -861,7 +868,7 @@ export function generatePanel(p: Project): GenResult {
       // the 3D view's live touch: pulses running along the cable the way power or data goes, once its source has power
       const fl = cableFlow(p, l), fwd = fl.from.module === l.a.module && fl.from.ref === l.a.ref;
       const flow = (pts: number[][], r: number): Ghost['fx'] => ({ flow: { pts: fwd ? pts : [...pts].reverse(), r, colour: FLOW_COLOUR[kind] ?? '#9fd8ff', on: powered.has(fl.from.module), slow: kind === 'power' } });
-      if (kind === 'debug') {
+      if (flat(l)) {
         // a flat grey ribbon as wide as the narrower end's connector, square across both sockets, its pin 1 edge red
         const rw = Math.min(ribbonWidth(l.a), ribbonWidth(l.b));
         const wOf = (E: typeof EA) => E.w ?? (Math.abs(E.d[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0]);

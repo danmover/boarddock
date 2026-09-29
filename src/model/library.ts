@@ -18,33 +18,56 @@ export interface ConnType {
   note?: string;
 }
 
-// Order matters: first match wins, so specific names come before generic ones.
+// Order matters: first match wins, so specific names come before generic ones. Besides the names in footprints
+// (KiCad's, and the usual ones in other tools) each type knows the common makers' part numbers, as a footprint or a
+// value is often only that: Molex 105017 (micro-USB), Bel A829-1A1T (RJ45), CUI PJ-102AH (DC jack) and so on.
 export const CONNECTORS: ConnType[] = [
-  { id: 'usb_c', name: 'USB-C', entry: 'edge', body: { w: 8.94, l: 7.35, h: 3.26 }, zc: 1.63, overhang: 0.6, plug: { w: 12.4, h: 6.6, len: 22, cable: 4 }, match: /usb[\s_-]?c\b|type[\s_-]?c|usb_?c_|usbc|usb4|gct_usb4/i, cradle: true },
-  { id: 'usb_micro_b', name: 'USB Micro-B', entry: 'edge', body: { w: 7.5, l: 5.3, h: 2.8 }, zc: 1.4, overhang: 0.6, plug: { w: 11, h: 7.5, len: 20, cable: 3.5 }, match: /micro[\s_-]?usb|usb[\s_-]?micro|microusb|micro[\s_-]?b/i, cradle: true },
-  { id: 'usb_mini_b', name: 'USB Mini-B', entry: 'edge', body: { w: 7.7, l: 9.2, h: 3.9 }, zc: 2.0, overhang: 0.8, plug: { w: 12, h: 8, len: 22, cable: 4 }, match: /mini[\s_-]?usb|usb[\s_-]?mini|mini[\s_-]?b/i, cradle: true },
-  { id: 'usb_a_dual', name: 'USB-A (stacked x2)', entry: 'edge', body: { w: 13.1, l: 17.5, h: 15.6 }, zc: 7.8, overhang: 2.5, plug: { w: 16, h: 17, len: 32, cable: 4.5 }, match: /usb[\s_-]?a.*(dual|stack|x2|2x)|dual.*usb/i, cradle: false },
-  { id: 'usb_a', name: 'USB-A', entry: 'edge', body: { w: 13.1, l: 14, h: 7 }, zc: 3.5, overhang: 1.5, plug: { w: 16, h: 8.5, len: 32, cable: 4.5 }, match: /usb[\s_-]?a\b|usb_a|type[\s_-]?a/i, cradle: true },
-  { id: 'usb_b', name: 'USB-B', entry: 'edge', body: { w: 12, l: 16.3, h: 10.9 }, zc: 5.5, overhang: 6.3, plug: { w: 16, h: 13, len: 32, cable: 5 }, match: /usb[\s_-]?b\b|usb_b/i, cradle: true },
-  { id: 'hdmi_micro', name: 'Micro HDMI (D)', entry: 'edge', body: { w: 6.5, l: 7, h: 3 }, zc: 1.5, overhang: 0.5, plug: { w: 11, h: 7, len: 26, cable: 5 }, match: /micro[\s_-]?hdmi|hdmi[\s_-]?micro|hdmi[\s_-]?d\b/i, cradle: true },
-  { id: 'hdmi_mini', name: 'Mini HDMI (C)', entry: 'edge', body: { w: 11.2, l: 7.5, h: 3.2 }, zc: 1.6, overhang: 0.5, plug: { w: 15, h: 8, len: 30, cable: 6 }, match: /mini[\s_-]?hdmi|hdmi[\s_-]?mini|hdmi[\s_-]?c\b/i, cradle: true },
-  { id: 'hdmi_a', name: 'HDMI (A)', entry: 'edge', body: { w: 15, l: 11, h: 5.6 }, zc: 2.8, overhang: 0.5, plug: { w: 21, h: 11, len: 38, cable: 7 }, match: /hdmi/i, cradle: true },
-  { id: 'rj45', name: 'RJ45 / Ethernet', entry: 'edge', body: { w: 16, l: 21, h: 13.5 }, zc: 6.8, overhang: 2.5, plug: { w: 14, h: 13, len: 30, cable: 6 }, match: /rj[\s_-]?45|8p8c|ethernet|magjack|hr911/i, cradle: false, note: 'The plug latch holds it; add a cable tie anchor for strain relief.' },
-  { id: 'dsub', name: 'D-sub (DE-9, DA-15, DB-25)', entry: 'edge', body: { w: 30.8, l: 12.5, h: 12.6 }, zc: 6.3, overhang: 1, plug: { w: 31, h: 16, len: 45, cable: 6 }, match: /d[\s_-]?sub|dsub|\bd[be][\s_-]?9\b|\bda[\s_-]?15\b|\bdb[\s_-]?25\b|\bdc[\s_-]?37\b|rs[\s_-]?232|574578[01]|5747840/i, cradle: false, note: "The plug's own jackscrews hold it: no cap, add a tie anchor." },
-  { id: 'barrel', name: 'DC barrel jack 5.5/2.1', entry: 'edge', body: { w: 9, l: 14, h: 11 }, zc: 6.5, overhang: 1.5, plug: { w: 10, h: 10, len: 32, cable: 3.5 }, match: /barrel|dc[\s_-]?jack|pj[\s_-]?0\d\d|dc[\s_-]?0\d\d|power[\s_-]?jack|bar(rel)?_?jack/i, cradle: true },
-  { id: 'audio35', name: '3.5 mm audio jack', entry: 'edge', body: { w: 6, l: 12, h: 5 }, zc: 2.5, overhang: 1.0, plug: { w: 8.5, h: 8.5, len: 25, cable: 3.5 }, match: /3\.5\s?mm|audio|trs|pj[\s_-]?3\d\d|phone[\s_-]?jack|headphone/i, cradle: true },
-  { id: 'microsd', name: 'microSD slot', entry: 'edge', body: { w: 11.5, l: 14, h: 1.9 }, zc: 0.9, overhang: 0, plug: { w: 14, h: 6, len: 8, cable: 0 }, match: /micro[\s_-]?sd|tf[\s_-]?card|sd[\s_-]?card|microsd/i, cradle: false, note: 'Opening sized for card access and a fingertip, no cradle.' },
-  { id: 'sma', name: 'SMA / RP-SMA (edge)', entry: 'edge', body: { w: 6.4, l: 10, h: 6.4 }, zc: 0, overhang: 7, plug: { w: 9, h: 9, len: 16, cable: 3 }, match: /\bsma\b|sma_|rp[\s_-]?sma|bnc/i, cradle: false },
+  { id: 'usb_c', name: 'USB-C', entry: 'edge', body: { w: 8.94, l: 7.35, h: 3.26 }, zc: 1.63, overhang: 0.6, plug: { w: 12.4, h: 6.6, len: 22, cable: 4 }, match: /usb[\s_-]?c\b|type[\s_-]?c|usb_?c_|usbc|usb4|gct_usb4|12401598|124019772|1240201\d|217175|105450|216990|\bcx90|\bdx07s|63272[123]\d{6}|\bu262-|\buj31|\bujc-|2012670005|2295018/i, cradle: true },
+  { id: 'usb_micro_b', name: 'USB Micro-B', entry: 'edge', body: { w: 7.5, l: 5.3, h: 2.8 }, zc: 1.4, overhang: 0.6, plug: { w: 11, h: 7.5, len: 20, cable: 3.5 }, match: /micro[\s_-]?usb|usb[\s_-]?micro|microusb|micro[\s_-]?a?b\b|micro[\s_-]?b[\s_-]|\bu-?usb|µusb|105017|105133|1051330|47346|47589|10118192|10118193|10118194|10103594|\bzx62|\bdx4r|629105|614105|uj2-mbh|usb313\d|\bu254-|micro[\s_-]?5p/i, cradle: true },
+  { id: 'usb_mini_b', name: 'USB Mini-B', entry: 'edge', body: { w: 7.7, l: 9.2, h: 3.9 }, zc: 2.0, overhang: 0.8, plug: { w: 12, h: 8, len: 22, cable: 4 }, match: /mini[\s_-]?usb|usb[\s_-]?mini|mini[\s_-]?b\b|mini[\s_-]?b[\s_-]|67503|54819|\bux60|65100516|uj2-mibh|1734035/i, cradle: true },
+  { id: 'usb_a_dual', name: 'USB-A (stacked x2)', entry: 'edge', body: { w: 13.1, l: 17.5, h: 15.6 }, zc: 7.8, overhang: 2.5, plug: { w: 16, h: 17, len: 32, cable: 4.5 }, match: /usb[\s_-]?a.*(dual|stack|x2|2x)|dual.*usb|67298|\buj2-a2|\buj3-a2/i, cradle: false },
+  { id: 'usb_a', name: 'USB-A', entry: 'edge', body: { w: 13.1, l: 14, h: 7 }, zc: 3.5, overhang: 1.5, plug: { w: 16, h: 8.5, len: 32, cable: 4.5 }, match: /usb[\s_-]?a\b|usb_a|type[\s_-]?a\b|48037|67643|292303|87520|87583|uj2-adh|\buj3-a|usb-a1|kusbx-a|614004\d{6}\b|1734028|ue27ac/i, cradle: true },
+  { id: 'usb_b', name: 'USB-B', entry: 'edge', body: { w: 12, l: 16.3, h: 10.9 }, zc: 5.5, overhang: 6.3, plug: { w: 16, h: 13, len: 32, cable: 5 }, match: /usb[\s_-]?b\b|usb_b|67068|292304|61400416|uj2-bh|usb-b1|kusbx-b|5787834/i, cradle: true },
+  { id: 'dp', name: 'DisplayPort', entry: 'edge', body: { w: 18.6, l: 16, h: 5.2 }, zc: 2.6, overhang: 0.5, plug: { w: 20.5, h: 9, len: 38, cable: 6 }, match: /display[\s_-]?port|\bdp[\s_-]?(receptacle|conn|jack|socket|port)\b|47272/i, cradle: true },
+  { id: 'hdmi_micro', name: 'Micro HDMI (D)', entry: 'edge', body: { w: 6.5, l: 7, h: 3 }, zc: 1.5, overhang: 0.5, plug: { w: 11, h: 7, len: 26, cable: 5 }, match: /micro[\s_-]?hdmi|hdmi[\s_-]?micro|hdmi[\s_-]?d\b|46765/i, cradle: true },
+  { id: 'hdmi_mini', name: 'Mini HDMI (C)', entry: 'edge', body: { w: 11.2, l: 7.5, h: 3.2 }, zc: 1.6, overhang: 0.5, plug: { w: 15, h: 8, len: 30, cable: 6 }, match: /mini[\s_-]?hdmi|hdmi[\s_-]?mini|hdmi[\s_-]?c\b|47291|2051333/i, cradle: true },
+  { id: 'hdmi_a', name: 'HDMI (A)', entry: 'edge', body: { w: 15, l: 11, h: 5.6 }, zc: 2.8, overhang: 0.5, plug: { w: 21, h: 11, len: 38, cable: 7 }, match: /hdmi|47151|208658|2007435|10029449|685119/i, cradle: true },
+  { id: 'rj45', name: 'RJ45 / Ethernet', entry: 'edge', body: { w: 16, l: 21, h: 13.5 }, zc: 6.8, overhang: 2.5, plug: { w: 14, h: 13, len: 30, cable: 6 }, match: /rj[\s_-]?45|8p8c|ethernet|magjack|\bhr9[01]\d|\bhy911|\blpj\d|rjhse|\brjmg|\brje\d|\barjm|\bjxd\d|\bj00\d\d[a-z]|\bj1011|\bjk0\d|7499\d{3}|615008|08b0-|0826-1|\b[al]8\d\d-1[a-z0-9]1t|\bsi-\d{5}|\brb1-|\b5406\d{3}|lan[\s_-]?(jack|conn)/i, cradle: false, note: 'The plug latch holds it; add a cable tie anchor for strain relief.' },
+  { id: 'rj11', name: 'RJ11 / RJ12 (phone, 6-way)', entry: 'edge', body: { w: 13.5, l: 15.5, h: 11.5 }, zc: 5.8, overhang: 2, plug: { w: 10, h: 9, len: 25, cable: 4 }, match: /rj[\s_-]?1[124]\b|rj[\s_-]?25\b|6p[246]c|4p4c|rj[\s_-]?9\b|95501|\b5520\d{3}/i, cradle: false, note: 'The plug latch holds it; add a cable tie anchor for strain relief.' },
+  { id: 'dsub', name: 'D-sub (DE-9, DA-15, DB-25)', entry: 'edge', body: { w: 30.8, l: 12.5, h: 12.6 }, zc: 6.3, overhang: 1, plug: { w: 31, h: 16, len: 45, cable: 6 }, match: /d[\s_-]?sub|dsub|\bd[be][\s_-]?9\b|\bda[\s_-]?15\b|\bdb[\s_-]?25\b|\bdc[\s_-]?37\b|rs[\s_-]?232|574578[01]|5747840|\b182-00\d|\bl77sde/i, cradle: false, note: "The plug's own jackscrews hold it: no cap, add a tie anchor." },
+  { id: 'xt60', name: 'XT60 (battery, high current)', entry: 'edge', body: { w: 15.8, l: 16, h: 8.3 }, zc: 4.15, overhang: 0, plug: { w: 16, h: 8.5, len: 24, cable: 5 }, match: /xt[\s_-]?60|xt[\s_-]?90/i, cradle: false, note: 'Its plug is a tight push fit: add a tie anchor for its leads.' },
+  { id: 'xt30', name: 'XT30 (battery)', entry: 'edge', body: { w: 10.2, l: 11, h: 5.3 }, zc: 2.65, overhang: 0, plug: { w: 10.5, h: 5.6, len: 18, cable: 3.5 }, match: /xt[\s_-]?30/i, cradle: false, note: 'Its plug is a tight push fit: add a tie anchor for its leads.' },
+  { id: 'barrel', name: 'DC barrel jack 5.5/2.1', entry: 'edge', body: { w: 9, l: 14, h: 11 }, zc: 6.5, overhang: 1.5, plug: { w: 10, h: 10, len: 32, cable: 3.5 }, match: /barrel|dc[\s_-]?jack|jack[\s_-]?dc|\bpj[\s_-]?[0-2]\d\d|\bpjm?-0\d\d|dc[\s_-]?0\d\d|power[\s_-]?jack|bar(rel)?_?jack|rapc7\d\d|\bkldx|\bdcj\d|\b54-00\d{3}|694106|\bdc[\s_-]?(in|power)[\s_-]?(jack|socket)/i, cradle: true },
+  { id: 'rca', name: 'RCA / phono jack', entry: 'edge', body: { w: 10, l: 13, h: 12.5 }, zc: 7, overhang: 3, plug: { w: 11, h: 11, len: 28, cable: 5 }, match: /\brca\b|rca[\s_-]|phono|cinch|\brcj-?\d/i, cradle: true },
+  { id: 'audio35', name: '3.5 mm audio jack', entry: 'edge', body: { w: 6, l: 12, h: 5 }, zc: 2.5, overhang: 1.0, plug: { w: 8.5, h: 8.5, len: 25, cable: 3.5 }, match: /3\.5\s?mm|audio|trs|\bpj[\s_-]?3\d\d|phone[\s_-]?jack|headphone|\bsj1?-\d{3,4}|\bsj-43|\bfc68\d|\bstx-?35|35rapc/i, cradle: true },
+  { id: 'microsd', name: 'microSD slot', entry: 'edge', body: { w: 11.5, l: 14, h: 1.9 }, zc: 0.9, overhang: 0, plug: { w: 14, h: 6, len: 8, cable: 0 }, match: /micro[\s_-]?sd|tf[\s_-]?card|microsd|\bdm3[a-d]|104031|503182|47219|472192|\bmem20[3-6]\d|\btf-(push|01)/i, cradle: false, note: 'Opening sized for card access and a fingertip, no cradle.' },
+  { id: 'sd', name: 'SD card slot', entry: 'edge', body: { w: 28, l: 29, h: 3 }, zc: 1.5, overhang: 0, plug: { w: 24, h: 2.1, len: 10, cable: 0 }, match: /\bsd[\s_-]?(card|slot|socket|conn)|sdcard|\bsd_(kyocera|te|molex)|2041021|67840/i, cradle: false, note: 'Opening sized for card access and a fingertip, no cradle.' },
+  { id: 'bnc', name: 'BNC', entry: 'edge', body: { w: 14.5, l: 22, h: 14.5 }, zc: 7.25, overhang: 11, plug: { w: 14.5, h: 14.5, len: 32, cable: 5 }, match: /\bbnc|031-5431|\b5227161/i, cradle: false, note: 'Its bayonet holds the plug: no cap.' },
+  { id: 'ufl', name: 'u.FL / IPEX (antenna lead)', entry: 'top', body: { w: 3, l: 3, h: 1.25 }, zc: 0, overhang: 0, plug: { w: 2.2, h: 2.2, len: 2.2, cable: 1.2 }, match: /\bu\.?fl\b|u\.fl|\bw\.fl|\bx\.fl|ipex|\bmhf\d?\b|\bi-pex|\bu-fl/i, cradle: false, note: 'A thin lead snaps onto it from above, off to an antenna: leave room over it.' },
+  { id: 'sma', name: 'SMA / RP-SMA (edge)', entry: 'edge', body: { w: 6.4, l: 10, h: 6.4 }, zc: 0, overhang: 7, plug: { w: 9, h: 9, len: 16, cable: 3 }, match: /\bsma\b|sma_|rp[\s_-]?sma|132134|132289|901-144|consma|\bsma-j/i, cradle: false },
+  { id: 'fpc', name: 'FFC / FPC flat cable (latching)', entry: 'edge', body: { w: 21, l: 5.5, h: 2.5 }, zc: 1.2, overhang: 0, plug: { w: 16, h: 0.6, len: 12, cable: 0.6 }, match: /\bfpc|\bffc|\bzif\b|\bfh(12|19|26|34|35|52)|52559|52610|503480|54548|84952|84953|\bafc\d\d|\bcsi[\s_-]?(conn|camera)|camera[\s_-]?conn|display[\s_-]?conn/i, cradle: false, note: 'Its latch holds the flat cable: no cap.' },
   { id: 'qwiic', name: 'JST-SH / Qwiic (side)', entry: 'edge', body: { w: 6, l: 4.3, h: 2.9 }, zc: 1.5, overhang: 0, plug: { w: 6.5, h: 3.5, len: 6, cable: 3 }, match: /qwiic|stemma|jst[\s_-]?sh|sm0\dB-SRSS|bm0\dB-SRSS/i, cradle: false },
-  { id: 'terminal', name: 'Screw terminal block', entry: 'edge', body: { w: 10.2, l: 7.5, h: 10 }, zc: 3, overhang: 0, plug: { w: 10, h: 4, len: 15, cable: 2 }, match: /terminal[\s_-]?block|screw[\s_-]?terminal|kf301|kf128|mstb|mkds|tb\d|wago|phoenix/i, cradle: false, note: 'Wires only: add a tie anchor.' },
-  { id: 'jst_xh', name: 'JST-XH (top entry)', entry: 'top', body: { w: 9.9, l: 5.75, h: 7 }, zc: 0, overhang: 0, plug: { w: 9.9, h: 5.75, len: 12, cable: 2 }, match: /jst[\s_-]?xh|b\dB-XH|xh[\s_-]?\d/i, cradle: false },
-  { id: 'jst_ph', name: 'JST-PH (top entry)', entry: 'top', body: { w: 7.9, l: 4.5, h: 6 }, zc: 0, overhang: 0, plug: { w: 7.9, h: 4.5, len: 10, cable: 2 }, match: /jst[\s_-]?ph|b\dB-PH|ph[\s_-]?\d/i, cradle: false },
+  { id: 'terminal', name: 'Screw terminal block', entry: 'edge', body: { w: 10.2, l: 7.5, h: 10 }, zc: 3, overhang: 0, plug: { w: 10, h: 4, len: 15, cable: 2 }, match: /terminal[\s_-]?block|screw[\s_-]?terminal|terminalblock|kf301|kf128|kf350|kf2edg|mstb|mkds|\bmc[\s_-]?1,5|\btb\d|wago|phoenix|\bdg30\d|\bdg128|\bxy128|\bwj\d{3}|\bost[tv]|691\d{9}|1935\d{3}|1729\d{3}|282834|282836|1776275|\btb00\d/i, cradle: false, note: 'Wires only: add a tie anchor.' },
+  // wire-to-board sockets whose plug goes in from the side (right-angle ones: "S2B-PH", "SM04B-GHS", Molex 53048,
+  // DuraClik 502352), ahead of the upright ones of the same families
+  { id: 'wtb_side', name: 'Wire-to-board, side entry (JST, Molex)', entry: 'edge', body: { w: 8, l: 6, h: 6 }, zc: 3, overhang: 0, plug: { w: 8, h: 4.5, len: 10, cable: 1.6 }, match: /\bS\d{1,2}B-(PH|XH|ZR|EH|GH|VH|PA|PUD)|\bSM\d\dB-(GHS|ZESS|PASS|ZR)|(jst|molex|picoblade|pico[\s_-]?clasp|clik[\s_-]?mate|duraclik|micro[\s_-]?fit|mini[\s_-]?fit|\bkk).*(horizontal|right[\s_-]?angle)|53048|53261|502352|502386|502494|\b5569\b|39-?30-?\d|39301|22-?05-?[37]/i, cradle: false, note: 'Its plug latches in: add a tie anchor for its wires.' },
+  { id: 'microfit', name: 'Molex Micro-Fit 3.0 (top entry)', entry: 'top', body: { w: 9.6, l: 9.8, h: 9.4 }, zc: 0, overhang: 0, plug: { w: 9.6, h: 10, len: 14, cable: 3 }, match: /micro[\s_-]?fit|43045|43650|43025|43020/i, cradle: false },
+  { id: 'minifit', name: 'Molex Mini-Fit Jr (top entry, ATX)', entry: 'top', body: { w: 10.6, l: 10.4, h: 13 }, zc: 0, overhang: 0, plug: { w: 10.6, h: 10, len: 16, cable: 3.6 }, match: /mini[\s_-]?fit|\b5566\b|39-?2[89]-?\d|39281|39291|atx[\s_-]?(24|20|power)|eps[\s_-]?12v/i, cradle: false },
+  { id: 'jst_gh', name: 'JST-GH (top entry, 1.25 mm)', entry: 'top', body: { w: 6.75, l: 4.25, h: 4.25 }, zc: 0, overhang: 0, plug: { w: 6.75, h: 4.25, len: 6, cable: 1.4 }, match: /jst[\s_-]?gh|bm\d\dB-GHS|\bB\dB-GH|\bgh[\s_-]?1\.25/i, cradle: false },
+  { id: 'jst_zh', name: 'JST-ZH (top entry, 1.5 mm)', entry: 'top', body: { w: 7.5, l: 3.5, h: 6.5 }, zc: 0, overhang: 0, plug: { w: 7.5, h: 3.5, len: 8, cable: 1.4 }, match: /jst[\s_-]?zh|\bB\d{1,2}B-ZR|\bzh[\s_-]?1\.5/i, cradle: false },
+  { id: 'picoblade', name: 'Molex PicoBlade (top entry, 1.25 mm)', entry: 'top', body: { w: 6.95, l: 3.5, h: 5.4 }, zc: 0, overhang: 0, plug: { w: 6.9, h: 3.2, len: 7, cable: 1.2 }, match: /pico[\s_-]?blade|53047|53398|clik[\s_-]?mate|502382|pico[\s_-]?clasp|501331|501568|501571/i, cradle: false },
+  { id: 'kk254', name: 'Molex KK / fan header (2.54 mm)', entry: 'top', body: { w: 10.2, l: 5.8, h: 9 }, zc: 0, overhang: 0, plug: { w: 10, h: 5, len: 13, cable: 1.6 }, match: /\bkk[\s_-]?(254|100|396|156)?\b|22-?27-?2\d|22-?23-?2\d|\b6410\b|\b7395\b|fan[\s_-]?(header|conn|[34]p)|\b171856/i, cradle: false },
+  { id: 'jst_xh', name: 'JST-XH (top entry)', entry: 'top', body: { w: 9.9, l: 5.75, h: 7 }, zc: 0, overhang: 0, plug: { w: 9.9, h: 5.75, len: 12, cable: 2 }, match: /jst[\s_-]?xh|b\dB-XH|xh[\s_-]?\d|\bxh[\s_-]?2\.5/i, cradle: false },
+  { id: 'jst_ph', name: 'JST-PH (top entry)', entry: 'top', body: { w: 7.9, l: 4.5, h: 6 }, zc: 0, overhang: 0, plug: { w: 7.9, h: 4.5, len: 10, cable: 2 }, match: /jst[\s_-]?ph|b\dB-PH|ph[\s_-]?\d|\bph[\s_-]?2\.0/i, cradle: false },
+  // box headers for a ribbon (an IDC socket pushes in): CNC Tech 3020-10-0100 upright, 3020-10-0200 right-angle
+  { id: 'idc_ra', name: 'Box header, right-angle (IDC ribbon)', entry: 'edge', body: { w: 20.3, l: 9, h: 8.9 }, zc: 4.45, overhang: 0, plug: { w: 18.3, h: 7.6, len: 9, cable: 1.2 }, match: /\b3020-\d\d-02|(box[\s_-]?header|idc[\s_-]?(header|box)|shrouded).*(horizontal|right[\s_-]?angle|\br\/?a\b)|\b61202\d23621/i, cradle: false, note: 'The ribbon socket latches in: add a tie anchor for the ribbon.' },
+  { id: 'idc', name: 'Box header (IDC ribbon, 2.54 mm)', entry: 'top', body: { w: 20.3, l: 8.9, h: 9 }, zc: 0, overhang: 0, plug: { w: 18.3, h: 7.6, len: 6.5, cable: 1.2 }, match: /box[\s_-]?header|idc[\s_-]?(header|box)|\bidc[\s_-]?\d|shrouded|\b3020-\d\d-0[13]|\bds1013|\bbh[\s_-]?\d\d\b|\b61200\d21621|\b75869-|\b5103308|\b302-s\d/i, cradle: false },
   // debug connectors: a probe (J-Link, ST-Link) plugs in from above with an IDC socket on a ribbon
   { id: 'swd10', name: 'Debug 10-pin (Cortex, 1.27 mm)', entry: 'top', body: { w: 12.7, l: 5.8, h: 5.6 }, zc: 0, overhang: 0, plug: { w: 12.4, h: 5.4, len: 5.5, cable: 1 }, match: /$^/, cradle: false, note: 'A J-Link plugs in with its 10-pin ribbon (the 20-to-10-pin adapter on a 20-pin J-Link).' },
   { id: 'cortex20', name: 'Debug 20-pin (Cortex + trace, 1.27 mm)', entry: 'top', body: { w: 17.8, l: 5.8, h: 5.6 }, zc: 0, overhang: 0, plug: { w: 17.5, h: 5.4, len: 5.5, cable: 1 }, match: /$^/, cradle: false, note: "A J-Link plugs in with a 20-pin 1.27 mm ribbon (the J-Link 19-pin Cortex-M adapter on a 20-pin J-Link)." },
   { id: 'jtag20', name: 'Debug 20-pin (JTAG, 2.54 mm)', entry: 'top', body: { w: 33.2, l: 8.9, h: 9 }, zc: 0, overhang: 0, plug: { w: 31, h: 7.6, len: 6.5, cable: 1.2 }, match: /$^/, cradle: false, note: "A J-Link's own 20-pin ribbon plugs straight in." },
   { id: 'tagconnect', name: 'Tag-Connect pads', entry: 'top', body: { w: 10, l: 5, h: 0.1 }, zc: 0, overhang: 0, plug: { w: 10, h: 5, len: 22, cable: 1 }, match: /$^/, cradle: false, note: 'Pads only: the Tag-Connect cable clips onto the board from above.' },
-  { id: 'header', name: 'Pin header (Dupont)', entry: 'top', body: { w: 10.2, l: 2.54, h: 8.5 }, zc: 0, overhang: 0, plug: { w: 10.2, h: 2.54, len: 14, cable: 1.5 }, match: /pin[\s_-]?header|pin[\s_-]?socket|conn_\d+x\d+|header_\d|idc|box[\s_-]?header|^[12]x\d\d\b|pinhd/i, cradle: false },
+  { id: 'header', name: 'Pin header (Dupont)', entry: 'top', body: { w: 10.2, l: 2.54, h: 8.5 }, zc: 0, overhang: 0, plug: { w: 10.2, h: 2.54, len: 14, cable: 1.5 }, match: /pin[\s_-]?header|pin[\s_-]?socket|conn_\d+x\d+|header_\d|^[12]x\d\d\b|pinhd|\bhdr[\s_-]?\d/i, cradle: false },
   { id: 'pins_ra', name: 'Pin header, right-angle (Dupont)', entry: 'edge', body: { w: 15.24, l: 2.5, h: 2.5 }, zc: 1.27, overhang: 0, plug: { w: 15.2, h: 2.5, len: 14, cable: 1.4 }, match: /$^/, cradle: false, note: 'Jumper wires push onto its pins one by one.' },
   { id: 'ac_au', name: 'Mains outlet, AU/NZ', entry: 'top', body: { w: 36, l: 36, h: 0.5 }, zc: 0, overhang: 0, plug: { w: 34, h: 26, len: 24, cable: 7.5 }, match: /$^/, cradle: false },
   { id: 'ac_uk', name: 'Mains outlet, UK', entry: 'top', body: { w: 42, l: 42, h: 0.5 }, zc: 0, overhang: 0, plug: { w: 44, h: 30, len: 26, cable: 7.5 }, match: /$^/, cradle: false },
@@ -80,6 +103,62 @@ const CHIP: Record<string, [number, number, number]> = {
 export interface PkgGuess { w: number; l: number; h: number; kind?: CompKind; tht?: boolean; conn?: ConnType }
 
 const num = (s: string | undefined) => (s ? parseFloat(s.replace(',', '.')) : NaN);
+
+/** A socket (female) header by its name: KiCad's PinSocket, "female", Samtec's and Sullins' socket series, Würth's. */
+export const SOCKET_NAME = /socket|female|receptacle|\b(PPTC|PPPC|NPTC|NPPC|LPPB|SSW|SSQ|SSM|SLW|BCS|ESW|ESQ|CES|SFM|FLE|CLP)[-\d]|\b6130\d\d[12]1821\b/i;
+
+/** Connector types that are through-hole unless their name says SMD. */
+const THT = new Set(['usb_a', 'usb_a_dual', 'usb_b', 'rj45', 'rj11', 'dsub', 'xt60', 'xt30', 'barrel', 'rca', 'bnc', 'terminal', 'microfit', 'minifit', 'kk254', 'jst_xh', 'jst_ph', 'idc', 'idc_ra', 'header']);
+
+/**
+ * How many pins a connector's name says it has: "1x04" or "2x05", JST's "B4B-" and "SM04B-", the circuits in a Molex
+ * part number ("53047-0410", "22-27-2041"), CNC Tech's "3020-10-", Hirose's "FH12-24S", "10P". 0 when it says none.
+ */
+export function nameCircuits(name: string): number {
+  let m;
+  if ((m = name.match(/(?:^|[^\d.])(\d{1,2})\s?x\s?(\d{1,2})(?![\d.])/i))) return +m[1] * +m[2];
+  if ((m = name.match(/\b[BS]M?(\d{1,2})B-/i))) return +m[1];
+  if ((m = name.match(/\b(?:53047|53048|53398|53261|43650|43045|502352|502382|502386|502494|5566|5569|39281|39301|52559|52610|503480|54548)-?(\d\d)/))) return +m[1];
+  if ((m = name.match(/\b22-?(?:27|23|05)-?\d(\d\d)/))) return +m[1];
+  if ((m = name.match(/\b3020-(\d\d)-/))) return +m[1];
+  if ((m = name.match(/\bFH\d\d[A-Z]*-(\d{1,2})S/i))) return +m[1];
+  if ((m = name.match(/(?:^|[^\d.])(\d{1,2})[\s_-]?(?:pins?|pos|way|p)\b/i))) return +m[1];
+  return 0;
+}
+
+/** Pitch and ends of the wire-to-board families, for their width from their number of pins. */
+const WTB: Record<string, { pitch: number; pad: number; rows?: number }> = {
+  jst_gh: { pitch: 1.25, pad: 3 }, jst_zh: { pitch: 1.5, pad: 3 }, picoblade: { pitch: 1.25, pad: 3.2 }, kk254: { pitch: 2.54, pad: 2.54 },
+  jst_ph: { pitch: 2, pad: 3.9 }, jst_xh: { pitch: 2.5, pad: 4.9 }, microfit: { pitch: 3, pad: 6.6, rows: 2 }, minifit: { pitch: 4.2, pad: 6.4, rows: 2 },
+};
+/** The pitch a side-entry wire-to-board socket's name says. */
+export function wtbPitch(name: string): number {
+  const m = /_P(\d+(?:\.\d+)?)mm/i.exec(name);
+  if (m) return +m[1];
+  if (/-(GH|GHS)\b|GHS|53048|53261|pico/i.test(name)) return 1.25;
+  if (/-ZR|ZESS/i.test(name)) return 1.5;
+  if (/-(PH|PA|PUD)\b|502352|duraclik/i.test(name)) return 2;
+  if (/-(XH|EH)\b/i.test(name)) return 2.5;
+  if (/micro[\s_-]?fit/i.test(name)) return 3;
+  if (/-VH\b|22-?05-?[37]/i.test(name)) return 3.96;
+  if (/mini[\s_-]?fit|5569|39-?30|39301/i.test(name)) return 4.2;
+  return 2;
+}
+
+/** A connector type sized for the number of pins its name says (a 2 x 8 box header, a 6-pin JST): body and plug as wide as that. */
+export function sizedConn(t: ConnType, name: string): ConnType {
+  const n = nameCircuits(name);
+  if (!n || n > 80) return t;
+  let w = t.body.w;
+  const f = WTB[t.id];
+  if (f) { const rows = f.rows === 2 && !/43650|1x\d/i.test(name) && n > 1 ? 2 : 1; w = (Math.ceil(n / rows) - 1) * f.pitch + f.pad; }
+  else if (t.id === 'idc' || t.id === 'idc_ra') w = Math.ceil(n / 2) * 2.54 + 7.6;
+  else if (t.id === 'wtb_side') w = (n - 1) * wtbPitch(name) + 4;
+  else if (t.id === 'fpc') { const m = /_P(\d+(?:\.\d+)?)mm/i.exec(name); w = (n - 1) * (m ? +m[1] : n <= 15 ? 1 : 0.5) + 5; }
+  else return t;
+  w = Math.round(w * 100) / 100;
+  return { ...t, body: { ...t.body, w }, plug: { ...t.plug, w: Math.max(1, Math.round((t.plug.w + w - t.body.w) * 100) / 100) } };
+}
 
 /** Guess body size and kind from a footprint/package name and reference designator. */
 export function guessPackage(pkg: string, ref = '', value = ''): PkgGuess {
@@ -120,6 +199,14 @@ export function guessPackage(pkg: string, ref = '', value = ''): PkgGuess {
     const pitch = /^(FTSH|FTS|TFM|SFM|CLP|FLE|SHF)$/.test(m[1]) ? 1.27 : 2.54, rows = m[3] === 'D' ? 2 : 1, cols = +m[2];
     g = { w: pitch * cols, l: pitch * rows, h: 8.5, tht: !/SM|SMT/.test(p), kind: 'header', conn: connById('header') };
   }
+  // Sullins headers (PBC03SAAN: 3 pins in one row, D two rows) and sockets (PPTC122LFBN: 12 a row, two rows), Würth
+  // WR-PHD (613 004 111 21: 4 pins in one row; 118 21 the socket) and Harwin M20 (M20-9990345: 3 pins)
+  const hdr = (cols: number, rows: number, pitch: number) => { if (cols > 0 && cols <= 80) g = { w: pitch * cols, l: pitch * rows, h: 8.5, tht: !/SMD|SMT/.test(p), kind: 'header', conn: connById('header') }; };
+  const up = `${p} ${value.toUpperCase()}`;
+  if ((m = up.match(/\b(PBC|PEC|PREC|PRPC|PZC|PTC|NRPN|GRPB)(\d{2,3})([SD])[A-Z]{2,3}N?\b/))) hdr(+m[2], m[3] === 'D' ? 2 : 1, m[1] === 'NRPN' ? 2 : m[1] === 'GRPB' ? 1.27 : 2.54);
+  else if ((m = up.match(/\b(PPTC|PPPC|NPTC|NPPC|LPPB)(\d\d)([12])[A-Z]/))) hdr(+m[2], +m[3], /^N/.test(m[1]) ? 2 : m[1] === 'LPPB' ? 1.27 : 2.54);
+  else if ((m = up.match(/\b6130(\d\d)([12])1[18]21\b/))) hdr(Math.ceil(+m[1] / +m[2]), +m[2], 2.54);
+  else if ((m = up.match(/\bM20-99([89])(\d\d)\d\d\b/))) hdr(+m[2], m[1] === '8' ? 2 : 1, 2.54);
   if (/MOUNTINGHOLE|MOUNTING_HOLE|MTG|FIDUCIAL/.test(p)) g = { w: 0, l: 0, h: 0 };
   if (/ESP32|ESP8266|WROOM|WROVER|NINA|RFM9|BLE|NRF52.*MODULE|RP2040.*ZERO/.test(p + ' ' + name.toUpperCase())) g = { ...g, kind: 'antenna', h: Math.max(g.h, 3.2) };
   if (/LED/.test(p) || /^LED/i.test(ref)) g = { ...g, kind: 'led' };
@@ -130,12 +217,15 @@ export function guessPackage(pkg: string, ref = '', value = ''): PkgGuess {
   if (dbg) { const t = connById(dbg); return { w: t.body.w, l: t.body.l, h: t.body.h, kind: 'connector', tht: dbg !== 'tagconnect' && !/smd/i.test(pkg), conn: t }; }
   // connectors
   const isConnRef = /^(J|P|CN|X|USB|CON|JP)\d/i.test(ref);
-  const hit = CONNECTORS.find((c) => c.id !== 'custom' && c.match.test(name));
+  // (also with underscores as spaces: in "Hirose_FH12-24S" the part number starts a word)
+  const spaced = name.replace(/_/g, ' ');
+  const hit = CONNECTORS.find((c) => c.id !== 'custom' && (c.match.test(name) || c.match.test(spaced)));
   if (hit && (isConnRef || hit.id !== 'header' || g.kind === 'header')) {
     const keepSize = hit.entry === 'top' && g.w > 0 && g.kind === 'header';
+    const t = keepSize ? hit : sizedConn(hit, name);
     g = {
-      w: keepSize ? g.w : hit.body.w, l: keepSize ? g.l : hit.body.l, h: keepSize ? g.h : hit.body.h,
-      kind: hit.entry === 'top' && hit.id === 'header' ? 'header' : 'connector', tht: g.tht ?? /usb[\s_-]?[ab]\b|rj45|barrel|jack|terminal|header/i.test(name), conn: hit,
+      w: keepSize ? g.w : t.body.w, l: keepSize ? g.l : t.body.l, h: keepSize ? g.h : t.body.h,
+      kind: hit.entry === 'top' && hit.id === 'header' ? 'header' : 'connector', tht: g.tht ?? (!/smd|smt/i.test(name) && (THT.has(hit.id) || /usb[\s_-]?[ab]\b|rj45|barrel|jack|terminal|header/i.test(name))), conn: t,
     };
   } else if (isConnRef && !g.kind) g = { ...g, kind: 'connector', conn: connById('custom') };
   return g;
@@ -222,7 +312,7 @@ const UART_NETS = /(^|[^a-z])(u?art\d?_?)?(txd?|rxd?)\d?([^a-z]|$)/i;
  * one, and any other one or two-row header a pin header, marked for debug or serial when its nets say so.
  */
 function byPins(c: Comp, g: PkgGuess): { conn: ConnType; kind: CompKind; role?: string; w: number; l: number } | null {
-  if (!c.pins || (g.conn && g.conn.id !== 'custom' && g.conn.id !== 'header')) return null;
+  if (!c.pins || (g.conn && g.conn.id !== 'custom' && g.conn.id !== 'header' && g.conn.id !== 'idc')) return null;
   if (!g.conn && !CONN_REF.test(c.ref)) return null;
   const ds = dsubPins(c.pins);
   if (ds) { const t = connById('dsub'), w = ({ 9: 30.8, 15: 39.1, 25: 53, 37: 69.3 } as Record<number, number>)[ds] ?? 30.8; return { conn: { ...t, body: { ...t.body, w }, plug: { ...t.plug, w: w + 0.5 } }, kind: 'connector', w, l: t.body.l }; }
@@ -233,7 +323,10 @@ function byPins(c: Comp, g: PkgGuess): { conn: ConnType; kind: CompKind; role?: 
   if (grid.rows === 2 && n === 10 && grid.pitch === 1.27) return { conn: connById('swd10'), kind: 'connector', w: 12.7, l: 5.8 };
   if (dbg && grid.rows === 2 && n === 20 && grid.pitch === 2.54) return { conn: connById('jtag20'), kind: 'connector', w: 33.2, l: 8.9 };
   if ((dbg || DEBUG_HINT.test(`${c.ref} ${c.pkg} ${c.value ?? ''}`)) && grid.rows === 2 && n === 20 && grid.pitch === 1.27) return { conn: connById('cortex20'), kind: 'connector', w: 17.8, l: 5.8 };
-  return { conn: connById('header'), kind: 'header', ...(dbg ? { role: 'debug' } : uart ? { role: 'uart' } : {}), w: grid.pitch * grid.cols, l: grid.pitch * grid.rows };
+  const role = dbg ? { role: 'debug' } : uart ? { role: 'uart' } : {};
+  // a box header named as one stays one (its shroud), as wide as its pins say
+  if (g.conn?.id === 'idc' && grid.rows === 2 && grid.pitch === 2.54) { const t = sizedConn(g.conn, `${grid.rows}x${grid.cols}`); return { conn: t, kind: 'connector', ...role, w: t.body.w, l: t.body.l }; }
+  return { conn: connById('header'), kind: 'header', ...role, w: grid.pitch * grid.cols, l: grid.pitch * grid.rows };
 }
 
 /** Fill in kind / connector setup for a component from its names, or its pins where the names say nothing known. Keeps sizes that are already known. */

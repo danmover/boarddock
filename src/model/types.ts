@@ -372,7 +372,7 @@ export interface Ghost {
   opacity: number;
   tag?: PickTag;
   anim?: Anim;
-  mat?: 'mask' | 'gold' | 'metal' | 'black' | 'chip' | 'white' | 'silk' | 'led' | 'passive' | 'blue' | 'plug' | 'cable' | 'copper' | 'trace' | 'tin' | 'box' | 'red';
+  mat?: 'mask' | 'gold' | 'metal' | 'black' | 'chip' | 'white' | 'silk' | 'led' | 'passive' | 'blue' | 'plug' | 'cable' | 'copper' | 'trace' | 'tin' | 'box' | 'red' | 'yellow';
   smooth?: boolean; // round things (plugs, cables): smooth shading, no outline edges
   // the 3D view's live touches: lights that glow and blink (dark: the board has no power), data running along a cable
   fx?: { lights?: Light[]; dark?: boolean; flow?: { pts: number[][]; r: number; colour: string; on: boolean; slow?: boolean }; fade?: { p: number[]; d: number[]; len: number; dash: number; label?: string; colour: string } };
