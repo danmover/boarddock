@@ -4,13 +4,13 @@
 import type { Board, Comp, Link, Module, PlugRef, Project } from './types';
 import { hostTotal, isPlugPack, minOf, needOf, portCap, poweredHub, supplyOf, type Need } from './powerdata';
 import { assign } from './assign';
+import { KIND_COLOR, KIND_NAME } from './cablekinds';
+
+export { KIND_COLOR, KIND_NAME }; // (the cable kinds' colours and names: cablekinds.ts)
 
 export type PlugRole = 'host' | 'device' | 'power-in' | 'power-in-dc' | 'power-out' | 'dc-out' | 'hub-up' | 'hub-down' | 'net' | 'video' | 'audio' | 'wire' | 'debug' | 'uart' | 'mains-in' | 'mains-out' | 'other';
 
 const ROLES: PlugRole[] = ['host', 'device', 'power-in', 'power-in-dc', 'power-out', 'dc-out', 'hub-up', 'hub-down', 'net', 'video', 'audio', 'wire', 'debug', 'uart', 'mains-in', 'mains-out', 'other'];
-
-export const KIND_COLOR: Record<NonNullable<Link['kind']>, string> = { usb: '#3a3f47', power: '#d0443a', net: '#3b7dd8', video: '#7a5cc7', audio: '#2fae9a', wire: '#e0a030', debug: '#a3a9b1', uart: '#c0772f', jumper: '#4f9d57', mains: '#8d6e63' };
-export const KIND_NAME: Record<NonNullable<Link['kind']>, string> = { usb: 'USB', power: 'power', net: 'Ethernet', video: 'video', audio: 'audio', wire: 'wires', debug: 'debug ribbon', uart: 'USB-serial', jumper: 'jumper wires', mains: 'mains' };
 
 /** An accessory rather than a board being served: a box (hub, charger), or a board that serves another (a J-Link, a
  * USB-serial adapter). For wiring: which end of a debug ribbon is the probe. */
