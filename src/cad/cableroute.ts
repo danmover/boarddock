@@ -214,18 +214,25 @@ export function ribbonRoute(A: RibbonEnd, B: RibbonEnd, t: number, rw: number, o
   }
   // round either end, a ribbon's width further out for each try (outside the ones already there)
   if (ownA && ownB) for (const sg of [1, -1]) for (let k = 0; k < 3; k++) {
-    const uS = sg > 0 ? Math.max(ownA[3], ownB[3]) + rw / 2 + 3 + k * (rw + 2) : Math.min(ownA[0], ownB[0]) - rw / 2 - 3 - k * (rw + 2);
     const a = lay(A, B.p, [sg, 0, 0]), b = lay(B, A.p, [sg, 0, 0]);
     const fa = add(a.E, a.x, 3), fb = add(b.E, b.x, 3);
+    // (and no nearer than where an end has already come out to: an adapter's jumper housings stick out past its
+    // holder, and going round inside them doubled the wires back over their own housings)
+    const uS = sg > 0 ? Math.max(Math.max(ownA[3], ownB[3]) + rw / 2 + 3, fa[0], fb[0]) + k * (rw + 2) : Math.min(Math.min(ownA[0], ownB[0]) - rw / 2 - 3, fa[0], fb[0]) - k * (rw + 2);
     const pa = [a.S, a.E, fa, [uS, fa[1], fa[2]]], pb = [[uS, fb[1], fb[2]], fb, b.E, b.S];
     cands.push({ pts: [...pa, ...pb], iA: pa.length - 1, iB: pa.length });
   }
   let best: RibbonChoice | null = null;
+  // (whether a leg runs straight out of a plug, or straight into it)
+  const outOf = (p: number[], q: number[], d: number[]) => { const v = [q[0] - p[0], q[1] - p[1], q[2] - p[2]], L = Math.hypot(v[0], v[1], v[2]); return L < 1e-6 || (v[0] * d[0] + v[1] * d[1] + v[2] * d[2]) / L > 0.99; };
   for (const { pts, iA, iB } of cands) {
     // along each board it may touch its own holder (it lies on it); between them it has to clear everything
     const kinds = pts.slice(1).map((_, i) => (i < iA || i >= iB ? 'exit' : 'escape') as SegKind);
     const route: Route = { pts, kinds };
-    const len = routeLength(route), h = hits(route, obs, [A, B], 1.2);
+    // jumper wires lie on nothing: only where they leave their housings straight out; where they turn, their own
+    // board is in the way like any other (going round the end along the rail went through a board that faces along it)
+    const strict = kinds.map((k, i) => (k === 'escape' || (i < iA ? !A.straight || outOf(pts[i], pts[i + 1], A.d) : !B.straight || outOf(pts[i + 1], pts[i], B.d)) ? k : 'escape'));
+    const len = routeLength(route), h = hits({ pts, kinds: strict }, obs, [A, B], 1.2);
     const score = len + h.length * 300 + h.reduce((q, x2) => q + x2.depth, 0) * 4;
     if (best && score >= best.score) continue;
     const lenTo = (k: number) => pts.slice(1, k + 1).reduce((q, p2, i) => q + dist(p2, pts[i]), 0);

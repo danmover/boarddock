@@ -173,6 +173,18 @@ function partDetail(bin: Bin, c: Comp, zt: number, zb: number) {
     }
     return;
   }
+  if (type === 'pins_ra') {
+    // right-angle pins (ahead of the upright headers below, as its name says "pin header" too): the plastic row along
+    // the edge, each pin bent down into the board (trimmed flush under it) and out over the edge
+    const n = Math.max(1, Math.round(w / 2.54));
+    B('black', -hx, hy - 2.5, 0, hx, hy, 2.5);
+    for (let i = 0; i < n; i++) {
+      const px = (i - (n - 1) / 2) * 2.54;
+      B('gold', px - 0.32, hy - 3.6, 0.95, px + 0.32, hy + 6, 1.6);
+      B('gold', px - 0.32, hy - 3.6, -(zt - zb), px + 0.32, hy - 2.96, 1.6);
+    }
+    return;
+  }
   if (c.kind === 'header' || type === 'header' || /pin.?header|pin.?socket|conn_\d+x\d+|idc/i.test(name)) {
     const socket = /socket|female/i.test(name);
     const baseH = socket ? h : Math.min(2.5, h);
@@ -182,17 +194,6 @@ function partDetail(bin: Bin, c: Comp, zt: number, zb: number) {
       const px = (i - (nx - 1) / 2) * 2.54, py = (j - (ny - 1) / 2) * 2.54;
       if (socket) B('chip', px - 0.5, py - 0.5, h - 0.02, px + 0.5, py + 0.5, h + 0.01);
       else { B('gold', px - 0.32, py - 0.32, 0, px + 0.32, py + 0.32, h - 0.5); B('gold', px - 0.2, py - 0.2, h - 0.5, px + 0.2, py + 0.2, h); }
-    }
-    return;
-  }
-  if (type === 'pins_ra') {
-    // right-angle pins: the plastic row along the edge, each pin bent down into the board and out over the edge
-    const n = Math.max(1, Math.round(w / 2.54));
-    B('black', -hx, hy - 2.5, 0, hx, hy, 2.5);
-    for (let i = 0; i < n; i++) {
-      const px = (i - (n - 1) / 2) * 2.54;
-      B('gold', px - 0.32, hy - 3.6, 0.95, px + 0.32, hy + 6, 1.6);
-      B('gold', px - 0.32, hy - 3.6, -1.8, px + 0.32, hy - 2.96, 1.6);
     }
     return;
   }

@@ -162,7 +162,11 @@ export function buildModule(job: Job): ModuleOut {
   const { p } = job;
   const mod = p.modules[job.mi];
   if (mod && mod.board === job.b) job = { ...job, used: usedRefs(p, mod) };
-  const key = JSON.stringify([job.used ?? null, job.mi, p.modules[job.mi]?.id, job.b, job.H, job.din, job.stand, job.hooks, job.name, job.level ?? 0, job.mount ?? null, job.dock ?? null, job.bolted ?? null,
+  // which pins have a jumper's housing pushed on, and in what colour: a header is in use (for a probe or adapter)
+  // before its wires go on, so the plugs in use alone don't tell a header with wires from one without
+  const mid = p.modules[job.mi]?.id ?? `m${job.mi}`;
+  const wired = job.b.comps.flatMap((c) => { const w = c.conn && !c.hidden ? wiredPins(p, mid, c) : []; return w.length ? [`${c.ref}:${w.map((q) => `${q.pin.n}${q.colour}`).join(',')}`] : []; });
+  const key = JSON.stringify([job.used ?? null, wired, job.mi, p.modules[job.mi]?.id, job.b, job.H, job.din, job.stand, job.hooks, job.name, job.level ?? 0, job.mount ?? null, job.dock ?? null, job.bolted ?? null,
     job.din ? p.mount : null, job.stand ? p.stand : null, p.printer.bed]);
   const hit = cache.get(key);
   if (hit) { cache.delete(key); cache.set(key, hit); return hit; }
@@ -194,10 +198,11 @@ function splitAxis(C: Ctx): V2 | null {
  */
 const isProbeBox = (b: Board) => isAccessory(b) && b.comps.some((c) => isDebugPort(c) || isUartPort(c));
 
-/** The pins of a header that have a wire pushed on (a jumper link's, or a serial cable's loose ends), with its colour. */
-function wiredPins(C: Ctx, c: Comp): { pin: Pin; colour: string }[] {
-  const mine = (r: { module: string; ref: string }) => r.module === C.mid && baseRef(r.ref) === c.ref;
-  const l = (C.p.links ?? []).find((x) => mine(x.a) || mine(x.b));
+/** The pins of a header of module `mid` that have a wire pushed on (a jumper link's, or a serial cable's loose ends),
+ * with its colour. */
+function wiredPins(p: Project, mid: string, c: Comp): { pin: Pin; colour: string }[] {
+  const mine = (r: { module: string; ref: string }) => r.module === mid && baseRef(r.ref) === c.ref;
+  const l = (p.links ?? []).find((x) => mine(x.a) || mine(x.b));
   if (!l) return [];
   if (l.kind === 'jumper' && l.wires?.length) {
     const pins = headerPins(c), end = mine(l.a) ? 'a' : 'b';
@@ -433,7 +438,7 @@ function connectors(C: Ctx) {
       // the header's long side)
       const ang = b.kind === 'box' && !isDebugPort(c) ? c.rot : c.w >= c.l ? c.rot : c.rot + 90;
       const tag = { kind: 'plug' as const, module: C.mid, refs: [c.ref] }, anim = { seq: 30, dir: [0, 0, 1] as [number, number, number] };
-      const wp = c.side === 'top' && cn.type === 'header' ? wiredPins(C, c) : [];
+      const wp = c.side === 'top' && cn.type === 'header' ? wiredPins(C.p, C.mid, c) : [];
       if (wp.length) {
         // jumper wires' housings, each pushed down over its pin onto the header's plastic
         const z0 = zt + Math.min(2.5, c.h), top = z0 + 14.6;
@@ -462,7 +467,7 @@ function connectors(C: Ctx) {
     C.blocked.push({ poly: orientedRect(mouth, d, -2, toOut + 2, -(pw / 2 + cl + 3), pw / 2 + cl + 3), why: c.ref });
     // right-angle pins: a jumper's housing on each pin with a wire, straight out
     if (cn.type === 'pins_ra') {
-      const wires = wiredPins(C, c).map(({ pin: q, colour }) => {
+      const wires = wiredPins(C.p, C.mid, c).map(({ pin: q, colour }) => {
         C.ghosts.push(...plugDetail([q.x, q.y], d, zAx, { w: 2.5, h: 2.5, len: 14, cable: 1.4 }, { kind: 'plug', module: C.mid, refs: [c.ref] }, { seq: 30, dir: [d[0], d[1], 0] }, 'dupont'));
         return { p: [q.x + d[0] * 14.6, q.y + d[1] * 14.6, zAx] as [number, number, number], colour, pin: q.n };
       });

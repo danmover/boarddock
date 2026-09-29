@@ -934,9 +934,12 @@ export function generatePanel(p: Project): GenResult {
       if (kind === 'jumper' && len > 300) warnings.push(`The jumper wires from ${purpose.from} to ${purpose.to} have to run about ${Math.round(len)} mm, longer than the usual 30 cm ones. Put the adapter closer: in the back slot of that board's dock (drag it there in the Rails step).`);
       // numbered tags, a hand-width from each plug: ring round the cable, flag standing up
       if (P.cableTags !== false) {
-        const key = `${no}:${d.toFixed(1)}`;
+        // (round the whole bundle of jumper wires, side by side 1.5 mm apart: one wire's size put the ring through the
+        // outer two)
+        const td = kind === 'jumper' ? Math.max(d, (Math.max(1, l.wires?.length ?? 1) - 1) * 1.5 + 1.6) : d;
+        const key = `${no}:${td.toFixed(1)}`;
         let tm = tagMeshes.get(key);
-        if (!tm) { const s = cableTag(no, d); const bb = s.boundingBox(); tm = { mesh: toMesh(s), volume: s.volume(), size: [bb.max[0] - bb.min[0], bb.max[1] - bb.min[1], bb.max[2] - bb.min[2]] as [number, number, number] }; tagMeshes.set(key, tm); }
+        if (!tm) { const s = cableTag(no, td); const bb = s.boundingBox(); tm = { mesh: toMesh(s), volume: s.volume(), size: [bb.max[0] - bb.min[0], bb.max[1] - bb.min[1], bb.max[2] - bb.min[2]] as [number, number, number] }; tagMeshes.set(key, tm); }
         // the flag stands up if it can; else out to one side, else down: whichever way is clear
         const frames = (t: number[]) => {
           const up = Math.abs(t[2]) > 0.9 ? [1, 0, 0] : [0, 0, 1];
@@ -953,7 +956,7 @@ export function generatePanel(p: Project): GenResult {
         };
         // a hand-width from its plug, where the cable runs straight and the tag touches nothing: no holder, rail,
         // stand, board or other cable or tag. The ring and the whole flag are checked, every 2 mm, at both faces
-        const r0 = d / 2 + 0.2 + TAG.wall, sh = TAG.flagW / 2 - 0.5;
+        const r0 = td / 2 + 0.2 + TAG.wall, sh = TAG.flagW / 2 - 0.5;
         const tagShape = (o: number[], t: number[], x: number[], y: number[]) => {
           const pts: number[][] = [];
           for (const a of [-TAG.height / 2 + 0.2, 0, TAG.height / 2 - 0.2]) {
