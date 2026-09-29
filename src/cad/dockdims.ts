@@ -24,6 +24,15 @@ export const HD = {
   // `pocket`: the pocket's half-width on the barb's side
   catch: { ledge: 2.0, barb: 0.5, pocket: 2.35 },
 };
+/**
+ * A column of small boards (J-Links, adapters), each holder standing on its long edge on the one below: the landing on
+ * a lower holder's far wall that the next one stands on (`gap` over the wall, `t` thick, `hx` half its width), and the
+ * two pegs under the next one's pedestal that press into it (x either side of the rod's tunnel, y across the spine;
+ * the same Ø4 pegs and crush-rib sockets as a stack's towers).
+ */
+export const LANDING = { gap: 0, t: 8, hx: 12 };
+export const PEG = { x: [-7, 7], y: 5.25, r: 2.0, len: 3.4, tip: 0.6 };
+
 /** Holder frame height (above the bed) of the spine top: the board must sit above it. */
 export const SPINE_TOP = HD.spineY1 - HD.backY;
 export const DOCK_MIN_ZB = SPINE_TOP + 0.5;

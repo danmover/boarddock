@@ -1,7 +1,7 @@
 // Holder heights (kernel-free).
 import type { Board, HolderSettings } from '../model/types';
 import { round } from '../geom/poly';
-import { isAccessory, isDebugPort, isUartPort } from '../model/links';
+import { isBox, isDebugPort, isUartPort } from '../model/links';
 import { CLIP_ABOVE, holdOf } from './grip';
 
 /** Heights of a holder (no geometry kernel needed). */
@@ -25,6 +25,6 @@ export function computeLevels(b: Board, H: HolderSettings, minZb = 0) {
     topMax = Math.max(topMax, zt + c.h + above);
   }
   // spring clips stand up past the wall: their lip, entry ramp and pull ear
-  if (holdOf(H) !== 'pins' && !isAccessory(b)) topMax = Math.max(topMax, zt + CLIP_ABOVE);
+  if (holdOf(H) !== 'pins' && !isBox(b)) topMax = Math.max(topMax, zt + CLIP_ABOVE);
   return { needMax, base, s, zb, zt, zw, topMax };
 }

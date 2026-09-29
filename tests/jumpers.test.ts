@@ -5,7 +5,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { TEMPLATES } from '../src/model/templates';
 import { newModule, newProject } from '../src/model/library';
 import { autoLinks, numberLinks } from '../src/model/links';
-import { addAdapters, addUartLinks, fillWires, headerPins, markDebug, stackProbes, uartHeaders, uartPins } from '../src/model/probes';
+import { addAdapters, addUartLinks, fillWires, headerPins, isAdapter, markDebug, stackCompanions, uartHeaders, uartPins } from '../src/model/probes';
 import { generate } from '../src/cad/assembly';
 import { initKernel } from '../src/cad/kernel';
 import type { GenResult, Link, Project } from '../src/model/types';
@@ -22,7 +22,7 @@ function rack(ids: string[], f?: (p: Project) => void): { p: Project; r: GenResu
   generate(p);
   for (const m of [...p.modules]) if (uartHeaders(m.board).length) addAdapters(p, m.id);
   p.links = numberLinks([...(p.links ?? []), ...autoLinks(p)]).map((l) => fillWires(p, l));
-  stackProbes(p);
+  stackCompanions(p);
   return { p, r: generate(p) };
 }
 
@@ -132,10 +132,12 @@ describe('jumper wires from a USB-serial adapter', () => {
     check(p, r);
   }, 120_000);
 
-  it('go over a board that faces along the rail, not through it', () => {
-    // a relay board's pin header marked as a UART header (Board › Debug & UART headers); it stands facing along the rail
+  it('go over a board from the adapter behind it, not through it', () => {
+    // a relay board's pin header marked as a UART header (Board › Debug & UART headers); its adapter stands in the
+    // back slot of its dock, back to back with it, so the wires go over the board to the header on its face
     const { p, r } = rack(['relay4'], (q) => markDebug(q.modules[0].board.comps.find((c) => c.ref === 'J1')!, 'uart'));
-    expect(Math.abs(r.report.frames![p.modules[0].id][8])).toBeCloseTo(1, 3);
+    const F0 = r.report.frames![p.modules[0].id], F1 = r.report.frames![p.modules.find(isAdapter)!.id];
+    expect(F0[8] * F1[8] + F0[9] * F1[9] + F0[10] * F1[10]).toBeCloseTo(-1, 3);
     check(p, r);
   }, 120_000);
 

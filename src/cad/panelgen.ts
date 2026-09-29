@@ -21,15 +21,15 @@ import { isPlugPack } from '../model/powerdata';
 import { cableTag, TAG } from './cabletag';
 import { mainsBudget, mainsText, powerBudget, powerText } from '../model/power';
 import { buildModule, builtLevels, transformMesh, type ArrangeHooks, type ModuleOut } from './generate';
-import { baseOf, ridersOf, stackLayers, type StackLayer } from '../model/holes';
+import { baseOf, columnOf, ridersOf, stackLayers, type StackLayer } from '../model/holes';
 import { box, freeAll, fromMesh, toMesh, unionMF, type MF } from './kernel';
-import { END_POSE, LEN_X, rail as railSolid, shoe, shoeBody, shoeLever, SHOE_LEVER, socket, SOCKET_Z } from './dock';
+import { END_POSE, LANDING, LEN_X, rail as railSolid, shoe, shoeBody, shoeLever, SHOE_LEVER, socket, SOCKET_Z } from './dock';
 import { EAR } from './dockdims';
-import { autoAssign, bestDock, classify, clipToRail, dockSite, EDGES, edgeNormal, plugDirs, railMatrix, slotMatrix, withRiders } from './dockplan';
+import { autoAssign, bestDock, classify, clipToRail, columnSeat, dockSite, EDGES, edgeNormal, plugDirs, railMatrix, slotMatrix, withRiders } from './dockplan';
 import { capStress, pieceMesh, planStands, railI, standBoxes, STAND, type StandLane } from './railstand';
 import { assemble, bendRadius, bestRoute, escapes, hits, lead, ribbonRoute, segInBox, slope, type Box, type CableEnd, type Choice, type Hit, type Obstacle, type RibbonEnd, type Route } from './cableroute';
 import { settleCables } from './cablesim';
-import { isDebugPort, isProbe, isUartPort, jumperToBuy, jumperWiring, ribbonOf, uartWiring } from '../model/probes';
+import { isDebugPort, isProbe, isSmall, isUartPort, jumperToBuy, jumperWiring, ribbonOf, uartWiring } from '../model/probes';
 
 const SHOE_BOX = { x: [-LEN_X / 2, LEN_X / 2], y: [-29, 29], z: [0, 42.8] };
 
@@ -185,6 +185,51 @@ export function generatePanel(p: Project): GenResult {
   const unplaced = p.modules.filter((m) => !placedIds.has(m.id) && !isPlugPack(m.board)).map((m) => m.id);
   if (unplaced.length) warnings.push(`${unplaced.length} board${unplaced.length > 1 ? 's are' : ' is'} not on a rail yet: drag ${unplaced.length > 1 ? 'them' : 'it'} onto a rail in the Rails step, or press Auto-arrange.`);
 
+  /**
+   * The holder for board `m` in a slot, and what stands on it: the printed layers of a stack on corner towers, or the
+   * holders of a column of small boards (J-Links, adapters), each on its long edge on the landing of the one below, the
+   * release rod down through them all. `above`: each of those holders and where it sits (its frame -> the seat's).
+   */
+  /** A J-Link or adapter alone stands on its long edge too, as it would at the bottom of a column. */
+  const standsOnEdge = (m: Module) => isProbe(m) && isSmall(m.board);
+  const clipless = (o: ModuleOut) => o.warnings.some((w) => /^Nothing clips this board in/.test(w));
+  const seatBuild = (m: Module, i: number, edge: EdgeName, mt: RailMount, railDir: 'h' | 'v', slot: number, lie?: 'flat', H = m.holder, shift = 0): { out: ModuleOut; above: Layer[] } => {
+    const column = mt.kind === 'dock' && !lie ? columnOf(p, m) : [];
+    if (column.length) {
+      const members = [m, ...column], n = members.length;
+      const edges = members.map((x, k) => (k === 0 ? edge : columnSeat(x, railDir, slot, k < n - 1, [mt.turn]).edge));
+      const sites = members.map((x, k) => dockSite(x.board, k === 0 ? H : x.holder, edges[k]));
+      // each holder's dock face over the socket: on the landing on the far wall of the one below
+      const Z = [0];
+      for (let k = 1; k < n; k++) Z.push(Z[k - 1] + sites[k - 1].far + LANDING.gap + LANDING.t);
+      const height = Z[n - 1] + sites[n - 1].far;
+      const build = (x: Module, k: number, h: typeof H, slot = false) => buildModule({ p, mi: mods.get(x.id)!.i, b: x.board, H: h, din: false, stand: false, hooks: {}, name: x.board.name, level: k,
+        dock: { edge: edges[k], fit: P.fit ?? 0, ...(shift ? { shift } : {}), column: { level: k, of: n, top: k === n - 1, drop: Z[k], height, ...(slot ? { slot } : {}) } } });
+      // a small board with nothing to clip it in (its ends taken by its plugs, its long edges by the dock and the
+      // landing) gets its release button beside it, which frees a long edge for the spring clips; failing that it
+      // slides into a slot, the holder above keeping it in (the holder's height, and so the column's, stays the same)
+      const outs = members.map((x, k) => {
+        const h = k === 0 ? H : x.holder, o = build(x, k, h);
+        if (!clipless(o)) return o;
+        if (h.release == null) { const o2 = build(x, k, { ...h, release: 'side' }); if (!clipless(o2)) return o2; }
+        return build(x, k, h, true);
+      });
+      return { out: outs[0], above: members.slice(1).map((x, j) => ({ mod: x, mi: mods.get(x.id)!.i, out: outs[j + 1], T: mul(inv(outs[0].dockM!), tr(0, 0, Z[j + 1]), outs[j + 1].dockM!) })) };
+    }
+    const layers = stackLayers(p, m);
+    const plan = layers.length > 1 ? stackPlan(p, layers, mt.kind === 'dock' && !lie ? edge : null) : null;
+    const out = buildModule({
+      p, mi: i, b: m.board, H, din: mt.kind === 'flat', stand: false, hooks: plan?.[0].hooks ?? {}, name: m.board.name, bolted: boltedOf(layers[0]),
+      dock: mt.kind === 'dock' ? { edge, fit: P.fit ?? 0, ...(shift ? { shift } : {}), ...(lie ? { lie } : {}) } : undefined,
+      mount: mt.kind === 'flat' ? { ...p.mount, kind: 'din', mode: 'flat', rotation: mt.turn, at: null } : undefined,
+    });
+    const above: Layer[] = layers.slice(1).map((L, k) => {
+      const r = L.mod, ri = mods.get(r.id)!.i;
+      return { mod: r, mi: ri, T: plan![k + 1].T, out: buildModule({ p, mi: ri, b: r.board, H: r.holder, din: false, stand: false, hooks: plan![k + 1].hooks, name: r.board.name, level: k + 1, bolted: boltedOf(L) }) };
+    });
+    return { out, above };
+  };
+
   // ---- build every seated holder ----
   const failed: string[] = [];
   const placed: Placed[] = [];
@@ -197,59 +242,50 @@ export function generatePanel(p: Project): GenResult {
       if (!hit) return;
       const { m, i } = hit;
       const lie = mt.kind === 'dock' ? sl.lie : undefined; // a holder lying flat in its dock, by an ear on that edge
-      let edge: EdgeName = sl.edge === 'auto' ? bestDock(withRiders(p, m), railDir, slot, [mt.turn], EDGES, lie).edge : sl.edge;
+      // a column's bottom holder stands on a long edge (its long side along the rail, as the rest of the column's)
+      const column = mt.kind === 'dock' && !lie ? columnOf(p, m) : [];
+      let edge: EdgeName = sl.edge !== 'auto' ? sl.edge : !lie && mt.kind === 'dock' && (column.length || standsOnEdge(m)) ? columnSeat(m, railDir, slot, column.length > 0, [mt.turn]).edge : bestDock(withRiders(p, m), railDir, slot, [mt.turn], EDGES, lie).edge;
       try {
         const layers = stackLayers(p, m);
         const riders = ridersOf(p, m);
-        const plan = layers.length > 1 ? stackPlan(p, layers, mt.kind === 'dock' && !lie ? edge : null) : null;
-        const build = (e: EdgeName, H = m.holder, shift = 0) => buildModule({
-          p, mi: i, b: m.board, H, din: mt.kind === 'flat', stand: false, hooks: plan?.[0].hooks ?? {}, name: m.board.name, bolted: boltedOf(layers[0]),
-          dock: mt.kind === 'dock' ? { edge: e, fit: P.fit ?? 0, ...(shift ? { shift } : {}), ...(lie ? { lie } : {}) } : undefined,
-          mount: mt.kind === 'flat' ? { ...p.mount, kind: 'din', mode: 'flat', rotation: mt.turn, at: null } : undefined,
-        });
-        let out = build(edge);
-        // a probe stack slides along its dock (its tongue off the middle) to line up with the debug headers of the
-        // board in the other slot, so its ribbons are short
-        if (mt.kind === 'dock' && isProbe(m) && seats.length) {
-          const other = seats[0], mine = new Set([m.id, ...riders.map((r) => r.id)]);
-          const heads: number[] = [];
-          for (const [o, T] of [[other.out, I4] as const, ...other.above.map((L) => [L.out, L.T] as const)]) for (const pe of o.plugs) {
-            if ((p.links ?? []).some((l) => l.kind === 'debug' && ((l.a.module === pe.module && l.a.ref === pe.ref && mine.has(l.b.module)) || (l.b.module === pe.module && l.b.ref === pe.ref && mine.has(l.a.module))))) heads.push(ptM(mul(other.M, T), pe.p)[0]);
-          }
-          const own = out.plugs.find((pe) => { const c = m.board.comps.find((x) => x.ref === pe.ref); return c && isDebugPort(c); });
+        let { out, above } = seatBuild(m, i, edge, mt, railDir, slot, lie);
+        // a probe's column behind a board slides along its dock (every holder in it with the tongue off the middle) to
+        // line up with the headers it serves on that board, so its ribbons and wires are short; but no further than
+        // keeps it within the length the board already takes along the rail (a built rack's docks stay where they are)
+        if (mt.kind === 'dock' && !lie && isProbe(m) && seats.length) {
+          const other = seats[0], mine = new Set([m.id, ...column.map((x) => x.id)]);
           const M0 = slotMatrix(mt.turn, slot, out.dockM!), n = edgeNormal(edge), ex = dir(M0, [n[1], -n[0], 0])[0];
-          if (heads.length && own && Math.abs(ex) > 0.5) {
-            let want = heads.reduce((q, x) => q + x, 0) / heads.length - ptM(M0, own.p)[0];
-            // but no further than keeps it within the length of the dock the board already takes (a built rack's docks
-            // stay where they are)
-            const span = (o: ModuleOut, M: M4) => { const bx = emptyBox(); for (const pt of o.parts) boxOf(pt.mesh.pos, mul(M, pt.toAssembly), bx); return [bx[0], bx[3]]; };
-            const [b0, b1] = span(other.out, other.M), [q0, q1] = span(out, M0);
-            want = Math.max(Math.min(b0, q0) - q0, Math.min(Math.max(b1, q1) - q1, want));
-            if (Math.abs(want) > 2) out = build(edge, m.holder, -want / ex);
-          }
+          const at = (o: ModuleOut, M: M4, own: boolean) => o.plugs.filter((pe) => (p.links ?? []).some((l) => (l.kind === 'debug' || l.kind === 'jumper') && [[l.a, l.b], [l.b, l.a]].some(([u, v]) => u.module === pe.module && u.ref === pe.ref && (own ? v.module === other.mod.id || other.riders.some((r) => r.id === v.module) : mine.has(v.module))))).map((pe) => ptM(M, pe.p)[0]);
+          const heads = [other.out, ...other.above.map((L) => L.out)].flatMap((o, k) => at(o, k ? mul(other.M, other.above[k - 1].T) : other.M, false));
+          const own = [out, ...above.map((L) => L.out)].flatMap((o, k) => at(o, k ? mul(M0, above[k - 1].T) : M0, true));
+          // (plugs and all: a J-Link's USB plug sticks out past its end, along the rail)
+          const span = (os: [ModuleOut, M4][]) => { const bx = emptyBox(); for (const [o, M] of os) { for (const pt of o.parts) boxOf(pt.mesh.pos, mul(M, pt.toAssembly), bx); for (const g of o.ghosts) if (!g.name.startsWith('DIN rail')) boxOf(g.mesh.pos, M, bx); } return [bx[0], bx[3]]; };
+          const [b0, b1] = span([[other.out, other.M], ...other.above.map((L) => [L.out, mul(other.M, L.T)] as [ModuleOut, M4])]);
+          const [q0, q1] = span([[out, M0], ...above.map((L) => [L.out, mul(M0, L.T)] as [ModuleOut, M4])]);
+          let want = heads.length && own.length ? heads.reduce((q, x) => q + x, 0) / heads.length - own.reduce((q, x) => q + x, 0) / own.length : 0;
+          // within the board's length where it fits in it; else no further out past it than it already is
+          const lo = q1 - q0 <= b1 - b0 ? b0 - q0 : Math.min(0, b0 - q0), hi = q1 - q0 <= b1 - b0 ? b1 - q1 : Math.max(0, b1 - q1);
+          want = Math.max(Math.min(lo, hi), Math.min(Math.max(lo, hi), want));
+          if (Math.abs(want) > 2 && Math.abs(ex) > 0.5) ({ out, above } = seatBuild(m, i, edge, mt, railDir, slot, lie, m.holder, -want / ex));
         }
         // an automatic dock edge that leaves nothing to clip the board in (a small board with no pin holes, its
         // fingers' walls taken by plugs and the dock) gives way to the next best edge that does hold it
         const loose = (o: ModuleOut) => o.warnings.some((w) => /^Nothing clips this board in/.test(w));
-        if ((sl.edge === 'auto' || P.auto) && mt.kind === 'dock' && layers.length === 1 && loose(out)) {
+        if ((sl.edge === 'auto' || P.auto) && mt.kind === 'dock' && layers.length === 1 && !column.length && loose(out)) {
           const others = (['bottom', 'top', 'left', 'right'] as EdgeName[]).filter((e) => e !== edge)
             .map((e) => ({ e, o: bestDock(withRiders(p, m), railDir, slot, [mt.turn], [e], lie) }))
             .filter((c) => !c.o.access.some((a) => a.ok === 'blocked')).sort((a, b) => b.o.score - a.o.score);
           let found = false;
-          for (const c of others) { const o = build(c.e); if (!loose(o)) { edge = c.e; out = o; found = true; break; } }
+          for (const c of others) { const o = seatBuild(m, i, c.e, mt, railDir, slot, lie).out; if (!loose(o)) { edge = c.e; out = o; found = true; break; } }
           // with the release button left at its default, a button beside the board frees the far edge for fingers
           if (!found && !lie && m.holder.release == null) for (const e of [edge, ...others.map((c) => c.e)]) {
-            const o = build(e, { ...m.holder, release: 'side' });
+            const o = seatBuild(m, i, e, mt, railDir, slot, lie, { ...m.holder, release: 'side' }).out;
             if (!loose(o)) { edge = e; out = { ...o, checks: o.checks.map((c) => (c.name === 'Release button' ? { ...c, detail: 'beside the board, so the far edge is free for the spring clips that hold it (it has no holes for pins)' } : c)) }; break; }
           }
         }
         const M = mt.kind === 'dock' ? slotMatrix(mt.turn, slot, out.dockM!) : mul(clipToRail(p.mount.clipWidth), inv(out.clipT ?? I4));
-        const above: Layer[] = layers.slice(1).map((L, k) => {
-          const r = L.mod, ri = mods.get(r.id)!.i;
-          return { mod: r, mi: ri, T: plan![k + 1].T, out: buildModule({ p, mi: ri, b: r.board, H: r.holder, din: false, stand: false, hooks: plan![k + 1].hooks, name: r.board.name, level: k + 1, bolted: boltedOf(L) }) };
-        });
         // (the towers stand round the biggest layer, so it is the biggest that has to be small for this)
-        if (mt.kind === 'dock' && !lie && riders.length && dockSite(m.board, m.holder, edge).side === 0 && Math.max(...[m, ...riders].map((x) => { const b = bbox(x.board.outline); return Math.min(b.x1 - b.x0, b.y1 - b.y0); })) < 30) warnings.push(`${m.board.name}: the stack's corner towers are close to the dock's release button; check them in 3D.`);
+        if (mt.kind === 'dock' && !lie && layers.length > 1 && dockSite(m.board, m.holder, edge).side === 0 && Math.max(...layers.map((L) => { const b = bbox(L.mod.board.outline); return Math.min(b.x1 - b.x0, b.y1 - b.y0); })) < 30) warnings.push(`${m.board.name}: the stack's corner towers are close to the dock's release button; check them in 3D.`);
         seats.push({ mod: m, mi: i, slot, edge, ...(lie ? { lie } : {}), out, M, above, riders });
       } catch (e: any) {
         failed.push(`${m.board.name}: ${e?.message ?? e}`);
@@ -366,7 +402,7 @@ export function generatePanel(p: Project): GenResult {
     /** The empty back (or front) slot of a dock already on the rack: no new shoe or socket, no rail to add. */
     const intoSlot = (q: Placed, liked: Set<string>, partners: Set<string>): boolean => {
       const s0 = q.seats[0];
-      // a probe stack goes behind the board it serves; any other stack keeps a dock of its own
+      // a probe's column goes in the free slot of the board it serves; any other stack keeps a dock of its own
       const probe = isProbe(s0.mod);
       if (q.mt.kind !== 'dock' || q.seats.length !== 1 || ((s0.riders.length || s0.above.length) && !probe)) return false;
       const mine = (o: Placed) => o.seats.some((st) => partners.has(st.mod.id));
@@ -375,16 +411,16 @@ export function generatePanel(p: Project): GenResult {
       const allBoxes = (skip: Placed) => placed.filter((o) => o !== q && o.mt.at != null && railOf(o.mt)).flatMap((o) => o.boxes.filter((bx) => o !== skip || bx.id).map((bx) => { const f = toPanel(railOf(o.mt)!, o.mt.at!, bx.b); return [f[0], f[1], bx.b[2], f[2], f[3], bx.b[5]]; }));
       for (const o of docksWithRoom) {
         const k = o.mt.slots.findIndex((sl) => !sl.module), r = railOf(o.mt)!;
-        const bd = bestDock(withRiders(p, s0.mod), r.dir, k, [o.mt.turn], EDGES, s0.lie);
+        // (a column stands with its long side along the rail, on a long edge)
+        const col = columnOf(p, s0.mod).length > 0;
+        if (col && o.mt.turn % 180) continue;
+        const bd = col || (standsOnEdge(s0.mod) && !s0.lie) ? columnSeat(s0.mod, r.dir, k, col, [o.mt.turn]) : bestDock(withRiders(p, s0.mod), r.dir, k, [o.mt.turn], EDGES, s0.lie);
         if (bd.access.some((a) => a.ok === 'blocked')) continue;
         let out = s0.out, above = s0.above;
-        if (bd.edge !== s0.edge) {
-          try {
-            // a stack is planned round its dock edge (the towers on that side step in), so it is built again
-            const layers = stackLayers(p, s0.mod), plan = layers.length > 1 ? stackPlan(p, layers, s0.lie ? null : bd.edge) : null;
-            out = buildModule({ p, mi: s0.mi, b: s0.mod.board, H: s0.mod.holder, din: false, stand: false, hooks: plan?.[0].hooks ?? {}, name: s0.mod.board.name, bolted: boltedOf(layers[0]), dock: { edge: bd.edge, fit: P.fit ?? 0, ...(s0.lie ? { lie: s0.lie } : {}) } });
-            if (plan) above = layers.slice(1).map((L, j) => { const ri = mods.get(L.mod.id)!.i; return { mod: L.mod, mi: ri, T: plan[j + 1].T, out: buildModule({ p, mi: ri, b: L.mod.board, H: L.mod.holder, din: false, stand: false, hooks: plan[j + 1].hooks, name: L.mod.board.name, level: j + 1, bolted: boltedOf(L) }) }; });
-          } catch { continue; }
+        if (bd.edge !== s0.edge || col) {
+          // a stack is planned round its dock edge (the towers on that side step in), and a column's holders round
+          // their slot, so it is built again
+          try { ({ out, above } = seatBuild(s0.mod, s0.mi, bd.edge, o.mt, r.dir, k, s0.lie)); } catch { continue; }
         }
         const M = slotMatrix(o.mt.turn, k, out.dockM!);
         const b = emptyBox();
@@ -545,32 +581,42 @@ export function generatePanel(p: Project): GenResult {
         const b0 = 300 + 10 * seatNo++;
         const hasRod = layers[0].out.parts.some((pt) => pt.tag?.kind === 'rod');
         const stacked = layers.length > 1 || s.riders.length > 0;
+        // a column of small boards: each holder stands on the pegs of the one below, then one rod goes down through
+        // them all (it comes in from the top, along the column)
+        const col = q.mt.kind === 'dock' && !s.lie && columnOf(p, s.mod).length > 0;
+        const up = col ? (dir(mul(T, inv(s.out.dockM!)), [0, 0, 1]) as [number, number, number]) : null;
         // the holder goes into its dock and the latch clicks (onto its clip: it snaps)
         const IN: Motion = { seq: b0 + 4, dir: [0, 0, 1], dist: 70, style: 'snap' };
         const nm = s.mod.board.name, box = s.mod.board.kind === 'box';
         if (hasRod) steps.push({ seq: b0 + 1, text: `Push the release rod into the spine of the ${nm} holder until it clicks.` });
-        steps.push({ seq: b0 + 2, text: isProbe(s.mod) ? `Slide the ${nm} down into its slot, plugs out.` : box ? `Set the ${nm} into its holder and strap it down with a hook-and-loop strap through the loops.` : `Snap the ${nm} into its holder: it clicks under the spring clips or onto the pins.` });
-        if (stacked) steps.push({ seq: b0 + 3, text: [...s.riders].map((x) => (layers.some((L) => L.mod === x) ? (isProbe(x) ? `Press the next slot onto the corner towers and slide the ${x.board.name} down into it.` : `Press the ${x.board.name} holder onto the corner towers.`) : `Bolt the ${x.board.name} onto the ${nm} on its standoffs.`)).join(' ') });
-        steps.push({ seq: b0 + 4, text: q.mt.kind === 'dock' ? `Push the ${nm} holder straight into its dock until the latch clicks.` : layers[0].out.parts.some((pt) => pt.id.endsWith('_clip2')) ? `Press both halves of the ${nm} holder onto their rail clips, end to end.` : `Press the ${nm} holder onto its rail clip.` });
+        if (col) {
+          const names = layers.map((L) => L.mod.board.name);
+          steps.push({ seq: b0 + 2, text: `Snap each board into its holder: it clicks under the spring clips or onto the pins (${names.join(', ')}).` });
+          steps.push({ seq: b0 + 3, text: layers.slice(1).map((L, k) => `Stand the ${L.mod.board.name} holder on its long edge on the ${names[k]} holder, its pegs in the holes on top.`).join(' ') });
+          steps.push({ seq: b0 + 3.5, text: `Push the release rod down through the column from the top, through every holder, until it clicks.` });
+          steps.push({ seq: b0 + 4, text: `Push the column straight into its dock by the ${nm} holder until the latch clicks. To take it out, press the button on top and lift the whole column; each holder then lifts off the one below.` });
+        } else {
+          steps.push({ seq: b0 + 2, text: box ? `Set the ${nm} into its holder and strap it down with a hook-and-loop strap through the loops.` : `Snap the ${nm} into its holder: it clicks under the spring clips or onto the pins.` });
+          if (stacked) steps.push({ seq: b0 + 3, text: [...s.riders].map((x) => (layers.some((L) => L.mod === x) ? `Press the ${x.board.name} holder onto the corner towers.` : `Bolt the ${x.board.name} onto the ${nm} on its standoffs.`)).join(' ') });
+          steps.push({ seq: b0 + 4, text: q.mt.kind === 'dock' ? `Push the ${nm} holder straight into its dock until the latch clicks.` : layers[0].out.parts.some((pt) => pt.id.endsWith('_clip2')) ? `Press both halves of the ${nm} holder onto their rail clips, end to end.` : `Press the ${nm} holder onto its rail clip.` });
+        }
         const dn = edgeNormal(s.edge);
         layers.forEach((L, li) => {
           const nrm = dir(L.T, [0, 0, 1]) as [number, number, number];
-          const layerPre: Motion[] = li > 0 ? [{ seq: b0 + 3, dir: nrm, dist: 30, style: 'snap' }] : [];
-          // how the layer's own board goes in: a probe or adapter slides down its slot from the open end (away from
-          // the dock); a board is tipped in under the fingers on the far side and pressed down on this one, clicking
+          const layerPre: Motion[] = li > 0 ? [{ seq: b0 + 3, dir: up ?? nrm, dist: 30, style: 'snap' }] : [];
+          // how the layer's own board goes in: tipped in under the fingers on the far side and pressed down on this
+          // one, clicking (in a column, each on the bench before its holder goes on the one below)
           const bbL = bbox(L.mod.board.outline), cx = (bbL.x0 + bbL.x1) / 2, cy = (bbL.y0 + bbL.y1) / 2;
           const half = Math.abs(dn[0]) * (bbL.x1 - bbL.x0) / 2 + Math.abs(dn[1]) * (bbL.y1 - bbL.y0) / 2;
           const zTop = L.out.levels.boardTop;
-          const boardIn: Motion = isProbe(L.mod)
-            ? { seq: li > 0 ? b0 + 3 : b0 + 2, dir: dir(L.T, [-dn[0], -dn[1], 0]) as [number, number, number], dist: 2 * half + 8, style: 'slide' }
-            : { seq: li > 0 ? b0 + 3 : b0 + 2, dir: nrm, dist: 30, style: 'snap', rot: moveRot({ axis: [dn[1], -dn[0], 0], at: [cx - dn[0] * half, cy - dn[1] * half, zTop], deg: 9 }, L.T) };
+          const boardIn: Motion = { seq: li > 0 && !col ? b0 + 3 : b0 + 2, dir: nrm, dist: 30, style: 'snap', rot: moveRot({ axis: [dn[1], -dn[0], 0], at: [cx - dn[0] * half, cy - dn[1] * half, zTop], deg: 9 }, L.T) };
           for (const pe of L.out.plugs) ends.set(`${pe.module}/${pe.ref}`, { p: ptM(L.T, pe.p), d: dir(L.T, pe.d), cable: pe.cable, w: pe.w && dir(L.T, pe.w), span: pe.span, wires: pe.wires?.map((q) => ({ p: ptM(L.T, q.p), colour: q.colour, pin: q.pin })) });
           for (const pt of L.out.parts) {
             const own = moveAnim(pt.anim, L.T);
             const k = pt.tag?.kind;
             const a: Anim = pt.id.endsWith('_clip') || k === 'clip' ? { seq: 210, dir: [0, 0, 1], dist: 40, style: 'snap' }
               : k === 'cap' ? { seq: CAP_SEQ, dir: own?.dir ?? [0, 0, 1], dist: 25, style: 'snap' }
-              : k === 'rod' ? { ...IN, pre: [{ seq: b0 + 1, dir: own?.dir ?? [0, 0, 1], dist: 30 }, ...layerPre], show: b0 + 1 }
+              : k === 'rod' ? (col ? { ...IN, pre: [{ seq: b0 + 3.5, dir: up!, dist: 40 }], show: b0 + 3.5 } : { ...IN, pre: [{ seq: b0 + 1, dir: own?.dir ?? [0, 0, 1], dist: 30 }, ...layerPre], show: b0 + 1 })
               : { ...IN, pre: layerPre, show: li > 0 ? b0 + 3 : hasRod ? b0 + 1 : b0 + 2 };
             parts.push({ ...pt, toAssembly: mul(L.T, pt.toAssembly), anim: a });
           }
@@ -936,7 +982,7 @@ export function generatePanel(p: Project): GenResult {
       const head = kind === 'uart' ? [l.a, l.b].map((r) => mods.get(r.module)?.m.board.comps.find((c) => c.ref === baseRef(r.ref))).find((c) => c && isUartPort(c)) : undefined;
       const wires = kind === 'jumper' ? jumperWiring(p, l) : head ? uartWiring(head) : undefined;
       cables.push({ id: l.id, a: `${nameOf2(l.a.module)} ${refText(mods.get(l.a.module)?.m, l.a.ref)}`, b: `${nameOf2(l.b.module)} ${refText(mods.get(l.b.module)?.m, l.b.ref)}`, ends: `${l.a.module}/${l.a.ref}|${l.b.module}/${l.b.ref}`, kind, length: round(len, 0), buy: ribbon != null ? 0 : kind === 'jumper' ? jumperToBuy(len) / 1000 : cableToBuy(len), no, label: purpose.text, mid: [m0.p[0], m0.p[1], m0.p[2] + d / 2 + 2], ...(ribbon != null ? { ribbon } : {}), ...(wires ? { wires } : {}), ...(clash.length ? { clash: clash.join(', ') } : {}) });
-      if (probe && ribbon != null && len > ribbon) warnings.push(`The ${probe.board.name} ribbon is ${ribbon} mm but has to run about ${Math.round(len)} mm to ${purpose.to === probe.board.name ? purpose.from : purpose.to}. Use a longer ribbon (set its length under Box), or put the probe closer: in the back slot of that board's dock.`);
+      if (probe && ribbon != null && len > ribbon) warnings.push(`The ${probe.board.name} ribbon is ${ribbon} mm but has to run about ${Math.round(len)} mm to ${purpose.to === probe.board.name ? purpose.from : purpose.to}. Use a longer ribbon (set its length in Plugs, by the header), or put its column closer: in the back slot of that board's dock (Rails).`);
       // jumper wires past the usual 30 cm ones: the adapter is too far from its header
       if (kind === 'jumper' && len > 300) warnings.push(`The jumper wires from ${purpose.from} to ${purpose.to} have to run about ${Math.round(len)} mm, longer than the usual 30 cm ones. Put the adapter closer: in the back slot of that board's dock (drag it there in the Rails step).`);
       // numbered tags, a hand-width from each plug: ring round the cable, flag standing up

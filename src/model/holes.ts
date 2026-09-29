@@ -125,6 +125,23 @@ export function applyHoleRoles(b: Board, above: Board[] = [], force = true) {
   }
 }
 
+/** Small boards (up to about a J-Link's size: longest side, the other side) can stand on their long edge in a column. */
+export const SMALL = { long: 105, mid: 60 };
+
+/** Whether a board is small enough to stand in a column of small boards (never a box). */
+export function isSmall(b: Board): boolean {
+  if (b.kind === 'box' || b.outline.length < 3) return false;
+  const bb = bbox(b.outline), w = bb.x1 - bb.x0, h = bb.y1 - bb.y0;
+  return Math.max(w, h) <= SMALL.long && Math.min(w, h) <= SMALL.mid;
+}
+
+/** Whether board `m` can go on `x`'s stack as part of a column: both small, and nothing on `x`'s stack but a column. */
+export function columnable(p: Project, m: Module, x: Module): boolean {
+  if (!isSmall(m.board) || !isSmall(x.board)) return false;
+  const b = baseOf(p, x);
+  return isSmall(b.board) && ridersOf(p, b).every((r) => r === m || stackMode(p, r) === 'column');
+}
+
 /** Boards stacked directly or indirectly on module `m`, bottom to top. */
 export function ridersOf(p: Project, m: Module): Module[] {
   const out: Module[] = [];
@@ -153,10 +170,13 @@ export function baseOf(p: Project, m: Module): Module {
   return cur;
 }
 
-/** How a stacked board is held: bolted to the board below on standoffs, or on its own printed tower layer. */
-export function stackMode(p: Project, m: Module): 'bolted' | 'towers' {
+/** How a stacked board is held: bolted to the board below on standoffs, on its own printed tower layer, or standing
+ * on its long edge on the holder below (a column of small boards: J-Links, adapters). */
+export function stackMode(p: Project, m: Module): 'bolted' | 'towers' | 'column' {
   if (m.onMode) return m.onMode;
   const below = p.modules.find((x) => x.id === m.on);
+  // a J-Link or adapter on another small board stands in a column with it
+  if (below && (m.board.role || below.board.role) && isSmall(m.board) && isSmall(below.board)) return 'column';
   return below && stackAlign(below.board, m.board).matched >= 2 ? 'bolted' : 'towers';
 }
 
@@ -247,6 +267,8 @@ export function stackLayers(p: Project, base: Module): StackLayer[] {
   let prev = base, px = 0, py = 0; // previous board and its offset in the current layer's frame
   let top = 0; // top of the previous board above the current layer board's top
   for (const r of ridersOf(p, base)) {
+    // a column's holders stand edge on edge, not face on face: they are laid out with the dock (see columnOf)
+    if (stackMode(p, r) === 'column') break;
     const a = stackAlign(prev.board, r.board);
     const L = layers[layers.length - 1];
     if (stackMode(p, r) === 'bolted') {
@@ -262,6 +284,17 @@ export function stackLayers(p: Project, base: Module): StackLayer[] {
     prev = r;
   }
   return layers;
+}
+
+/** The boards standing on `base` in a column (each on its long edge on the holder below), bottom to top: empty when
+ * nothing stands on it that way. */
+export function columnOf(p: Project, base: Module): Module[] {
+  const out: Module[] = [];
+  for (const r of ridersOf(p, base)) {
+    if (stackMode(p, r) !== 'column') break;
+    out.push(r);
+  }
+  return out;
 }
 
 /** Boards bolted directly onto module m. */

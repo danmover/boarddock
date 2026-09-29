@@ -12,8 +12,11 @@ const ROLES: PlugRole[] = ['host', 'device', 'power-in', 'power-in-dc', 'power-o
 export const KIND_COLOR: Record<NonNullable<Link['kind']>, string> = { usb: '#3a3f47', power: '#d0443a', net: '#3b7dd8', video: '#7a5cc7', audio: '#2fae9a', wire: '#e0a030', debug: '#a3a9b1', uart: '#c0772f', jumper: '#4f9d57', mains: '#8d6e63' };
 export const KIND_NAME: Record<NonNullable<Link['kind']>, string> = { usb: 'USB', power: 'power', net: 'Ethernet', video: 'video', audio: 'audio', wire: 'wires', debug: 'debug ribbon', uart: 'USB-serial', jumper: 'jumper wires', mains: 'mains' };
 
-/** An accessory rather than a board being served: a box (hub, charger, probe), or a board marked as a probe or adapter. */
+/** An accessory rather than a board being served: a box (hub, charger), or a board that serves another (a J-Link, a
+ * USB-serial adapter). For wiring: which end of a debug ribbon is the probe. */
 export const isAccessory = (b: Board) => b.kind === 'box' || !!b.role;
+/** A closed device (hub, charger, powerboard): it lies in low guards with straps, not in a board's holder. */
+export const isBox = (b: Board) => b.kind === 'box';
 
 /** Connector types that are debug connectors (a probe's ribbon plugs in). */
 export const DEBUG_TYPES = new Set(['swd10', 'cortex20', 'jtag20', 'tagconnect']);

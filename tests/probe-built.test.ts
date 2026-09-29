@@ -1,11 +1,11 @@
-// A J-Link added to a rack that is already built goes into the free slot of its board's dock: all that is new to
-// print is its own slot holder (and what comes with it), nothing already printed changes, and its ribbon reaches.
+// A J-Link added to a rack that is already built goes into the free slot of its board's dock, or a dock of its own
+// when it would push the built docks along: nothing already printed changes.
 import { it, expect, beforeAll } from 'vitest';
 import { TEMPLATES } from '../src/model/templates';
 import { newModule, newProject } from '../src/model/library';
 import { autoLinks, numberLinks } from '../src/model/links';
 import { addProbes } from '../src/model/probes';
-import { seatCompanion } from '../src/cad/dockplan';
+import { ownDocks, seatCompanion } from '../src/cad/dockplan';
 import { generatePanel } from '../src/cad/panelgen';
 import { initKernel } from '../src/cad/kernel';
 import { delta, snapshot } from '../src/model/built';
@@ -23,22 +23,30 @@ function build(p: Project) {
   p.built = snapshot(p, r);
 }
 
-it('adds a J-Link to a built rack as add-on prints only, behind its board', () => {
+it('adds a J-Link to a built rack as add-on prints only, in a dock of its own when there is no room behind its board', () => {
   const p = newProject(T('example_dual_swd'));
   p.modules.push(newModule(T('usb_hub7')));
   p.links = numberLinks(autoLinks(p));
   build(p);
-  const added = addProbes(p, p.modules[0].id);
+  const added = addProbes(p, p.modules[0].id, ['J_SWD1']);
   for (const pm of added) if (!pm.on) seatCompanion(p, pm.id);
   p.links = numberLinks([...(p.links ?? []), ...autoLinks(p)]);
-  const r = generatePanel(p);
-  const dock = r.report.panel!.mounts.find((m) => m.slots.some((s) => s.module === p.modules[0].id))!;
-  expect(dock.slots.map((s) => s.module)).toContain(added[0].id);
-  expect(r.report.warnings.filter((w) => /ribbon is|Rail \d|overlap|runs into/.test(w))).toEqual([]);
+  let r = generatePanel(p);
+  // it stands on its long edge, its USB plug out along the rail: behind the board it reaches over the hub beside it, so
+  // (as the app does once the rack is built again) it gets a dock of its own rather than push the built docks along
+  expect(r.report.warnings.filter((w) => /overlap/.test(w)).length).toBe(1);
+  expect(ownDocks(p, r.report.panel!)).toEqual([added[0].id]);
+  r = generatePanel(p);
+  expect(r.report.panel!.mounts.find((m) => m.slots.some((s) => s.module === added[0].id))!.slots.map((s) => s.module)).toEqual([added[0].id, null]);
+  expect(r.report.warnings.filter((w) => /overlap|runs into/.test(w))).toEqual([]);
+  // from there its 200 mm ribbon doesn't reach, and it says so (and how to fix it)
+  expect(r.report.warnings.filter((w) => /ribbon is 200 mm but has to run/.test(w)).map((w) => /J_SWD1.*set its length in Plugs/.test(w))).toEqual([true]);
   const d = delta(p, r)!;
   const printed = d.parts.map((x) => x.name);
-  // the probes' own holders and rod; no new dock, shoe, socket or holder for anything already built
-  expect(printed.filter((n) => /J-Link/.test(n)).length).toBe(2);
-  expect(printed.some((n) => /Rail shoe|Dock socket|Holder: Dual-MCU|Holder: Powered/.test(n))).toBe(false);
-  expect(d.rails).toEqual([]);
+  // the J-Link's own holder and rod, and its dock; nothing for anything already built
+  expect(printed.filter((n) => /J-Link|Release rod|Rail shoe|Dock socket/.test(n)).length).toBe(4);
+  expect(printed.some((n) => /Holder: Dual-MCU|Holder: Powered/.test(n))).toBe(false);
+  // (its dock goes on the end of the rail, which gets longer: that is the one thing to cut again)
+  expect(d.rails.map((x) => x.id)).toEqual(['r1']);
+  expect(d.rails[0].length).toBeGreaterThan(d.rails[0].was ?? 0);
 }, 120_000);

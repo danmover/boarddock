@@ -9,7 +9,7 @@
 //  socket-local: same axes, Z = 0 at the socket top; tongues plug in along -Z; holder A faces +Y
 import type { V2 } from '../model/types';
 import { box, circle2, ext, extCh, K, poly, rect2, roundCS, unionCS, unionMF, type CS, type MF } from './kernel';
-import { EAR, gripSpan, HD, headSpan, LEN_X, NOSE_TIP, SHOE_GRIP, TONGUE } from './dockdims';
+import { EAR, gripSpan, HD, headSpan, LANDING, LEN_X, NOSE_TIP, PEG, SHOE_GRIP, TONGUE } from './dockdims';
 import { railGrip } from './dinclip';
 export { gripSpan, headSpan };
 
@@ -234,7 +234,7 @@ export const shoeLever = () => extYZ(leverProfile(), LEN_X / 2).subtract(pinBead
 export const END_POSE = { pose: [0, 0, 1, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 0, 1], inv: [0, 0, -1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1] };
 
 // ---------------- holder side (socket-local coordinates, holder A) ----------------
-export { HD, SPINE_TOP, DOCK_MIN_ZB } from './dockdims';
+export { HD, SPINE_TOP, DOCK_MIN_ZB, LANDING, PEG } from './dockdims';
 
 /** Tongue that plugs into the socket (after matching_tongue.stl, grown to 14 x 4.5 mm), with a lead-in at the tip. */
 export function tongue(into = 0.2, fit = 0): MF {
@@ -251,23 +251,41 @@ export function tongue(into = 0.2, fit = 0): MF {
  * under the board (grip bar centred on it), +1 / -1 when it runs beside the board on the +x / -x side (grip bar
  * reaches away from the board, so it stays clear of plugs on the top edge).
  */
-export function holderDock(far: number, pedestal: number, side = 0, fit = 0) {
+export function holderDock(far: number, pedestal: number, side = 0, fit = 0, col?: { foot: boolean; landing: boolean }) {
   const { spineHx, spineY1, grip } = HD;
-  const zg0 = far + grip.gap, zg1 = zg0 + grip.t;
+  // in a column of holders, one below the top carries the next on a landing on its far wall instead of a grip bar
+  const zg0 = col?.landing ? far + LANDING.gap : far + grip.gap, zg1 = zg0 + (col?.landing ? LANDING.t : grip.t);
   const [g0, g1] = gripSpan(side);
   const add = unionMF([
-    tongue(Math.min(1.0, pedestal), fit),
-    extXZ(rect2(-HD.base.hx, 0, HD.base.hx, Math.max(HD.base.t, pedestal)), HD.backY, HD.base.y1), // pedestal on the socket top
+    // the bottom of a column (or a holder on its own) plugs into the socket; one higher up stands on pegs
+    col?.foot ? unionMF(PEG.x.map((x) => peg(x))) : tongue(Math.min(1.0, pedestal), fit),
+    extXZ(rect2(-HD.base.hx, 0, HD.base.hx, Math.max(HD.base.t, pedestal)), HD.backY, HD.base.y1), // pedestal on the socket top (or on the landing below)
     box(-spineHx, HD.backY, 0, spineHx, spineY1, zg1), // spine, dock face to grip bar
-    // grip bar: rounded, with a shallow finger scoop in the face the fingers pull on (matches the button's dish)
-    extXZ(roundCS(rect2(g0, zg0, g1, zg1), 1.2).subtract(circle2((g0 + g1) / 2, zg0 - ((g1 - g0) ** 2 / 4 + 0.64) / 1.6 + 0.8, ((g1 - g0) ** 2 / 4 + 0.64) / 1.6, 256)), HD.backY, spineY1),
+    col?.landing
+      ? extXZ(roundCS(rect2(-LANDING.hx, zg0 - 0.01, LANDING.hx, zg1), 1.2).intersect(rect2(-LANDING.hx - 1, zg0 - 0.01, LANDING.hx + 1, zg1 + 1)), HD.backY, spineY1)
+      // grip bar: rounded, with a shallow finger scoop in the face the fingers pull on (matches the button's dish)
+      : extXZ(roundCS(rect2(g0, zg0, g1, zg1), 1.2).subtract(circle2((g0 + g1) / 2, zg0 - ((g1 - g0) ** 2 / 4 + 0.64) / 1.6 + 0.8, ((g1 - g0) ** 2 / 4 + 0.64) / 1.6, 256)), HD.backY, spineY1),
   ]);
-  const tunnel = rodTunnel(zg1); // release-rod tunnel
+  // the rod's tunnel: with its catch at the top of the column; straight through a holder the rod only passes
+  const tunnel = col?.landing ? box(-HD.tunnelHx, HD.tunnelY[0], -0.2, HD.tunnelHx, HD.tunnelY[1], zg1 + 0.2) : rodTunnel(zg1);
   const cut = unionMF([
     tunnel,
     box(-HD.voidHx, HD.backY - 0.1, Math.max(HD.base.t, pedestal) + 1.5, HD.voidHx, HD.voidY1, zg0 - 1.5), // back channel (saves filament)
+    ...(col?.landing ? PEG.x.map((x) => pegHole(x, zg1)) : []),
   ]);
   return { add, cut, tunnel, zg0, zg1 };
+}
+
+/** A column holder's peg, standing down from its pedestal (socket-local, z = 0 its underside). */
+function peg(x: number): MF {
+  return unionMF([ext(circle2(x, PEG.y, PEG.r, 48), -PEG.len, 0.01), K().Manifold.cylinder(PEG.tip, PEG.r - PEG.tip, PEG.r, 48).translate([x, PEG.y, -PEG.len - PEG.tip])]);
+}
+
+/** The press-fit hole for a peg in a landing whose top is at `top`: a lead-in, and three crush ribs that grip the peg. */
+function pegHole(x: number, top: number): MF {
+  let hole = unionMF([ext(circle2(x, PEG.y, 2.12, 48), top - 4.6, top + 1), K().Manifold.cylinder(2.1, 0.02, 2.12, 48).translate([x, PEG.y, top - 6.7])]);
+  for (const a of [90, 210, 330]) hole = hole.subtract(box(-0.35, 1.85, top - 5, 0.35, 2.3, top + 1).rotate([0, 0, a - 90]).translate([x, PEG.y, 0]));
+  return hole;
 }
 
 /**
@@ -309,9 +327,10 @@ export function rodTunnel(top: number): MF {
   return unionMF([box(-HD.tunnelHx, y0, -0.2, HD.tunnelHx, y1, top + 0.2), box(HD.tunnelHx - 0.1, y0, zb - HD.stroke - 0.3, HD.catch.pocket, y1, top - HD.catch.ledge)]);
 }
 
-/** Release rod with its button head, socket-local (rest position). `zg1`: the top of its tunnel. */
-export function rod(zg1: number, side = 0): { m: MF; len: number } {
-  const zh = zg1 + HD.stroke, zf = HD.rodRest, [y0, y1] = HD.rodY, h = HD.head;
+/** Release rod with its button head, socket-local (rest position). `zg1`: the top of its tunnel. `drop`: how far the
+ * socket is below this holder's dock face (the top holder of a column: the rod runs down through every holder under it). */
+export function rod(zg1: number, side = 0, drop = 0): { m: MF; len: number } {
+  const zh = zg1 + HD.stroke, zf = HD.rodRest - drop, [y0, y1] = HD.rodY, h = HD.head;
   const [x0, x1] = headSpan(side);
   // the shaft, and on its +x side a finger hanging from the head, cut free by a 0.5 mm slot, with the barb at its
   // foot: pushed down the tunnel, the ledge bends the finger 0.3 mm aside and the barb clicks out under it, so the rod

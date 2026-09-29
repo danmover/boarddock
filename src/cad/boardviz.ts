@@ -706,7 +706,8 @@ export function boardDetail(b: Board, zb: number, zt: number, tag: PickTag, anim
   const nm = b.name.slice(0, 28), nw = textWidth(nm, nameH);
   const spot = findFree(b, list, nw, nameH, taken); // (clear of the plugs' labels too)
   if (spot) silkText(bin, nm, spot, nameH, zt);
-  return bin.ghosts('board', tag, anim, bare && b.color ? { mask: b.color } : {});
+  // (a bare box, or a board with a colour of its own: a J-Link, an adapter, drawn in its solder mask's colour)
+  return bin.ghosts('board', tag, anim, b.color ? { mask: b.color } : {});
 }
 
 /**

@@ -1,4 +1,4 @@
-// Boxes (hubs, chargers, powerboards, probes, adapters) made to match yours: the Box tab (size, corners, colour, and a
+// Boxes (hubs, chargers, powerboards) made to match yours: the Box tab (size, corners, colour, and a
 // card for every row of ports: how many, what, which face, where along it, how high, which way up), a live sketch of
 // the box from above and of each face as you look at it, and "Build your own box" for the Start page.
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -102,7 +102,7 @@ export function BoxEditor() {
       <div className="row3" style={{ marginTop: 10 }}>
         <Num label="Length" value={spec.l} min={10} max={800} step={1} onChange={(v) => set((s) => { s.l = v; })} hint="Along its front: the long side." />
         <Num label="Width" value={spec.w} min={8} max={300} step={1} onChange={(v) => set((s) => { s.w = v; })} hint="Front to back." />
-        <Num label="Height" value={spec.h} min={1} max={150} step={0.1} onChange={(v) => set((s) => { s.h = v; })} hint="Under 5 mm it is a bare board (a probe, an adapter): its ports stand on its top face." />
+        <Num label="Height" value={spec.h} min={1} max={150} step={0.1} onChange={(v) => set((s) => { s.h = v; })} hint="Under 5 mm it is drawn as a bare circuit board: its ports stand on its top face." />
       </div>
       <div className="boxshape">
         <div className="field"><span>Corners, from above</span>
@@ -143,7 +143,7 @@ export function BoxEditor() {
           {tightFaces(spec).slice(0, 1).map((t) => <button key={t.face} className="btn small soft" style={{ marginTop: 6 }} onClick={() => set((s) => { s[t.dim] = Math.max(s[t.dim], ...tightFaces(s).filter((x) => x.dim === t.dim).map((x) => x.need)); })}>Make the box {Math.max(...tightFaces(spec).filter((x) => x.dim === t.dim).map((x) => x.need))} mm {t.dim === 'l' ? 'long' : 'wide'}</button>)}
         </div>
       )}
-      <p className="hint">{isProbe(m) ? 'It slides down into a slot in the back of its board\'s dock and stays there; the next probe or adapter for that board gets the next slot, on corner towers. Height is its thickness.' : spec.groups.some((x) => x.type.startsWith('ac_')) ? 'A powerboard lies on its base in its holder, strapped down between the outlets. Outlets spread evenly along the top; turn them 45° if your chargers are plug packs. Its own lead goes to the wall: never into another powerboard.' : 'Front and back are the long sides; the box lies on its base in its holder, strapped down. Ports on top are fine: the strap loops move to miss them.'} {bare ? '' : 'To copy your own: measure each port with calipers from the end of the box, or drag it in the editor to where it is on a photo. '}Cables to ports you remove are removed too.</p>
+      <p className="hint">{isProbe(m) ? 'A J-Link or USB-serial adapter is better as a board (the library has both): a board stands on its long edge in a column beside the board it serves, where a box lies flat like a hub.' : spec.groups.some((x) => x.type.startsWith('ac_')) ? 'A powerboard lies on its base in its holder, strapped down between the outlets. Outlets spread evenly along the top; turn them 45° if your chargers are plug packs. Its own lead goes to the wall: never into another powerboard.' : 'Front and back are the long sides; the box lies on its base in its holder, strapped down. Ports on top are fine: the strap loops move to miss them.'} {bare ? '' : 'To copy your own: measure each port with calipers from the end of the box, or drag it in the editor to where it is on a photo. '}Cables to ports you remove are removed too.</p>
     </Section>
   );
 }
@@ -365,7 +365,7 @@ export function DrawBox({ put }: { put: (b: Board) => void }) {
         <div className="row3" style={{ marginTop: 8 }}>
           <Num label="Length" value={l} min={10} max={800} step={1} onChange={(v) => put3(0, v)} hint="Along its front: the long side." />
           <Num label="Width" value={w} min={8} max={300} step={1} onChange={(v) => put3(1, v)} hint="Front to back." />
-          <Num label="Height" value={h} min={1} max={150} step={0.1} onChange={(v) => put3(2, v)} hint="Under 5 mm it is a bare board (a probe, an adapter)." />
+          <Num label="Height" value={h} min={1} max={150} step={0.1} onChange={(v) => put3(2, v)} hint="Under 5 mm it is drawn as a bare circuit board." />
         </div>
         <div className="field" style={{ marginTop: 8 }}><span>Colour</span>
           <div className="swatches">

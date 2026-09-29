@@ -205,8 +205,9 @@ describe('custom boxes: build your own, save it, print it', () => {
   beforeAll(async () => { await initKernel(); });
 
   it('starts a box of each kind from scratch, with ports to edit', () => {
-    for (const k of ['hub', 'charger', 'supply', 'probe', 'adapter'] as const) {
-      const b = newBox(k, { l: 80, w: 40, h: k === 'probe' || k === 'adapter' ? 2 : 20 });
+    // (J-Links and USB-serial adapters are boards now, from the library or drawn: not boxes)
+    for (const k of ['hub', 'charger', 'supply'] as const) {
+      const b = newBox(k, { l: 80, w: 40, h: 20 });
       expect(b.kind).toBe('box');
       expect(b.box!.groups.length).toBeGreaterThan(0);
       expect(boxProblems(b.box!), k).toEqual([]);

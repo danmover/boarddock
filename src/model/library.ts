@@ -2,7 +2,7 @@
 // Dimensions are typical catalogue values; every one is editable in the app because real parts vary.
 import { PRINTERS_DB, printerByName } from './printers';
 import { applyHoleRoles } from './holes';
-import { DEBUG_HINT, numberLinks } from './links';
+import { DEBUG_HINT, isDebugPort, isUartPort, numberLinks } from './links';
 import type { ArrangeSettings, Board, Comp, CompKind, ConnSetup, HolderSettings, Material, Module, MountSettings, PanelSettings, PlugSpec, PrinterSettings, Project, StandSettings } from './types';
 
 export interface ConnType {
@@ -407,6 +407,33 @@ export function newProject(board: Board): Project {
 }
 
 /** Upgrade older project files (single board) to the current format. */
+/**
+ * A board laid out by face as a box is (a J-Link, a USB-serial adapter, or one saved when they were boxes) made the
+ * ordinary board it is: each port on an edge gets its connector's own footprint, flush with that edge as a board's
+ * connectors are, and the board keeps its size, parts, colour and port names, so its cables stay put. Mutates `b`.
+ */
+export function bareToBoard(b: Board, role: 'probe' | 'adapter'): Board {
+  const xs = b.outline.map((q) => q[0]), ys = b.outline.map((q) => q[1]);
+  const bb = { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) };
+  for (const c of b.comps) {
+    if (!c.conn || c.conn.entry !== 'edge') continue;
+    const t = connById(c.conn.type), a = ((Math.round(c.conn.angle) % 360) + 360) % 360;
+    if (a % 90) continue;
+    const horizontal = a === 0 || a === 180, out = a === 0 || a === 90 ? 1 : -1;
+    const edge = a === 0 ? bb.x1 : a === 180 ? bb.x0 : a === 90 ? bb.y1 : bb.y0;
+    const depth = t.body.l, mid = edge + out * (t.overhang - depth / 2);
+    const across = horizontal ? c.l : c.w; // a row of pins keeps the width its pins give it
+    if (horizontal) { c.x = mid; c.w = depth; c.l = across; } else { c.y = mid; c.l = depth; c.w = across; }
+    c.h = t.body.h;
+    c.conn.zc = t.zc;
+  }
+  if (b.box?.ribbon) b.ribbon = b.box.ribbon;
+  delete b.box;
+  delete b.kind;
+  b.role = role;
+  return b;
+}
+
 export function migrate(p: any): Project {
   if (p && p.version === 1 && p.board) {
     p = { version: 2, modules: [{ id: 'm0', board: p.board, holder: p.holder }], active: 0, arrange: { ...DEFAULT_ARRANGE }, mount: p.mount, stand: p.stand, printer: p.printer };
@@ -419,6 +446,13 @@ export function migrate(p: any): Project {
     for (const g of s.groups) if (g.type === 'barrel' && g.role === 'other') { g.role = 'power-in-dc'; g.volts ??= 12; }
     for (const c of m.board.comps ?? []) if (c.conn?.type === 'barrel' && c.role === 'other') c.role = 'power-in-dc';
   }
+  // J-Links and USB-serial adapters were boxes that slid into a slot behind their board: they are boards now, and the
+  // ones stacked on each other stand in a column
+  for (const m of p.modules) {
+    const b = m.board;
+    if (b?.kind === 'box' && b.comps?.some((c: Comp) => isDebugPort(c) || isUartPort(c))) bareToBoard(b, b.comps.some((c: Comp) => isDebugPort(c)) ? 'probe' : 'adapter');
+  }
+  for (const m of p.modules) if (m.on && m.onMode === 'towers' && m.board?.role && p.modules.find((x: Module) => x.id === m.on)?.board?.role) m.onMode = 'column';
   // v2 -> v3: boards go onto DIN rail docks, laid out automatically
   return {
     ...p,

@@ -3,7 +3,7 @@
 import type { EdgeName, GenResult, PanelReport, Project, RailMount, Slot, Turn } from '../model/types';
 import { round, uid } from '../geom/poly';
 import { appendDock, bestDock, seatBoard, dropEmptied, nearestFree, ownDocks, spreadOut, spreadRails, withRiders } from '../cad/dockplan';
-import { baseOf, refreshStandoffs } from '../model/holes';
+import { baseOf, columnable, refreshStandoffs } from '../model/holes';
 import { amend, edit, select, store, toast, uniqueName } from '../state';
 import { mountLabels, snapshot } from '../model/built';
 import { isProbe } from '../model/probes';
@@ -384,6 +384,12 @@ export function stackOn(moduleId: string, baseId: string | null) {
     for (const x of p.modules) if (x.on === moduleId && !baseId) x.on = m.on ?? null;
     const oldBelow = m.on;
     m.on = baseId;
+    // a small board put on a column (or a J-Link or adapter on another small board) stands in it on its long edge; one
+    // taken off a column goes back to its own dock as it was
+    const x = baseId ? p.modules.find((q) => q.id === baseId) : null;
+    const colHere = !!x && (x.onMode === 'column' || p.modules.some((y) => y.on === x.id && y !== m && y.onMode === 'column') || !!m.board.role || !!x.board.role);
+    if (x && columnable(p, m, x) && colHere) m.onMode = 'column';
+    else if (m.onMode === 'column') delete m.onMode;
     if (baseId) for (const mt of p.panel.mounts) for (const sl of mt.slots) if (sl.module === moduleId) sl.module = null;
     for (const id of [oldBelow, baseId]) { const x = p.modules.find((q) => q.id === id); if (x) refreshStandoffs(p, x); }
   };
@@ -403,7 +409,7 @@ export function quickLayout(kind: 'row' | 'rows' | 'cols') {
 }
 
 /** How a stacked board is held, and its standoff length (null: BoardDock picks it again). */
-export function setStackMode(moduleId: string, mode: 'bolted' | 'towers', gap?: number | null) {
+export function setStackMode(moduleId: string, mode: 'bolted' | 'towers' | 'column', gap?: number | null) {
   edit((p) => {
     const m = p.modules.find((x) => x.id === moduleId);
     if (!m) return;

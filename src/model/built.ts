@@ -8,7 +8,7 @@ import { isPlugPack } from './powerdata';
 import { packGoes } from './links';
 
 /**
- * The boxes that need a hook-and-loop strap: those in a holder with strap loops. A probe slides into a slot instead, a
+ * The boxes that need a hook-and-loop strap: those in a holder with strap loops. A J-Link or adapter is a board, a
  * plug pack sits in an outlet and never gets a holder, and a box not on a rail (or riding one that isn't) has none.
  * `panel`: the rack's report, for which boards are on the rails; loose holders each get their own.
  */

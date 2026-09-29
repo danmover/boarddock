@@ -3,9 +3,9 @@
 // Automatic until the first change by hand; every change is undoable.
 import { useMemo, useState, type ReactNode } from 'react';
 import type { Access, EdgeName, Module, PanelReport, Project, Turn } from '../model/types';
-import { baseOf, ridersOf, stackAlign, stackGap, stackHardware, stackMode } from '../model/holes';
+import { baseOf, columnable, columnOf, isSmall, ridersOf, stackAlign, stackGap, stackHardware, stackMode } from '../model/holes';
 import { bbox } from '../geom/poly';
-import { companionLabel, isProbe, targetOf } from '../model/probes';
+import { companionLabel, isProbe } from '../model/probes';
 import { isAccessory } from '../model/links';
 import { edit, isSel, select, setActive, store, toast, useApp } from '../state';
 import { Check, Chip, Num, Pick, Section, Seg } from './controls';
@@ -67,7 +67,7 @@ function BoardChip({ m, color, rider, children, acc }: { m: Module; color: strin
     if (id === m.id) return;
     const up = p.modules.find((x) => x.id === id);
     // a board goes only on one about its size, never on a hub, charger or powerboard
-    if (up && !stackTargets(p, up).some((x) => x.m === m)) { toast(`${up.board.name} can't sit on ${m.board.name}: ${m.board.kind === 'box' ? 'it is a box (a hub, charger or powerboard), not a board' : isProbe(up) ? 'a probe stacks only on another probe of the same board' : isAccessory(m.board) ? 'it is an accessory, not a board to build on' : 'it is smaller'}. Drop it on a slot or a rail instead.`); return; }
+    if (up && !stackTargets(p, up).some((x) => x.m === m)) { toast(`${up.board.name} can't sit on ${m.board.name}: ${m.board.kind === 'box' ? 'it is a box (a hub, charger or powerboard), not a board' : isSmall(up.board) && isSmall(m.board) ? 'what is on it is not a column of small boards' : isAccessory(m.board) ? 'it is a J-Link or adapter: only a small board stands on it, in a column' : 'it is smaller'}. Drop it on a slot or a rail instead.`); return; }
     if (!stackOn(id, m.id)) store.set({ toast: 'That would put a board on top of itself.' });
   });
   return (
@@ -76,7 +76,7 @@ function BoardChip({ m, color, rider, children, acc }: { m: Module; color: strin
       onClick={(e) => { e.stopPropagation(); setActive(i); select([{ kind: 'module', id: m.id }]); }}
       title="Drag onto a slot, a rail, or another board to stack it on top">
       <i style={{ background: color }} />
-      <span className="grow" title={m.board.name}>{isProbe(m) ? companionLabel(p, m) : m.board.name}{rider && <small style={{ color: 'var(--subtle)', fontWeight: 400 }}> · {stackMode(p, m) === 'bolted' ? 'bolted on top' : 'printed layer'}</small>}</span>
+      <span className="grow" title={m.board.name}>{isProbe(m) ? companionLabel(p, m) : m.board.name}{rider && <small style={{ color: 'var(--subtle)', fontWeight: 400 }}> · {({ bolted: 'bolted on top', towers: 'printed layer', column: 'in a column' } as const)[stackMode(p, m)]}</small>}</span>
       {acc && <AccessChips list={acc} />}
       {children}
     </div>
@@ -387,16 +387,21 @@ function Slot({ mountId, slot, label, m, edge, lie, col, acc, stackRows, dock, r
 }
 
 /**
- * The boards `m` can sit on: boards at least about its size (never a box such as a hub or a powerboard; a probe only
- * on another probe of the same board), the ones it bolts onto (two or more holes in common) first.
+ * The boards `m` can sit on: boards at least about its size (never a box such as a hub or a powerboard), the ones it
+ * bolts onto (two or more holes in common) first; and for a small board (a J-Link, an adapter), any other small board
+ * whose stack is a column (it stands on its long edge on top). A J-Link or adapter goes only in a column.
  */
-export function stackTargets(p: Project, m: Module): { m: Module; bolts: boolean }[] {
+export function stackTargets(p: Project, m: Module): { m: Module; bolts: boolean; column?: boolean }[] {
   const area = (x: Module) => { const b = bbox(x.board.outline); return (b.x1 - b.x0) * (b.y1 - b.y0); };
-  const probe = isProbe(m), mine = probe ? targetOf(p, m) : null;
+  const companion = isAccessory(m.board);
   return p.modules
     .filter((x) => x !== m && baseOf(p, x) !== m && x.board.kind !== 'box')
-    .filter((x) => (probe ? isProbe(x) && !!mine && targetOf(p, x) === mine : !isAccessory(x.board) && area(x) >= 0.8 * area(m)))
-    .map((x) => ({ m: x, bolts: !probe && stackAlign(x.board, m.board).matched >= 2 }))
+    .map((x) => {
+      if (columnable(p, m, x) && (companion || isAccessory(x.board) || columnOf(p, baseOf(p, x)).length > 0)) return { m: x, bolts: false, column: true };
+      const ok = !companion && !isAccessory(x.board) && area(x) >= 0.8 * area(m) && !columnOf(p, baseOf(p, x)).length;
+      return ok ? { m: x, bolts: stackAlign(x.board, m.board).matched >= 2 } : null;
+    })
+    .filter((x): x is { m: Module; bolts: boolean; column?: boolean } => !!x)
     .sort((a, b) => Number(b.bolts) - Number(a.bolts));
 }
 
@@ -409,7 +414,7 @@ function StackSection() {
   const can = p.modules.filter((m) => !m.on && m.board.kind !== 'box' && stackTargets(p, m).length);
   const who = can.find((m) => m.id === pick) ?? null;
   const put = (id: string, on: string | null) => { if (!stackOn(id, on)) store.set({ toast: 'That would put a board on top of itself.' }); };
-  const label = (x: { m: Module; bolts: boolean }) => `on top of ${x.m.board.name}${x.bolts ? ' (bolts on)' : ''}`;
+  const label = (x: { m: Module; bolts: boolean; column?: boolean }) => `on top of ${x.m.board.name}${x.bolts ? ' (bolts on)' : x.column ? ' (in a column)' : ''}`;
   return (
     <Section title="Stacks" right={<span className="hint" style={{ margin: 0 }}>or drag a board onto another</span>}>
       <div className="list">
@@ -425,7 +430,8 @@ function StackSection() {
                 {opts.map((x) => <option key={x.m.id} value={x.m.id}>{label(x)}</option>)}
               </select>
               <div style={{ display: 'flex', gap: 6, alignItems: 'center', width: '100%', paddingLeft: 18 }}>
-                <div style={{ flex: 1 }}><Seg value={stackMode(p, m)} options={[['bolted', 'Bolted on standoffs'], ['towers', 'Printed layer']]} onChange={(v) => setStackMode(m.id, v)} /></div>
+                <div style={{ flex: 1 }}><Seg value={stackMode(p, m)} options={[['bolted', 'Bolted on standoffs'], ['towers', 'Printed layer'], ...(on && columnable(p, m, on) ? [['column', 'On its edge'] as ['column', string]] : [])]} onChange={(v) => setStackMode(m.id, v)} /></div>
+                <button className="btn small" onClick={() => put(m.id, null)} title="Back onto a dock of its own">Take off the stack</button>
                 {stackMode(p, m) === 'bolted' && <input type="number" style={{ width: 62, height: 26 }} title={`Standoff length (mm)${m.onGap == null ? ': the shortest that clears the parts under it (type your own, or clear it to go back to this)' : ': yours (clear it to let BoardDock pick)'}`} value={m.onGap ?? stackGap(p, m)} step={0.5} min={2} max={40} onChange={(e) => setStackMode(m.id, 'bolted', e.target.value === '' ? null : Math.max(2, +e.target.value || 11))} />}
               </div>
             {(() => {
@@ -439,11 +445,11 @@ function StackSection() {
       </div>
       {can.length > 0 && (
         <div className="row" style={{ marginTop: 8 }}>
-          <Pick label="Put a board" value={who?.id ?? ''} options={[['', 'pick one…'], ...can.map((m) => [m.id, m.board.name] as [string, string])]} onChange={(v) => setPick(v)} />
-          <Pick label="On top of" value="" options={[['', who ? 'pick one…' : 'pick a board first'], ...(who ? stackTargets(p, who).map((x) => [x.m.id, `${x.m.board.name}${x.bolts ? ' (bolts on)' : ''}`] as [string, string]) : [])]} onChange={(v) => { if (who && v) { put(who.id, v); setPick(''); } }} />
+          <Pick label="Stack a board" value={who?.id ?? ''} options={[['', 'pick one…'], ...can.map((m) => [m.id, m.board.name] as [string, string])]} onChange={(v) => setPick(v)} />
+          <Pick label="Stack on…" value="" options={[['', who ? 'pick one…' : 'pick a board first'], ...(who ? stackTargets(p, who).map((x) => [x.m.id, `${x.m.board.name}${x.bolts ? ' (bolts on)' : x.column ? ' (in a column)' : ''}`] as [string, string]) : [])]} onChange={(v) => { if (who && v) { put(who.id, v); setPick(''); } }} />
         </div>
       )}
-      <p className="hint"><b>Bolted</b>: a HAT or shield screwed to the board below on standoffs, lined up on the holes they share ("bolts on": they share two or more); those holes get no pins and room for screw heads. <b>Printed layer</b>: a separate board on its own light holder that presses onto corner towers of the one below. Only boards at least as big as the one on top are offered, and never a hub, charger or powerboard.</p>
+      <p className="hint"><b>Bolted</b>: a HAT or shield screwed to the board below on standoffs, lined up on the holes they share ("bolts on": they share two or more); those holes get no pins and room for screw heads. <b>Printed layer</b>: a separate board on its own light holder that presses onto corner towers of the one below. <b>On its edge</b>: small boards (J-Links, USB-serial adapters, anything up to about a J-Link's size) stand on their long edges in a column, each holder on pegs on the one below; one release rod runs down through them all, and each lifts straight off. Only boards at least as big as the one on top are offered (any small board for a column), and never a hub, charger or powerboard.</p>
     </Section>
   );
 }

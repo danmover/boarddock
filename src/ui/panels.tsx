@@ -6,7 +6,7 @@ import { applyHoleRoles, boltedOn, detectHoleRoles, ROLE_INFO, stackHardware } f
 import { allPlugs, baseRef, canCable, connectNote, findModule, offRackModule, powerShort, refText, cableNumbers, cablePurpose, shortName, strongerPower, KIND_COLOR, linkKind, linkOf, plugName, plugRole, plugsOf, portBudget, sameRef } from '../model/links';
 import { cableLines } from '../model/cablelist';
 import { addAccessory, addJLinks, addLinks, addSerialAdapters, addUartCables, plugPlaces, rebalancePower, removeLinks, setLink } from './linkOps';
-import { adapterFor, debugHeaders, isDebugPort, isProbe, isUartPort, markDebug, uartHeaders, uartPins, type DebugKind } from '../model/probes';
+import { adapterFor, debugHeaders, isDebugPort, isProbe, isUartPort, markDebug, ribbonOf, uartHeaders, uartPins, type DebugKind } from '../model/probes';
 import { Icon, I } from './icons';
 import { CONNECTORS, DEFAULT_FEATURES, HOLDER_PRESETS, MATERIALS, PRINTERS, connById, connSetup, setLayout } from '../model/library';
 import { holdOf } from '../cad/grip';
@@ -426,7 +426,7 @@ function BoardTab() {
         {box ? <p className="hint" style={{ margin: 0 }}>A box: its size and ports are under Box.</p> : (
           <>
             <Pick label="It is" value={b.role ?? 'board'} options={[['board', 'a board'], ['probe', 'a debug probe (J-Link…)'], ['adapter', 'a USB-serial adapter']]} onChange={(v) => editMod((q) => { q.board.role = v === 'board' ? undefined : (v as 'probe' | 'adapter'); })} />
-            <p className="hint" style={{ margin: '6px 0 0' }}>{b.role === 'probe' ? 'Give it its debug connector (the one its ribbon plugs into) and its USB; it slides into a slot behind the board it serves, like a J-Link.' : b.role === 'adapter' ? 'Give it its pins (named, for the jumper wires) and its USB; it slides into a slot behind the board it serves.' : 'A board you build a holder for. A debug probe or an adapter you drew yourself goes in a slot behind the board it serves instead.'}</p>
+            <p className="hint" style={{ margin: '6px 0 0' }}>{b.role === 'probe' ? 'Give it its debug connector (the one its ribbon plugs into) and its USB. It is docked like any board: on its long edge, in a column beside the board it serves.' : b.role === 'adapter' ? 'Give it its pins (named, for the jumper wires) and its USB. It is docked like any board: on its long edge, in a column beside the board it serves.' : 'A board you build a holder for. Mark a debug probe or an adapter you drew yourself as one, and it stands in a column beside the board it serves.'}</p>
           </>
         )}
       </Section>
@@ -464,12 +464,12 @@ function DebugProbes() {
   );
   // a probe's ribbon length, set where the "too short" note shows up
   const ribbon = (o: NonNullable<ReturnType<typeof other>>) => {
-    const pm = o.m!, len = pm.board.box?.ribbon ?? 200, run = cables?.find((x) => x.id === o.link && x.ribbon != null)?.length;
+    const pm = o.m!, len = ribbonOf(pm.board), run = cables?.find((x) => x.id === o.link && x.ribbon != null)?.length;
     return (
       <span className="ribbon" onClick={(e) => e.stopPropagation()} title={run != null ? `Its ribbon has to run about ${Math.round(run)} mm` : 'How long its ribbon is'}>
         {run != null && run > len && <Chip status="warn">needs ~{Math.round(run)}</Chip>}
         <input type="number" aria-label={`${kindOf(pm)} ribbon length (mm)`} value={len} step={10} min={50} max={1000}
-          onChange={(e) => { const v = Math.max(50, Math.min(1000, +e.target.value || 200)); edit((q) => { const x = q.modules.find((y) => y.id === pm.id); if (x?.board.box) x.board.box.ribbon = v; }); }} />
+          onChange={(e) => { const v = Math.max(50, Math.min(1000, +e.target.value || 200)); edit((q) => { const x = q.modules.find((y) => y.id === pm.id); if (!x) return; if (x.board.box) x.board.box.ribbon = v; else x.board.ribbon = v; }); }} />
         <small>mm</small>
       </span>
     );
@@ -477,7 +477,7 @@ function DebugProbes() {
   return (
     <Section title={`${heads.length ? 'Debug' : ''}${heads.length && uarts.length ? ' & ' : ''}${uarts.length ? 'UART' : ''} headers · ${heads.length + uarts.length}`}>
       <div className="list">
-        {heads.map((c) => { const o = other(c); return o?.m ? row(c, <Chip status="ok">{kindOf(o.m)}</Chip>, isProbe(o.m) && o.m.board.box ? ribbon(o) : undefined) : row(c, <button className="btn small soft" onClick={(e) => { e.stopPropagation(); addJLinks(m.id, [c.ref]); }} title={`A J-Link on ${c.ref}, cabled to it, behind this board`}><Icon d={I.plus} /> J-Link</button>); })}
+        {heads.map((c) => { const o = other(c); return o?.m ? row(c, <Chip status="ok">{kindOf(o.m)}</Chip>, isProbe(o.m) ? ribbon(o) : undefined) : row(c, <button className="btn small soft" onClick={(e) => { e.stopPropagation(); addJLinks(m.id, [c.ref]); }} title={`A J-Link on ${c.ref}, cabled to it, behind this board`}><Icon d={I.plus} /> J-Link</button>); })}
         {uarts.map((c) => { const o = other(c); return o?.m ? row(c, <Chip status="ok">{shortName(kindOf(o.m))} {isProbe(o.m) ? '' : refText(o.m, o.ref)}</Chip>) : row(c, <button className="btn small soft" onClick={(e) => { e.stopPropagation(); addSerialAdapters(m.id, [c.ref]); }} title={`A USB-serial adapter on ${c.ref}, with jumper wires, behind this board`}><Icon d={I.plus} /> Adapter</button>); })}
       </div>
       {uarts.map((c) => <UartPins key={c.id} c={c} many={uarts.length > 1} />)}
@@ -488,7 +488,7 @@ function DebugProbes() {
           {freeUart.length > 0 && <button className="btn small ghost" onClick={() => addUartCables(m.id)} title="A USB to TTL cable with loose jumper ends, straight to a hub">or {freeUart.length > 1 ? 'serial cables' : 'a serial cable'}</button>}
         </div>
       )}
-      <p className="hint">{heads.length > 0 && 'Each J-Link slides down into a slot in the back of this board\'s dock, USB end up (more than one: the slots stack on towers); its ribbon loops over the top of the dock to its header, and its USB goes to a hub (Auto-connect). The number by it is its ribbon\'s length: set yours. '}{uarts.length > 0 && 'A USB-serial adapter (the little FT232RL board) goes in the slot behind the board too, with jumper wires from its pins to the header: GND to GND, its TXD to the board\'s RX, its RXD to the board\'s TX. (Or a serial cable with loose ends, straight to a hub.) '}Found by shape (2 × 5 at 1.27 mm) or name (SWD, JTAG, debug, UART, serial, TX/RX); mark others by selecting them and choosing <b>Debug / UART</b>.</p>
+      <p className="hint">{heads.length > 0 && 'Each J-Link is a board of its own: it stands on its long edge in a column beside this board, with its other J-Links and adapters, each holder on pegs on the one below; its ribbon goes to its header, and its USB to a hub (Auto-connect). The number by it is its ribbon\'s length: set yours. '}{uarts.length > 0 && 'A USB-serial adapter (the little FT232RL board) stands in the same column, with jumper wires from its pins to the header: GND to GND, its TXD to the board\'s RX, its RXD to the board\'s TX. (Or a serial cable with loose ends, straight to a hub.) '}Found by shape (2 × 5 at 1.27 mm) or name (SWD, JTAG, debug, UART, serial, TX/RX); mark others by selecting them and choosing <b>Debug / UART</b>.</p>
     </Section>
   );
 }

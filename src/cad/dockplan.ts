@@ -8,9 +8,9 @@ import { DOCK_MIN_ZB, EAR, gripSpan, HD, headSpan, SOCKET_Z, SPINE_TOP, TONGUE }
 import { MATERIALS } from '../model/library';
 import { computeLevels } from './levels';
 import { holdOf } from './grip';
-import { baseOf, ridersOf } from '../model/holes';
+import { baseOf, columnOf, ridersOf } from '../model/holes';
 import { isProbe, probesOf, targetOf } from '../model/probes';
-import { isAccessory } from '../model/links';
+import { baseRef, isAccessory, isBox } from '../model/links';
 import { isPlugPack } from '../model/powerdata';
 
 /** A module plus the plugs of every board stacked on it: what orientation scoring should look at. */
@@ -384,23 +384,22 @@ export function autoAssign(p: Project): RailMount[] {
   // stacked boards ride on the board below them; score each stack with all of its plugs
   // (a plug pack lives in an outlet, off the rails)
   const all = p.modules.filter((m) => baseOf(p, m) === m && !isPlugPack(m.board)).map((m) => withRiders(p, m));
-  // a board's debug probes (J-Links) stand in the back slot of its dock, stacked, so every ribbon just goes round it
-  const backs = probeSlots(p, all);
-  // any more of a board's probes that are not stacked on the first (taken off the stack by hand) get a dock of their own
-  // right beside the board's, so their ribbons and jumper wires still reach
-  const extras = extraCompanions(p, all, backs);
-  const docked = new Map([...backs].map(([board, pr]) => [pr.id, board]));
-  for (const [board, xs] of extras) for (const x of xs) docked.set(x.id, board);
+  // a board's J-Links and adapters stand in a column in a dock of their own right after the board's, so every ribbon
+  // and jumper wire is short
+  const cols = columnsBeside(p, all);
+  const docked = new Map<string, string>();
+  for (const [board, xs] of cols) for (const x of xs) docked.set(x.id, board);
   const q = docked.size ? { ...p, links: (p.links ?? []).map((l) => ({ ...l, a: { ...l.a, module: docked.get(l.a.module) ?? l.a.module }, b: { ...l.b, module: docked.get(l.b.module) ?? l.b.module } })) } : p;
   // boxes (hubs, chargers) lie flat right after the boards they feed, so their cables stay short; boards connected to
   // each other sit together
   const out: RailMount[] = [];
-  for (const seg of byBoxes(q, all.filter((m) => !isAccessory(m.board)), all.filter((m) => isAccessory(m.board) && !docked.has(m.id)))) {
-    const docks: RailMount[] = [];
-    docksFor(q, orderByLinks(q, seg.boards), railDir, docks, backs, extras);
+  for (const seg of byBoxes(q, all.filter((m) => !isBox(m.board) && !docked.has(m.id)), all.filter((m) => isBox(m.board)))) {
+    const docks: RailMount[] = [], units: number[] = [];
+    docksFor(q, orderByLinks(q, seg.boards), railDir, docks, cols, units, p.links ?? []);
     const flats: RailMount[] = seg.boxes.map((m) => { const bb = bbox(m.board.outline); return { id: '', rail: '', at: null, kind: 'flat', turn: bb.x1 - bb.x0 >= bb.y1 - bb.y0 ? 0 : 90, slots: [{ module: m.id, edge: 'auto' }] }; });
-    // the box in the middle of the boards it feeds, so the farthest cable is half as long
-    const mid = flats.length && docks.length >= 2 ? Math.floor(docks.length / 2) : docks.length;
+    // the box in the middle of the boards it feeds, so the farthest cable is half as long (never between a board's
+    // dock and the dock of its column)
+    const half = docks.length / 2, mid = flats.length && docks.length >= 2 ? units.reduce((b, u) => (Math.abs(u - half) < Math.abs(b - half) ? u : b), docks.length) : docks.length;
     out.push(...docks.slice(0, mid), ...flats, ...docks.slice(mid));
   }
   out.forEach((m, i) => { m.id = `auto${i}`; });
@@ -434,47 +433,65 @@ export function byBoxes<T extends Module>(p: Project, boards: T[], boxes: T[]): 
   return rest.length ? [{ boards: rest, boxes: [] }, ...segs] : segs;
 }
 
-/**
- * The probe stack that goes in the back slot of each board's dock: the first probe cabled to the board (with the
- * probes stacked on it), when that probe is not itself stacked on something else. Board id -> probe (with riders).
- */
-export function probeSlots<T extends Module>(p: Project, bases: T[]): Map<string, T> {
-  const out = new Map<string, T>(), used = new Set<string>();
-  for (const m of bases) {
-    if (isAccessory(m.board)) continue;
-    // probes of the board and of any board stacked on it
-    const mine = [m, ...ridersOf(p, m)].flatMap((x) => probesOf(p, p.modules.find((y) => y.id === x.id) ?? x));
-    const pr = mine.map((x) => bases.find((b) => b.id === x.id)).find((x) => x && !used.has(x.id));
-    if (pr) { out.set(m.id, pr); used.add(pr.id); }
-  }
-  return out;
+/** A board's long edges (the two it can stand on in a column): along x when it is wider than it is deep. */
+export function longEdges(b: Board): EdgeName[] {
+  const bb = bbox(b.outline);
+  return bb.x1 - bb.x0 >= bb.y1 - bb.y0 ? ['bottom', 'top'] : ['left', 'right'];
 }
 
 /**
- * A board's probes and adapters that are neither in its back slot nor stacked on the one that is: each board id ->
- * those companions (with their riders), in the order of the board's headers.
+ * How a board in a column stands (slot `slot` of a dock turned `turn`, or the better of 0 and 180 degrees, so its long
+ * side runs along the rail): on whichever long edge keeps its plugs easiest to reach. Below the top of the column,
+ * a plug on its top edge would point into the holder above: that edge is not the one left free unless both are.
  */
-export function extraCompanions<T extends Module>(p: Project, bases: T[], backs: Map<string, T>): Map<string, T[]> {
-  const out = new Map<string, T[]>(), used = new Set([...backs.values()].map((x) => x.id));
+export function columnSeat(m: Module, railDir: 'h' | 'v', slot: number, below: boolean, turns: Turn[] = [0, 180]): Orientation {
+  let best: Orientation | null = null, bs = -Infinity;
+  for (const t of turns) for (const e of longEdges(m.board)) {
+    const o = bestDock(m, railDir, slot, [t], [e]);
+    const s = o.score - (below ? 25 * o.access.filter((x) => x.dir === 'front').length : 0);
+    if (s > bs + 1e-9) { best = o; bs = s; }
+  }
+  return best!;
+}
+
+/**
+ * The columns that stand beside each board: its probes and adapters (and any board it serves through a board stacked
+ * on it), each column by the one at its bottom. Board id -> column bases, in the order of the board's headers.
+ */
+export function columnsBeside<T extends Module>(p: Project, bases: T[]): Map<string, T[]> {
+  const out = new Map<string, T[]>(), used = new Set<string>();
   for (const m of bases) {
     if (isAccessory(m.board)) continue;
     const mine = [m, ...ridersOf(p, m)].flatMap((x) => probesOf(p, p.modules.find((y) => y.id === x.id) ?? x));
-    const xs = mine.map((x) => bases.find((b) => b.id === x.id)).filter((x): x is T => !!x && !used.has(x.id));
+    const xs = mine.map((x) => bases.find((b) => b.id === baseOf(p, x).id)).filter((x): x is T => !!x && x.id !== m.id && !used.has(x.id));
     for (const x of xs) used.add(x.id);
-    if (xs.length) out.set(m.id, xs);
+    if (xs.length) out.set(m.id, [...new Set(xs)]);
   }
   return out;
 }
 
-/** Docks for a run of boards: in pairs back to back where that costs little plug access, else one per dock; a
- * board with debug probes gets its probe stack in the back slot, and any more of its probes a dock right after it. */
-function docksFor<T extends Module>(p: Project, mods: T[], railDir: 'h' | 'v', out: RailMount[], backs = new Map<string, T>(), extras = new Map<string, T[]>()) {
-  const companions = (m: T) => {
-    const xs = extras.get(m.id) ?? [];
+/** Docks for a run of boards: in pairs back to back where that costs little plug access, else one per dock; after
+ * each board's dock, a dock for the columns of its probes and adapters (two back to back in one). `units`: where each
+ * board's docks start (a box may go in between, not inside). */
+function docksFor<T extends Module>(p: Project, mods: T[], railDir: 'h' | 'v', out: RailMount[], cols = new Map<string, T[]>(), units: number[] = [], links = p.links ?? []) {
+  // docks for columns, two back to back in each
+  const columnDocks = (xs: T[], into: RailMount[] = out) => {
     for (let k = 0; k < xs.length; k += 2) {
-      const a = bestDock(xs[k], railDir, 0), b = xs[k + 1] ? bestDock(xs[k + 1], railDir, 1, [a.turn]) : null;
-      out.push({ id: `auto${out.length}`, rail: '', at: null, kind: 'dock', turn: a.turn, slots: [{ module: xs[k].id, edge: a.edge }, b ? { module: xs[k + 1].id, edge: b.edge } : { module: null, edge: 'auto' }] });
+      const a = columnSeat(xs[k], railDir, 0, tall(xs[k])), b = xs[k + 1] ? columnSeat(xs[k + 1], railDir, 1, tall(xs[k + 1]), [a.turn]) : null;
+      into.push({ id: `auto${into.length}`, rail: '', at: null, kind: 'dock', turn: a.turn, slots: [{ module: xs[k].id, edge: a.edge }, b ? { module: xs[k + 1].id, edge: b.edge } : { module: null, edge: 'auto' }] });
     }
+  };
+  const companions = (...ms: T[]) => columnDocks(ms.flatMap((m) => cols.get(m.id) ?? []));
+  const tall = (x: T) => columnOf(p, x).length > 0;
+  // where along the rail a column's headers are on board `m` docked as `o`, from the board's middle (mm, + towards the
+  // end of the rail): its ribbons and wires are shortest from that side
+  const headerAt = (m: T, x: T, o: { edge: EdgeName; turn: Turn }) => {
+    const ids = new Set([x, ...columnOf(p, x)].map((y) => y.id));
+    const refs = links.flatMap((l) => (ids.has(l.a.module) && l.b.module === m.id ? [l.b.ref] : ids.has(l.b.module) && l.a.module === m.id ? [l.a.ref] : []));
+    const cs = refs.map((r) => m.board.comps.find((c) => c.ref === baseRef(r))).filter((c): c is NonNullable<typeof c> => !!c);
+    if (!cs.length) return 0;
+    const bb = bbox(m.board.outline), R = dockRot(o.edge, o.turn, 0, railDir), k = railDir === 'h' ? 0 : 1;
+    return cs.reduce((t, c) => t + dir(R, [c.x - (bb.x0 + bb.x1) / 2, c.y - (bb.y0 + bb.y1) / 2, 0])[k], 0) / cs.length;
   };
   // each board standing up or lying flat, as the rack's setting asks (or whichever suits it, on auto)
   const best = mods.map((m) => bestSeat(m, railDir, p.panel.lie, 0));
@@ -483,27 +500,39 @@ function docksFor<T extends Module>(p: Project, mods: T[], railDir: 'h' | 'v', o
   mods.forEach((m, i) => {
     if (used.has(i)) return;
     used.add(i);
+    units.push(out.length);
     const lie = best[i].lie;
-    const back = backs.get(m.id);
-    if (back) {
-      // the turn that suits the board and its probes together (the probes stand, even behind a board lying flat);
-      // nothing may point into the table
-      let pick: { turn: Turn; a: Orientation; b: Orientation; s: number } | null = null;
-      for (const t of TURNS) {
-        const a = bestDock(m, railDir, 0, [t], EDGES, lie), b = bestDock(back, railDir, 1, [t]);
-        const s = a.score + b.score - (a.access.some((x) => x.ok === 'blocked') || b.access.some((x) => x.ok === 'blocked') ? 1000 : 0);
-        if (!pick || s > pick.s + 1e-9) pick = { turn: t, a, b, s };
+    // a board with probes or adapters takes its first column in the back slot of its own dock, right behind it, when
+    // it docks about as well turned so that the column's long side runs along the rail: its ribbons and jumper wires
+    // then just go round the dock
+    const xs = cols.get(m.id) ?? [];
+    if (xs.length && !lie) {
+      // (the column whose headers are nearest the board's middle goes behind it; the others in docks of their own on
+      // the side of the board their headers are on)
+      let bk: { turn: Turn; a: Orientation; b: Orientation; s: number; k0: number; at: number[] } | null = null;
+      for (const t of [0, 180] as Turn[]) {
+        const a = bestDock(m, railDir, 0, [t]);
+        const at = xs.map((x) => headerAt(m, x, a)), k0 = at.reduce((bi, v, k) => (Math.abs(v) < Math.abs(at[bi]) - 1e-9 ? k : bi), 0);
+        const b = columnSeat(xs[k0], railDir, 1, tall(xs[k0]), [t]);
+        if (a.access.some((x) => x.ok === 'blocked') || b.access.some((x) => x.ok === 'blocked')) continue;
+        if (!bk || a.score + b.score > bk.s + 1e-9) bk = { turn: t, a, b, s: a.score + b.score, k0, at };
       }
-      out.push({ id: `auto${out.length}`, rail: '', at: null, kind: 'dock', turn: pick!.turn, slots: [{ module: m.id, edge: pick!.a.edge, ...lieOf(pick!.a) }, { module: back.id, edge: pick!.b.edge }] });
-      companions(m);
-      return;
+      if (bk && best[i].score - bk.a.score < 1.5) {
+        const start = out.length, k0 = bk.k0, at = bk.at;
+        out.push({ id: `auto${out.length}`, rail: '', at: null, kind: 'dock', turn: bk.turn, slots: [{ module: m.id, edge: bk.a.edge }, { module: xs[k0].id, edge: bk.b.edge }] });
+        const pre: RailMount[] = [];
+        columnDocks(xs.filter((_, k) => k !== k0 && at[k] < 0), pre);
+        out.splice(start, 0, ...pre);
+        columnDocks(xs.filter((_, k) => k !== k0 && at[k] >= 0));
+        return;
+      }
     }
     let pick: { j: number; turn: Turn; a: Orientation; b: Orientation } | null = null;
-    if (p.panel.pairs) {
+    if (p.panel.pairs && !xs.length) {
       let bestLoss = 1.5;
       mods.forEach((m2, j) => {
         // two boards share a dock back to back when both stand or both lie flat (ears back to back)
-        if (used.has(j) || j <= i || backs.has(m2.id) || best[j].lie !== lie) return;
+        if (used.has(j) || j <= i || best[j].lie !== lie || cols.get(m2.id)?.length) return;
         for (const t of TURNS) {
           const a = bestDock(m, railDir, 0, [t], EDGES, lie), b = bestDock(m2, railDir, 1, [t], EDGES, lie);
           if (a.access.some((x) => x.ok === 'blocked') || b.access.some((x) => x.ok === 'blocked')) continue;
@@ -516,7 +545,7 @@ function docksFor<T extends Module>(p: Project, mods: T[], railDir: 'h' | 'v', o
       const pk = pick as { j: number; turn: Turn; a: Orientation; b: Orientation };
       used.add(pk.j);
       out.push({ id: `auto${out.length}`, rail: '', at: null, kind: 'dock', turn: pk.turn, slots: [{ module: m.id, edge: pk.a.edge, ...lieOf(pk.a) }, { module: mods[pk.j].id, edge: pk.b.edge, ...lieOf(pk.b) }] });
-      companions(m); companions(mods[pk.j]);
+      companions(m, mods[pk.j]);
     } else {
       out.push({ id: `auto${out.length}`, rail: '', at: null, kind: 'dock', turn: best[i].turn, slots: [{ module: m.id, edge: best[i].edge, ...lieOf(best[i]) }, { module: null, edge: 'auto' }] });
       companions(m);
@@ -602,8 +631,8 @@ export function seatBoard(p: Project, moduleId: string): { where: 'slot' | 'new'
 export interface Seated { where: 'home' | 'near' | 'new'; mount: string; rail: string | null; beside?: string }
 
 /**
- * Put a probe or adapter behind the board it serves (laid-out or built racks): into the free slot of that board's
- * dock, so all that is new to print is its own slot holder; else the free slot of the nearest dock on that rail; else a
+ * Put a probe or adapter by the board it serves (laid-out or built racks): into the free slot of that board's
+ * dock, so all that is new to print is its own holder (and the column on it); else the free slot of the nearest dock on that rail; else a
  * new dock at the end of the rail. Says where it went.
  */
 export function seatCompanion(p: Project, moduleId: string): Seated {
@@ -622,7 +651,7 @@ export function seatCompanion(p: Project, moduleId: string): Seated {
 }
 
 /**
- * After cables change on a rack laid out by hand or built: a probe or adapter now cabled to a board goes behind it.
+ * After cables change on a rack laid out by hand or built: a probe or adapter now cabled to a board goes by it.
  * One stacked on another probe leaves its own dock; one alone in a dock of its own (a J-Link added from the library
  * gets one) moves into the free slot of its board's dock, or of a dock beside it on that rail. A probe that is part of
  * the built rack stays where it is, and one with nowhere better to go stays put. Docks it leaves empty go. Returns the

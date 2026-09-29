@@ -116,7 +116,8 @@ export interface Board {
   box?: BoxSpec; // box: its size and ports, from which outline, thickness and port parts are generated
   color?: string; // box colour in the 3D view
   draw?: number; // A at 5 V it may take from its supply (unset: estimated from what it is)
-  role?: 'probe' | 'adapter'; // a board drawn or imported that serves another one: a debug probe, a USB-serial adapter (slides into a slot behind it)
+  ribbon?: number; // a probe's ribbon length, mm (unset: a typical J-Link cable's 200)
+  role?: 'probe' | 'adapter'; // a board that serves another one: a debug probe (J-Link), a USB-serial adapter; docked like any board, in a column beside the board it serves
   dims?: Dim[]; // dimensions put on it in the board editor (measured on the real board with calipers)
   photo?: { url: string; x: number; y: number; w: number; h: number; opacity?: number }; // a photo of the real board under it in the editor, to trace over (board mm)
   traces?: { a: V2; b: V2; w: number; side: Side }[]; // copper tracks (read from KiCad), for the 3D view
@@ -213,7 +214,7 @@ export interface Module {
   holder: HolderSettings;
   original?: Board; // the board as imported, for "revert to import"
   on?: string | null; // stacked on top of this module
-  onMode?: 'bolted' | 'towers'; // bolted: screwed to the board below on standoffs (HAT, shield); towers: its own printed layer
+  onMode?: 'bolted' | 'towers' | 'column'; // bolted: screwed to the board below on standoffs (HAT, shield); towers: its own printed layer; column: a small board (J-Link, adapter) standing on its long edge on the holder below, on pegs
   onGap?: number;
   clip?: { off?: boolean; tab?: 'down' | 'up' }; // loose holders: this one's DIN clip left off, or its release tab the other way (the rail's direction is the rack's) // bolted: gap between the boards (standoff length), mm
   revision?: { at: string; from: string; to: string; changes: string[] }; // the last new version swapped in: files and what changed

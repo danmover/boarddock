@@ -3,7 +3,7 @@
 import type { Board, Comp, Hole, Side } from './types';
 import { connById, connSetup } from './library';
 import { roundedRectLoop, uid } from '../geom/poly';
-import { makeBox } from './boxes';
+import { makeBox, makeCompanion } from './boxes';
 import { headerPins } from './probes';
 
 /** A header with its pins' nets, pin 1 first. */
@@ -233,13 +233,13 @@ export const TEMPLATES: Template[] = [
   { id: 'psu_pi5', name: 'USB-C supply, 27 W, 5 A (the Raspberry Pi 5 one; a plug pack)', accessory: true, make: () => makeBox('psu_pi5') },
   { id: 'psu_pi4', name: 'USB-C supply, 15 W, 3 A (the Raspberry Pi 4 one; a plug pack)', accessory: true, make: () => makeBox('psu_pi4') },
   { id: 'dc_pack_12v', name: 'DC plug pack, 12 V 2 A (barrel plug)', accessory: true, make: () => makeBox('dc_pack_12v') },
-  { id: 'jlink', name: 'J-Link debug probe (50 × 50 × 3, 10-pin ribbon)', accessory: true, make: () => makeBox('jlink') },
+  { id: 'jlink', name: 'J-Link debug probe (65 × 40, 20-pin 1.27 mm ribbon, USB-B)', accessory: true, make: () => makeCompanion('jlink') },
   { id: 'pb4', name: 'Powerboard, 4 outlets (290 × 58 × 40)', accessory: true, make: () => makeBox('pb4') },
   { id: 'pb6', name: 'Powerboard, 6 outlets (420 × 58 × 40)', accessory: true, make: () => makeBox('pb6') },
   { id: 'pb4sw', name: 'Powerboard, 4 switched outlets (330 × 62 × 42)', accessory: true, make: () => makeBox('pb4sw') },
   { id: 'pb4ang', name: 'Powerboard, 4 angled outlets, room for plug packs (300 × 66 × 40)', accessory: true, make: () => makeBox('pb4ang') },
   { id: 'pb4usb', name: 'Powerboard, 4 outlets and 2 USB (330 × 58 × 40)', accessory: true, make: () => makeBox('pb4usb') },
-  { id: 'ftdi', name: 'USB-serial adapter, FT232RL (36 × 18, mini-USB, 6 pins)', accessory: true, make: () => makeBox('ftdi') },
+  { id: 'ftdi', name: 'USB-serial adapter, FT232RL (36 × 18, mini-USB, 6 pins)', accessory: true, make: () => makeCompanion('ftdi') },
   {
     id: 'power_dist', name: 'DC power distribution board (60 × 40)', accessory: true,
     make: () => {

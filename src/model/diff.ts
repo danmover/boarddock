@@ -49,7 +49,7 @@ export function rackName(p: Project): string {
   return p.modules.length === 1 ? p.modules[0].board.name : `Rack, ${rackCount(p)}`;
 }
 
-/** "8 boards + 3 probes": J-Links and USB-serial adapters are counted apart, as they ride behind the boards they serve. */
+/** "8 boards + 3 probes": J-Links and USB-serial adapters are counted apart, as they serve the other boards. */
 export function rackCount(p: Project): string {
   const probes = p.modules.filter(isProbe).length, boards = p.modules.length - probes;
   return `${boards} board${boards === 1 ? '' : 's'}${probes ? ` + ${probes} probe${probes === 1 ? '' : 's'}` : ''}`;

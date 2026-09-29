@@ -39,7 +39,7 @@ describe('DIN clip under a box', () => {
     const { measure } = await import('./collide/measure');
     await initKernel();
     // the hooks reach 1.9 mm above the base they grip; a box used to sit 1.2 mm up, so each went 0.7 mm into it
-    for (const k of ['hub7', 'charger4', 'ftdi'] as const) {
+    for (const k of ['hub7', 'charger4', 'hub4'] as const) {
       const p = newProject(makeBox(k));
       setLayout(p, 'loose');
       p.mount = { ...p.mount, kind: 'din', mode: 'flat', picked: true };
