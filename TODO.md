@@ -10,7 +10,12 @@ Nothing BoardDock makes has been printed and tried yet, so anything below about 
 
 - **Wires bend unnaturally, all of a sudden.** Seen in v0.2.0; where and on which cables still to find out.
 
-- **USB-serial adapters and J-Links as ordinary boards.** They should be normal boards with their connectors, docked and cabled like any other, not a separate kind of part in a board's back slot. Boards the size of an adapter or a J-Link should stack upright on top of each other, each easy to take off the stack, and every one in the stack should work with the release rod. (Asked 29 Sep; the shape still to agree.)
+- **USB-serial adapters and J-Links as ordinary boards, in stacks.** Agreed 29 Sep:
+  - A J-Link and a USB-serial adapter are ordinary boards with their connectors (USB, the 20-pin debug header, the adapter's 6 right-angle pins), docked and cabled like any other board: no longer boxes that go in the back slot of their board's dock (`probeSlots` / `extraCompanions` in `src/cad/dockplan.ts`, `isProbe` / `isAdapter` in `src/model/probes.ts`). Old projects' probes and adapters are turned into boards when they load (`migrate` in `src/model/library.ts`).
+  - Small boards (up to about a J-Link's size) stack in a column: each lies on its long edge (longest side along the rail, middle side upright, thickness out from the wall), the next one on top, like bricks.
+  - Auto-arrange stacks a board's J-Links and adapters in one column next to it; by hand, "Stack on…" puts any small board on another's stack and "Take off the stack" lifts it off.
+  - Each holder sits on the one below on pegs and lifts straight off; the release rod runs down through every holder, so pressing it on the top one frees the whole stack from the rail.
+  - Needs: tests (placement, stacking and unstacking, rod through every level, migration), the collision matrix and its baseline, README, and saying plainly that none of it has been printed.
 - (Done: connectors on imported boards known by their pins when their names say nothing BoardDock knows, so an Allegro board's debug header takes a J-Link and its headers aren't "Custom connector".)
 
 ## 1. From the second round of test users
