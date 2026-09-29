@@ -8,6 +8,7 @@ import { cableLines } from './cablelist';
 import { stackHardware, baseOf } from './holes';
 import { adapterFor, isProbe } from './probes';
 import { isPlugPack } from './powerdata';
+import { poeHats } from './poe';
 import { baseRef, isAccessory } from './links';
 import { strapBoxes } from './built';
 import type { GenResult, Module, Project } from './types';
@@ -99,6 +100,7 @@ export function billOfMaterials(p: Project, res: GenResult): BomGroup[] {
     if (need) adapters.set(need, [...(adapters.get(need) ?? []), pr.m.board.name]);
   }
   for (const [item, who] of adapters) hw.push({ qty: who.length, item, note: who.join(', ') });
+  hw.push(...poeHats(p));
   if (hw.length) out.push({ head: 'Hardware', rows: hw, buy: true });
 
   // ---- filament and tools ----

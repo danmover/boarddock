@@ -90,6 +90,7 @@ export interface BoxPortGroup {
   across?: number; // a top row: its centre, mm from the front edge (unset: by near)
   amps?: number; // power out: what each port gives, A (unset: typical for its type)
   volts?: number; // DC out: its output voltage
+  poe?: boolean; // Ethernet ports: they give power over Ethernet (PoE); the box's `poe` says how much in all
   turn?: 0 | 90 | 180 | 270; // a side face: the socket turned, clockwise looking at it: 90 or 270 on its side (upright), 180 upside down
 }
 export interface BoxSpec {
@@ -99,6 +100,7 @@ export interface BoxSpec {
   corner?: number; // its corners seen from above: radius (or chamfer size), mm; unset: min(4, width / 6)
   chamfer?: boolean; // corners cut straight across instead of rounded
   pack?: { lead: number; own?: string }; // a plug pack: it plugs straight into an outlet (or the wall), off the rack; lead: its own output lead, mm; own: the box it came with (module id), so it isn't bought
+  poe?: number; // a PoE switch: what all its PoE ports give together, W (unset: a typical figure)
   rating?: number; // a powerboard: what it may carry in all, A at mains voltage (unset: a typical figure for its outlets)
 }
 
@@ -116,6 +118,7 @@ export interface Board {
   box?: BoxSpec; // box: its size and ports, from which outline, thickness and port parts are generated
   color?: string; // box colour in the 3D view
   draw?: number; // A at 5 V it may take from its supply (unset: estimated from what it is)
+  poe?: boolean; // a PoE HAT is fitted: it takes its power over Ethernet from a PoE port (see model/poe.ts), no supply of its own
   ribbon?: number; // a probe's ribbon length, mm (unset: a typical J-Link cable's 200)
   role?: 'probe' | 'adapter'; // a board that serves another one: a debug probe (J-Link), a USB-serial adapter; docked like any board, in a column beside the board it serves
   dims?: Dim[]; // dimensions put on it in the board editor (measured on the real board with calipers)

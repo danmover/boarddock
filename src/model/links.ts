@@ -4,6 +4,7 @@
 import type { Board, Comp, Link, Module, PlugRef, Project } from './types';
 import { hostTotal, isPlugPack, minOf, needOf, portCap, poweredHub, supplyOf, type Need } from './powerdata';
 import { assign } from './assign';
+import { isPoePort, poeAdvice, poeAssign, poeFedIds, poeTotal, poeWatts, takesPoe } from './poe';
 
 export type PlugRole = 'host' | 'device' | 'power-in' | 'power-in-dc' | 'power-out' | 'dc-out' | 'hub-up' | 'hub-down' | 'net' | 'video' | 'audio' | 'wire' | 'debug' | 'uart' | 'mains-in' | 'mains-out' | 'other';
 
@@ -318,6 +319,13 @@ export function autoLinks(p: Project, at?: PlugAt): Link[] {
   const nm = (x: PlugInfo) => shortName(x.module.board.name);
   const hostOf = (hub: Module) => hostOfHub(p, hub, out);
 
+  // 0. PoE: a board with a PoE HAT goes on a free PoE port of a switch, within what the switch gives, and needs no supply
+  const poeFed = poeFedIds(p);
+  for (const [n, sw] of poeAssign(p, plugs, taken, reach)) {
+    take(n, sw, `The ${nm(n)} has a PoE HAT: its Ethernet goes to a PoE port of the ${nm(sw)} (${cm(n, sw)}), which powers it (about ${poeWatts(n.module.board)} W of the ${poeTotal(sw.module.board).total} W the switch gives), so it needs no supply.`);
+    poeFed.add(n.module.id);
+  }
+
   // 1. hubs hang off a host (a computer's or a board's USB port) first, so their ports can feed devices; a hub with
   // Ethernet or USB 3 ports goes on a USB 3 port where there is one
   const fast = (hub: Module) => /usb ?3|3\.[012]/i.test(hub.board.name) || hub.board.comps.some((c) => c.conn?.type === 'rj45' || /usb ?3/i.test(`${c.ref} ${c.value ?? ''}`));
@@ -345,7 +353,7 @@ export function autoLinks(p: Project, at?: PlugAt): Link[] {
     }
     return supply.get(m.id)!;
   };
-  const pins = free('power-in');
+  const pins = free('power-in').filter((x) => !poeFed.has(x.module.id));
   const need = new Map(pins.map((x) => [x, needOf(x.module.board, true)]));
   const outs = free('power-out');
   const fit = (a: PlugInfo, b: PlugInfo) => powerFit(need.get(a)!, portCap(b.module.board, b.comp, b.role));
@@ -405,7 +413,7 @@ export function autoLinks(p: Project, at?: PlugAt): Link[] {
   }
   // no charger port left: a powered hub's port will do when it gives the board enough (a small board, never a Pi),
   // and never the hub that hangs off that same board; a hub without a supply of its own never powers a board
-  for (const [a, b] of pairUp(free('power-in'), free('hub-down').filter((h) => poweredHub(h.module.board)), (a, b) => {
+  for (const [a, b] of pairUp(free('power-in').filter((x) => !poeFed.has(x.module.id)), free('hub-down').filter((h) => poweredHub(h.module.board)), (a, b) => {
     const f = powerFit(needOf(a.module.board, true), portCap(b.module.board, b.comp, b.role));
     return f == null || hostOf(b.module) === a.module.id ? null : reach(a, b) + f;
   }))
@@ -457,7 +465,8 @@ export function autoLinks(p: Project, at?: PlugAt): Link[] {
   const sw = free('net').filter((x) => isSwitch(x.module.board));
   // (a board with an RJ45 uses that, not an SFP cage: a cage needs a module bought for it)
   const lan = (x: PlugInfo) => x.comp.conn?.type !== 'sfp' || !x.module.board.comps.some((c) => c.conn?.type === 'rj45' && !c.hidden);
-  if (sw.length) for (const [n, s] of pairUp(free('net').filter((x) => !isSwitch(x.module.board) && !isAccessory(x.module.board) && lan(x)), sw, reach))
+  // (a board with a PoE HAT that the PoE step left out, the switch having no more to give, stays off the PoE ports: it would draw from them)
+  if (sw.length) for (const [n, s] of pairUp(free('net').filter((x) => !isSwitch(x.module.board) && !isAccessory(x.module.board) && lan(x)), sw, (a, b) => (takesPoe(a.module.board) && isPoePort(b.module.board, b.comp) ? null : reach(a, b))))
     take(n, s, `The ${nm(n)}'s Ethernet to the nearest free port of the ${nm(s)} (${cm(n, s)}).`);
 
   // 5. a DC supply's lead to a DC input, only where both say the same voltage (BoardDock can't check the rest: those
@@ -588,6 +597,7 @@ export function wiringAdvice(p: Project): { text: string; add?: string; count?: 
   if (b.devices.length > b.usbPorts.length) { const k = b.devices.length - b.usbPorts.length; out.push({ text: `${k} USB plug${k > 1 ? 's have' : ' has'} no free port on the rack: Auto-connect plugs ${k > 1 ? 'them' : 'it'} into your computer, or add a hub.`, add: 'usb_hub7', count: Math.ceil(k / 7) }); }
   const net = plugsOf(p).filter((x) => x.role === 'net' && !isAccessory(x.module.board) && !linkOf(p, x.ref));
   if (net.length >= 2 && !p.modules.some((m) => isSwitch(m.board))) out.push({ text: `${net.length} boards have Ethernet and there is no switch in the rack.`, add: 'net_switch8', count: 1 });
+  out.push(...poeAdvice(p));
   for (const u of b.unwired) out.push({ text: `${u.name}: its ${u.refs.join(', ')} ${u.refs.length > 1 ? 'are' : 'is'} for wires you connect yourself (click a pin, then the pin it goes to).` });
   // a switch or powered hub with nothing on its DC input: the supply it came with goes on the rack (add: own:<box>)
   for (const m of p.modules) {
@@ -618,7 +628,8 @@ export function portBudget(p: Project) {
   const taken = new Set((p.links ?? []).flatMap((l) => [`${l.a.module}/${l.a.ref}`, `${l.b.module}/${l.b.ref}`]));
   const free = (roles: PlugRole[]) => plugs.filter((x) => roles.includes(x.role) && !taken.has(`${x.ref.module}/${x.ref.ref}`));
   const devices = free(['device', 'hub-up']), usbPorts = free(['hub-down', 'host']);
-  const powerIns = free(['power-in']), powerOuts = free(['power-out']);
+  const poeFed = poeFedIds(p); // (a board on a PoE port needs no supply)
+  const powerIns = free(['power-in']).filter((x) => !poeFed.has(x.module.id)), powerOuts = free(['power-out']);
   const feeds = powerFeeds(p);
   const weak = feeds.filter((f) => f.weak), limited = feeds.filter((f) => !f.weak && f.cap + 1e-6 < f.need.peak);
   // boards with wire terminals or jumper headers and not one of them connected (a relay board, a power distribution

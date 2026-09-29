@@ -31,6 +31,7 @@ import { baseOf as stackBase, ridersOf } from '../model/holes';
 import { DockFeaSection } from './DockFea';
 import { mainsBudget, mainsText, powerBudget, powerText } from '../model/power';
 import { netSpread } from '../model/netlength';
+import { poeBudget, poeText, takesPoe, canFitPoe, poeHats } from '../model/poe';
 import { copyHolder } from '../model/copyto';
 import { CopyTo } from './CopyTo';
 import { ChecklistButton } from './Checklist';
@@ -734,14 +735,16 @@ function PowerDraw() {
   const mine = plugsOf(p).filter((x) => x.module === m);
   const n = needOf(b, mine.some((x) => x.role === 'power-in'));
   // only boards that take power from a port (a power input, or USB as a device) are in the budget
-  if (b.draw == null && !mine.some((x) => x.role === 'power-in' || x.role === 'device')) return null;
+  const budgeted = b.draw != null || mine.some((x) => x.role === 'power-in' || x.role === 'device');
+  if (!budgeted && !canFitPoe(b)) return null;
   return (
     <>
-      <div className="row" style={{ marginTop: 8, alignItems: 'end' }}>
+      {canFitPoe(b) && <Check label="PoE HAT fitted (powered over its Ethernet)" value={takesPoe(b)} onChange={(v) => editMod((q) => { if (v) q.board.poe = true; else delete q.board.poe; })} hint="On a PoE port of a switch it needs no supply of its own, and Auto-connect leaves its USB-C alone. The HAT goes on the shopping list." />}
+      {budgeted && <div className="row" style={{ marginTop: 8, alignItems: 'end' }}>
         <Num label={`Power${b.draw == null ? ' (estimate)' : ''}`} unit="A at 5 V" value={b.draw ?? n.load} min={0} max={10} step={0.1} onChange={(v) => editMod((q) => { q.board.draw = v; })} hint={n.why} />
         {b.draw != null && <button className="btn small ghost" onClick={() => editMod((q) => { delete q.board.draw; })}>Back to the estimate</button>}
-      </div>
-      {b.draw == null && <p className="hint" style={{ margin: '4px 0 0' }}>{n.why}. Used for the power budget under Plugs › Cables.</p>}
+      </div>}
+      {budgeted && b.draw == null && <p className="hint" style={{ margin: '4px 0 0' }}>{n.why}. Used for the power budget under Plugs › Cables.</p>}
     </>
   );
 }
@@ -754,9 +757,10 @@ function PowerBudget() {
   const p = useApp((s) => s.project)!;
   const srcs = useMemo(() => powerBudget(p), [p.links, p.modules]);
   const mains = useMemo(() => mainsBudget(p), [p.links, p.modules]);
+  const poe = useMemo(() => poeBudget(p), [p.links, p.modules]);
   const stronger = useMemo(() => strongerPower(p, plugPlaces()), [p.links, p.modules]);
   const [open, setOpen] = useState<string | null>(null);
-  if (!srcs.length && !mains.length) return null;
+  if (!srcs.length && !mains.length && !poe.length) return null;
   const bad = srcs.filter((s) => s.status !== 'ok').length;
   return (
     <div className="powerlist">
@@ -771,6 +775,17 @@ function PowerBudget() {
             {s.limited.length > 0 && <small className="pw-note">{s.limited.map((q) => shortName(q.take)).join(', ')}: {s.limited[0].cap} A of the {s.limited[0].peak} A {s.limited.length > 1 ? 'they want' : 'it wants'}, so {s.limited.length > 1 ? 'their' : 'its'} USB ports are held back</small>}
             <div className="pw-bar"><i style={{ width: `${f * 100}%` }} /></div>
             {open === s.module.id && <p className="hint" style={{ margin: '6px 0 0' }}>{t.detail}</p>}
+          </div>
+        );
+      })}
+      {poe.map((s) => {
+        const t = poeText(s), f = Math.min(1, s.load / Math.max(0.01, s.total)), k = `poe-${s.module.id}`;
+        return (
+          <div key={k} className={`pw ${s.status}`} onClick={() => setOpen(open === k ? null : k)} title="Click for the details">
+            <div className="pw-row"><b title={s.module.board.name}>{shortName(s.module.board.name)}</b><small>PoE</small><span className="grow" /><span className="mono">{Math.round(s.load)} / {Math.round(s.total)} W</span></div>
+            {s.over.length > 0 && <small className="pw-note">{s.over.map((q) => shortName(q.name)).join(', ')} want more than one PoE port gives</small>}
+            <div className="pw-bar"><i style={{ width: `${f * 100}%` }} /></div>
+            {open === k && <p className="hint" style={{ margin: '6px 0 0' }}>{t.detail}</p>}
           </div>
         );
       })}
@@ -1487,6 +1502,7 @@ export function shopping(p: Project, res: Res, d: Delta | null, tot: { g: number
     other.push(`${2 * straps.length} × 12 mm hook-and-loop strap, ${lo === hi ? `about ${lo} cm` : `${lo} to ${hi} cm`} each (${(all / 100).toFixed(1)} m in all, or a roll to cut): 2 for each of ${straps.length > 3 ? `the ${straps.length} boxes` : straps.map((x) => x.name).join(', ')}`);
   }
   for (const m of mods) { const b = m.on && stackBase(p, m) !== m ? bolts(m) : null; if (b) other.push(b); }
+  for (const h of poeHats({ ...p, modules: mods })) other.push(`${h.qty} × ${h.item}: ${h.note}`);
   if (other.length) out.push({ head: 'Hardware', items: other });
   const adapters = new Map<string, string[]>();
   for (const l of p.links ?? []) {

@@ -29,6 +29,7 @@ const ANGLE: Record<Exclude<BoxFace, 'top'>, number> = { front: -90, back: 90, l
 
 const g = (type: string, count: number, face: BoxFace, role: string): BoxPortGroup => ({ id: uid('pg'), type, count, face, role });
 const SWITCH = "A network switch: every board's Ethernet goes to one of its ports (Auto-connect does it). Its own supply (a plug pack) goes in a powerboard's outlet, its lead to the DC input at the back: the To do list's Add its supply puts it on the rack. Set its size, ports and input voltage under Box to match yours.";
+const SWITCH_POE = "A PoE switch: its ports give power over Ethernet (30 W a port, 120 W in all), so a Pi with a PoE HAT on one needs no supply of its own (Board › Power). Every other board's Ethernet goes to a port too (Auto-connect does it). Its own supply (a plug pack) goes in a powerboard's outlet, its lead to the DC input at the back. Set its ports, PoE budget and input voltage under Box to match yours.";
 const PACK = (what: string) => `A plug pack: it plugs straight into a powerboard's outlet (or the wall), so it stays off the rails, and its own lead goes to ${what}. Auto-connect plugs it in. Set its figures under Box to match the label on yours.`;
 const POWERBOARD = "A powerboard: set its outlets (AU, UK, US or EU), how many, their angle and its size under Box. Auto-connect plugs the chargers' mains leads into it; its own lead goes to the wall. Never plug one powerboard into another.";
 
@@ -44,6 +45,8 @@ export const BOX_PRESETS: Record<string, { name: string; color: string; spec: ()
   charger6: { name: 'USB charger (A + C)', color: '#e9e7e2', spec: () => ({ l: 110, w: 70, h: 30, groups: [g('usb_a', 4, 'back', 'power-out'), g('usb_c', 2, 'back', 'power-out'), g('iec_c7', 1, 'front', 'mains-in')] }) },
   // a desktop network switch: its Ethernet ports along the front, its power in at the back
   switch8: { name: 'Network switch, 8 ports', color: '#2b2f36', spec: () => ({ l: 158, w: 100, h: 27, groups: [g('rj45', 8, 'front', 'net'), { ...g('barrel', 1, 'back', 'power-in-dc'), volts: 12 }] }), note: SWITCH },
+  // a PoE switch: the same box with every port giving power (802.3at, 30 W a port, 120 W in all) and a 52 V supply
+  switch8poe: { name: 'Network switch, 8 ports, PoE', color: '#2b2f36', spec: () => ({ l: 158, w: 100, h: 27, poe: 120, groups: [{ ...g('rj45', 8, 'front', 'net'), poe: true }, { ...g('barrel', 1, 'back', 'power-in-dc'), volts: 52, amps: 2.5 }] }), note: SWITCH_POE },
   switch5: { name: 'Network switch, 5 ports', color: '#2b2f36', spec: () => ({ l: 100, w: 70, h: 25, groups: [g('rj45', 5, 'front', 'net'), { ...g('barrel', 1, 'back', 'power-in-dc'), volts: 12 }] }), note: SWITCH },
   // plug packs: a supply that plugs straight into an outlet, its own lead ending in its output plug. The Raspberry Pi
   // 27 W supply gives 5 A over USB-C PD (a Pi 5's full USB), the 15 W one 3 A; sizes and leads are typical, not measured
