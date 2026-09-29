@@ -20,6 +20,7 @@ import { generate } from '../src/cad/assembly';
 import { generatePanel } from '../src/cad/panelgen';
 import { initKernel } from '../src/cad/kernel';
 import type { Link, Project } from '../src/model/types';
+import { describe as describePick } from '../src/ui/pickOps';
 
 const T = (id: string) => TEMPLATES.find((t) => t.id === id)!.make();
 const rack = (ids: string[]) => { const p = newProject(T(ids[0])); for (const id of ids.slice(1)) p.modules.push(newModule(T(id))); return p; };
@@ -110,6 +111,14 @@ describe('plug packs and powerboards', () => {
     expect(cl.comes.some((x) => /plugs straight into/.test(x))).toBe(true);
     expect(cl.comes.some((x) => /own lead/.test(x))).toBe(true);
     expect(cl.buy).toEqual([]);
+  });
+
+  it('a picked mains cable says its plugs, its outlet and to switch the powerboard off first', () => {
+    const p = rack(['rpi5', 'psu_pi5', 'pb4']);
+    p.links = numberLinks(autoLinks(p));
+    const mains = p.links.find((l) => l.kind === 'mains')!;
+    const d = describePick(p, { kind: 'link', id: mains.id });
+    expect(d.note).toMatch(/Mains lead plugs into AU outlet Powerboard, 4 outlets AC\d\. Switch the powerboard off before plugging in\.$/);
   });
 
   it('refuse a powerboard into another, and a mains outlet onto wires, in plain words', () => {

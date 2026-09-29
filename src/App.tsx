@@ -310,6 +310,7 @@ function SelPanel({ items }: { items: SelItem[] }) {
           <button className="btn small ghost icon" onClick={() => select([])} title="Clear (Esc)"><Icon d={I.x} /></button>
         </div>
       </div>
+      {one && ds[0].d.note && <p className="hint selnote">{ds[0].d.note}</p>}
       {one && <MountQuick item={one} />}
       {!one && (
         <div className="picks">
