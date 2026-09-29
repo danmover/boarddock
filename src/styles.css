@@ -916,9 +916,10 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 .ltile-main svg.thumb { width: 100%; height: auto; aspect-ratio: 14 / 9; margin-bottom: 4px; }
 .ltile-main .nm { font-size: 13px; font-weight: 650; line-height: 1.25; }
 .ltile-main small { color: var(--subtle); font-size: 10.5px; }
-.ltile-qty { position: absolute; top: 8px; right: 8px; display: flex; align-items: center; gap: 4px; background: var(--glass); border: 1px solid var(--line); border-radius: 999px; padding: 2px; box-shadow: var(--shadow-sm); opacity: 0; transition: opacity 0.12s; }
+.ltile-qty { position: absolute; top: 8px; right: 8px; display: flex; align-items: center; gap: 4px; background: var(--glass); border: 1px solid var(--line); border-radius: 999px; padding: 2px; box-shadow: var(--shadow-sm); opacity: 0.85; transition: opacity 0.12s; }
 .ltile:hover .ltile-qty, .ltile.on .ltile-qty, .ltile-qty:focus-within { opacity: 1; }
-.ltile-qty b { font-family: var(--mono); font-size: 12px; min-width: 14px; text-align: center; }
+.ltile-qty .qnum { font-family: var(--mono); font-size: 12px; font-weight: 700; width: 34px; height: 24px; padding: 0 2px; text-align: center; border: 0; background: transparent; color: var(--text); -moz-appearance: textfield; appearance: textfield; }
+.ltile-qty .qnum::-webkit-outer-spin-button, .ltile-qty .qnum::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .ltile-x { position: absolute; top: 8px; left: 8px; width: 22px; height: 22px; border-radius: 99px; border: 1px solid var(--line); background: var(--glass); color: var(--muted); cursor: pointer; opacity: 0; transition: opacity 0.12s; }
 .ltile:hover .ltile-x { opacity: 1; }
 .lib-foot { position: sticky; bottom: 12px; z-index: 4; display: flex; align-items: center; gap: 8px; margin-top: 14px; padding: 10px 12px; border: 1px solid var(--accent-line); border-radius: 14px; background: var(--glass); backdrop-filter: blur(14px); box-shadow: var(--shadow); }
@@ -1155,9 +1156,10 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 @media (pointer: coarse) {
   .bchip, .tbtn, .btn.small, .stepper button, .iconbtn { min-height: 40px; }
   .bchip { height: auto; }
-  /* no hover on a touch screen: the tiles' + shows all the time */
+  /* the tiles' + is at rest everywhere (no hover on a touch screen); bigger to tap */
   .ltile-qty { opacity: 1; }
   .ltile-qty .qbtn { min-width: 34px; min-height: 34px; }
+  .ltile-qty .qnum { height: 34px; font-size: 14px; }
 }
 
 /* the 3D selection panel's mounting row: stand or lie flat, the edge in the dock, turn, swap; a loose holder's DIN clip */
