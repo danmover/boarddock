@@ -30,6 +30,7 @@ export const CONNECTORS: ConnType[] = [
   { id: 'hdmi_mini', name: 'Mini HDMI (C)', entry: 'edge', body: { w: 11.2, l: 7.5, h: 3.2 }, zc: 1.6, overhang: 0.5, plug: { w: 15, h: 8, len: 30, cable: 6 }, match: /mini[\s_-]?hdmi|hdmi[\s_-]?mini|hdmi[\s_-]?c\b/i, cradle: true },
   { id: 'hdmi_a', name: 'HDMI (A)', entry: 'edge', body: { w: 15, l: 11, h: 5.6 }, zc: 2.8, overhang: 0.5, plug: { w: 21, h: 11, len: 38, cable: 7 }, match: /hdmi/i, cradle: true },
   { id: 'rj45', name: 'RJ45 / Ethernet', entry: 'edge', body: { w: 16, l: 21, h: 13.5 }, zc: 6.8, overhang: 2.5, plug: { w: 14, h: 13, len: 30, cable: 6 }, match: /rj[\s_-]?45|8p8c|ethernet|magjack|hr911/i, cradle: false, note: 'The plug latch holds it; add a cable tie anchor for strain relief.' },
+  { id: 'dsub', name: 'D-sub (DE-9, DA-15, DB-25)', entry: 'edge', body: { w: 30.8, l: 12.5, h: 12.6 }, zc: 6.3, overhang: 1, plug: { w: 31, h: 16, len: 45, cable: 6 }, match: /d[\s_-]?sub|dsub|\bd[be][\s_-]?9\b|\bda[\s_-]?15\b|\bdb[\s_-]?25\b|\bdc[\s_-]?37\b|rs[\s_-]?232|574578[01]|5747840/i, cradle: false, note: "The plug's own jackscrews hold it: no cap, add a tie anchor." },
   { id: 'barrel', name: 'DC barrel jack 5.5/2.1', entry: 'edge', body: { w: 9, l: 14, h: 11 }, zc: 6.5, overhang: 1.5, plug: { w: 10, h: 10, len: 32, cable: 3.5 }, match: /barrel|dc[\s_-]?jack|pj[\s_-]?0\d\d|dc[\s_-]?0\d\d|power[\s_-]?jack|bar(rel)?_?jack/i, cradle: true },
   { id: 'audio35', name: '3.5 mm audio jack', entry: 'edge', body: { w: 6, l: 12, h: 5 }, zc: 2.5, overhang: 1.0, plug: { w: 8.5, h: 8.5, len: 25, cable: 3.5 }, match: /3\.5\s?mm|audio|trs|pj[\s_-]?3\d\d|phone[\s_-]?jack|headphone/i, cradle: true },
   { id: 'microsd', name: 'microSD slot', entry: 'edge', body: { w: 11.5, l: 14, h: 1.9 }, zc: 0.9, overhang: 0, plug: { w: 14, h: 6, len: 8, cable: 0 }, match: /micro[\s_-]?sd|tf[\s_-]?card|sd[\s_-]?card|microsd/i, cradle: false, note: 'Opening sized for card access and a fingertip, no cradle.' },
@@ -40,6 +41,7 @@ export const CONNECTORS: ConnType[] = [
   { id: 'jst_ph', name: 'JST-PH (top entry)', entry: 'top', body: { w: 7.9, l: 4.5, h: 6 }, zc: 0, overhang: 0, plug: { w: 7.9, h: 4.5, len: 10, cable: 2 }, match: /jst[\s_-]?ph|b\dB-PH|ph[\s_-]?\d/i, cradle: false },
   // debug connectors: a probe (J-Link, ST-Link) plugs in from above with an IDC socket on a ribbon
   { id: 'swd10', name: 'Debug 10-pin (Cortex, 1.27 mm)', entry: 'top', body: { w: 12.7, l: 5.8, h: 5.6 }, zc: 0, overhang: 0, plug: { w: 12.4, h: 5.4, len: 5.5, cable: 1 }, match: /$^/, cradle: false, note: 'A J-Link plugs in with its 10-pin ribbon (the 20-to-10-pin adapter on a 20-pin J-Link).' },
+  { id: 'cortex20', name: 'Debug 20-pin (Cortex + trace, 1.27 mm)', entry: 'top', body: { w: 17.8, l: 5.8, h: 5.6 }, zc: 0, overhang: 0, plug: { w: 17.5, h: 5.4, len: 5.5, cable: 1 }, match: /$^/, cradle: false, note: "A J-Link plugs in with a 20-pin 1.27 mm ribbon (the J-Link 19-pin Cortex-M adapter on a 20-pin J-Link)." },
   { id: 'jtag20', name: 'Debug 20-pin (JTAG, 2.54 mm)', entry: 'top', body: { w: 33.2, l: 8.9, h: 9 }, zc: 0, overhang: 0, plug: { w: 31, h: 7.6, len: 6.5, cable: 1.2 }, match: /$^/, cradle: false, note: "A J-Link's own 20-pin ribbon plugs straight in." },
   { id: 'tagconnect', name: 'Tag-Connect pads', entry: 'top', body: { w: 10, l: 5, h: 0.1 }, zc: 0, overhang: 0, plug: { w: 10, h: 5, len: 22, cable: 1 }, match: /$^/, cradle: false, note: 'Pads only: the Tag-Connect cable clips onto the board from above.' },
   { id: 'header', name: 'Pin header (Dupont)', entry: 'top', body: { w: 10.2, l: 2.54, h: 8.5 }, zc: 0, overhang: 0, plug: { w: 10.2, h: 2.54, len: 14, cable: 1.5 }, match: /pin[\s_-]?header|pin[\s_-]?socket|conn_\d+x\d+|header_\d|idc|box[\s_-]?header|^[12]x\d\d\b|pinhd/i, cradle: false },
@@ -112,6 +114,12 @@ export function guessPackage(pkg: string, ref = '', value = ''): PkgGuess {
     g = { w: pitch * cols, l: pitch * rows, h: /SOCKET/.test(p) ? 8.5 : 8.5, tht: true, kind: 'header', conn: connById('header') };
     if (/HORIZONTAL/.test(p)) g.h = 2.5 + pitch;
   }
+  // Samtec pin headers and sockets by part number: TSW-110-07-L-S is 10 pins in one row (S; D is two rows) at 2.54 mm,
+  // FTSH / FTS / TFM / SFM at 1.27 mm
+  if ((m = `${p} ${value.toUpperCase()}`.match(/\b(H?TSW|SSW|SSQ|MTSW|ZW|BCS|ESW|HLE|TLW|FTSH|FTS|TFM|SFM|CLP|FLE|SHF)-1(\d\d)-[\w.-]*?-(S|D|T)V?\b/))) {
+    const pitch = /^(FTSH|FTS|TFM|SFM|CLP|FLE|SHF)$/.test(m[1]) ? 1.27 : 2.54, rows = m[3] === 'D' ? 2 : 1, cols = +m[2];
+    g = { w: pitch * cols, l: pitch * rows, h: 8.5, tht: !/SM|SMT/.test(p), kind: 'header', conn: connById('header') };
+  }
   if (/MOUNTINGHOLE|MOUNTING_HOLE|MTG|FIDUCIAL/.test(p)) g = { w: 0, l: 0, h: 0 };
   if (/ESP32|ESP8266|WROOM|WROVER|NINA|RFM9|BLE|NRF52.*MODULE|RP2040.*ZERO/.test(p + ' ' + name.toUpperCase())) g = { ...g, kind: 'antenna', h: Math.max(g.h, 3.2) };
   if (/LED/.test(p) || /^LED/i.test(ref)) g = { ...g, kind: 'led' };
@@ -139,17 +147,20 @@ export function guessPackage(pkg: string, ref = '', value = ''): PkgGuess {
  * name, value or reference says JTAG / SWD / debug. Other headers named for debug (a 1 x 4 SWD header) stay pin
  * headers: jumper wires go there, and they still count as a debug port.
  */
-export function debugType(pkg: string, ref = '', value = ''): 'swd10' | 'jtag20' | 'tagconnect' | null {
+export function debugType(pkg: string, ref = '', value = ''): 'swd10' | 'cortex20' | 'jtag20' | 'tagconnect' | null {
   const text = `${pkg} ${value} ${ref}`;
   if (/tag[\s_-]?connect|tc20[35]0/i.test(text)) return 'tagconnect';
   const grid = pkg.match(/(\d+)x(\d+)/i);
   const rows = grid ? +grid[1] : 0, pins = grid ? rows * +grid[2] : 0;
   const pitch = /1\.27/.test(pkg) ? 1.27 : /2\.54/.test(pkg) ? 2.54 : 0;
-  if (/ftsh[\s_-]?105/i.test(pkg) || (pins === 10 && rows === 2 && pitch === 1.27)) return 'swd10';
+  // part numbers: Samtec FTSH / SHF 1.27 mm headers (105: 2 x 5, 110: 2 x 10) and CNC Tech's 3220 ones
+  if (/(ftsh|shf)[\s_-]?110|3220[\s_-]?20\b/i.test(pkg + ' ' + value)) return 'cortex20';
+  if (/(ftsh|shf)[\s_-]?105|3220[\s_-]?10\b/i.test(pkg + ' ' + value) || (pins === 10 && rows === 2 && pitch === 1.27)) return 'swd10';
   if (!DEBUG_HINT.test(text)) return null;
   const n = pins || +(text.match(/(?:_|\b)(10|20)(?:[\s_-]?pins?)?\b/i)?.[1] ?? 0);
   if (n === 10 && pitch !== 2.54) return 'swd10';
-  if (n === 20 && pitch !== 1.27) return 'jtag20';
+  if (n === 20 && pitch === 1.27) return 'cortex20';
+  if (n === 20) return 'jtag20';
   return null;
 }
 
@@ -181,6 +192,26 @@ export function pinGrid(pins: Comp['pins']): { rows: number; cols: number; pitch
   return even(along) && even(across) ? { rows: across.length, cols: along.length, pitch } : null;
 }
 
+/**
+ * A D-sub by its pins, whatever it is called: two staggered rows (5 and 4 for a DE-9, 8 and 7, 13 and 12, 19 and 18)
+ * at 2.77 mm, the rows 2.84 mm apart. Its number of pins, or null.
+ */
+export function dsubPins(pins: Comp['pins']): number | null {
+  const ps = (pins ?? []).filter((q) => /^\d+$/.test(q.n));
+  if (![9, 15, 25, 37].includes(ps.length)) return null;
+  const mx = ps.reduce((t, p) => t + p.x, 0) / ps.length, my = ps.reduce((t, p) => t + p.y, 0) / ps.length;
+  let sxx = 0, syy = 0, sxy = 0;
+  for (const p of ps) { sxx += (p.x - mx) ** 2; syy += (p.y - my) ** 2; sxy += (p.x - mx) * (p.y - my); }
+  const t = 0.5 * Math.atan2(2 * sxy, sxx - syy), u = [Math.cos(t), Math.sin(t)], v = [-u[1], u[0]];
+  const across = ps.map((p) => (p.x - mx) * v[0] + (p.y - my) * v[1]);
+  const lo = Math.min(...across), hi = Math.max(...across);
+  if (Math.abs(hi - lo - 2.84) > 0.15) return null;
+  const rowA = ps.filter((_, i) => across[i] - lo < 0.5), rowB = ps.filter((_, i) => hi - across[i] < 0.5);
+  if (rowA.length + rowB.length !== ps.length || Math.abs(rowA.length - rowB.length) !== 1) return null;
+  const even = (row: typeof ps) => { const xs = row.map((p) => (p.x - mx) * u[0] + (p.y - my) * u[1]).sort((a, b) => a - b); return xs.every((x, i) => i === 0 || Math.abs(x - xs[i - 1] - 2.77) < 0.12); };
+  return even(rowA) && even(rowB) ? ps.length : null;
+}
+
 /** Nets that say debug (SWD or JTAG) or serial, on a header's pins. */
 const DEBUG_NETS = /(^|[^a-z])(swdio|swclk|swdclk|swo|tms|tck|tdi|tdo|n?trst)([^a-z]|$)/i;
 const UART_NETS = /(^|[^a-z])(u?art\d?_?)?(txd?|rxd?)\d?([^a-z]|$)/i;
@@ -193,12 +224,15 @@ const UART_NETS = /(^|[^a-z])(u?art\d?_?)?(txd?|rxd?)\d?([^a-z]|$)/i;
 function byPins(c: Comp, g: PkgGuess): { conn: ConnType; kind: CompKind; role?: string; w: number; l: number } | null {
   if (!c.pins || (g.conn && g.conn.id !== 'custom' && g.conn.id !== 'header')) return null;
   if (!g.conn && !CONN_REF.test(c.ref)) return null;
+  const ds = dsubPins(c.pins);
+  if (ds) { const t = connById('dsub'), w = ({ 9: 30.8, 15: 39.1, 25: 53, 37: 69.3 } as Record<number, number>)[ds] ?? 30.8; return { conn: { ...t, body: { ...t.body, w }, plug: { ...t.plug, w: w + 0.5 } }, kind: 'connector', w, l: t.body.l }; }
   const grid = pinGrid(c.pins);
   if (!grid) return null;
   const n = grid.rows * grid.cols, nets = c.pins.map((q) => q.net ?? '').join(' ');
   const dbg = DEBUG_NETS.test(nets), uart = !dbg && UART_NETS.test(nets) && n <= 8;
   if (grid.rows === 2 && n === 10 && grid.pitch === 1.27) return { conn: connById('swd10'), kind: 'connector', w: 12.7, l: 5.8 };
   if (dbg && grid.rows === 2 && n === 20 && grid.pitch === 2.54) return { conn: connById('jtag20'), kind: 'connector', w: 33.2, l: 8.9 };
+  if ((dbg || DEBUG_HINT.test(`${c.ref} ${c.pkg} ${c.value ?? ''}`)) && grid.rows === 2 && n === 20 && grid.pitch === 1.27) return { conn: connById('cortex20'), kind: 'connector', w: 17.8, l: 5.8 };
   return { conn: connById('header'), kind: 'header', ...(dbg ? { role: 'debug' } : uart ? { role: 'uart' } : {}), w: grid.pitch * grid.cols, l: grid.pitch * grid.rows };
 }
 

@@ -16,7 +16,7 @@ export const KIND_NAME: Record<NonNullable<Link['kind']>, string> = { usb: 'USB'
 export const isAccessory = (b: Board) => b.kind === 'box' || !!b.role;
 
 /** Connector types that are debug connectors (a probe's ribbon plugs in). */
-export const DEBUG_TYPES = new Set(['swd10', 'jtag20', 'tagconnect']);
+export const DEBUG_TYPES = new Set(['swd10', 'cortex20', 'jtag20', 'tagconnect']);
 /** A name that says debug: SWD, JTAG, a Cortex debug connector, a J-Link or another probe. */
 export const DEBUG_HINT = /swd|jtag|cortex[\s_-]?debug|j[\s_-]?link|debug|\bdbg|conn_arm|st[\s_-]?link|tag[\s_-]?connect/i;
 /** A name that says serial: UART, a serial console, TX/RX, an FTDI header. */
@@ -32,7 +32,7 @@ export const isUartPort = (c: Comp) => !!c.conn && !c.hidden && (c.role ? c.role
 const plugTypeName: Record<string, string> = {
   usb_c: 'USB-C', usb_micro_b: 'micro-USB', usb_mini_b: 'mini-USB', usb_a: 'USB-A', usb_a_dual: 'USB-A', usb_b: 'USB-B',
   hdmi_micro: 'micro-HDMI', hdmi_mini: 'mini-HDMI', hdmi_a: 'HDMI', rj45: 'RJ45', barrel: 'DC barrel', audio35: '3.5 mm', terminal: 'wires', header: 'jumper',
-  swd10: '10-pin debug', jtag20: '20-pin debug', tagconnect: 'Tag-Connect', iec_c7: 'mains (C7)', pins_ra: 'pins', ac_au: 'AU outlet', ac_uk: 'UK outlet', ac_us: 'US outlet', ac_eu: 'EU outlet', mains_lead: 'mains lead',
+  swd10: '10-pin debug', cortex20: '20-pin Cortex debug', jtag20: '20-pin debug', dsub: 'D-sub', tagconnect: 'Tag-Connect', iec_c7: 'mains (C7)', pins_ra: 'pins', ac_au: 'AU outlet', ac_uk: 'UK outlet', ac_us: 'US outlet', ac_eu: 'EU outlet', mains_lead: 'mains lead',
 };
 
 export function plugRole(m: Module, c: Comp): PlugRole {

@@ -180,7 +180,7 @@ function BoardSketch({ b }: { b: Board }) {
   );
 }
 
-const DEBUG_KINDS: [DebugKind, string][] = [['swd10', '10-pin, 1.27 mm (Cortex)'], ['jtag20', '20-pin, 2.54 mm (JTAG)'], ['tagconnect', 'Tag-Connect pads'], ['pins', 'Pins for jumper wires (SWD)']];
+const DEBUG_KINDS: [DebugKind, string][] = [['swd10', '10-pin, 1.27 mm (Cortex)'], ['cortex20', '20-pin, 1.27 mm (Cortex + trace)'], ['jtag20', '20-pin, 2.54 mm (JTAG)'], ['tagconnect', 'Tag-Connect pads'], ['pins', 'Pins for jumper wires (SWD)']];
 
 /**
  * Copy this board's holder (style, sizes, features, material, colour, release button) to the boards of the same

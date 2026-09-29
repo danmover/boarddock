@@ -278,13 +278,14 @@ export const jumperToBuy = (mm: number) => [100, 150, 200, 300].find((l) => l >=
 export function adapterFor(probePort: Comp, header: Comp): string | null {
   const a = probePort.conn?.type, b = header.conn?.type;
   if (a === 'jtag20' && b === 'swd10') return '20-to-10-pin adapter (J-Link Cortex-M adapter) for a 1.27 mm header';
+  if (a === 'jtag20' && b === 'cortex20') return '20-pin to 20-pin 1.27 mm adapter (J-Link 19-pin Cortex-M adapter)';
   if (a === 'jtag20' && b === 'tagconnect') return 'Tag-Connect cable for a 20-pin probe (TC2050-IDC with its adapter)';
   if (a === 'jtag20' && b === 'header') return 'jumper wires from the 20-pin connector to the pins (or a 20-pin to Dupont adapter)';
   if (a === 'swd10' && b === 'jtag20') return '10-to-20-pin adapter';
   return null;
 }
 
-export type DebugKind = 'swd10' | 'jtag20' | 'tagconnect' | 'pins' | 'uart';
+export type DebugKind = 'swd10' | 'cortex20' | 'jtag20' | 'tagconnect' | 'pins' | 'uart';
 
 /**
  * Mark a part as a debug header by hand: one of the debug connectors (sized to it, along the part's long side), or

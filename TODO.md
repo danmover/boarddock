@@ -8,15 +8,14 @@ Nothing BoardDock makes has been printed and tried yet, so anything below about 
 
 ## 0. Most important (from the user, 29 Sep, on v0.2.0)
 
-- **Wires bend unnaturally, all of a sudden.** Seen in v0.2.0; where and on which cables still to find out.
-
+- **Connectors on imported boards come in as "Custom connector"** (the user's Allegro board, through KiCad). Named by the user: SHF-110-01-L-D-TH (a J-Link plug: Samtec 1.27 mm 2 x 10, the 20-pin Cortex debug connector), 5745781 and 5745781-4 (TE D-sub, 9-way, right angle), TSW-110-07-L-S (Samtec 2.54 mm pin header, 1 x 10), 3020-10-0200-00 (CNC Tech 10-pin shrouded header), MC000046 and A829-1A1T-91B (not yet known what they are), "and a bunch of others". Also: **the DC barrel jack's behaviour is broken** (how, still to find out). (Done: connectors known by their pins when their names say nothing; SHF-110 as the 20-pin Cortex debug connector a J-Link plugs into, TSW-110 as a 1 x 10 pin header, 5745781 as a D-sub, which is a new connector type, as is the 20-pin 1.27 mm Cortex one; D-subs known by their staggered pins. Left: MC000046, A829-1A1T-91B and the others still custom, and the barrel jack.)
 - **USB-serial adapters and J-Links as ordinary boards, in stacks.** Agreed 29 Sep:
   - A J-Link and a USB-serial adapter are ordinary boards with their connectors (USB, the 20-pin debug header, the adapter's 6 right-angle pins), docked and cabled like any other board: no longer boxes that go in the back slot of their board's dock (`probeSlots` / `extraCompanions` in `src/cad/dockplan.ts`, `isProbe` / `isAdapter` in `src/model/probes.ts`). Old projects' probes and adapters are turned into boards when they load (`migrate` in `src/model/library.ts`).
   - Small boards (up to about a J-Link's size) stack in a column: each lies on its long edge (longest side along the rail, middle side upright, thickness out from the wall), the next one on top, like bricks.
   - Auto-arrange stacks a board's J-Links and adapters in one column next to it; by hand, "Stack on…" puts any small board on another's stack and "Take off the stack" lifts it off.
   - Each holder sits on the one below on pegs and lifts straight off; the release rod runs down through every holder, so pressing it on the top one frees the whole stack from the rail.
   - Needs: tests (placement, stacking and unstacking, rod through every level, migration), the collision matrix and its baseline, README, and saying plainly that none of it has been printed.
-- (Done: connectors on imported boards known by their pins when their names say nothing BoardDock knows, so an Allegro board's debug header takes a J-Link and its headers aren't "Custom connector".)
+- **Wires bend unnaturally, all of a sudden.** Seen in v0.2.0; where and on which cables still to find out.
 
 ## 1. From the second round of test users
 

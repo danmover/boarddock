@@ -53,3 +53,22 @@ describe('connectors known by their pins', () => {
     expect(r.conn).toBeUndefined();
   });
 });
+
+describe('connectors known by their part numbers and D-subs by their pins', () => {
+  const named = (ref: string, pkg: string, pins?: Pin[]) => classify(part(ref, pkg, pins ?? []), false);
+  it('the user board\'s connectors', () => {
+    expect(named('J1', 'SHF-110-01-L-D-TH').conn?.type).toBe('cortex20'); // a J-Link's 20-pin 1.27 mm Cortex plug
+    expect(isDebugPort(named('J1', 'SHF-110-01-L-D-TH'))).toBe(true);
+    expect(named('J2', 'FTSH-105-01-L-DV-K').conn?.type).toBe('swd10');
+    const tsw = named('J3', 'TSW-110-07-L-S');
+    expect([tsw.conn?.type, tsw.kind, tsw.w, tsw.l]).toEqual(['header', 'header', 25.4, 2.54]);
+    expect(named('J4', '5745781-4').conn?.type).toBe('dsub');
+    expect(named('P1', 'DSUB-9_FEMALE').conn?.type).toBe('dsub');
+  });
+  it('a DE-9 by its staggered rows, whatever it is called; a 2 x 10 at 1.27 mm with SWD nets is the Cortex 20-pin', () => {
+    const de9: Pin[] = [...[0, 1, 2, 3, 4].map((i) => ({ n: String(i + 1), x: i * 2.77, y: 0 })), ...[0, 1, 2, 3].map((i) => ({ n: String(i + 6), x: 1.385 + i * 2.77, y: 2.84 }))];
+    expect(classify(part('J6', 'CONN_9_RA', de9), true).conn?.type).toBe('dsub');
+    const nets = Array.from({ length: 20 }, (_, i) => ['VCC', 'SWDIO', 'GND', 'SWCLK'][i % 4]);
+    expect(classify(part('J7', 'CON20', grid(2, 10, 1.27, nets)), true).conn?.type).toBe('cortex20');
+  });
+});
