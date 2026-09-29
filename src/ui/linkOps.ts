@@ -1,6 +1,7 @@
 // Cable edits (undoable).
 import { autoLinks, numberLinks, portBudget, powerShort, sameRef, strongerPower, type PlugAt } from '../model/links';
 import { TEMPLATES } from '../model/templates';
+import { ownSupply } from '../model/boxes';
 import { addAdapters, addProbes, addUartLinks, fillWires, stackProbes } from '../model/probes';
 import { seatCompanion, seatCompanions, type Seated } from '../cad/dockplan';
 import type { Module, PlugRef, Project } from '../model/types';
@@ -64,6 +65,14 @@ export function rewire() {
 
 /** Add an accessory from the library (a charger, a hub, a switch) and connect what it was added for. */
 export function addAccessory(id: string, count = 1) {
+  // own:<box>: the plug pack a switch or powered hub came with, for its DC input
+  if (id.startsWith('own:')) {
+    const box = store.get().project?.modules.find((m) => m.id === id.slice(4)), b = box && ownSupply(box);
+    if (!b) return;
+    putBoards([b], false, { stay: true });
+    addLinks(undefined, true);
+    return;
+  }
   const t = TEMPLATES.find((x) => x.id === id);
   if (!t) return;
   putBoards(Array.from({ length: count }, () => t.make()), false, { stay: true }); // staying where you are

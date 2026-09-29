@@ -15,13 +15,9 @@ Go through the clip in depth, measuring rather than guessing:
 
 ## 2. From the second round of test users
 
-Most serious first:
-- A switch's or powered hub's DC input is never given a supply, yet the To do list says done.
-- "What's new" lists docks that were already built as new.
-- Adding to a built rack slides built docks past the rail end with no Move or Cut step (prefer a free gap, add the step, and fail the check on a built rack).
-- A full powerboard: the mains bar ignores boxes' own supplies and sends them off the rack while outlets are free.
-- One charger left idle; no uplink from the switch to a router.
-- A plug-pack supply's mains plug-in and lead are missing from What's new and the mains step.
+Done: switches' and powered hubs' DC inputs (the To do list asks for a supply; Add its supply puts the one it came with in a free outlet), What's new listing built docks as new, built docks sliding past the rail end (a new board gets its own dock; Slide and Cut steps; Check fails), the mains bar and boxes' own supplies, the idle charger (the advice says why) and the switch's uplink to your router, and where a plug pack goes in What's new and the steps. The start code check and the brim are being done by an agent.
+
+Still to do, most serious first:
 - Pasted printer start code is trusted as the A1 mini's without checking it.
 - The plate brim can land just off the bed; keep it inside the margin.
 - No way to slice for an A1 mini without Bambu's files.
@@ -34,6 +30,7 @@ Most serious first:
 
 - Collisions left after the collision test (`npm run collisions`; baseline 339 mm³ over 140 racks, from 8272; 1 layout problem):
   - Cables where they cross under a rail or at its edge (cables into rails 154 mm³, 110 in the Pi cluster, up to 1.2 mm; cable into cable 47 mm³, up to 3.6 mm): a street is 8 mm under a rail's underside, so a 6 mm Ethernet cable has 2 mm to spare and one can't lie over another there; cables going up to a plug also pass through a rail's lip overhang. Needs a choice: taller table stands (more headroom, more plastic, a taller rack), or keeping crossings and rises out from under the rails in the router. Tried and taken out, as each made the matrix worse: cables back to the side they were laid on, crossing beads kept further apart, and no brushing a rail's box.
+  - The switch's uplink to your router (its lead leaving the rack) moved cables on two racks: the boxes rack +52.6 mm³ (a Pi 4's power and Ethernet cables crossing under rail 1, 3.2 mm deep) and the busy rack +3.3 mm³. Baseline updated with it; the crossing is the one above.
   - Cable tags where no spot along a crowded cable is clear (80 mm³ in 6 racks, most in the probes and back-to-back racks).
   - The one real route clash: on the columns rack the Mega's cable goes into the Nano's USB plug.
   - Small: a cable into a plug (16 mm³, 2 racks), into a dock's release lever (3.6), a stacked board's standoffs into the board parts under them (4.2). The stacking pegs' crush ribs press 0.3 mm³ each, by design, and are still counted.
@@ -112,3 +109,6 @@ Each: how bad (1 to 5), what's wrong, where, and how it was seen.
 - 2 · The bill of materials gave each same-named printed part its own line ("Release rod + button" twice, 1 each; two Pi 5 holders on two lines). Fixed (`src/model/bom.ts`: one line a name, weights as a range when they differ). Seen in the printed build guide.
 - 1 · The printed guide's pictures have no cable numbers: the numbers are drawn over the 3D view, not in it. `src/ui/Viewer3D.tsx` stepPictures. Seen in the printed guide of a rack with cables.
 - 3 · The Tag-Connect footprint's 3D model was an inside-out box, and on any board with one it emptied every black part from the 3D view (jack bodies, JST housings, debug header shrouds). Fixed by the toolbox agent (`src/cad/boardviz.ts`: a shape that fails is left out on its own). Seen comparing the toolbox pictures with the 3D view.
+- 1 · Two boards of the same kind give the same advice line twice, word for word ("Raspberry Pi 4B: its GPIO is for wires you connect yourself"). `src/model/links.ts` portBudget's unwired list and wiringAdvice. Seen in the advice for a rack of two Pi 4s.
+- 2 · The Wiring view's To do list gave a port too weak to power a board as its "best" (a Pi 4's power from the other Pi's USB-A port). Fixed (`src/ui/WiringView.tsx`: it says no free port gives enough). Seen trying the switch's supply in the browser.
+- 2 · A barrel jack's best match was a Pi's GPIO header (a DC input could be cabled to any header's pins). Fixed (`src/model/links.ts` refusal: a barrel jack takes a supply's plug or a pigtail to screw terminals, never header pins). Seen in the same To do list.

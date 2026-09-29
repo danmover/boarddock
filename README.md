@@ -307,7 +307,7 @@ A live sketch above the cards shows the box from above, each port with an arrow 
 
 On Start, **Draw your own › A box** builds one from scratch: pick what it is (a USB hub, a USB charger, a power supply, a debug probe or a USB-serial adapter), its name, size and colour, with the sketch updating as you type. It starts with a typical port or two for its kind (a hub: four USB-A and a USB-C upstream); change them and add rows under **Box**, then drag each port in the editor to where it is on yours (a photo of it under the drawing helps). **Save to My boards** keeps it for any rack. None of the holders for these has been printed yet: check the fit of a test print against your box.
 
-The Plugs step counts what still needs a port: USB devices against free hub and computer ports, and boards that need power against free ports strong enough for them. A board on a port too weak for it (or powered through the hub it hosts) counts as still needing power, so the offer to add a charger (or, for Pi 5s, their own 27 W supplies) stays until every board has enough; adding one connects it and moves the boards on weak ports onto it. A USB device with no port on the rack can go to **your computer** instead of a hub. A stacked pair of USB-A sockets, like on a Raspberry Pi, counts as two ports ("USB2 lower" and "USB2 upper"). Boards with screw terminals or jumper headers and nothing connected (a relay board, a power distribution board) are listed too: Auto-connect leaves wiring to you.
+The Plugs step counts what still needs a port: USB devices against free hub and computer ports, and boards that need power against free ports strong enough for them. A board on a port too weak for it (or powered through the hub it hosts) counts as still needing power, so the offer to add a charger (or, for Pi 5s, their own 27 W supplies) stays until every board has enough; adding one connects it and moves the boards on weak ports onto it. It names the boards still without power and what the free ports give ("the free ones give 2.4 A at most, they need 3 A or more"), and says so when a charger powers nothing and why. A USB device with no port on the rack can go to **your computer** instead of a hub. A stacked pair of USB-A sockets, like on a Raspberry Pi, counts as two ports ("USB2 lower" and "USB2 upper"). Boards with screw terminals or jumper headers and nothing connected (a relay board, a power distribution board) are listed too: Auto-connect leaves wiring to you.
 
 ![Power budget in the Plugs step](docs/images/power.png)
 
@@ -358,8 +358,8 @@ Each plug gets a role from its type, its name and its board:
 1. hubs to the nearest computer or board that hosts them (a hub with Ethernet or USB 3 ports on a USB 3 port where there is one); with nothing on the rack to host it, to **your computer**;
 2. power: every board that takes power over USB, only from a port that gives it enough (a Pi 5 on a 5 A supply where there is one, a Pi 4 on a USB-C port), with no charger loaded past what it gives and the load spread over the chargers. A board no free port can power is left free, and the Plugs step offers a charger or supply. With no charger port left, a powered hub's port will do for a small board, never a Pi, and never the hub that hangs off that same board;
 3. devices (an Arduino's USB, a probe's or an adapter's USB) to the nearest hub port, else a board's own USB port while their shared limit allows (a Pi 4's give 1.2 A between them), else **your computer** (off the rack; its 2 m cable is on the shopping list);
-4. each board's Ethernet to a **network switch** in the rack (Start › Hubs and chargers has 5- and 8-port ones);
-5. a DC plug pack's lead to a DC input of the same voltage;
+4. each board's Ethernet to a **network switch** in the rack (Start › Hubs and chargers has 5- and 8-port ones), and each switch with boards on it to **your router**, off the rack, on its last free port (the shopping list asks you to measure that cable);
+5. a DC plug pack's lead to a DC input of the same voltage. A network switch or powered hub has a DC input for the supply it came with: until something is on it, the To do list says so, and **Add its supply** puts that plug pack on the rack (listed as coming with the box, not to buy), in a free outlet with its lead to the box. Set the input's voltage under **Box** to match the label on yours;
 6. mains leads and plug packs to the nearest free outlet of a powerboard (never one powerboard into another);
 7. J-Links and serial adapters to the headers they serve.
 
@@ -493,7 +493,7 @@ Later, open BoardDock. A saved rack opens on **Your rack**, with its boards, whe
 2. otherwise into the first gap on the rails that is clear in 3D, preferably on the rail of a board it is cabled to;
 3. otherwise on the end of a rail, and Export tells you that rail has to be longer.
 
-Nothing else moves; where a board in a free slot makes its dock reach further, the docks beside it slide along the rail just enough to clear it, and the toast says where the board went. Connect its cables (Auto-connect only fills plugs that are still free). Export then lists what to do since the build:
+Nothing else moves. Where a board in a free slot of a built dock would make that dock reach over the next one, the board goes into a dock of its own instead (a free gap, else the end of a rail), so no built dock has to slide; the toast says where it went. If built docks do end up past the end of the rail you cut, Check fails and What's new says to cut a longer rail and where to slide each dock. Connect its cables (Auto-connect only fills plugs that are still free). Export then lists what to do since the build:
 
 ![What changed since the rack was built](docs/images/whatsnew.png)
 
@@ -501,9 +501,10 @@ It is a numbered checklist in the order you would work at the rack, each step wi
 - **Take off** the boards you removed, from their dock ("dock 1.3 front");
 - **Swap** a board for its new version, or for the board that took its place, in the same dock;
 - **Cut** any rail that has to be longer, and **move the end block** out to the new end;
+- **Slide** a built dock along its rail to its new place, in mm from the rail's start, the one furthest along first;
 - **Move** boards that now sit somewhere else ("Arduino Uno R3 from dock 1.3 front to dock 1.2 front"; docks are numbered by rail and place);
 - **Clip on** each new dock, at its distance in mm from the rail's start;
-- **Seat** each new board in its holder and plug it into its dock (or onto the board it stacks on);
+- **Seat** each new board in its holder and plug it into its dock (or onto the board it stacks on); a new plug pack goes into its outlet, its lead to its board;
 - **Plug in** the new cables, and say when a cable you have is now too short ("#4 is now 1 m, yours is 0.5 m");
 - what is **spare** now: parts and cables (by number) the rack no longer uses.
 

@@ -1,7 +1,7 @@
 // Boxes (USB hubs, chargers, power supplies): a size and rows of ports on its faces. The outline, the height and a
 // port part for every port are generated from that, and every port knows its role, so Auto-connect never has to
 // guess whether a USB-A socket on a box takes a device or gives power.
-import type { Board, BoxFace, BoxPortGroup, BoxSpec, Comp, ConnSetup, V2 } from './types';
+import type { Board, BoxFace, BoxPortGroup, BoxSpec, Comp, ConnSetup, Module, V2 } from './types';
 import { connById, connSetup } from './library';
 import { bbox, roundedRectLoop, round, uid } from '../geom/poly';
 
@@ -20,6 +20,7 @@ export const BOX_ROLES: [string, string][] = [
   ['mains-out', 'mains outlet: a charger\'s lead plugs in'],
   ['mains-in', 'mains in: a lead to an outlet (or the wall)'],
   ['dc-out', "DC out: a supply's DC lead to a board's DC input"],
+  ['power-in-dc', "DC in: its supply's lead (a plug pack)"],
   ['other', 'leaves the rack (supply, screen)'],
 ];
 
@@ -27,6 +28,7 @@ export const FACE_NAME: Record<BoxFace, string> = { front: 'Front', back: 'Back'
 const ANGLE: Record<Exclude<BoxFace, 'top'>, number> = { front: -90, back: 90, left: 180, right: 0 };
 
 const g = (type: string, count: number, face: BoxFace, role: string): BoxPortGroup => ({ id: uid('pg'), type, count, face, role });
+const SWITCH = "A network switch: every board's Ethernet goes to one of its ports (Auto-connect does it). Its own supply (a plug pack) goes in a powerboard's outlet, its lead to the DC input at the back: the To do list's Add its supply puts it on the rack. Set its size, ports and input voltage under Box to match yours.";
 const PACK = (what: string) => `A plug pack: it plugs straight into a powerboard's outlet (or the wall), so it stays off the rails, and its own lead goes to ${what}. Auto-connect plugs it in. Set its figures under Box to match the label on yours.`;
 const POWERBOARD = "A powerboard: set its outlets (AU, UK, US or EU), how many, their angle and its size under Box. Auto-connect plugs the chargers' mains leads into it; its own lead goes to the wall. Never plug one powerboard into another.";
 
@@ -36,13 +38,13 @@ const dp = (ref: string, pkg: string, x: number, y: number, w: number, l: number
 
 export const BOX_PRESETS: Record<string, { name: string; color: string; spec: () => BoxSpec; note?: string; parts?: () => Comp[] }> = {
   hub4: { name: 'USB hub', color: '#2b2f36', spec: () => ({ l: 100, w: 30, h: 22, groups: [g('usb_a', 4, 'front', 'hub-down'), g('usb_micro_b', 1, 'left', 'hub-up')] }) },
-  hub7: { name: 'Powered USB hub', color: '#2b2f36', spec: () => ({ l: 160, w: 48, h: 24, groups: [g('usb_a', 7, 'top', 'hub-down'), g('usb_c', 1, 'left', 'hub-up'), g('barrel', 1, 'right', 'other')] }) },
+  hub7: { name: 'Powered USB hub', color: '#2b2f36', spec: () => ({ l: 160, w: 48, h: 24, groups: [g('usb_a', 7, 'top', 'hub-down'), g('usb_c', 1, 'left', 'hub-up'), { ...g('barrel', 1, 'right', 'power-in-dc'), volts: 12 }] }), note: "A powered hub: its own supply (a plug pack) goes in a powerboard's outlet, its lead to the DC input on the end. The To do list's Add its supply puts it on the rack. Set the input's voltage under Box to match the label on yours." },
   hubc: { name: 'USB-C hub', color: '#3a3f47', spec: () => ({ l: 110, w: 32, h: 16, groups: [g('usb_a', 3, 'front', 'hub-down'), g('usb_c', 1, 'front', 'hub-down'), g('usb_c', 1, 'left', 'hub-up'), g('rj45', 1, 'right', 'net')] }) },
   charger4: { name: 'USB charger', color: '#e9e7e2', spec: () => ({ l: 90, w: 60, h: 28, groups: [g('usb_a', 4, 'back', 'power-out'), g('iec_c7', 1, 'front', 'mains-in')] }) },
   charger6: { name: 'USB charger (A + C)', color: '#e9e7e2', spec: () => ({ l: 110, w: 70, h: 30, groups: [g('usb_a', 4, 'back', 'power-out'), g('usb_c', 2, 'back', 'power-out'), g('iec_c7', 1, 'front', 'mains-in')] }) },
   // a desktop network switch: its Ethernet ports along the front, its power in at the back
-  switch8: { name: 'Network switch, 8 ports', color: '#2b2f36', spec: () => ({ l: 158, w: 100, h: 27, groups: [g('rj45', 8, 'front', 'net'), g('barrel', 1, 'back', 'other')] }), note: "A network switch: every board's Ethernet goes to one of its ports (Auto-connect does it), its own power supply plugs in at the back. Set its size and ports under Box to match yours." },
-  switch5: { name: 'Network switch, 5 ports', color: '#2b2f36', spec: () => ({ l: 100, w: 70, h: 25, groups: [g('rj45', 5, 'front', 'net'), g('barrel', 1, 'back', 'other')] }), note: "A network switch: every board's Ethernet goes to one of its ports (Auto-connect does it), its own power supply plugs in at the back. Set its size and ports under Box to match yours." },
+  switch8: { name: 'Network switch, 8 ports', color: '#2b2f36', spec: () => ({ l: 158, w: 100, h: 27, groups: [g('rj45', 8, 'front', 'net'), { ...g('barrel', 1, 'back', 'power-in-dc'), volts: 12 }] }), note: SWITCH },
+  switch5: { name: 'Network switch, 5 ports', color: '#2b2f36', spec: () => ({ l: 100, w: 70, h: 25, groups: [g('rj45', 5, 'front', 'net'), { ...g('barrel', 1, 'back', 'power-in-dc'), volts: 12 }] }), note: SWITCH },
   // plug packs: a supply that plugs straight into an outlet, its own lead ending in its output plug. The Raspberry Pi
   // 27 W supply gives 5 A over USB-C PD (a Pi 5's full USB), the 15 W one 3 A; sizes and leads are typical, not measured
   psu_pi5: { name: 'USB-C supply, 27 W (5 A)', color: '#f4f3ef', spec: () => ({ l: 62, w: 50, h: 32, supply: 5, pack: { lead: 1200 }, groups: [{ ...g('usb_c', 1, 'right', 'power-out'), amps: 5 }, g('mains_lead', 1, 'left', 'mains-in')] }), note: PACK('a Pi 5 (5 A over USB-C PD, so its USB ports give their full 1.6 A)') },
@@ -382,6 +384,23 @@ export function makeBox(preset: keyof typeof BOX_PRESETS, name?: string): Board 
   const b: Board = { name: name ?? P.name, outline: [], cutouts: [], thickness: 1, holes: [], comps: [], source: 'box', notes: [P.note ?? 'A box: set its size and ports under Box to match yours. Every port knows what it is for, so Auto-connect wires it right.'], kind: 'box', color: P.color };
   applyBox(b, P.spec());
   b.comps.push(...(P.parts?.() ?? []));
+  return b;
+}
+
+/**
+ * The plug pack a box came with (a switch's, a powered hub's), for its DC input: at that input's voltage, and marked as
+ * the box's own, so it is never on the list to buy. Null when the box has no DC input.
+ */
+export function ownSupply(box: Module): Board | null {
+  const inp = box.board.box?.groups.find((x) => x.role === 'power-in-dc');
+  if (!inp) return null;
+  const v = inp.volts ?? 12;
+  const b = makeBox('dc_pack_12v', `${box.board.name} supply, ${v} V`);
+  const s = b.box!;
+  s.groups = s.groups.map((x) => (x.role === 'dc-out' ? { ...x, volts: v, ...(inp.amps ? { amps: inp.amps } : {}) } : x));
+  s.pack = { ...s.pack!, own: box.id };
+  applyBox(b, s);
+  b.notes = [`The plug pack that came with the ${box.board.name}: it goes in a powerboard's outlet (or the wall), its lead to the ${box.board.name}'s ${v} V DC input. Set its figures under Box to match its label.`];
   return b;
 }
 

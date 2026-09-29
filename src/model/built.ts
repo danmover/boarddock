@@ -5,6 +5,7 @@ import type { Built, GenResult, Module, PanelReport, PartOut, Project } from './
 import { baseOf, stackMode } from './holes';
 import { isProbe } from './probes';
 import { isPlugPack } from './powerdata';
+import { packGoes } from './links';
 
 /**
  * The boxes that need a hook-and-loop strap: those in a holder with strap loops. A probe slides into a slot instead, a
@@ -148,6 +149,8 @@ function planOf(p: Project, res: GenResult, b: Built, d: Omit<Delta, 'plan' | 'a
   }
   for (const m of fresh) {
     if (swapped.has(m.id)) continue;
+    // a plug pack has no holder: it goes in its outlet, its lead to its board
+    if (isPlugPack(m.board)) { out.push({ kind: 'cable', text: `Push ${packGoes(p, m)}.` }); continue; }
     const where = m.on ? (stackMode(p, m) === 'bolted' ? `bolt it onto ${nameOf(m.on)} on its standoffs` : `press it onto the corner towers of ${nameOf(m.on)}'s holder`) : `plug the holder into ${seats.get(m.id) ?? 'its dock'}`;
     out.push({ kind: 'seat', text: `Seat ${m.board.name} in its holder and ${where}.`, parts: take(partsOf(m.id)) });
   }

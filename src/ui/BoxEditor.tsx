@@ -197,6 +197,7 @@ function GroupCard({ spec, g, i, lay, focus, setFocus, open, setOpen, set }: { s
                 {g.role === 'dc-out' && <Num label="At" unit="V" value={g.volts ?? 12} min={3} max={48} step={0.5} onChange={(v) => G((x) => { x.volts = v; })} hint="Its label's output voltage. BoardDock can't check polarity." />}
               </div>
       )}
+      {g.role === 'power-in-dc' && <div className="row" style={{ marginTop: 6 }}><Num label="Takes" unit="V" value={g.volts ?? 12} min={3} max={48} step={0.5} onChange={(v) => G((x) => { x.volts = v; })} hint="What its supply's label says it puts out: its own supply is made to match. BoardDock can't check polarity." /></div>}
       {g.face === 'top' && g.type.startsWith('ac_') && <Check label="A switch by each" value={!!g.switched} onChange={(v) => G((x) => { x.switched = v || undefined; })} />}
       <button className="bg-more" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? '▾' : '▸'} Where they are{side && !bare ? ', how high' : ''}{g.face === 'top' ? ', turned' : ''}</button>
       {open && (

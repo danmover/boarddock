@@ -1458,9 +1458,10 @@ export function shopping(p: Project, res: Res, d: Delta | null, tot: { g: number
     return out;
   }
   const count = (xs: string[]) => { const m = new Map<string, number>(); for (const x of xs) m.set(x, (m.get(x) ?? 0) + 1); return [...m.entries()].map(([k, n]) => `${n} × ${k}`); };
-  if (d && (d.removed.length || d.moved.length || d.spareCables.length)) out.push({ head: 'On the rack', items: [
+  if (d && (d.removed.length || d.moved.length || d.slid.length || d.spareCables.length)) out.push({ head: 'On the rack', items: [
     ...d.removed.map((n) => `Take off ${n}`),
     ...d.moved.map((m) => `Move ${m.name} from ${m.from} to ${m.to}`),
+    ...d.slid.map((x) => `Slide dock ${x.dock} along ${x.rail} to ${Math.round(x.to)} mm (it is at ${Math.round(x.from)} mm)`),
     ...d.spareCables.map((c) => `Cable ${c.no != null ? `#${c.no} ` : ''}(${c.a} to ${c.b}) is no longer used`),
   ] });
   const rails = d ? d.rails.map((r) => r.length) : (res.report.panel?.rails ?? []).map((r) => r.length);

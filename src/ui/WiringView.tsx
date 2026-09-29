@@ -7,7 +7,7 @@
 // removes it.
 import { useEffect, useMemo, useRef, useState, type PointerEvent as RPE } from 'react';
 import type { Link, Pin, PlugRef, Project } from '../model/types';
-import { allPlugs, autoLinks, cableFlow, canCable, connectNote, KIND_COLOR, KIND_NAME, linkKind, numberLinks, PC, pcModule, rankTargets, refusal, sameRef, shortName, wiringAdvice, type PlugInfo } from '../model/links';
+import { allPlugs, autoLinks, cableFlow, canCable, connectNote, KIND_COLOR, KIND_NAME, linkKind, numberLinks, PC, pcModule, rankTargets, ROUTER, routerModule, refusal, sameRef, shortName, wiringAdvice, type PlugInfo } from '../model/links';
 import { isPlugPack } from '../model/powerdata';
 import { TEMPLATES } from '../model/templates';
 import { fillWires, headerPins } from '../model/probes';
@@ -80,7 +80,12 @@ export function WiringView() {
   const links = p.links ?? [];
   sideRef.current = side;
   // the cards: every board and box, and "Your computer" (off the rack) when anything could go to it
-  const mods = useMemo(() => (links.some((l) => l.a.module === PC || l.b.module === PC) || plugs.some((q) => q.role === 'device' || q.role === 'hub-up') ? [...p.modules, pcModule(p)] : p.modules), [p, plugs]);
+  // your computer and your router get a card when a cable goes to them (or might)
+  const mods = useMemo(() => [
+    ...p.modules,
+    ...(links.some((l) => l.a.module === PC || l.b.module === PC) || plugs.some((q) => q.role === 'device' || q.role === 'hub-up') ? [pcModule(p)] : []),
+    ...(links.some((l) => l.a.module === ROUTER || l.b.module === ROUTER) ? [routerModule(p)] : []),
+  ], [p, plugs]);
 
   const jumperOf = (q: PlugInfo) => links.find((l) => l.kind === 'jumper' && (sameRef(l.a, q.ref) || sameRef(l.b, q.ref)));
   const showsPins = (q: PlugInfo) => pinsOf(q).length >= 2 && (open.has(keyOf(q)) || !!jumperOf(q) || pendingPin?.q.module === q.module && pendingPin.q.ref.ref === q.ref.ref);
@@ -384,7 +389,7 @@ export function WiringView() {
   }
   const where = (id: string) => {
     const mt = rep?.panel?.mounts.find((m) => m.slots.some((s) => s.module === id));
-    if (id === PC) return 'off the rack';
+    if (id === PC || id === ROUTER) return 'off the rack';
     if (!mt) { const m = p.modules.find((x) => x.id === id); return m?.on ? 'stacked on another board' : m && isPlugPack(m.board) ? 'in an outlet, off the rails' : 'not on a rail yet'; }
     const s = mt.slots.findIndex((x) => x.module === id);
     return `rail ${mt.rail.replace(/^r/, '')}, ${mt.slots.length > 1 ? `${s ? 'back' : 'front'} of the dock` : 'on a flat clip'}`;
@@ -562,10 +567,10 @@ function WiringSide({ tab, setTab, onPick }: { tab: 'todo' | 'cables'; setTab: (
   // plugs that want something: a board's power, a device's host, a hub's uplink, a header's probe or serial cable
   const WANT: Record<string, string> = { 'power-in': 'needs power', 'power-in-dc': 'needs a DC supply', device: 'needs a USB port', 'hub-up': 'needs a host', debug: 'no probe on it', uart: 'no serial on it', 'mains-in': 'needs an outlet' };
   // (a powerboard's own lead goes to the wall, not to anything in the rack)
-  const todo = plugs.filter((q) => WANT[q.role] && q.module.id !== PC && !linked.has(keyOf(q)) && !((q.role === 'debug' || q.role === 'uart') && q.module.board.kind === 'box') && !(q.role === 'mains-in' && q.module.board.comps.some((c) => c.conn?.type.startsWith('ac_'))));
+  const todo = plugs.filter((q) => WANT[q.role] && q.module.id !== PC && q.module.id !== ROUTER && !linked.has(keyOf(q)) && !((q.role === 'debug' || q.role === 'uart') && q.module.board.kind === 'box') && !(q.role === 'mains-in' && q.module.board.comps.some((c) => c.conn?.type.startsWith('ac_'))));
   const best = (q: PlugInfo) => rankTargets(p, q.ref, plugPlaces(), 1)[0];
   const nos = numberLinks(links);
-  const nameOf = (id: string) => (id === PC ? 'Your computer' : shortName(p.modules.find((m) => m.id === id)?.board.name ?? '?'));
+  const nameOf = (id: string) => (id === PC ? 'Your computer' : id === ROUTER ? 'Your router' : shortName(p.modules.find((m) => m.id === id)?.board.name ?? '?'));
   return (
     <div className="wside floating" onPointerDown={(e) => e.stopPropagation()}>
       <div className="wside-tabs" role="tablist">
@@ -578,18 +583,19 @@ function WiringSide({ tab, setTab, onPick }: { tab: 'todo' | 'cables'; setTab: (
           {advice.map((a, i) => (
             <div key={i} className="wadv">
               <span>{a.text}</span>
-              {a.add && <button className="btn small soft" onClick={() => addAccessory(a.add!, a.count ?? 1)}>Add {a.count && a.count > 1 ? `${a.count} × ` : 'a '}{(TEMPLATES.find((t) => t.id === a.add)?.name ?? a.add).replace(/ \(.*$/, '')}</button>}
+              {a.add && <button className="btn small soft" onClick={() => addAccessory(a.add!, a.count ?? 1)}>{a.add.startsWith('own:') ? 'Add its supply' : `Add ${a.count && a.count > 1 ? `${a.count} × ` : 'a '}${(TEMPLATES.find((t) => t.id === a.add)?.name ?? a.add).replace(/ \(.*$/, '')}`}</button>}
             </div>
           ))}
           {todo.length ? <>
             {todo.length > 1 && <button className="btn small primary" style={{ width: '100%', marginBottom: 6 }} onClick={() => addLinks()}><Icon d={I.wand} /> Connect all {todo.length} the best way</button>}
             {todo.map((q) => {
-              const b = best(q);
+              // (a port too weak to power it is never the best: say nothing free gives enough)
+              const b0 = best(q), weak = !!b0 && / too little$/.test(b0.note), b = weak ? undefined : b0;
               return (
                 <div key={keyOf(q)} className="wtodo">
                   <button className="wtodo-main" onClick={() => onPick(q)} title="Show its best matches">
                     <b>{shortName(q.module.board.name)}</b> <span className="mono">{q.label}</span>
-                    <em>{WANT[q.role]}{b ? ` · best: ${shortName(b.plug.module.board.name)} ${b.plug.label}` : ' · nothing free fits'}</em>
+                    <em>{WANT[q.role]}{b ? ` · best: ${shortName(b.plug.module.board.name)} ${b.plug.label}` : weak ? ' · no free port gives enough' : ' · nothing free fits'}</em>
                   </button>
                   {b && <button className="btn small ghost" onClick={() => {
                     edit((pp) => { pp.links = numberLinks([...(pp.links ?? []), { id: `l${Math.random().toString(36).slice(2, 8)}`, a: q.ref, b: b.plug.ref, kind: linkKind(q.role, b.plug.role) }]).map((l) => fillWires(pp, l)); });

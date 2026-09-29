@@ -16,7 +16,7 @@ import { basis, dir, I4, inv, mul, pt as ptM, rotZ, tr, type M4 } from '../geom/
 import { filletPath, leadStub, moveFx, powerFx, ribbonMesh, sphereMesh, tubeMesh } from './boardviz';
 import { poweredBoards } from '../model/lights';
 import { inUse, portUses, type UseWhy } from '../model/portuse';
-import { baseRef, cableFlow, cableNumbers, cablePurpose, cableToBuy, findModule, KIND_COLOR, KIND_NAME, offRackModule, offRackTo, plugRole, plugsOf, refText, shortName } from '../model/links';
+import { baseRef, cableFlow, cableNumbers, cablePurpose, cableToBuy, findModule, KIND_COLOR, KIND_NAME, offRackModule, offRackTo, packGoes, plugRole, plugsOf, refText, shortName } from '../model/links';
 import { isPlugPack } from '../model/powerdata';
 import { cableTag, TAG } from './cabletag';
 import { mainsBudget, mainsText, powerBudget, powerText } from '../model/power';
@@ -1020,8 +1020,11 @@ export function generatePanel(p: Project): GenResult {
   // a board whose only supply is a DC input with nothing on it: a supply off the rack, or none at all
   const dcFree = plugsOf(p).filter((x) => (x.role === 'power-in-dc' || (x.role === 'wire' && /^(v?in|pwr|power|dc ?in)\d*$/i.test(x.comp.ref))) && !(p.links ?? []).some((l) => [l.a, l.b].some((r) => r.module === x.ref.module && r.ref === x.ref.ref)));
   // (a box, such as a network switch, comes with its own plug pack: only a note for it)
-  if (dcFree.length) checks.push({ group: 'Power', name: 'DC inputs with no supply', value: dcFree.map((x) => `${shortName(x.module.board.name)} ${x.comp.ref}`).join(', '), status: dcFree.every((x) => x.module.board.kind === 'box') ? 'info' : 'warn', module: dcFree[0].module.id,
-    detail: `${dcFree.length > 1 ? 'These boards take' : 'This board takes'} power only through a DC input (a barrel jack or an input terminal) with nothing on it. Give ${dcFree.length > 1 ? 'each' : 'it'} a DC supply (Start › Hubs and chargers has a 12 V plug pack) and check its voltage and polarity against the board's label: BoardDock can't check either. If ${dcFree.length > 1 ? 'they have their' : 'it has its'} own supply off the rack, this is fine.` });
+  const dcBoards = dcFree.filter((x) => x.module.board.kind !== 'box'), dcBoxes = dcFree.filter((x) => x.module.board.kind === 'box');
+  if (dcBoards.length) checks.push({ group: 'Power', name: 'DC inputs with no supply', value: dcBoards.map((x) => `${shortName(x.module.board.name)} ${x.comp.ref}`).join(', '), status: 'warn', module: dcBoards[0].module.id,
+    detail: `${dcBoards.length > 1 ? 'These boards take' : 'This board takes'} power only through a DC input (a barrel jack or an input terminal) with nothing on it. Give ${dcBoards.length > 1 ? 'each' : 'it'} a DC supply (Start › Hubs and chargers has a 12 V plug pack) and check its voltage and polarity against the board's label: BoardDock can't check either. If ${dcBoards.length > 1 ? 'they have their' : 'it has its'} own supply off the rack, this is fine.` });
+  if (dcBoxes.length) checks.push({ group: 'Power', name: 'Boxes with nothing on their DC input', value: [...new Set(dcBoxes.map((x) => shortName(x.module.board.name)))].join(', '), status: 'info', module: dcBoxes[0].module.id,
+    detail: `${dcBoxes.length > 1 ? 'These boxes have' : 'This box has'} nothing on ${dcBoxes.length > 1 ? 'their' : 'its'} DC input. The supply ${dcBoxes.length > 1 ? 'each' : 'it'} came with can go on the rack: the Plugs step's To do list has Add its supply, and Auto-connect puts it in a free outlet. Plugged in off the rack, this is fine.` });
   if ((p.links ?? []).some((l) => l.kind === 'mains') || p.modules.some((m) => m.board.comps.some((c) => c.conn?.type.startsWith('ac_'))))
     checks.push({ group: 'Power', name: 'Mains: what BoardDock checks', value: 'plugs and outlets only', status: 'info',
       detail: "BoardDock checks which mains plug goes into which outlet, never a powerboard into another, and adds up the load it knows about. It can't check your powerboard, its lead or earth, or the wall socket, and it doesn't model mains wiring through screw terminals or relays: that belongs in a proper enclosure, wired by someone qualified to. Plug the powerboards into the wall last, with their switches off." });
@@ -1157,7 +1160,9 @@ export function generatePanel(p: Project): GenResult {
     if (k === 'mains') { steps.push({ seq: cableSeq(k), text: `With every powerboard still unplugged from the wall, plug the mains leads and plug packs into their outlets: ${cs.map((c) => `${c.no ? `#${c.no} ` : ''}${c.a} to ${c.b}`).join(', ')}.` }); continue; }
     steps.push({ seq: cableSeq(k), text: `Plug in the ${KIND_NAME[k]} cable${cs.length > 1 ? 's' : ''}: ${cs.map((c) => `${c.no ? `#${c.no} ` : ''}${c.a} to ${c.b} (${c.buy} m)`).join(', ')}${combed ? '. Press each one into its comb slot as you go' : ''}.` });
   }
-  if (ghosts.some((g) => g.tag?.kind === 'plug' && g.anim?.seq === PLUG_SEQ)) steps.push({ seq: PLUG_SEQ, text: 'Plug in the cables that leave the rack (supplies, screens, your computer). Nothing goes into the wall yet.' });
+  // (a plug pack goes straight into its outlet, its lead is its own: no cable on the rack, so it's said here)
+  const packs = p.modules.filter((m) => isPlugPack(m.board) && (p.links ?? []).some((l) => l.a.module === m.id || l.b.module === m.id)).map((m) => packGoes(p, m));
+  if (ghosts.some((g) => g.tag?.kind === 'plug' && g.anim?.seq === PLUG_SEQ)) steps.push({ seq: PLUG_SEQ, text: `Plug in the cables that leave the rack (supplies, screens, your computer).${packs.length ? ` Push each plug pack into its outlet and its lead into its board: ${packs.join('; ')}.` : ''} Nothing goes into the wall yet.` });
   if (parts.some((x) => x.tag?.kind === 'cap')) steps.push({ seq: CAP_SEQ, text: 'Snap the caps over the plugs to lock them in.' });
   if (parts.some((x) => x.tag?.kind === 'cabletag')) steps.push({ seq: TAG_SEQ, text: 'Snap a numbered tag round each end of every cable, a hand-width from the plug: the numbers match the Wiring view and the shopping list.' });
   // the wall, last of all: every terminal checked and every switch off first

@@ -98,7 +98,7 @@ export interface BoxSpec {
   ribbon?: number; // a debug probe (J-Link): length of the ribbon it comes with, mm
   corner?: number; // its corners seen from above: radius (or chamfer size), mm; unset: min(4, width / 6)
   chamfer?: boolean; // corners cut straight across instead of rounded
-  pack?: { lead: number }; // a plug pack: it plugs straight into an outlet (or the wall), off the rack; lead: its own output lead, mm
+  pack?: { lead: number; own?: string }; // a plug pack: it plugs straight into an outlet (or the wall), off the rack; lead: its own output lead, mm; own: the box it came with (module id), so it isn't bought
   rating?: number; // a powerboard: what it may carry in all, A at mains voltage (unset: a typical figure for its outlets)
 }
 

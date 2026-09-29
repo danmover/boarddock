@@ -55,7 +55,9 @@ export function billOfMaterials(p: Project, res: GenResult): BomGroup[] {
 
   // ---- the boards, the boxes and supplies, the probes: what goes on the rack ----
   const byKind = (ms: Module[]) => count(ms, kindName).map(([item, xs]) => ({ qty: xs.length, item }));
-  const boards = p.modules.filter((m) => !isAccessory(m.board)), probes = p.modules.filter((m) => isProbe(m)), boxes = p.modules.filter((m) => isAccessory(m.board) && !isProbe(m));
+  // (a switch's or hub's own supply came with it: nothing to buy)
+  const own = (m: Module) => !!m.board.box?.pack?.own;
+  const boards = p.modules.filter((m) => !isAccessory(m.board)), probes = p.modules.filter((m) => isProbe(m)), boxes = p.modules.filter((m) => isAccessory(m.board) && !isProbe(m) && !own(m));
   if (boards.length) out.push({ head: 'Boards', rows: byKind(boards) });
   if (boxes.length) out.push({ head: 'Boxes and supplies', rows: byKind(boxes).map((r) => { const m = boxes.find((x) => kindName(x) === r.item)!; return isPlugPack(m.board) ? { ...r, note: 'plugs into an outlet' } : r; }), buy: true });
   if (probes.length) out.push({ head: 'Debug probes and USB-serial adapters', rows: byKind(probes), buy: true });
@@ -68,7 +70,8 @@ export function billOfMaterials(p: Project, res: GenResult): BomGroup[] {
   // ---- cables: the shopping list's lines ("2 × 1 m USB-A to USB-C cable (numbers 3, 5)"), and what comes with parts ----
   const cl = cableLines(p, res.report.cables ?? []);
   if (cl.buy.length) out.push({ head: 'Cables', buy: true, rows: cl.buy.map((line) => { const m = /^(\d+) × (.*)$/.exec(line); return m ? { qty: +m[1], item: m[2] } : { qty: 1, item: line }; }) });
-  if (cl.comes.length) out.push({ head: 'Comes with the parts (nothing to buy)', rows: cl.comes.map((item) => ({ qty: 1, item })) });
+  const owned = p.modules.filter(own).map((m) => ({ qty: 1, item: m.board.name, note: `comes with the ${p.modules.find((x) => x.id === m.board.box!.pack!.own)?.board.name ?? 'box'}` }));
+  if (cl.comes.length || owned.length) out.push({ head: 'Comes with the parts (nothing to buy)', rows: [...owned, ...cl.comes.map((item) => ({ qty: 1, item }))] });
 
   // ---- hardware ----
   const hw: BomRow[] = [];
