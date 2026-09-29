@@ -13,6 +13,8 @@ import { activeModule, editMod, store, toast, uniqueName, useApp } from '../stat
 import { Check, Num, Pick, Section, Seg, Text } from './controls';
 import { Icon, I } from './icons';
 import { uid } from '../geom/poly';
+import { normDeg } from '../geom/angle';
+import { RotateBox } from './RotateBox';
 
 /** What each role is drawn in, in the sketch (theme colours). */
 const TONE: Record<string, string> = { 'hub-down': 'var(--muted)', host: 'var(--muted)', 'hub-up': 'var(--accent)', device: 'var(--accent)', 'power-out': 'var(--bad)', 'power-in': 'var(--warn)', net: 'var(--info)', debug: 'var(--subtle)', uart: 'var(--good)', 'mains-out': 'var(--copper)', 'mains-in': 'var(--copper)', other: 'var(--warn)' };
@@ -230,9 +232,9 @@ function GroupCard({ spec, g, i, lay, focus, setFocus, open, setOpen, set }: { s
             </div>
           )}
           {g.face === 'top' && (
-            <div className="row" style={{ marginTop: 6, alignItems: 'end' }}>
-              <Num label="Turned" unit="°" value={g.rot ?? 0} min={-180} max={360} step={15} onChange={(v) => G((x) => { const d = ((v % 360) + 360) % 360; x.rot = d || undefined; })} hint="0: their width along the box; 90: across it; 180: the other way round. 45 lets plug packs sit side by side." />
-              <Seg value={[0, 45, 90, 180].includes(g.rot ?? 0) ? g.rot ?? 0 : -1} options={[[0, '0°'], [45, '45°'], [90, '90°'], [180, '180°']]} onChange={(v) => G((x) => { x.rot = v || undefined; })} />
+            <div style={{ marginTop: 6 }}>
+              <RotateBox label="Turned" value={g.rot ?? 0} onTurn={(by) => G((x) => { const d = normDeg((x.rot ?? 0) + by); x.rot = d || undefined; })} />
+              <p className="hint" style={{ margin: '4px 0 0' }}>0: their width along the box; 90: across it; 180: the other way round. 45 lets plug packs sit side by side.</p>
             </div>
           )}
         </div>

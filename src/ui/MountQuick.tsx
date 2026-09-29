@@ -5,6 +5,7 @@
 import type { EdgeName } from '../model/types';
 import { edit, useApp, type SelItem } from '../state';
 import { makeRoom, setSlot, swapSlots, turnMounts } from './panelOps';
+import { RotateBox } from './RotateBox';
 import { Seg } from './controls';
 
 type Edge = EdgeName | 'auto';
@@ -58,6 +59,7 @@ export function MountQuick({ item }: { item: SelItem }) {
       )}
       <button className="btn small ghost" onClick={() => turnMounts([mt.id], -90)} title="Turn the dock (Shift+R in Rails)">⟲</button>
       <button className="btn small ghost" onClick={() => turnMounts([mt.id], 90)} title="Turn the dock (R in Rails)">⟳ Turn dock</button>
+      <RotateBox compact label="Dock turn" steps={[90]} value={mt.turn} onTurn={(by) => turnMounts([mt.id], by)} />
       {dock && mt.slots.some((s) => s.module) && <button className="btn small ghost" onClick={() => swapSlots([mt.id])} title="Front board to the back and back to the front (F in Rails)">Swap front / back</button>}
     </div>
   );

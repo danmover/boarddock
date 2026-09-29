@@ -35,6 +35,8 @@ import { ackNote, summarizeChecks } from '../model/checkSummary';
 import { boardSig, tileUrl, useKeptPicture } from './pics';
 import { CompPic } from './Toolbox';
 import { BoxEditor } from './BoxEditor';
+import { RotateBox } from './RotateBox';
+import { turnParts } from './rotateOps';
 import { BoardCheck } from './BoardCheck';
 import { needOf } from '../model/powerdata';
 import { picture } from './snapshot';
@@ -563,11 +565,11 @@ export function Inspector() {
           {!one && <div style={{ marginBottom: 8 }}><Seg value={common(comps, (c) => c.side) ?? ('' as Comp['side'])} options={[['top', 'On top'], ['bottom', 'Underneath']]} onChange={(v) => setC((x) => { x.side = v; })} /></div>}
           <div className="row3" style={{ marginTop: 8 }}>
             {one && <><Num label="X" value={comps[0].x} onChange={(v) => setC((x) => { x.x = v; })} /><Num label="Y" value={comps[0].y} onChange={(v) => setC((x) => { x.y = v; })} /></>}
-            <Num label="Rotation" unit="°" step={90} value={mixed(common(comps, (c) => c.rot))} onChange={(v) => setC((x) => { x.rot = v; })} />
             <Num label="Width" value={mixed(common(comps, (c) => c.w))} min={0.2} onChange={(v) => setC((x) => { x.w = v; })} />
             <Num label="Length" value={mixed(common(comps, (c) => c.l))} min={0.2} onChange={(v) => setC((x) => { x.l = v; })} />
             <Num label="Height" value={mixed(common(comps, (c) => c.h))} min={0} onChange={(v) => setC((x) => { x.h = v; })} />
           </div>
+          <div style={{ marginTop: 8 }}><RotateBox value={common(comps, (c) => c.rot) ?? null} onTurn={(by) => turnParts(comps.map((c) => c.id), by)} /></div>
           <div className="row" style={{ marginTop: 8 }}>
             <Pick label="Kind" value={common(comps, (c) => c.kind) ?? ('' as Comp['kind'])} options={[['' as Comp['kind'], '— mixed —'], ['generic', 'Part'], ['connector', 'Connector'], ['header', 'Header'], ['switch', 'Button/switch'], ['led', 'LED'], ['module', 'Module'], ['hot', 'Hot part'], ['antenna', 'Antenna/RF']]} onChange={(v) => v && setC((x) => { x.kind = v; })} />
             <div className="field"><span>&nbsp;</span><Check label="Through-hole leads" value={common(comps, (c) => c.tht) ?? false} onChange={(v) => setC((x) => { x.tht = v; })} /></div>

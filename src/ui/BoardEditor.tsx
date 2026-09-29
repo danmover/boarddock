@@ -22,6 +22,7 @@ import { plugName } from '../model/links';
 import { alignPhoto, dimPopupAt, edgeGaps, fitPhoto, itemsBox, scalePhoto, snapBox, snapLines, type Box2 } from '../model/editorgeo';
 import { PART_DRAG, Toolbox } from './Toolbox';
 import { useShapeTool } from './ShapeTool';
+import { RotateBox } from './RotateBox';
 
 export type Tool = 'select' | 'pan' | 'place' | 'measure' | 'shape' | 'photoScale' | 'photoAlign';
 const PIN_TYPES = new Set(['header', 'pins_ra', 'jst_ph', 'jst_xh', 'jst_gh', 'jst_zh', 'picoblade', 'kk254', 'swd10', 'cortex20', 'jtag20', 'idc']);
@@ -826,7 +827,7 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
       {nSel > 0 && !editDim && !photoAsk && tool !== 'shape' && (
         <div className="selbar floating">
           <b className="mono">{nSel} selected</b>
-          <button className="btn small ghost" onClick={() => rotateSel(sel, 90)} title="R">Rotate 90°</button>
+          <RotateBox compact label="Rotate the selection" value={null} onTurn={(by) => rotateSel(sel, by)} />
           <button className="btn small ghost" onClick={() => duplicateSel(sel)} title="Cmd/Ctrl+D">Duplicate</button>
           {nSel > 1 && <>
             <span className="tsep" />
