@@ -363,6 +363,17 @@ export function generatePanel(p: Project): GenResult {
       row.push(pl);
     }
     if (row.length) rows.push(row);
+    // with cables, every second rail is laid out the other way round (a snake): the last dock of one rail is beside the
+    // first of the next, so boards cabled across the break are not at opposite ends of two rails
+    if ((p.links ?? []).length && rows.length > 1) {
+      rows.forEach((rw, k) => {
+        if (k % 2 === 0) return;
+        const before = Math.max(...rows[k - 1].map((q) => q.mt.at! + q.hi));
+        const first = Math.min(...rw.map((q) => q.mt.at! + q.lo)), last = Math.max(...rw.map((q) => q.mt.at! + q.hi));
+        const shift = Math.max(0, before - last);
+        for (const q of rw) q.mt.at = first + last - (q.mt.at! + q.hi) - q.lo + shift;
+      });
+    }
     let prev: { x: number; y: number; ylo: number; yhi: number } | null = null;
     rows.forEach((rw, k) => {
       const ylo = Math.min(...rw.map((q) => q.ylo)), yhi = Math.max(...rw.map((q) => q.yhi));

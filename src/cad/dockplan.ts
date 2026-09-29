@@ -11,7 +11,7 @@ import { computeLevels } from './levels';
 import { holdOf } from './grip';
 import { baseOf, columnOf, isSmall, ridersOf } from '../model/holes';
 import { isProbe, probesOf, targetOf } from '../model/probes';
-import { baseRef, isAccessory, isBox } from '../model/links';
+import { baseRef, findModule, isAccessory, isBox, plugRole } from '../model/links';
 import { isPlugPack } from '../model/powerdata';
 
 /** A module plus the plugs of every board stacked on it: what orientation scoring should look at. */
@@ -404,8 +404,47 @@ export function autoAssign(p: Project): RailMount[] {
     const half = docks.length / 2, mid = flats.length && docks.length >= 2 ? units.reduce((b, u) => (Math.abs(u - half) < Math.abs(b - half) ? u : b), docks.length) : docks.length;
     out.push(...docks.slice(0, mid), ...flats, ...docks.slice(mid));
   }
+  pullBesideHost(p, out, new Set([...docked.keys(), ...cols.keys()]));
   out.forEach((m, i) => { m.id = `auto${i}`; });
   return out;
+}
+
+/**
+ * Devices sit right after the host they are cabled to: a hub on a Pi, a Pi Zero on a Pi 4, and the boards on a hub
+ * right after the hub. Host-to-device cables are the ones that have to stay short, whatever else the order was made
+ * for. `skip`: boards that stand in a column beside their own board (a probe's ribbon goes to that board, not its hub)
+ * and boards with such columns (they stay with them).
+ */
+export function pullBesideHost(p: Project, out: RailMount[], skip: Set<string> = new Set()): void {
+  const hostOf = new Map<string, string>(); // device module -> its host
+  for (const l of p.links ?? []) {
+    if (l.kind !== 'usb') continue;
+    const ends = [l.a, l.b].map((r) => { const m = findModule(p, r.module), c = m?.board.comps.find((x) => x.ref === baseRef(r.ref)); return { module: r.module, role: m && c ? plugRole(m, c) : '' }; });
+    const host = ends.find((e) => e.role === 'host' || e.role === 'hub-down'), dev = ends.find((e) => e.role === 'device' || e.role === 'hub-up');
+    if (host && dev && host.module !== dev.module && !hostOf.has(dev.module) && !skip.has(dev.module) && !findModule(p, dev.module)?.board.role) hostOf.set(dev.module, host.module);
+  }
+  if (!hostOf.size) return;
+  const unitOf = (id: string) => out.find((m) => m.slots.some((s) => s.module === id));
+  const kids = (h: string) => [...hostOf].filter(([, x]) => x === h).map(([d]) => d);
+  const placed = new Set<RailMount>();
+  // (`homes`: the docks of the hosts above, never moved: a board in the dock beside a host is that host's, not the hub's)
+  const place = (host: string, homes: Set<RailMount>): RailMount | undefined => {
+    const home = unitOf(host);
+    let last = home;
+    if (!home) return undefined;
+    const up = new Set(homes).add(home);
+    for (const d of kids(host)) {
+      const u = unitOf(d);
+      // (one already within two docks of its host stays: only the far ones are pulled in)
+      if (!u || up.has(u) || placed.has(u) || Math.abs(out.indexOf(u) - out.indexOf(last!)) <= 2) continue;
+      placed.add(u);
+      out.splice(out.indexOf(u), 1);
+      out.splice(out.indexOf(last!) + 1, 0, u);
+      last = place(d, up) ?? u;
+    }
+    return last;
+  };
+  for (const h of new Set(hostOf.values())) if (!hostOf.has(h)) place(h, new Set());
 }
 
 /**
@@ -564,16 +603,19 @@ function docksFor<T extends Module>(p: Project, mods: T[], railDir: 'h' | 'v', o
 export function orderByLinks<T extends Module>(p: Project, mods: T[]): T[] {
   const links = p.links ?? [];
   if (!links.length) return mods;
-  const deg = new Map(mods.map((m) => [m.id, links.filter((l) => l.a.module === m.id || l.b.module === m.id).length]));
-  const nb = (id: string) => links.flatMap((l) => (l.a.module === id ? [l.b.module] : l.b.module === id ? [l.a.module] : []));
+  // a host-to-device link (a board on a Pi's USB, a Pi Zero on a Pi 4) counts three times a plain one: those cables
+  // must stay short, so the board goes next
+  const weight = (l: NonNullable<Project['links']>[number]) => (l.kind === 'usb' ? 3 : l.kind === 'net' ? 2 : 1);
+  const deg = new Map(mods.map((m) => [m.id, links.filter((l) => l.a.module === m.id || l.b.module === m.id).reduce((a, l) => a + weight(l), 0)]));
+  const nb = (id: string) => links.flatMap((l) => (l.a.module === id ? [{ id: l.b.module, w: weight(l) }] : l.b.module === id ? [{ id: l.a.module, w: weight(l) }] : []));
   const left = new Set(mods.map((m) => m.id)), out: T[] = [];
   while (left.size) {
-    // start from the best-connected board left, then follow its connections
-    let cur = [...left].sort((a, b) => (deg.get(b) ?? 0) - (deg.get(a) ?? 0))[0];
+    // start from the best-connected board left, then follow its strongest connection
+    let cur: string | undefined = [...left].sort((a, b) => (deg.get(b) ?? 0) - (deg.get(a) ?? 0))[0];
     while (cur) {
       left.delete(cur);
       out.push(mods.find((m) => m.id === cur)!);
-      cur = nb(cur).filter((id) => left.has(id)).sort((a, b) => (deg.get(b) ?? 0) - (deg.get(a) ?? 0))[0];
+      cur = nb(cur).filter((x) => left.has(x.id)).sort((a, b) => b.w - a.w || (deg.get(b.id) ?? 0) - (deg.get(a.id) ?? 0))[0]?.id;
     }
   }
   return out;
