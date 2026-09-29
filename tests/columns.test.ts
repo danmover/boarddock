@@ -13,6 +13,8 @@ import { LANDING } from '../src/cad/dockdims';
 import { stackTargets } from '../src/ui/RackBuilder';
 import type { Board, BoxPortGroup } from '../src/model/types';
 import { measure } from './collide/measure';
+import { hits, type CableEnd, type Obstacle, type Route } from '../src/cad/cableroute';
+import { autoAssign } from '../src/cad/dockplan';
 
 const T = (id: string) => TEMPLATES.find((t) => t.id === id)!.make();
 beforeAll(async () => { await initKernel(); });
@@ -116,5 +118,39 @@ describe('stacking by hand', () => {
     // taken off the stack: its own dock again
     ad.on = null;
     expect(columnOf(p, jl)).toEqual([]);
+  });
+});
+
+describe('a lone J-Link or adapter', () => {
+  it('stands on its long edge in a dock of its own, whatever the lying-flat setting says', () => {
+    const p = newProject(T('jlink'));
+    p.modules.push(newModule(T('ftdi')));
+    p.panel.lie = 'flat';
+    const mounts = autoAssign(p);
+    const slots = mounts.flatMap((m) => m.slots).filter((s) => s.module);
+    expect(slots.map((s) => s.lie)).toEqual([undefined, undefined]);
+    // each in a dock of its own (two J-Link-sized boards are never paired back to back), its long side along the rail
+    expect(mounts.filter((m) => m.slots.some((s) => s.module)).length).toBe(2);
+    expect(mounts.every((m) => m.turn % 180 === 0)).toBe(true);
+  });
+});
+
+describe('a ribbon leaving a board', () => {
+  // the cable's own plug is at the origin; the board's other plug (its USB) is along the way, and its board
+  const ends: CableEnd[] = [{ p: [0, 0, 0], d: [0, -1, 0], module: 'jl', plug: 'jl/DBG' }];
+  const usb: Obstacle = { box: [10, -13, -8, 50, 0, 8], label: 'the J-Link USB plug', module: 'jl', plug: 'jl/USB' };
+  const own: Obstacle = { box: [-4, -3, -4, 4, 0, 4], label: 'the J-Link DBG plug', module: 'jl', plug: 'jl/DBG' };
+  const pcb: Obstacle = { box: [-20, -1, -8, 60, 2, 8], label: 'the J-Link', module: 'jl' };
+  const along = (kinds: Route['kinds']): Route => ({ pts: [[0, -6, 0], [70, -6, 0]], kinds });
+
+  it('may lie on its own board and leave its own plug, but not run through the board\'s other plugs', () => {
+    const h = hits(along(['exit']), [usb, own, pcb], ends, 1.2);
+    expect(h.map((x) => x.ob.label)).toEqual(['the J-Link USB plug']);
+    expect(h[0].depth).toBeGreaterThan(30);
+  });
+
+  it('clears a plug it goes over', () => {
+    const over: Route = { pts: [[0, -6, 12], [70, -6, 12]], kinds: ['exit'] };
+    expect(hits(over, [usb, own, pcb], ends, 1.2)).toEqual([]);
   });
 });

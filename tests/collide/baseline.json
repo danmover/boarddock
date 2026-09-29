@@ -326,7 +326,7 @@
   "ftdi DIN flat clip": {
    "cats": {
     "holder-board": [
-     0.1,
+     0,
      0.05
     ]
    },
@@ -335,7 +335,7 @@
   "ftdi loose": {
    "cats": {
     "holder-board": [
-     0.1,
+     0,
      0.05
     ]
    },
@@ -344,7 +344,7 @@
   "ftdi lying flat": {
    "cats": {
     "holder-board": [
-     0.1,
+     0,
      0.05
     ]
    },
@@ -353,7 +353,7 @@
   "ftdi standing": {
    "cats": {
     "holder-board": [
-     0.1,
+     0,
      0.05
     ]
    },
@@ -685,20 +685,24 @@
   "probes and adapters": {
    "cats": {
     "holder-holder": [
-     7.6,
-     0.19
+     2,
+     0.15
     ],
     "holder-board": [
-     0.6,
+     0.3,
      0.05
     ],
     "cable-cable": [
-     1.8,
-     0.3
+     3.5,
+     0.9
+    ],
+    "cable-stand/rail": [
+     5.8,
+     2.02
     ],
     "tag": [
-     40.4,
-     1
+     52.3,
+     1.02
     ]
    },
    "issues": []
@@ -833,15 +837,15 @@
   "rows lying flat": {
    "cats": {
     "holder-board": [
-     0.5,
+     0.4,
      0.32
     ],
     "cable-cable": [
      0.3,
-     0.17
+     0.43
     ],
     "cable-stand/rail": [
-     13.7,
+     37.9,
      1
     ]
    },
@@ -854,20 +858,20 @@
      0.17
     ],
     "holder-board": [
-     0.2,
+     0.1,
      0.05
     ],
     "cable-board": [
-     2.4,
+     2.1,
      0.19
     ],
     "cable-cable": [
-     0.6,
-     0.46
+     0.3,
+     0.28
     ],
     "cable-stand/rail": [
-     2.4,
-     0.77
+     38.9,
+     2.47
     ]
    },
    "issues": []

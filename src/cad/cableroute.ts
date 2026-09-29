@@ -63,11 +63,12 @@ export function hits(r: Route, obs: Obstacle[], ends: CableEnd[], radius: number
   for (let i = 0; i + 1 < r.pts.length; i++) {
     const p = r.pts[i], q = r.pts[i + 1], kind = r.kinds[i], L = dist(p, q);
     if (L < 1e-6) continue;
-    // the first and last segments leave a plug: its own board and holder are allowed there
+    // the first and last segments leave a plug: its own board and holder are allowed there (its board's other plugs
+    // are not: a J-Link's ribbon can't lie through its own USB plug)
     const exitSeg = kind === 'exit';
     for (const ob of obs) {
       if (ob.plug && own.has(ob.plug)) continue;
-      if (exitSeg && ob.module && mods.has(ob.module)) continue;
+      if (exitSeg && ob.module && mods.has(ob.module) && !ob.plug) continue;
       if (kind === 'street' && ob.stand) continue;
       const t = segInBox(p, q, ob.box, radius - slack);
       if (!t) continue;
@@ -178,6 +179,9 @@ export interface RibbonChoice extends Choice { free: [number, number] } // free:
 const cross = (a: number[], b: number[]) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const unit = (a: number[]) => { const L = Math.hypot(a[0], a[1], a[2]) || 1; return a.map((x) => x / L); };
 
+/** How far (mm) a ribbon rising off a sideways socket may stand off the board's face first, to clear what is just above it. */
+const JOGS = [6, 12];
+
 /**
  * A flat ribbon from one IDC socket to another, the way one is really laid: it leaves each socket flat over its top,
  * square to the socket's long side, and lies along its board. Then either it loops over the top from one board to
@@ -199,18 +203,30 @@ export function ribbonRoute(A: RibbonEnd, B: RibbonEnd, t: number, rw: number, o
     return { x, S: add(base, x, -e.span / 2), E: add(base, x, e.span / 2 + 2) }; // S: its cut end, at the socket's far side
   };
   const cands: { pts: number[][]; iA: number; iB: number }[] = [];
-  // over the top: up (after a fold, or a bend on a board lying flat, if it left sideways), across, down
+  // over the top: up (after a fold, or a bend on a board lying flat, if it left sideways), across, down. A ribbon that
+  // rises off a socket facing sideways may first stand off the board's face a little (`JOGS`), to clear what stands
+  // out of the board just above the socket (the housings of a header's jumper wires)
   {
     const a = lay(A, B.p, [0, 0, 1]), b = lay(B, A.p, [0, 0, 1]);
     const foot = (q: typeof a) => (q.x[2] > 0.7 ? q.E : add(q.E, q.x, 3));
     const fa = foot(a), fb = foot(b);
-    const pad = rw / 2 + 2;
-    const u0 = Math.min(fa[0], fb[0]) - pad, u1 = Math.max(fa[0], fb[0]) + pad, v0 = Math.min(fa[1], fb[1]) - pad, v1 = Math.max(fa[1], fb[1]) + pad;
-    let Z = Math.max(fa[2], fb[2]) + R;
-    for (const box of [...obs.map((o) => o.box), ...above]) if (!(box[3] < u0 || box[0] > u1 || box[4] < v0 || box[1] > v1)) Z = Math.max(Z, box[5] + 3 + t / 2 + R * 0.3);
-    const col = (q: typeof a) => (q.x[2] > 0.7 ? add(q.E, q.x, (Z - q.E[2]) / q.x[2]) : [foot(q)[0], foot(q)[1], Z]);
-    const pa = [a.S, a.E, ...(a.x[2] > 0.7 ? [] : [fa]), col(a)], pb = [col(b), ...(b.x[2] > 0.7 ? [] : [fb]), b.E, b.S];
-    cands.push({ pts: [...pa, ...pb], iA: pa.length - 1, iB: pa.length });
+    const pad0 = rw / 2 + 2;
+    const heightFor = (j: number) => {
+      const pad = pad0 + j;
+      const u0 = Math.min(fa[0], fb[0]) - pad, u1 = Math.max(fa[0], fb[0]) + pad, v0 = Math.min(fa[1], fb[1]) - pad, v1 = Math.max(fa[1], fb[1]) + pad;
+      let Z = Math.max(fa[2], fb[2]) + R;
+      for (const box of [...obs.map((o) => o.box), ...above]) if (!(box[3] < u0 || box[0] > u1 || box[4] < v0 || box[1] > v1)) Z = Math.max(Z, box[5] + 3 + t / 2 + R * 0.3);
+      return Z;
+    };
+    const col = (q: typeof a, E: number[], Z: number) => (q.x[2] > 0.7 ? add(E, q.x, (Z - E[2]) / q.x[2]) : [foot(q)[0], foot(q)[1], Z]);
+    const canJog = (q: typeof a, c: RibbonEnd) => q.x[2] > 0.7 && Math.abs(c.d[2]) < 0.7 && !c.straight;
+    const stand = (q: typeof a, c: RibbonEnd, j: number) => (j ? add(q.E, unit([c.d[0], c.d[1], 0]), j) : q.E);
+    for (const ja of [0, ...JOGS]) for (const jb of [0, ...JOGS]) {
+      if ((ja && !canJog(a, A)) || (jb && !canJog(b, B))) continue;
+      const Ea = stand(a, A, ja), Eb = stand(b, B, jb), Z = heightFor(Math.max(ja, jb));
+      const pa = [a.S, a.E, ...(ja ? [Ea] : []), ...(a.x[2] > 0.7 ? [] : [fa]), col(a, Ea, Z)], pb = [col(b, Eb, Z), ...(b.x[2] > 0.7 ? [] : [fb]), ...(jb ? [Eb] : []), b.E, b.S];
+      cands.push({ pts: [...pa, ...pb], iA: pa.length - 1, iB: pa.length });
+    }
   }
   // round either end, a ribbon's width further out for each try (outside the ones already there)
   if (ownA && ownB) for (const sg of [1, -1]) for (let k = 0; k < 3; k++) {

@@ -6,7 +6,7 @@
 // rail). No bounding boxes are used for what is counted: they only pick which pairs to intersect.
 import { K, freeAll, type MF } from '../../src/cad/kernel';
 import { GRIP, SHOE_GRIP } from '../../src/cad/dockdims';
-import { compRect } from '../../src/geom/poly';
+import { compRect, extentAlong } from '../../src/geom/poly';
 import { mul as mulM } from '../../src/cad/assembly';
 import { stackLayers } from '../../src/model/holes';
 import type { Feature, GenResult, MeshData, PickTag, Project } from '../../src/model/types';
@@ -157,8 +157,10 @@ function allowed(p: Project, r: GenResult) {
       const a = (c.conn.angle * Math.PI) / 180, d = [Math.cos(a), Math.sin(a)], n = [-d[1], d[0]];
       const half = Math.max(c.w, c.l, c.conn.plug.w) / 2 + 1;
       const at = (s2: number, t: number): [number, number] => [c.x + d[0] * s2 + n[0] * t, c.y + d[1] * s2 + n[1] * t];
+      // (an edge plug's housing goes over the pins that stand out past the board's edge: they are in it on purpose)
+      const strip = [at(0, -half), at(extentAlong(c, c.conn.angle) + c.conn.plug.len + 1, -half), at(extentAlong(c, c.conn.angle) + c.conn.plug.len + 1, half), at(0, half)];
       const loop = box ? [at(-30, -half), at(30, -half), at(30, half), at(-30, half)] : compRect(c, 1);
-      const cs = new (K().CrossSection)([loop], 'Positive');
+      const cs = new (K().CrossSection)(box || c.conn.entry !== 'edge' ? [loop] : [loop, strip], 'Positive');
       made.push(cs);
       jack.set(`${m.id}/${c.ref}`, cs.extrude(400).translate([0, 0, -200]).transform(T as any));
     }
