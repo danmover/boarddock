@@ -1104,7 +1104,10 @@ export function generatePanel(p: Project): GenResult {
     const r = Math.max(1.1, e.cable / 2), far = e.p.map((v, j) => v + e.d[j] * 60);
     let clear = 60;
     for (const sd of solid) { if (sd.module === module) continue; const t = segInBox(e.p, far, sd.b, r); if (t) clear = Math.min(clear, t[0] * 60 - 1); }
-    ghosts.push(leadStub(`off-rack cable ${k}`, e.p, e.d, e.cable, m && c ? offRackTo(m, c) : 'off the rack', { kind: 'plug', module, refs: [baseRef(ref)] }, { seq: toWall(module, ref) ? WALL_SEQ : PLUG_SEQ, dir: [0, 0, 1], dist: 0, grow: true }, clear));
+    // (words only for a real lead: a cable in the app, a lead you said goes there, a box's supply or mains lead)
+    const why = m ? (uses.get(module) ?? portUses(p, m)).get(baseRef(ref)) : undefined;
+    const real = toOff.has(`${module}/${baseRef(ref)}`) || why === 'yours' || why === 'supply' || (!!m && !!c && plugRole(m, c) === 'mains-in');
+    ghosts.push(leadStub(`off-rack cable ${k}`, e.p, e.d, e.cable, !real ? '' : m && c ? offRackTo(m, c) : 'off the rack', { kind: 'plug', module, refs: [baseRef(ref)] }, { seq: toWall(module, ref) ? WALL_SEQ : PLUG_SEQ, dir: [0, 0, 1], dist: 0, grow: true }, clear));
   }
 
 

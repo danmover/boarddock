@@ -17,6 +17,7 @@ import { packPlates, placedMesh, printability, type Plate } from '../cad/export'
 import { store, type Layer, type SelItem } from '../state';
 import { featureItem } from './pickOps';
 import { KIND_COLOR } from '../model/links';
+import { cornerDist } from './frame';
 import { liveFx } from './liveFx';
 import { growTo } from './cableGrow';
 import { badgeText } from '../model/cablebadge';
@@ -328,7 +329,7 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
       const moved = controls.update();
       if (!c.dirty && !moved) return;
       c.dirty = false;
-      c.fx?.declutter(camera);
+      c.fx?.declutter(camera, camera.position.distanceTo(controls.target) / Math.max(20, c.radius));
       composer.render();
       c.placeLabels?.();
       // what the scene before this one used, freed only now it has been drawn without it
@@ -992,7 +993,9 @@ function flyTo(c: any, box: THREE.Box3, dir: THREE.Vector3 | null, k = 1.3, inst
   const r = Math.max(8, box.getSize(new THREE.Vector3()).length() / 2);
   const d = (dir ?? cam.position.clone().sub(c.controls.target)).clone().normalize();
   const aspect = Math.min(1, cam.aspect || 1);
-  const dist = (r / Math.sin(((cam.fov / 2) * Math.PI) / 180)) * k * 0.72 / Math.sqrt(aspect);
+  // far enough that a ball round the box fits, and that every corner of it does, from this direction and in this window
+  // (a long row of holders seen from the front, or in a tall phone window, is wider than the ball says)
+  const dist = Math.max((r / Math.sin(((cam.fov / 2) * Math.PI) / 180)) * k * 0.72 / Math.sqrt(aspect), cornerDist(cam, box, d, k));
   const p1 = center.clone().add(d.multiplyScalar(dist));
   if (instant) { cam.position.copy(p1); c.controls.target.copy(center); c.tween = null; c.invalidate(); return; }
   c.tween = { p0: cam.position.clone(), p1, q0: c.controls.target.clone(), q1: center, t0: performance.now(), dur: 480 };

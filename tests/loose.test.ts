@@ -112,11 +112,16 @@ describe('loose holders', () => {
     for (const g of leads) {
       const b = boxOf(g);
       expect(Math.max(b.hi[0] - b.lo[0], b.hi[1] - b.lo[1], b.hi[2] - b.lo[2])).toBeLessThan(60);
-      expect(g.fx?.fade?.label).toBeTruthy();
     }
-    // the powerboard's own lead: to the wall; a cable between two boards: to the other one
+    // the powerboard's own lead: to the wall; a cable between two boards: to the other one ("→ Powerboard")
     expect(leads.find((g) => g.tag?.module === p.modules[2].id)?.fx?.fade?.label).toBe('to the wall');
-    expect(leads.some((g) => /^to the /.test(g.fx!.fade!.label!) && g.fx!.fade!.label !== 'to the wall')).toBe(true);
+    expect(leads.some((g) => /^→ /.test(g.fx!.fade!.label!))).toBe(true);
+    // a label only where there is a real lead: one for a cable in the app, the wall, an off-rack link
+    const links = p.links ?? [];
+    for (const g of leads.filter((x) => x.fx?.fade?.label)) {
+      const ref = g.tag!.refs![0];
+      expect(links.some((l) => [l.a, l.b].some((e) => e.module === g.tag!.module && e.ref.replace(/:2$/, '') === ref)) || g.fx!.fade!.label === 'to the wall').toBe(true);
+    }
   }, 300_000);
 });
 
@@ -155,7 +160,8 @@ describe('plugs and leads in 3D', () => {
     expect(av.map((g) => g.tag?.refs?.[0]).sort()).toEqual(['AUDIO', 'HDMI0', 'HDMI1']);
     for (const g of pis) expect(boxOf(g).lo[2]).toBeGreaterThan(20); // up by the board, not down on the table
     expect(av.map((g) => g.fx?.fade?.label).sort()).toEqual(['to a screen', 'to a screen', 'to speakers']);
-    for (const g of pis.filter((x) => x.tag?.refs?.[0] === 'J_PWR')) expect(g.fx?.fade?.label).toBe('to its power supply');
+    // (its power socket, with no cable in the app to it: a stub, but no words that call it a lead)
+    for (const g of pis.filter((x) => x.tag?.refs?.[0] === 'J_PWR')) expect(g.fx?.fade?.label).toBe('');
     // the powerboard's lead: to the wall
     expect(leads.find((g) => g.tag?.module === p.modules[2].id)?.fx?.fade?.label).toBe('to the wall');
 
