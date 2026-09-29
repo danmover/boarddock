@@ -930,7 +930,7 @@ const sweepT = (prof: CS, t0: number, t1: number) => prof.extrude(t1 - t0).trans
  * Build one leaf in its local frame: cut its zone clear, add the anchor and the tapered leaf (root fillet, rounded
  * tip), and hand back the heights for the lip, which the caller adds.
  */
-function leafBody(C: Ctx, st: LeafSite, f: Leaf, face: number, top: number) {
+function leafBody(C: Ctx, st: LeafSite, f: Leaf, face: number, top: number, refs?: string[]) {
   const H = C.H, gw = H.gap + H.wall, L = f.L;
   // the zone: everything outside the inner slit, from the anchor's root to past the tip, bed to sky
   C.neg.push(placeLeaf(box(0, -(gw + 4), -1, L + SLIT, face + SLIT, top + 30), st));
@@ -952,7 +952,7 @@ function leafBody(C: Ctx, st: LeafSite, f: Leaf, face: number, top: number) {
   const leaf = ext(planCS, 0, top);
   C.late.push(placeLeaf(anchor, st), placeLeaf(leaf, st));
   C.blocked.push({ poly: st.zone, why: 'spring clip' });
-  feat(C, 'spring', st.zone, 0, top + 1);
+  feat(C, 'spring', st.zone, 0, top + 1, refs);
 }
 
 /**
@@ -1052,7 +1052,7 @@ function clips(C: Ctx, mode: ReturnType<typeof holdOf>): Loop[] {
       const zc = (t: number) => C.zt + t - (stop + d0.preload); // its 45 degree face, touching the board's top edge
       const top = zc(d0.tip) + 0.2 + (d0.tip - d0.face) / Math.tan(rad(RAMP));
       const dz = designBow({ L, h: top, mat, gap: H.gap, stop });
-      leafBody(C, st, dz.leaf, dz.face, top);
+      leafBody(C, st, dz.leaf, dz.face, top, ['anti-rattle']); // (it presses on the board: the collision test allows that)
       const { tip, face } = dz, f = dz.leaf;
       const prof = poly([[face - 0.4, zc(face - 0.4)], [tip, zc(tip)], [tip, zc(tip) + 0.2], [face, top], [face - 0.4, top]], 'NonZero');
       const s1 = f.L - 0.3, s0 = s1 - f.lipLen, w = tip - face;

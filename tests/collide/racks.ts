@@ -9,6 +9,7 @@ import { addAdapters, addProbes } from '../../src/model/probes';
 import { seatBoard, seatCompanion, spreadOut, spreadRails } from '../../src/cad/dockplan';
 import { generatePanel } from '../../src/cad/panelgen';
 import { snapshot } from '../../src/model/built';
+import { refreshStandoffs } from '../../src/model/holes';
 import type { Board, EdgeName, Project, V2 } from '../../src/model/types';
 
 export interface Rack {
@@ -97,6 +98,8 @@ const together: Rack[] = [
       d.on = c.id; d.onMode = 'bolted'; d.onGap = 15; // a shield on an Uno
       f.on = e.id; f.onMode = 'towers'; // a board on its own printed layer
       h.on = g.id; h.onMode = 'bolted'; // a Zero on a Pi, two holes shared
+      // (as the app does on every stack change: the shared holes become stacking standoffs, with no pins)
+      for (const m of [a, c, e, g]) refreshStandoffs(p, m);
     })),
   },
   {

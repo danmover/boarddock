@@ -8,23 +8,11 @@ Nothing BoardDock makes has been printed and tried yet, so anything below about 
 
 From the second round of test users (B21 below): a plug pack goes in an outlet and never gets a holder, so it needs no strap, but the shopping list counts one. A wrong number on the shopping list: being fixed first in a batch of small fixes.
 
-## 1. A collision test for whole racks (the test is in; fixing what it finds)
-
-Done: `tests/collide/` builds 140 racks through `generate()` (every template alone standing, lying flat, loose and on a DIN flat clip; back to back; stacks; probes and adapters; boxes; stands off; rails along, rows, lying flat, whichever suits each, an L of rails, an L-shaped board; the Pi cluster and the busy mixed rack with Auto-connect; a rack changed by hand; a built rack with boards added), with seeded ids, and intersects every printed part, board, plug, rail, stand and cable exactly (manifold), by category, with volume and depth. Allowed: a plug in its own jack (a box's port reaches into the box along the plug), a cable in its own plugs, a board on its own holder's pins, a DIN clip's hooks in its own holder. Automatic layouts are also checked for failing Check lines (a failing tongue root says which ways of docking would pass), overlap and "runs into" warnings, rails over Longest rail (unless one dock is longer than the limit) and blocked plugs in use. Baseline: `tests/collide/baseline.json`; `npm test` runs 7 quick racks (about 30 s), `npm run collisions` all 140 (about 90 s, in CI too), `npm run collisions:update` rewrites the baseline.
-
-Baseline now: 374 mm³ over the 140 racks (8272 at first; bolted stacks got standoffs that clear what is under them, 4604; boxes on a flat DIN clip stand clear of its hooks, 2247; the release rod's tunnel, a flat dock's key groove and stacking pegs kept clear, tie anchors for plugs from above kept off the dock, 1520; no lead from the empty socket of a stacked pair, 1054; cable tags checked whole, 748; off-rack leads only as long as they are clear, 596; a rail end touching its end block's crush ribs and stop counted as touching, 520; the USB-C hub made tall enough for its Ethernet jack, 560; plug openings cut again after everything, so a neighbour's collar keeps out, 374), and 1 layout problem (9 before: the USB-C hub's failing box check, and "runs into" warnings that were bounding-box false alarms). The measure also showed that the item-1 settling change (cables back to the side they were laid on, crossing beads kept further apart) made cables worse over the whole matrix (cable categories 1360 → 2363 mm³), so it was taken back out.
-
-Left, biggest first (from the baseline):
-- Cable into cable, about 45 mm³, up to 3.8 mm deep (most in the Pi cluster): cables cross right under a rail or at its edge, where there is no room for one to lie over the other (a street is 8 mm under a rail's underside). Tried and taken out, as they made the matrix worse: cables back to the side they were laid on, crossing beads kept further apart, and no brushing a rail's box (cables into rails 170 -> 155 mm³, but cable into cable 137 -> 256).
-- Cables into stands and rails, 163 mm³, up to 1.65 mm (most in the Pi cluster): a street runs 8 mm under a rail's underside, so a 6 mm Ethernet cable has 2 mm to spare and one crossing over another there pushes into the rail. Cross them between rails, or give the streets more room under the rails. Cable tags into cables, 70 mm³ where no spot along the cable is clear (probes, back to back).
-- Holders into their boards, about 45 mm³ over many racks, 0.3 to 0.9 mm (the Pico's and the blank board's edge 0.45 mm into a guard or seat, 0.3 mm³ each; the printed stacking layer's board, 19 mm³).
-- Layout: one real clash left: on the columns rack the Mega's cable goes into the Nano's USB plug (the route check's other warnings were bounding-box false alarms, now confirmed against the parts themselves before warning). Making the USB-C hub 16 mm tall, as it has to be for its Ethernet jack, re-routed cables on the boxes rack (+40 mm³ of cable into cable).
-
-## 2. Toolbox pictures to match the 3D models
+## 1. Toolbox pictures to match the 3D models
 
 The board editor's toolbox pictures (each plug, header, part) no longer look like the 3D model of the same thing: redraw them from the models, or check each against its model.
 
-## 3. DIN rail clip review
+## 2. DIN rail clip review
 
 Go through the clip in depth, measuring rather than guessing:
 - the release lever: how it frees the clip from the rail, and what keeps the lever on;
@@ -33,11 +21,11 @@ Go through the clip in depth, measuring rather than guessing:
 - that every piece is printable;
 - (done: a box on a flat clip now stands 2.3 mm up, clear of the snap hooks that reach 1.9 mm above the base; they went 0.7 mm into it.)
 
-## 4. Bill of materials and a build guide
+## 3. Bill of materials and a build guide
 
 A proper bill of materials at the end (printed parts, boards, cables, rails, supplies, with quantities) and a step-by-step build view: each step's text with its 3D view, next and back, usable on a phone at the bench, and printable. Start from what's already there (the shopping list in Export and the assembly Steps).
 
-## 5. From the second round of test users
+## 4. From the second round of test users
 
 Most serious first:
 - A switch's or powered hub's DC input is never given a supply, yet the To do list says done.
@@ -54,13 +42,18 @@ Most serious first:
 - Loose holders drop probes into the row; docks and loose holders can't be mixed.
 - Smaller things: cables beside a stand comb, an auto-connected cable through a Pi 4 holder (still there: on a rack of a Pi 4, Uno, Pico, ESP32 and the 4-port hub, Auto-connect's hub UP to Pi 4 USB2 cable "runs into the Raspberry Pi 4B holder", with or without table stands), off-rack labels crowding a big rack, toast wording, the Wiring view at 16 boards, Auto-arrange putting cabled boards on opposite rails, Forget with no confirm, the headline print time estimate, the L-shape spacing defaults, the printer not asked up front, Next not auto-connecting, Measure moving one side only, round boards' corner holes, mirrored silkscreen, bulk tools for identical boards, locking a dock or rail, per-plate control, and more wording fixes.
 
-## 6. Started before, not finished
+## 5. Started before, not finished
 
+- Collisions left after the collision test (`npm run collisions`; baseline 339 mm³ over 140 racks, from 8272; 1 layout problem):
+  - Cables where they cross under a rail or at its edge (cables into rails 154 mm³, 110 in the Pi cluster, up to 1.2 mm; cable into cable 47 mm³, up to 3.6 mm): a street is 8 mm under a rail's underside, so a 6 mm Ethernet cable has 2 mm to spare and one can't lie over another there; cables going up to a plug also pass through a rail's lip overhang. Needs a choice: taller table stands (more headroom, more plastic, a taller rack), or keeping crossings and rises out from under the rails in the router. Tried and taken out, as each made the matrix worse: cables back to the side they were laid on, crossing beads kept further apart, and no brushing a rail's box.
+  - Cable tags where no spot along a crowded cable is clear (80 mm³ in 6 racks, most in the probes and back-to-back racks).
+  - The one real route clash: on the columns rack the Mega's cable goes into the Nano's USB plug.
+  - Small: a cable into a plug (16 mm³, 2 racks), into a dock's release lever (3.6), a stacked board's standoffs into the board parts under them (4.2). The stacking pegs' crush ribs press 0.3 mm³ each, by design, and are still counted.
 - Tight cable bends where neighbouring plugs' cables bend the same way.
 - The spring clips flexing in the assembly animation.
 - The DIN plate slots on rack and inline mounts: a plate printed on its face.
 
-## 7. From the first round of test users
+## 6. From the first round of test users
 
 - Jumper and debug ribbons routed straight over the dock.
 - A 12 V pack auto-connecting to boards with a known DC input range (Uno, Mega).
@@ -69,7 +62,7 @@ Most serious first:
 
 Ideas: a cluster preset, isolate or X-ray the selection in 3D, a command palette, a debug bench sheet, a live buy/print/tools checklist, What's new highlighted in 3D, mains and low-voltage zones, a layout lock with change receipts.
 
-## 8. Plug protection
+## 7. Plug protection
 
 Check each cradle and cap prints well in every orientation, and fit a cap only where the pull comes out of the cradle's open side.
 
@@ -121,3 +114,5 @@ Each: how bad (1 to 5), what's wrong, where, and how it was seen.
 
 - 2 · The route check says "The USB-serial adapter USB to Powered USB hub P5 cable runs into the USB charger holder" on a rack of 2 × Pi 4, Pi 5, Uno, Mega, Pico, Nano, ESP32, 7-port hub, 4-port charger, J-Link and USB-serial adapter with Auto-connect and Longest rail 300 mm (standing or lying flat). Cable routing, `src/cad/panelgen.ts`. Seen in a scratch test of that rack.
 - 1 · `npm test` takes about 160 s, most of it building holders and racks (the collision test's quick racks add about 30 s).
+- 2 · Top-entry plugs (a debug header) got their zip-tie anchor on the nearest wall with no other check; one sat in the Dual-MCU board's dock socket. Fixed in the collision work (`src/cad/generate.ts` tieAnchor). Seen with the collision test.
+- 1 · A picked anti-rattle spring was named "spring clip" in the 3D view's panel. Fixed (`src/ui/pickOps.ts`). Seen while tagging the springs for the collision test.

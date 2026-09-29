@@ -1,7 +1,8 @@
 // Things inside other things, measured exactly: every printed part, board, plug, rail, stand and cable a rack build
 // gives out, turned into a solid in the rack's frame (manifold-3d), and each pair that meets intersected. What is left
 // is sorted by what met what, with the few contacts a real rack has on purpose taken out (a plug in its own jack, a
-// board on its own holder's pins, a cable in its own plugs, a DIN clip's hooks in its own holder, a rail end touching
+// board on its own holder's pins and pressed by its anti-rattle springs, a cable in its own plugs, a DIN clip's hooks
+// in its own holder, a rail end touching
 // its end block's crush ribs and stop). No bounding boxes are used for what is counted: they only pick which pairs to
 // intersect.
 import { K, freeAll, type MF } from '../../src/cad/kernel';
@@ -164,6 +165,14 @@ function allowed(p: Project, r: GenResult) {
     const fs = (r.report.features ?? []).filter((f) => f.module === m.id && f.kind === 'pin').map((f) => featureSolid(f, T, 0.3));
     if (fs.length) pins.set(m.id, K().Manifold.union(fs));
   }
+  // module -> its anti-rattle springs: each lip presses on its board's top edge, 0.3 mm, by design
+  const springs = new Map<string, MF>();
+  for (const m of p.modules) {
+    const T = frame.get(m.id) ?? (p.modules.length === 1 ? I4 : null);
+    if (!T) continue;
+    const fs = (r.report.features ?? []).filter((f) => f.module === m.id && f.kind === 'spring' && f.refs?.includes('anti-rattle')).map((f) => featureSolid(f, T, 0.3));
+    if (fs.length) springs.set(m.id, K().Manifold.union(fs));
+  }
   const cradles = new Map<string, MF>(); // module -> its cradles and caps' boxes: a plug overlapping there counts as cap/cradle-plug
   for (const m of p.modules) {
     const T = r.report.frames?.[m.id] ?? (p.modules.length === 1 ? I4 : null);
@@ -171,7 +180,7 @@ function allowed(p: Project, r: GenResult) {
     const fs = (r.report.features ?? []).filter((f) => f.module === m.id && (f.kind === 'cradle' || f.kind === 'cap')).map((f) => featureSolid(f, T, 0.5));
     if (fs.length) cradles.set(m.id, K().Manifold.union(fs));
   }
-  return { jack, pins, cradles };
+  return { jack, pins, cradles, springs };
 }
 
 /**
@@ -207,7 +216,7 @@ function pieces(m: MF): { vol: number; depth: number; at: number[] }[] {
 /** Everything inside something else in a rack build, by category. */
 export function measure(p: Project, r: GenResult): Measured {
   const S = solids(r);
-  const { jack, pins, cradles } = allowed(p, r);
+  const { jack, pins, cradles, springs } = allowed(p, r);
   const base = (ref: string) => ref.replace(/:2$/, '');
   const links = new Map((p.links ?? []).map((l) => [l.id, [`${l.a.module}/${base(l.a.ref)}`, `${l.b.module}/${base(l.b.ref)}`]]));
   /** The plugs at a cable's ends: a routed cable's link, or the one plug an off-rack lead leaves. */
@@ -244,11 +253,13 @@ export function measure(p: Project, r: GenResult): Measured {
       const J = pl.module && bd.module === pl.module ? jack.get(`${pl.module}/${(pl.ref ?? '').replace(/:2$/, '')}`) : undefined;
       if (J) m = m.subtract(J);
     }
-    // a board on its own holder's pins
+    // a board on its own holder's pins, pressed by its anti-rattle springs
     if (cat === 'holder-board') {
       const [h, bd] = a.cls === 'board' ? [b, a] : [a, b];
-      const P = h.module && bd.module === h.module ? pins.get(h.module) : undefined;
+      const own = h.module && bd.module === h.module;
+      const P = own ? pins.get(h.module!) : undefined, Sp = own ? springs.get(h.module!) : undefined;
       if (P) m = m.subtract(P);
+      if (Sp) m = m.subtract(Sp);
     }
     // a plug in a cradle, under a cap
     if (cat === 'holder-plug') {
