@@ -1040,7 +1040,7 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 /* a dimension typed where its label is */
 .editor .dimedit { position: absolute; z-index: 6; width: 236px; display: grid; gap: 4px; padding: 8px; background: var(--glass); backdrop-filter: blur(10px); border: 1px solid var(--accent-line); border-radius: 10px; box-shadow: var(--shadow); }
 .dimedit-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.dimedit input { width: 84px; height: 28px; padding: 0 8px; border-radius: 7px; border: 1px solid var(--line-2); background: var(--surface); color: var(--fg); font-size: 13px; }
+.dimedit input:not([type='checkbox']) { width: 84px; height: 28px; padding: 0 8px; border-radius: 7px; border: 1px solid var(--line-2); background: var(--surface); color: var(--fg); font-size: 13px; }
 .dimedit small { color: var(--muted); font-size: 11px; }
 /* ---- the board editor's Shape tool: a bar under the drawing (modes, then what the selection or tool takes) ---- */
 .shapebar { position: absolute; bottom: 52px; left: 50%; transform: translateX(-50%); z-index: 6; padding: 5px 7px; display: flex; flex-direction: column; gap: 4px; max-width: min(920px, calc(100% - 24px)); width: max-content; }
