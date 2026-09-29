@@ -97,12 +97,13 @@ export function App() {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement).tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (store.get().addSheet) return; // the Add a board window has the keyboard (Delete would take out what is picked behind it)
       const cmd = e.metaKey || e.ctrlKey;
       if (cmd && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
       if (cmd && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); }
       if (cmd && e.key.toLowerCase() === 's' && project) { e.preventDefault(); saveProject(); }
       if (e.key === '?' || (e.key === '/' && e.shiftKey)) setKeys((k) => !k);
-      if (!cmd && e.key.toLowerCase() === 'a' && project && !store.get().addSheet) { e.preventDefault(); store.set({ addSheet: true }); }
+      if (!cmd && e.key.toLowerCase() === 'a' && project) { e.preventDefault(); store.set({ addSheet: true }); }
       if (e.key === 'Escape') setKeys(false);
       // 1-7: the steps (not while the rails view uses the keys for its docks, nor in the board editor)
       if (!cmd && !e.altKey && project && /^[1-7]$/.test(e.key) && store.get().view !== 'panel') { goStep(STEPS[+e.key - 1].id); return; }
