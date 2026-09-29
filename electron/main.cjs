@@ -103,8 +103,12 @@ function kicadCli() {
   const found = [];
   if (process.platform === 'darwin') found.push('/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli', '/Applications/KiCad.app/Contents/MacOS/kicad-cli');
   else if (process.platform === 'win32') {
-    // C:\Program Files\KiCad\<version>\bin\kicad-cli.exe, newest first
-    try { for (const v of fs.readdirSync(path.join(pf, 'KiCad')).sort((a, b) => parseFloat(b) - parseFloat(a))) found.push(path.join(pf, 'KiCad', v, 'bin', 'kicad-cli.exe')); } catch { /* not installed */ }
+    // C:\Program Files\KiCad\<version>\bin\kicad-cli.exe, newest first; or installed for this user only
+    // (%LOCALAPPDATA%\Programs\KiCad\<version>)
+    const roots = [pf, process.env.ProgramW6432, process.env['ProgramFiles(x86)'], process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Programs')];
+    for (const root of [...new Set(roots.filter(Boolean))]) {
+      try { for (const v of fs.readdirSync(path.join(root, 'KiCad')).sort((a, b) => parseFloat(b) - parseFloat(a))) found.push(path.join(root, 'KiCad', v, 'bin', 'kicad-cli.exe')); } catch { /* not installed there */ }
+    }
   } else found.push('/usr/bin/kicad-cli', '/usr/local/bin/kicad-cli', '/snap/bin/kicad-cli');
   for (const dir of (process.env.PATH || '').split(path.delimiter)) if (dir) found.push(path.join(dir, process.platform === 'win32' ? 'kicad-cli.exe' : 'kicad-cli'));
   return found.find((p) => { try { return fs.statSync(p).isFile(); } catch { return false; } }) ?? null;

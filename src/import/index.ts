@@ -35,6 +35,8 @@ const isEagleXml = (f: InFile) => /\.brd$/i.test(f.name) && /<eagle/i.test(head(
 const isIpc = (f: InFile) => /\.(xml|cvg)$/i.test(f.name) && isIpc2581(head(f));
 const isGc = (f: InFile) => /\.(cad|gcd|gencad)$/i.test(f.name) && isGencad(head(f, 2000));
 const isIdf = (f: InFile) => /\.(emn|idf|brd_idf)$/i.test(f.name) || (/\.(txt|brd)$/i.test(f.name) && /^\s*\.HEADER[\s\S]*BOARD_FILE/.test(head(f, 200)));
+/** An Allegro board, by either mark: its version string, or its release's magic number. Conversion and the reader's message use the same test. */
+const isAllegroFile = (f: InFile) => /\.brd$/i.test(f.name) && !isEagleXml(f) && !isIdf(f) && (brdKind(f) === 'allegro' || isAllegroBrd(f.bytes));
 const inOdb = (f: InFile) => /(^|\/)(steps|matrix|misc|fonts|symbols|wheels)\//i.test((f.path ?? '').replace(/\\/g, '/')); // a file of an ODB++ job tree
 
 /** What kind of board file this is, for splitting a drop into boards (null: a helper file, like a Gerber layer). */
@@ -119,7 +121,7 @@ export type Converter = (name: string, bytes: Uint8Array) => Promise<{ text: str
  * becomes a folder of its files, so it is still read as one board. What can't be converted is left out, with why.
  */
 export async function convertForeign(files: InFile[], convert: Converter, errors: string[]): Promise<InFile[]> {
-  const isAllegro = (f: InFile) => /\.brd$/i.test(f.name) && isAllegroBrd(f.bytes);
+  const isAllegro = isAllegroFile;
   const one = async (f: InFile): Promise<InFile | null> => {
     if (!isAllegro(f)) return f;
     const r = await convert(f.name, f.bytes);
@@ -194,7 +196,7 @@ function candidates(all: InFile[], group: string): Candidate[] {
   each('Eagle', isEagleXml, (f) => importEagle(text(f), f.name));
   each('binary Eagle', (f) => brdKind(f) === 'eagle-bin', (f) => importEagleBinary(f.bytes, f.name));
   each('board viewer', (f) => brdKind(f) === 'boardview', (f) => importBoardView(f.bytes, f.name));
-  each('Allegro .brd', (f) => /\.brd$/i.test(f.name) && !isEagleXml(f) && !isIdf(f) && (brdKind(f) === 'allegro' || isAllegroBrd(f.bytes)), (f) => {
+  each('Allegro .brd', isAllegroFile, (f) => {
     throw new ReadError(allegroMessage(f.name, f.bytes), 'it is a Cadence Allegro board, whose format is not published');
   });
   each('.brd', (f) => BRD_FILE.test(f.name) && brdKind(f) === null && !isIdf(f) && !isAllegroBrd(f.bytes), () => {
