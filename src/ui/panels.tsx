@@ -30,6 +30,7 @@ import { delta, partsFor, strapBoxes, type Delta } from '../model/built';
 import { baseOf as stackBase, ridersOf } from '../model/holes';
 import { DockFeaSection } from './DockFea';
 import { mainsBudget, mainsText, powerBudget, powerText } from '../model/power';
+import { netSpread } from '../model/netlength';
 import { saveBoard } from '../model/myboards';
 import { ackNote, summarizeChecks } from '../model/checkSummary';
 import { boardSig, tileUrl, useKeptPicture } from './pics';
@@ -639,6 +640,7 @@ function CablesSection() {
   const nos = cableNumbers(links);
   // the same list as the shopping list: ribbons come with their probe, jumper wires by the wire
   const buy = cableLines(p, cables);
+  const spread = netSpread(cables);
   const budget = portBudget(p);
   return (
     <Section title={`Cables · ${links.length}`} right={<span className="btns">
@@ -667,6 +669,7 @@ function CablesSection() {
           <ul className="fmt" style={{ marginTop: 4 }}>{buy.buy.map((k) => <li key={k}>{k}</li>)}{!buy.buy.length && <li>nothing: {cables.length ? 'every cable comes with its part' : 'the cables are sized once the rack is laid out'}</li>}</ul>
           {buy.comes.length > 0 && <p className="hint" style={{ margin: '4px 0 0' }}>Not to buy: {buy.comes.join('; ')}.</p>}
           {p.layout === 'panel' && <Check label="Print a numbered tag for each end of every cable" value={p.panel.cableTags !== false} onChange={(v) => edit((q) => { q.panel.cableTags = v; })} />}
+          {(spread?.n ?? 0) > 1 && spread!.short !== spread!.long && <Check label={`Buy every Ethernet lead at one length (${spread!.long} m, the longest route, rounded up: now ${spread!.short} to ${spread!.long} m)`} value={!!p.oneNetLength} onChange={(v) => edit((q) => { if (v) q.oneNetLength = true; else delete q.oneNetLength; })} />}
         </>
       )}
     </Section>

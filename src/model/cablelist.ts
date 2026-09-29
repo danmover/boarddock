@@ -5,6 +5,7 @@ import { buyText } from './cablebuy';
 import type { GenReport, Link, PlugRef, Project } from './types';
 import { baseRef, cableNumbers, findModule, isAccessory, PC, plugName, plugRole, ROUTER, shortName } from './links';
 import { isPlugPack } from './powerdata';
+import { oneNetBuy } from './netlength';
 
 export type CableOut = NonNullable<GenReport['cables']>[number];
 export interface CableLines { buy: string[]; comes: string[] }
@@ -23,6 +24,7 @@ export function cableLines(p: Project, cables: CableOut[], onlyNew = false): Cab
   const buy = new Map<string, number[]>(), comes: string[] = [];
   const add = (k: string, ns: number[]) => buy.set(k, [...(buy.get(k) ?? []), ...ns]);
   const no = (l: Link | undefined) => (l ? nos.get(l.id) ?? 0 : 0);
+  const oneNet = oneNetBuy(p, cables); // every Ethernet lead at this length, when asked (Plugs › Cables)
   const tag = (n: number) => (n ? `#${n} ` : '');
   /** A mains cable: a charger's figure-8 lead is bought (most come with one); a fixed lead or a plug pack isn't. */
   const mains = (l: Link, len?: number) => {
@@ -45,7 +47,7 @@ export function cableLines(p: Project, cables: CableOut[], onlyNew = false): Cab
     // a plug pack's lead is its own
     const pack = [A, B].find((e) => e.m && isPlugPack(e.m.board));
     if (pack) { comes.push(`${tag(n)}the ${pack.m!.board.name}'s own lead (about ${((pack.m!.board.box?.pack?.lead ?? 1500) / 1000).toFixed(1)} m)`); continue; }
-    add(`${buyText(c.kind ?? 'usb', c.buy, plugName(A.type), plugName(B.type))}${pi5OnA(A, B) ? " (a USB-A to C cable can't give a Pi 5 its full 5 A)" : ''}`, [n]);
+    add(`${buyText(c.kind ?? 'usb', c.kind === 'net' && oneNet != null ? oneNet : c.buy, plugName(A.type), plugName(B.type))}${pi5OnA(A, B) ? " (a USB-A to C cable can't give a Pi 5 its full 5 A)" : ''}`, [n]);
   }
   // cables that leave the rack: to your computer, and a plug pack's lead and body
   const routed = new Set(cables.map((c) => c.id));
