@@ -28,7 +28,7 @@ import { END_POSE, LANDING, LEN_X, rail as railSolid, shoe, shoeBody, shoeLever,
 import { EAR } from './dockdims';
 import { autoAssign, bestDock, classify, clipToRail, columnSeat, dockSite, EDGES, edgeNormal, plugDirs, railMatrix, slotMatrix, withRiders } from './dockplan';
 import { capStress, pieceMesh, planStands, railI, standBoxes, STAND, type StandLane } from './railstand';
-import { assemble, bendRadius, bestRoute, escapes, hits, lead, ribbonRoute, segInBox, slope, type Box, type CableEnd, type Choice, type Hit, type Obstacle, type RibbonEnd, type Route } from './cableroute';
+import { assemble, bendRadius, bestRoute, escapes, hits, lead, ribbonRoute, segInBox, slope, spreadCrossings, type Box, type CableEnd, type Choice, type Hit, type Obstacle, type RibbonEnd, type Route } from './cableroute';
 import { settleCables } from './cablesim';
 import { isDebugPort, isProbe, isSmall, isUartPort, jumperToBuy, jumperWiring, ribbonOf, uartWiring } from '../model/probes';
 
@@ -731,7 +731,7 @@ export function generatePanel(p: Project): GenResult {
     for (const g of ghosts) {
       if (g.tag?.kind === 'cable') continue;
       const b = emptyBox(); boxOf(g.mesh.pos, I4, b);
-      obs.push({ box: uvBox(b), label: labelOf(g.tag, g.name), module: g.tag?.module, plug: g.tag?.kind === 'plug' ? `${g.tag.module}/${g.tag.refs?.[0]}` : undefined, src: { mesh: g.mesh, T: I4 } });
+      obs.push({ box: uvBox(b), label: labelOf(g.tag, g.name), module: g.tag?.module, plug: g.tag?.kind === 'plug' ? `${g.tag.module}/${g.tag.refs?.[0]}` : undefined, solid: g.tag?.kind === 'rail', src: { mesh: g.mesh, T: I4 } });
     }
     const pre = stands ? planStands(standRails, streets, []) : null;
     if (pre) for (const sb of standBoxes(pre)) obs.push({ ...sb, stand: true });
@@ -827,19 +827,26 @@ export function generatePanel(p: Project): GenResult {
     };
     // every cable's planned way, with its bends as a cable takes them (arcs of about four diameters, no kinks)
     const bendR = (q: (typeof routes)[number]) => (flat(q.l) ? 7 : q.l.kind === 'jumper' ? 6 : bendRadius(q.d / 2));
-    const lay = () => routes.map((q) => {
-      const { l, A, B, ch, d, zc } = q;
-      const vl = laneOf.get(l.id)!;
-      const ea = ch.ea === 'slope' ? slope(A, vl, zc) ?? escapes(A, null, zc, d / 2)[0] : ch.ea;
-      const eb = ch.eb === 'slope' ? slope(B, vl, zc) ?? escapes(B, null, zc, d / 2)[0] : ch.eb;
-      const route = ch.direct ? ch.route : assemble(ea, eb, vl, zc);
-      // a bend is drawn tighter where its arc would cut through something its corner clears (the rise from the table
-      // up to a plug, under a rail's edge)
-      const own = new Set([A.plug, B.plug]), mods = new Set([l.a.module, l.b.module]), rr = d / 2 - 0.8;
-      const clear = (arc: number[][]) => arc.every((c) => !obs.some((ob) => /^rail /.test(ob.label) && !(ob.plug && own.has(ob.plug)) && !(ob.module && mods.has(ob.module))
-        && c[0] > ob.box[0] - rr && c[0] < ob.box[3] + rr && c[1] > ob.box[1] - rr && c[1] < ob.box[4] + rr && c[2] > ob.box[2] - rr && c[2] < ob.box[5] + rr));
-      return { route, vl, hit: hits(route, obs, [A, B], d / 2), path: filletPath(route.pts, bendR(q), flat(l) || l.kind === 'jumper' ? undefined : clear) };
-    });
+    const lay = () => {
+      const asm = routes.map((q) => {
+        const { l, A, B, ch, d, zc } = q;
+        const vl = laneOf.get(l.id)!;
+        const ea = ch.ea === 'slope' ? slope(A, vl, zc) ?? escapes(A, null, zc, d / 2)[0] : ch.ea;
+        const eb = ch.eb === 'slope' ? slope(B, vl, zc) ?? escapes(B, null, zc, d / 2)[0] : ch.eb;
+        return { route: ch.direct ? ch.route : assemble(ea, eb, vl, zc), vl };
+      });
+      // cables that cross the rails side by side, not on top of each other
+      spreadCrossings(routes.flatMap((q, k) => (q.ch.direct ? [] : [{ route: asm[k].route, d: q.d, zc: q.zc }])), obs);
+      return routes.map((q, k) => {
+        const { l, A, B, d } = q, { route, vl } = asm[k];
+        // a bend is drawn tighter where its arc would cut through something its corner clears (the rise from the table
+        // up to a plug, under a rail's edge)
+        const own = new Set([A.plug, B.plug]), mods = new Set([l.a.module, l.b.module]), rr = d / 2 - 0.1;
+        const clear = (arc: number[][]) => arc.every((c) => !obs.some((ob) => /^rail /.test(ob.label) && !(ob.plug && own.has(ob.plug)) && !(ob.module && mods.has(ob.module))
+          && c[0] > ob.box[0] - rr && c[0] < ob.box[3] + rr && c[1] > ob.box[1] - rr && c[1] < ob.box[4] + rr && c[2] > ob.box[2] - rr && c[2] < ob.box[5] + rr));
+        return { route, vl, hit: hits(route, obs, [A, B], d / 2), path: filletPath(route.pts, bendR(q), flat(l) || l.kind === 'jumper' ? undefined : clear) };
+      });
+    };
     // each cable's comb lane: where it runs straight along its street (it has bent away by a bend's radius before the
     // street ends, and a comb there would sit beside it, not round it). With them the stands are known in full (a
     // sleeper a street crosses gets a spacer or foot with a comb), and the cables settle round what is really there.
@@ -1055,6 +1062,9 @@ export function generatePanel(p: Project): GenResult {
           tag: { kind: 'cabletag', refs: [l.id] }, tags: [{ kind: 'cabletag', refs: [l.id] }], anim: { seq: TAG_SEQ, dir: [T1[0], T1[1], T1[2]] as [number, number, number], dist: 25 }, anims: [{ seq: TAG_SEQ, dir: [T2[0], T2[1], T2[2]] as [number, number, number], dist: 25 }] });
       }
     }
+    // DBG-BEGIN
+    if ((globalThis as any).__dbgOn) (globalThis as any).__dbg = { vert, streets, obs: obs.map((o) => ({ box: o.box, label: o.label, module: o.module, plug: o.plug, stand: o.stand })), cables: routes.map((q, qi) => ({ id: q.l.id, kind: q.l.kind, d: q.d, street: q.ch.street, A: q.A, B: q.B, route: planned[qi].route, path: sim.paths[qi], hit: planned[qi].hit.map((h) => ({ l: h.ob.label, at: h.at, depth: h.depth })) })), tags: parts.filter((x) => x.tag?.kind === 'cabletag').map((x) => ({ id: x.tag!.refs![0], T: [x.toAssembly, ...(x.instances ?? [])] })) };
+    // DBG-END
     const clashing = cables.filter((c) => c.clash);
     for (const c of clashing) warnings.push(`The ${c.a} to ${c.b} cable runs into ${c.clash}. Move or turn one of the boards, or connect it to another plug.`);
     if (cables.length) checks.push({ group: 'Panel', name: 'Cable routes', value: clashing.length ? `${clashing.length} of ${cables.length} touch something` : `all ${cables.length} clear`, status: clashing.length ? 'warn' : 'ok', detail: clashing.length ? clashing.map((c) => `${c.a} to ${c.b}: ${c.clash}`).join('; ') : 'no clash found in the model: every route misses the holders, boards, plugs, docks, rails and stands, checked with their bounding boxes (a rough check: route the real cables with care)' });

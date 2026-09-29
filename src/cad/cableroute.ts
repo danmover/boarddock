@@ -15,6 +15,7 @@ export interface Obstacle {
   module?: string; // the board it belongs to
   plug?: string; // "module/ref" when it is a plug
   stand?: boolean; // table stand piece: streets run through their combs
+  solid?: boolean; // a rail: fills its box (a cable may not brush it)
   src?: { mesh: MeshData; T: number[] }; // the part's own shape (and where it is), to confirm a clash with
 }
 
@@ -70,7 +71,7 @@ export function hits(r: Route, obs: Obstacle[], ends: CableEnd[], radius: number
       if (ob.plug && own.has(ob.plug)) continue;
       if (exitSeg && ob.module && mods.has(ob.module) && !ob.plug) continue;
       if (kind === 'street' && ob.stand) continue;
-      const t = segInBox(p, q, ob.box, radius - slack);
+      const t = segInBox(p, q, ob.box, radius - (ob.solid ? 0.1 : slack));
       if (!t) continue;
       const depth = (t[1] - t[0]) * L;
       if (depth < 0.5) continue;
@@ -255,5 +256,84 @@ export function ribbonRoute(A: RibbonEnd, B: RibbonEnd, t: number, rw: number, o
     best = { route, street: -1, hits: h, len, score, ea: route, eb: route, direct: true, free: [lenTo(iA) - R, lenTo(iB) + R] };
   }
   return best!;
+}
+
+interface Run { n: number; i: number; head: boolean; u: number; vc: number; vl: number; r: number; x: number }
+
+/**
+ * Cables that cross the rails run along v at the u of their plug's drop column, and two plugs' columns can be a few
+ * millimetres apart: the cables would run on top of each other under the rails (8 mm of room: nothing lies over
+ * another there). Every run along v (`cross`) that shares its stretch of v with another closer than the two cables
+ * are wide is moved sideways, the runs of a cluster spread to the least total move that keeps them a gap apart and
+ * out of the stand blocks and whatever else stands at the cable's height; the cable eases over with a slant, so its
+ * column stays where its plug is. Edits the routes in place.
+ */
+export function spreadCrossings(items: { route: Route; d: number; zc: number }[], obs: Obstacle[], gap = 2.4): void {
+  const runs: Run[] = [];
+  items.forEach(({ route: { pts, kinds }, d, zc }, n) => {
+    for (let i = 0; i < kinds.length; i++) {
+      if (kinds[i] !== 'cross') continue;
+      const a = pts[i], b = pts[i + 1];
+      if (Math.abs(a[2] - zc) > 0.01 || Math.abs(b[2] - zc) > 0.01 || Math.abs(a[0] - b[0]) > 0.01 || Math.abs(a[1] - b[1]) < 4) continue;
+      const head = kinds[i + 1] === 'street', tail = kinds[i - 1] === 'street';
+      if (head === tail) continue;
+      const col = head ? a : b, lane = head ? b : a;
+      runs.push({ n, i, head, u: col[0], vc: col[1], vl: lane[1], r: d / 2, x: col[0] });
+    }
+  });
+  if (runs.length < 2) return;
+  const lo = (q: Run) => Math.min(q.vc, q.vl), hi = (q: Run) => Math.max(q.vc, q.vl);
+  const pitch = (p: Run, q: Run) => p.r + q.r + gap;
+  // clusters: runs that share some of v and are closer in u than the two are wide
+  const parent = runs.map((_, k) => k);
+  const find = (k: number): number => (parent[k] === k ? k : (parent[k] = find(parent[k])));
+  for (let p = 0; p < runs.length; p++) for (let q = p + 1; q < runs.length; q++) {
+    if (runs[p].n === runs[q].n) continue;
+    if (Math.min(hi(runs[p]), hi(runs[q])) - Math.max(lo(runs[p]), lo(runs[q])) > 3 && Math.abs(runs[p].u - runs[q].u) < pitch(runs[p], runs[q])) parent[find(p)] = find(q);
+  }
+  const groups = new Map<number, number[]>();
+  runs.forEach((_, k) => { const g = find(k); (groups.get(g) ?? groups.set(g, []).get(g)!).push(k); });
+  // where a run may lie: at its height, clear of everything standing there along its stretch of v
+  const free = (q: Run, x: number) => !obs.some((o) => o.box[2] < items[q.n].zc + q.r - 0.2 && o.box[5] > items[q.n].zc - q.r && o.box[1] < hi(q) - 1 && o.box[4] > lo(q) + 1 && o.box[0] < x + q.r + 0.3 && o.box[3] > x - q.r - 0.3);
+  const STEP = 0.5, REACH = 60;
+  for (const g of groups.values()) {
+    if (g.length < 2) continue;
+    const rs = g.map((k) => runs[k]).sort((p, q) => p.u - q.u || lo(p) - lo(q));
+    // least total move with every neighbour a pitch apart, over the positions where the cable can lie
+    const cand = rs.map((q) => { const c: number[] = []; for (let s = -REACH; s <= REACH; s += STEP) if (free(q, q.u + s)) c.push(q.u + s); return c; });
+    if (cand.some((c) => !c.length)) continue;
+    const cost = cand.map((c) => c.map(() => Infinity)), from = cand.map((c) => c.map(() => -1));
+    cand[0].forEach((x, a) => { cost[0][a] = Math.abs(x - rs[0].u); });
+    for (let k = 1; k < rs.length; k++) {
+      const need = pitch(rs[k - 1], rs[k]);
+      let bi = -1, j = 0;
+      cand[k].forEach((x, a) => {
+        while (j < cand[k - 1].length && cand[k - 1][j] <= x - need + 1e-9) { if (bi < 0 || cost[k - 1][j] < cost[k - 1][bi]) bi = j; j++; }
+        if (bi >= 0) { cost[k][a] = cost[k - 1][bi] + Math.abs(x - rs[k].u); from[k][a] = bi; }
+      });
+    }
+    let a = -1;
+    const last = rs.length - 1;
+    cost[last].forEach((c, k) => { if (c < Infinity && (a < 0 || c < cost[last][a])) a = k; });
+    if (a < 0) continue;
+    for (let k = last; k >= 0; k--) { rs[k].x = cand[k][a]; a = from[k][a]; }
+  }
+  // the moved runs: the column stays, a slant eases over to the new line, the run goes along it
+  const edits = new Map<number, Map<number, Run>>();
+  for (const q of runs) if (Math.abs(q.x - q.u) > 0.4) (edits.get(q.n) ?? edits.set(q.n, new Map()).get(q.n)!).set(q.i, q);
+  for (const [n, es] of edits) {
+    const { route, zc } = items[n], P = route.pts, K = route.kinds, pts: number[][] = [], kinds: SegKind[] = [];
+    const slant = (q: Run) => [q.x, q.vc + Math.sign(q.vl - q.vc) * Math.min(Math.abs(q.vl - q.vc) * 0.6, 1.2 * Math.abs(q.x - q.u) + 6), zc];
+    const push = (p: number[], k: SegKind | null) => { if (pts.length && k) kinds.push(k); pts.push(p); };
+    P.forEach((p0, i) => {
+      const before = es.get(i - 1), here = es.get(i);
+      let p = p0;
+      if ((before && before.head) || (here && !here.head)) { const q = (before && before.head ? before : here)!; p = [q.x, q.vl, zc]; }
+      if (before && !before.head) { push(slant(before), K[i - 1]); push(p, 'cross'); } else push(p, i ? K[i - 1] : null);
+      if (here && here.head) push(slant(here), 'cross');
+    });
+    route.pts = pts;
+    route.kinds = kinds;
+  }
 }
 
