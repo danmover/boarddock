@@ -7,6 +7,8 @@ import { createRoot, type Root } from 'react-dom/client';
 import { Section, useModalFocus } from '../src/ui/controls';
 import { forgetBoard, myBoards, restoreBoard, saveBoard } from '../src/model/myboards';
 import { TEMPLATES } from '../src/model/templates';
+import { PRINTERS } from '../src/model/library';
+import { putBoards, rememberPrinter, store } from '../src/state';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 let root: Root | null = null, host: HTMLElement | null = null;
@@ -122,5 +124,20 @@ describe('My boards', () => {
     restoreBoard(f);
     expect(myBoards().map((x) => x.name)).toEqual(names);
     expect(forgetBoard('nothing')).toBeNull();
+  });
+});
+
+describe('your printer', () => {
+  it('a new rack is for the printer picked last (on Start or in Export)', () => {
+    localStorage.clear();
+    const other = PRINTERS[PRINTERS.length - 1];
+    expect(other.name).not.toBe(PRINTERS[0].name);
+    store.set({ project: null, past: [], future: [], sel: [] });
+    putBoards([TEMPLATES.find((t) => t.id === 'uno')!.make()], true);
+    expect(store.get().project!.printer.name).toBe(PRINTERS[0].name);
+    rememberPrinter(other.name);
+    store.set({ project: null, past: [], future: [], sel: [] });
+    putBoards([TEMPLATES.find((t) => t.id === 'uno')!.make()], true);
+    expect(store.get().project!.printer).toMatchObject({ name: other.name, bed: other.bed });
   });
 });

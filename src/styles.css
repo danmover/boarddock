@@ -1211,3 +1211,10 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
   #printguide td.n { color: #444; }
   @page { margin: 14mm; }
 }
+
+/* Start: which printer you print on, asked up front */
+.start-printer { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 10px; font-size: 13px; }
+.start-hero .start-printer { grid-column: -2; margin-top: 4px; }
+.start-printer span { font-weight: 600; }
+.start-printer select { height: 30px; max-width: 100%; }
+.start-printer small { flex-basis: 100%; color: var(--muted); font-size: 12px; }

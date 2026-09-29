@@ -16,7 +16,7 @@ import { TEMPLATES } from '../model/templates';
 import { ACCEPT } from '../import';
 import { openRevision } from './importFlow';
 import { bbox, compRect, roundedRectLoop, round, uid } from '../geom/poly';
-import { activeModule, closeProject, dropModule, edit, editMod, isSel, select, setActive, store, toast, useApp, type SelItem, type Step } from '../state';
+import { activeModule, closeProject, dropModule, edit, editMod, isSel, rememberPrinter, select, setActive, store, toast, useApp, type SelItem, type Step } from '../state';
 import { kindName, rackCount, rackName, sameKind } from '../model/diff';
 import { Check, Chip, Num, Pick, Section, Seg, Text, download, safeName } from './controls';
 import { BRIM_OUT, EDGE_CLEAR, estimate, fitsBed, packPlates, placedMesh, write3mf, writeStl } from '../cad/export';
@@ -1287,7 +1287,7 @@ export function ExportPanel() {
       </div>
       <button className="btn primary" style={{ width: '100%', justifyContent: 'center', marginBottom: 10 }} onClick={() => zipAll()}><Icon d={I.download} /> {scope === 'all' ? 'Download everything' : scope === 'new' ? "Download what's new" : 'Download these'} (.zip)</button>
       <Section title="Printer">
-        <Pick label="Printer" value={p.printer.name} options={[...PRINTERS.map((x) => [x.name, x.name] as [string, string]), ['Custom', 'Custom']]} onChange={(v) => setP((x) => { const pr = PRINTERS.find((q) => q.name === v); delete x.gcodeStart; delete x.gcodeEnd; if (pr) Object.assign(x, { ...pr, spacing: x.spacing }); else x.name = 'Custom'; })} />
+        <Pick label="Printer" value={p.printer.name} options={[...PRINTERS.map((x) => [x.name, x.name] as [string, string]), ['Custom', 'Custom']]} onChange={(v) => setP((x) => { rememberPrinter(v); const pr = PRINTERS.find((q) => q.name === v); delete x.gcodeStart; delete x.gcodeEnd; if (pr) Object.assign(x, { ...pr, spacing: x.spacing }); else x.name = 'Custom'; })} />
         <div className="row3" style={{ marginTop: 8 }}>
           <Num label="Bed X" value={p.printer.bed[0]} min={50} onChange={(v) => setP((x) => { x.bed = [v, x.bed[1]]; x.name = 'Custom'; })} />
           <Num label="Bed Y" value={p.printer.bed[1]} min={50} onChange={(v) => setP((x) => { x.bed = [x.bed[0], v]; x.name = 'Custom'; })} />

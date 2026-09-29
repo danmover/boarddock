@@ -1,7 +1,7 @@
 // App state: the project (undoable, autosaved) plus UI state. Tiny external store + useSyncExternalStore.
 import { useSyncExternalStore } from 'react';
 import type { Board, Feature, GenResult, Module, PartOut, Project } from './model/types';
-import { activeModule, migrate, newModule, newProject } from './model/library';
+import { activeModule, migrate, newModule, newProject, PRINTERS } from './model/library';
 import { seatBoard } from './cad/dockplan';
 import { describeChange } from './model/diff';
 import { carryOver, compareBoards } from './model/revision';
@@ -211,10 +211,21 @@ export function setBoard(b: Board) {
     lastReplace = `${docked ? ' It keeps the dock' : ' It keeps its place'}${kept ? ` and ${kept} cable${kept > 1 ? 's' : ''}` : ''}${mine - kept ? `; ${mine - kept} cable${mine - kept > 1 ? 's' : ''} to plugs it doesn't have ${mine - kept > 1 ? 'were' : 'was'} dropped` : ''}.`;
     p.modules[p.active] = nm;
     p.mount = { ...p.mount, at: null };
-  } else p = newProject(b);
+  } else {
+    p = newProject(b);
+    // the printer picked last time (on Start or in Export), so plates, splits and times are for yours from the start
+    const pr = PRINTERS.find((x) => x.name === myPrinter());
+    if (pr) p.printer = { ...pr };
+  }
   store.set({ project: p, past: cur ? [...state.past, cur] : [], future: [], sel: [], step: 'board', view: 'editor', result: null });
   persist(p);
 }
+
+const PRINTER_KEY = 'boarddock.printer';
+/** The printer picked last (kept in this browser for new racks), or null. */
+export function myPrinter(): string | null { try { return localStorage.getItem(PRINTER_KEY); } catch { return null; } }
+/** Keep this printer for new racks. */
+export function rememberPrinter(name: string) { try { localStorage.setItem(PRINTER_KEY, name); } catch { /* private window */ } }
 
 /**
  * Swap in a new version of a board (one undo step): it keeps its id, name, dock and stack, its holder settings, the
