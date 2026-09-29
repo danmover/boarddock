@@ -5,7 +5,7 @@
 // profiles.json, see vendor/kiri/build.mjs), otherwise from a plain template for the firmware that heats, homes and
 // primes. Neither has been run on a real printer by BoardDock, which the UI says.
 import type { Material, PrinterSettings, V2 } from '../model/types';
-import { FILAMENTS, type Printer } from '../model/printers';
+import { filamentOn, type Printer } from '../model/printers';
 import { BRIM_OUT, EDGE_CLEAR, SKIRT_OUT } from '../cad/export';
 
 export type Fit = 'exact' | 'close' | 'generic' | 'none';
@@ -94,7 +94,7 @@ export const roundRoom = (brim: boolean) => (brim ? BRIM_OUT : SKIRT_OUT) + EDGE
 
 /** Kiri:Moto process settings for BoardDock parts: printers.ts' settings in Kiri's names. */
 export function kiriProcess(pr: Printer | null, mat: Material, brim: boolean): Record<string, number | string | boolean> {
-  const f = FILAMENTS[mat];
+  const f = filamentOn(pr, mat);
   const fast = pr?.kind === 'corexy', bowden = pr?.extruder === 'bowden';
   return {
     processName: 'BoardDock',

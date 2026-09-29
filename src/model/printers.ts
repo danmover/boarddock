@@ -59,12 +59,29 @@ export const FILAMENTS: Record<Material, FilamentSettings & { source: string }> 
   PC: { nozzle: 280, nozzleFirst: 270, range: [260, 290], bed: 110, bedFirst: 110, fan: [10, 60], flow: 12, note: 'needs an enclosure', source: `${FIL}/fdm_filament_pc.json` },
 };
 
+/**
+ * A filament's temperatures on this printer: never past what the printer heats to (ABS asks for a 100 °C bed, the A1
+ * mini's stops at 80 °C). `capped`: what was held back, in words, for the user; empty when nothing was (or the
+ * printer's limits aren't known).
+ */
+export function filamentOn(pr: Printer | null | undefined, mat: Material): FilamentSettings & { capped: string[] } {
+  const f = FILAMENTS[mat], capped: string[] = [];
+  const bedMax = pr?.maxBed ?? Infinity, nozMax = pr?.maxNozzle ?? Infinity;
+  if (Math.max(f.bed, f.bedFirst) > bedMax) capped.push(`${mat} wants a ${Math.max(f.bed, f.bedFirst)} °C bed and the ${pr!.name}'s heats to ${bedMax} °C at most, so the bed is set to ${bedMax} °C. ${mat} may lift or warp at that: PETG or PLA suit this printer better.`);
+  if (Math.max(f.nozzle, f.nozzleFirst) > nozMax) capped.push(`${mat} wants a ${Math.max(f.nozzle, f.nozzleFirst)} °C nozzle and the ${pr!.name}'s heats to ${nozMax} °C at most, so the nozzle is set to ${nozMax} °C.`);
+  return {
+    ...f, capped,
+    nozzle: Math.min(f.nozzle, nozMax), nozzleFirst: Math.min(f.nozzleFirst, nozMax), range: [Math.min(f.range[0], nozMax), Math.min(f.range[1], nozMax)],
+    bed: Math.min(f.bed, bedMax), bedFirst: Math.min(f.bedFirst, bedMax),
+  };
+}
+
 export type Basis = 'design' | 'vendor' | 'convention';
 export interface SettingRow { name: string; value: string; basis: Basis; why: string; orca: string; prusa: string }
 
 /** What to set in the slicer for BoardDock parts on this printer with this filament. */
 export function printSettings(pr: Printer | null, mat: Material, tallParts: string[]): SettingRow[] {
-  const f = FILAMENTS[mat];
+  const f = filamentOn(pr, mat);
   const rows: SettingRow[] = [
     { name: 'Layer height', value: '0.2 mm', basis: 'design', why: 'chamfers, snap lips and clearances are sized in 0.2 mm steps', orca: 'Quality › Layer height', prusa: 'Print › Layers and perimeters › Layer height' },
     { name: 'Wall line width', value: '0.45 mm (outer and inner)', basis: 'design', why: 'the rail shoe hinge is exactly two 0.45 mm lines', orca: 'Quality › Line width › Outer / Inner wall', prusa: 'Print › Advanced › Extrusion width › External perimeters / Perimeters' },
@@ -77,7 +94,7 @@ export function printSettings(pr: Printer | null, mat: Material, tallParts: stri
     { name: 'Elephant foot compensation', value: '0.1 mm', basis: 'convention', why: 'the first layer of snap parts stays true to size', orca: 'Quality › Elephant foot compensation', prusa: 'Print › Advanced › Elephant foot compensation' },
     { name: 'Brim', value: tallParts.length ? `3 mm for ${tallParts.join(', ')}` : 'none', basis: 'convention', why: tallParts.length ? 'they stand more than 3 times taller than their footprint is wide' : 'no part is tall and narrow', orca: 'Others › Brim type / width', prusa: 'Print › Skirt and brim › Brim width' },
     { name: 'Nozzle', value: `${f.nozzle} °C (first layer ${f.nozzleFirst}); ${f.range[0]}–${f.range[1]} °C is fine`, basis: 'vendor', why: `OrcaSlicer generic ${mat}${f.note ? `; ${f.note}` : ''}`, orca: 'Filament › Nozzle temperature', prusa: 'Filament › Temperature › Extruder' },
-    { name: 'Bed', value: `${f.bed} °C (first layer ${f.bedFirst})`, basis: 'vendor', why: `OrcaSlicer generic ${mat}, smooth or textured PEI`, orca: 'Filament › Bed temperature', prusa: 'Filament › Temperature › Bed' },
+    { name: 'Bed', value: `${f.bed} °C (first layer ${f.bedFirst})`, basis: 'vendor', why: `OrcaSlicer generic ${mat}, smooth or textured PEI${f.capped.length ? `; ${f.capped.join(' ')}` : ''}`, orca: 'Filament › Bed temperature', prusa: 'Filament › Temperature › Bed' },
     { name: 'Part fan', value: f.fan[0] === f.fan[1] ? `${f.fan[0]} %` : `${f.fan[0]}–${f.fan[1]} %`, basis: 'vendor', why: `OrcaSlicer generic ${mat}`, orca: 'Filament › Cooling › Fan speed', prusa: 'Filament › Cooling › Fan settings' },
     { name: 'Max volumetric speed', value: `${f.flow} mm³/s`, basis: 'vendor', why: `OrcaSlicer generic ${mat}; your printer preset's speeds stay as they are`, orca: 'Filament › Max volumetric speed', prusa: 'Filament › Advanced › Max volumetric speed' },
   ];

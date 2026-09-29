@@ -4,7 +4,7 @@
 // be printed and read back move by move, and used only when it looks like start code for this printer. The rules are
 // BoardDock's own (nothing of Bambu's is copied); the limits are printers.ts'. Pure.
 import type { Material, PrinterSettings } from '../model/types';
-import { FILAMENTS, printerByName } from '../model/printers';
+import { filamentOn, printerByName } from '../model/printers';
 import { bambuVars, renderTemplate, type TplValue } from './bambutpl';
 
 type Own = NonNullable<PrinterSettings['bambu']>;
@@ -124,7 +124,7 @@ export function checkOwnCode(own: Own, ps: PrinterSettings, mat: Material, extra
         if (!s.nozzle.some((t) => t > 0)) add('start:nozzle', true, `${label} never heats the nozzle (no M104 or M109 above 0).`);
       }
       if (!s.homes) add('start:home', false, `${label} never homes the printer (no G28), so the printer can't know where its nozzle is.`);
-      const last = [...s.nozzle].reverse().find((t) => t > 0), f = FILAMENTS[mat];
+      const last = [...s.nozzle].reverse().find((t) => t > 0), f = filamentOn(pr, mat);
       if (last != null && (last < f.range[0] || last > f.range[1])) add('start:range', false, `${label} ends by heating the nozzle to ${last} °C, but ${mat} prints at ${f.range[0]} to ${f.range[1]} °C.`);
     } else if (box === 'end') {
       if (BODY.test(src) || s.printing > MOVES_MAX) add('end:body', true, `${label} looks like part of a sliced file, not end code.`);

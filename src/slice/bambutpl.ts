@@ -5,7 +5,7 @@
 // round, abs), and `{if ...}` / `{elsif ...}` / `{else}` / `{endif}` blocks. A name it doesn't know is never
 // guessed: the print is refused and the names are listed. Pure.
 import type { Material, PrinterSettings } from '../model/types';
-import { FILAMENTS } from '../model/printers';
+import { filamentOn, printerByName } from '../model/printers';
 
 export type TplValue = number | string | boolean | (number | string | boolean)[];
 export interface Rendered { text: string; unknown: string[] }
@@ -169,7 +169,7 @@ export function fromProfileJson(text: string): { start?: string; end?: string; l
  * layer by layer). Names used by Bambu's own start, end and layer code for its printers.
  */
 export function bambuVars(ps: PrinterSettings, mat: Material, g: { x0: number; y0: number; x1: number; y1: number; z1: number; layers: number }): Record<string, TplValue> {
-  const f = FILAMENTS[mat], flow = f.flow;
+  const f = filamentOn(printerByName(ps.name), mat), flow = f.flow;
   const plateTemp = { cool_plate_temp: [f.bed], eng_plate_temp: [f.bed], hot_plate_temp: [f.bed], textured_plate_temp: [f.bed], cool_plate_temp_initial_layer: [f.bedFirst], eng_plate_temp_initial_layer: [f.bedFirst], hot_plate_temp_initial_layer: [f.bedFirst], textured_plate_temp_initial_layer: [f.bedFirst] };
   return {
     ...plateTemp,

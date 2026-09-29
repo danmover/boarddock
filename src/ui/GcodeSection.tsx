@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Material, MeshData, V2 } from '../model/types';
 import { MATERIALS } from '../model/library';
-import { printerByName } from '../model/printers';
+import { filamentOn, printerByName } from '../model/printers';
 import { defaultCode, machinePlan } from '../slice/profiles';
 import { gcodeLayers, kiriProfiles, slicePlate, type Sliced } from '../slice/kiri';
 import { fromProfileJson } from '../slice/bambutpl';
@@ -64,6 +64,7 @@ export function GcodeSection({ plates, plateMeshes, plate3mf, base, brim, plateK
       <p className="hint" style={{ marginTop: 0 }}>
         Slice here with <a href="https://grid.space/kiri/" target="_blank" rel="noreferrer">Kiri:Moto</a>, an open-source slicer that runs inside BoardDock. It uses the settings above for {mat}. {plan.firmware === 'bambu' ? 'Bambu Lab printers get a .gcode.3mf to send or copy to the SD card.' : 'You get a .gcode file for the SD card, USB stick or printer web page.'}
       </p>
+      {filamentOn(pr, mat).capped.map((t) => <div key={t} className="fitnote close" role="note"><b>Held back to what the {p.printer.name} can do</b><span>{t}</span></div>)}
       <div className={`fitnote ${plan.fit}`}>
         <b>{plan.fit === 'none' ? (pr?.firmware === 'bambu' ? `One step first: the ${p.printer.name}'s own start code` : `No in-app G-code for the ${p.printer.name}`) : `Start code: ${plan.label}`}</b>
         {plan.note && <span>{plan.note}</span>}
