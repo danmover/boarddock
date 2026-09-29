@@ -1,7 +1,7 @@
 {
   "name": "boarddock",
   "productName": "BoardDock",
-  "version": "0.3.0",
+  "version": "2.1.0",
   "description": "3D-printable, screwless holders for any PCB, docked onto DIN rails with a push-button release: auto-fit to the board and its plugs, panel layout for plug access, FEA checks, plate-packed STL/3MF export.",
   "license": "MIT",
   "author": "BoardDock contributors",
