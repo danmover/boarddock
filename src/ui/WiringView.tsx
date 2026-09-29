@@ -15,6 +15,7 @@ import { badgeSpots, boundsOf, CARD, cardSize, fitZoom, flowLayout, freeSpot, ra
 import { edit, isSel, select, store, toast, useApp } from '../state';
 import { Icon, I } from './icons';
 import { addAccessory, addLinks, plugPlaces, removeLinks, rewire } from './linkOps';
+import { say, touchy } from './touch';
 
 const { W, HEAD, ROW, PROW } = CARD;
 // USB cables are drawn near-black in 3D; on this graph they take the text colour so they show in both themes
@@ -506,7 +507,7 @@ export function WiringView() {
             </> : <p className="hint">Nothing free fits it{cur ? '' : ': free a plug, or add a hub or a charger'}.</p>}
             <div className="wpop-foot">
               {cur && <button className="btn small ghost" onClick={() => { removeLinks([cur.id]); setPending(null); }}>Disconnect</button>}
-              <span>or click the plug it goes to · Esc</span>
+              <span>{say('or click the plug it goes to · Esc')}</span>
             </div>
           </div>
         );
@@ -533,7 +534,7 @@ export function WiringView() {
         <button className={`tbtn ${side ? 'on' : ''}`} onClick={() => setSide((x) => (x ? null : 'todo'))} title="What still needs connecting, and every cable">List</button>
       </div>
       <div className="hud floating mono">
-        <span>{pendingPin ? `${pendingPin.q.module.board.name} pin ${pendingPin.pin}: now click the pin on another header it goes to · Esc cancels` : pending ? `${pending.module.board.name} ${pending.label}: now click the plug it goes to (green ones fit) · Esc cancels` : 'drag from a plug to where it goes (or click it for its best matches) · drag a connected plug to move that end · ▸ opens a header for jumper wires · drag a card by its title · pinch or ⌘ + scroll zooms'}</span>
+        <span>{say(pendingPin ? `${pendingPin.q.module.board.name} pin ${pendingPin.pin}: now click the pin on another header it goes to · Esc cancels` : pending ? `${pending.module.board.name} ${pending.label}: now click the plug it goes to (green ones fit) · Esc cancels` : touchy() ? 'drag from a plug to where it goes (or tap it for its best matches) · drag a connected plug to move that end · ▸ opens a header for jumper wires · drag a card by its title · pinch zooms' : 'drag from a plug to where it goes (or click it for its best matches) · drag a connected plug to move that end · ▸ opens a header for jumper wires · drag a card by its title · pinch or ⌘ + scroll zooms')}</span>
         <span className="xy">{links.length} cable{links.length === 1 ? '' : 's'}{rep?.cables?.length ? ` · ${(rep.cables.reduce((a, c) => a + c.length, 0) / 1000).toFixed(1)} m` : ''}</span>
       </div>
       <div className="legend2 floating" style={{ bottom: 52 }}>

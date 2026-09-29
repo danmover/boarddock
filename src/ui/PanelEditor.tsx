@@ -243,6 +243,8 @@ export function PanelEditor() {
     if (ghost.ids.length === 1) return ghost.d;
     return railDir === 'h' ? [ghost.d[0], 0] : [0, ghost.d[1]];
   };
+  // the part of the drawing in view, along x (the view box is fitted into the window, so it can show more than its width)
+  const visX = (() => { const r = svg.current?.getBoundingClientRect(); if (!r || !r.width || !r.height) return [-Infinity, Infinity]; const k = Math.max(vb.w / r.width, vb.h / r.height), ox = vb.x + (vb.w - r.width * k) / 2; return [ox, ox + r.width * k]; })();
   const collide = new Set((rep?.collisions ?? []).flat());
   const shownDrop = dropAt ? (mountAt(dropAt) ? { m: mountAt(dropAt)! } : railAt(dropAt, 60) ? { r: railAt(dropAt, 60)! } : null) : null;
 
@@ -342,7 +344,9 @@ export function PanelEditor() {
                 const dirs = ['up', 'down', 'left', 'right'] as const;
                 // slide along the rail if another label is there; with no room, just the name, faint
                 const spot = claim(cx, cy, fs(vertical ? 17 : tw / 2), fs(vertical ? tw / 2 : 17), h);
-                const [lx, ly] = spot ?? [cx, cy];
+                const [lx0, ly] = spot ?? [cx, cy];
+                // a pill wider than its board (or than a phone's view) is held inside the view, not clipped at its edge
+                const half = fs(vertical ? 17 : tw / 2) + fs(3), lx = visX[1] - visX[0] > 2 * half ? Math.min(Math.max(lx0, visX[0] + half), visX[1] - half) : lx0;
                 return (
                   <g key={q.id}>
                     <title>{`${name}: ${q.lie === 'flat' ? `lies flat, tab on its ${q.edge} edge` : `docked by its ${q.edge} edge`}.\nIts plugs: ◉ faces you, easy to reach · ✓ reachable from the side · ⚠ points at the next dock · ✕ points into the table or wall`}</title>

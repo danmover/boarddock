@@ -13,6 +13,7 @@ import { DrawBoard } from './DrawBoard';
 import { Library } from './Library';
 import { Icon, I } from './icons';
 import { useModalFocus } from './controls';
+import { say } from './touch';
 
 /** "Raspberry Pi 4B", "2 × Raspberry Pi Pico and Relay board", "7 boards". */
 export function countNames(bs: Board[]): string {
@@ -74,8 +75,8 @@ export function AddBoardSheet() {
       <div className="sheet wide" role="dialog" aria-modal="true" aria-label={replacing ? `Replace ${target}` : 'Add a board'} tabIndex={-1} ref={sheet}>
         <div className="sheet-head">
           {replacing
-            ? <div><b>Replace {target}</b><small>The board you pick takes its place: its dock, its stack, its holder settings and the cables to plugs the new one also has. Click a picture, or drop its files.</small></div>
-            : <div><b>Add a board</b><small>{n ? `It joins your ${n}-board rack${store.get().project?.built ? ' without moving anything that is built' : ''}. You stay on this step.` : 'Start a rack with it.'} Click a picture to add it, or “+” to pick several.</small></div>}
+            ? <div><b>Replace {target}</b><small>The board you pick takes its place: its dock, its stack, its holder settings and the cables to plugs the new one also has. {say('Click a picture, or drop its files.')}</small></div>
+            : <div><b>Add a board</b><small>{n ? `It joins your ${n}-board rack${store.get().project?.built ? ' without moving anything that is built' : ''}. You stay on this step.` : 'Start a rack with it.'} {say('Click a picture to add it, or “+” to pick several.')}</small></div>}
           <button className="iconbtn" title="Close (Esc)" onClick={close}><Icon d={I.x} /></button>
         </div>
         <div className="sheet-body">

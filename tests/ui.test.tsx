@@ -203,3 +203,12 @@ describe("an empty port's protection", () => {
     expect([c1.conn!.guard, c1.conn!.use, portUses(p1, p1.modules[0]).get(dc.ref)]).toEqual([true, 'yes', 'yours']);
   });
 });
+
+describe('wording for the way in', () => {
+  it('says tap and press and hold on a touch screen, and leaves a mouse alone', async () => {
+    const { say } = await import('../src/ui/touch');
+    expect(say('Click a picture, or drop its files.', true)).toBe('Tap a picture, or drop its files.');
+    expect(say('click the first corner · double-click to close · the name shows on hover', true)).toBe('tap the first corner · double-tap to close · the name shows on press and hold');
+    expect(say('Click a picture', false)).toBe('Click a picture');
+  });
+});

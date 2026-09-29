@@ -41,6 +41,7 @@ import { picture } from './snapshot';
 import { boardPicture, holderPicture, type PicPart } from '../worker/client';
 import { GcodeSection } from './GcodeSection';
 import { PrintCheckSection } from './PrintCheck';
+import { say } from './touch';
 
 // ============================================================================================ IMPORT
 export function ImportPanel() {
@@ -616,7 +617,7 @@ export function PlugsPanel() {
               </SelRow>
             );
           })}
-          {!conns.length && <p className="hint">No connectors found. Add them in the board editor (Connector tool, click an edge), or select a part and choose "Treat as connector".</p>}
+          {!conns.length && <p className="hint">{say('No connectors found. Add them in the board editor (Connector tool, click an edge), or select a part and choose "Treat as connector".')}</p>}
         </div>
         <p className="hint" style={{ marginTop: 8 }}>Tap a port's <i>empty</i> or <i>cable</i> tag to say whether you'll plug something into it yourself.</p>
       </Section>
