@@ -13,6 +13,8 @@ export interface Printer {
   firmware: 'bambu' | 'marlin' | 'klipper';
   orca: string; // machine preset name in OrcaSlicer (and Bambu Studio for Bambu Lab printers)
   slicers: string[]; // slicers that ship a profile for it, the maker's own first
+  maxNozzle?: number; // °C, the maker's spec (used to check start code someone pastes in)
+  maxBed?: number; // °C, the maker's spec (the most any mains voltage gives)
   retraction?: number; // mm, from the vendor profile
   accel?: number; // mm/s², max while extruding, from the vendor profile
   source: string;
@@ -22,10 +24,10 @@ export interface Printer {
 const ORCA = 'https://github.com/OrcaSlicer/OrcaSlicer/tree/main/resources/profiles';
 
 export const PRINTERS_DB: Printer[] = [
-  { name: 'Bambu Lab X1 Carbon', bed: [256, 256], maxZ: 256, kind: 'corexy', extruder: 'direct', firmware: 'bambu', orca: 'Bambu Lab X1 Carbon 0.4 nozzle', slicers: ['Bambu Studio', 'OrcaSlicer'], retraction: 0.8, accel: 20000, source: `${ORCA}/BBL/machine`, aliases: ['Bambu Lab X1 / P1 / A1'] },
-  { name: 'Bambu Lab P1S', bed: [256, 256], maxZ: 256, kind: 'corexy', extruder: 'direct', firmware: 'bambu', orca: 'Bambu Lab P1S 0.4 nozzle', slicers: ['Bambu Studio', 'OrcaSlicer'], retraction: 0.8, accel: 20000, source: `${ORCA}/BBL/machine` },
-  { name: 'Bambu Lab A1', bed: [256, 256], maxZ: 256, kind: 'bedslinger', extruder: 'direct', firmware: 'bambu', orca: 'Bambu Lab A1 0.4 nozzle', slicers: ['Bambu Studio', 'OrcaSlicer'], accel: 12000, source: `${ORCA}/BBL/machine` },
-  { name: 'Bambu Lab A1 mini', bed: [180, 180], maxZ: 180, kind: 'bedslinger', extruder: 'direct', firmware: 'bambu', orca: 'Bambu Lab A1 mini 0.4 nozzle', slicers: ['Bambu Studio', 'OrcaSlicer'], source: `${ORCA}/BBL/machine` },
+  { name: 'Bambu Lab X1 Carbon', bed: [256, 256], maxZ: 256, kind: 'corexy', extruder: 'direct', firmware: 'bambu', maxNozzle: 300, maxBed: 120, orca: 'Bambu Lab X1 Carbon 0.4 nozzle', slicers: ['Bambu Studio', 'OrcaSlicer'], retraction: 0.8, accel: 20000, source: `${ORCA}/BBL/machine`, aliases: ['Bambu Lab X1 / P1 / A1'] },
+  { name: 'Bambu Lab P1S', bed: [256, 256], maxZ: 256, kind: 'corexy', extruder: 'direct', firmware: 'bambu', maxNozzle: 300, maxBed: 100, orca: 'Bambu Lab P1S 0.4 nozzle', slicers: ['Bambu Studio', 'OrcaSlicer'], retraction: 0.8, accel: 20000, source: `${ORCA}/BBL/machine` },
+  { name: 'Bambu Lab A1', bed: [256, 256], maxZ: 256, kind: 'bedslinger', extruder: 'direct', firmware: 'bambu', maxNozzle: 300, maxBed: 100, orca: 'Bambu Lab A1 0.4 nozzle', slicers: ['Bambu Studio', 'OrcaSlicer'], accel: 12000, source: `${ORCA}/BBL/machine` },
+  { name: 'Bambu Lab A1 mini', bed: [180, 180], maxZ: 180, kind: 'bedslinger', extruder: 'direct', firmware: 'bambu', maxNozzle: 300, maxBed: 80, orca: 'Bambu Lab A1 mini 0.4 nozzle', slicers: ['Bambu Studio', 'OrcaSlicer'], source: `${ORCA}/BBL/machine` },
   { name: 'Prusa CORE One', bed: [250, 220], maxZ: 270, kind: 'corexy', extruder: 'direct', firmware: 'marlin', orca: 'Prusa CORE One 0.4 nozzle', slicers: ['PrusaSlicer', 'OrcaSlicer'], source: `${ORCA}/Prusa/machine` },
   { name: 'Prusa MK4S / MK4', bed: [250, 210], maxZ: 220, kind: 'bedslinger', extruder: 'direct', firmware: 'marlin', orca: 'Prusa MK4S 0.4 nozzle', slicers: ['PrusaSlicer', 'OrcaSlicer'], source: `${ORCA}/Prusa/machine`, aliases: ['Prusa MK4 / MK3S'] },
   { name: 'Prusa MK3S+', bed: [250, 210], maxZ: 210, kind: 'bedslinger', extruder: 'direct', firmware: 'marlin', orca: 'Prusa MK3S 0.4 nozzle', slicers: ['PrusaSlicer', 'OrcaSlicer'], retraction: 0.8, source: `${ORCA}/Prusa/machine` },
