@@ -39,18 +39,27 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx vite build
-      # uploads to GitHub sometimes time out (Windows did on v0.1.0): try up to three times
-      - name: Build and publish installers
+      - name: Build the installers
+        run: npx electron-builder --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      # uploaded with gh, not electron-builder: electron-builder skips a release that is already published (v0.2.0's,
+      # published by hand from the Releases page, got no files). Uploads sometimes time out (Windows did on v0.1.0):
+      # try up to three times; --clobber lets a re-run replace what an earlier attempt left.
+      - name: Attach the installers to the release
         shell: bash
         run: |
+          shopt -s nullglob
+          files=(release/*.exe release/*.dmg release/*.zip release/*.AppImage release/*.deb release/*.blockmap release/latest*.yml)
+          printf '%s\n' "${files[@]}"
+          [ ${#files[@]} -gt 0 ] || { echo "No installers were built"; exit 1; }
           for i in 1 2 3; do
-            npx electron-builder --publish always && exit 0
+            gh release upload "$GITHUB_REF_NAME" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber && exit 0
             echo "Attempt $i failed; trying again in 30 s"; sleep 30
           done
           exit 1
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
   web:
     runs-on: ubuntu-latest
     environment:
