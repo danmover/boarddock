@@ -1,5 +1,6 @@
 // Promise wrappers around the workers. Generation is "latest wins": stale requests are dropped.
 import type { Board, GenResult, HolderSettings, MeshData, PartOut, Project } from '../model/types';
+import { addMainsZones } from '../model/zones';
 import type { LayerReport } from '../cad/printcheck';
 import type { ClipFeaResult } from '../fea/clipfea';
 import type { DockFeaResult } from '../fea/dockfea';
@@ -33,7 +34,9 @@ let latest = 0;
 export async function generateProject(p: Project): Promise<GenResult | null> {
   const ticket = ++latest;
   const res = await cad.call<GenResult>('generate', p);
-  return ticket === latest ? res : null;
+  if (ticket !== latest) return null;
+  addMainsZones(p, res); // (the mains zones and their Check line: model/zones.ts)
+  return res;
 }
 
 export async function runClipFea(W: number, tf: number, tabExt: number, HA: number | undefined, E: number, nu: number, h: number, onProgress?: (s: string) => void): Promise<ClipFeaResult & { loops: [number, number][][] }> {

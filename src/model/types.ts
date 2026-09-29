@@ -396,6 +396,9 @@ export interface Check {
   module?: string; // the board it is about, when it is about one
 }
 
+/** Where mains sits: a mains board's footprint (panel frame, mm) with its margin, and how high the box stands. */
+export interface MainsZone { module: string; name: string; rect: [number, number, number, number]; z: [number, number]; what: string }
+
 export interface GenReport {
   warnings: string[];
   checks: Check[];
@@ -405,6 +408,7 @@ export interface GenReport {
   /** clip frame -> assembly, for the "as installed" view */
   clipFrame: number[] | null;
   panel?: PanelReport | null;
+  zones?: MainsZone[]; // where mains sits on the rack (set after the build: model/zones.ts)
   features?: Feature[];
   frames?: Record<string, number[]>; // module id -> holder frame to assembly
   cables?: { id: string; a: string; b: string; ends?: string; kind: NonNullable<Link['kind']>; length: number; buy: number; clash?: string; no?: number; label?: string; mid?: number[]; ribbon?: number; wires?: string }[]; // ends: "module/ref|module/ref"; no: cable number; label: what it is for; mid: where its number shows (assembly frame); ribbon: a probe's own ribbon (mm), nothing to buy; wires: a serial cable's loose ends, which pin each goes on
