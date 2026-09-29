@@ -289,6 +289,7 @@ export interface Built {
   names?: Record<string, string>; // module id -> board name then (to say what was taken off)
   seats?: Record<string, string>; // module id -> where it sat ("dock 1.3 back")
   cableInfo?: { sig: string; no?: number; a: string; b: string; buy: number }[]; // the cables as bought
+  mounts?: Record<string, { rail: string; at: number }>; // dock id -> the rail it was clipped on and where (mm from its start)
 }
 
 export interface Project {

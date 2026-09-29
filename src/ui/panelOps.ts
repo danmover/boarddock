@@ -2,7 +2,7 @@
 // exactly where they are, so nothing jumps.
 import type { EdgeName, GenResult, PanelReport, Project, RailMount, Slot, Turn } from '../model/types';
 import { round, uid } from '../geom/poly';
-import { appendDock, bestDock, seatBoard, dropEmptied, nearestFree, spreadOut, spreadRails, withRiders } from '../cad/dockplan';
+import { appendDock, bestDock, seatBoard, dropEmptied, nearestFree, ownDocks, spreadOut, spreadRails, withRiders } from '../cad/dockplan';
 import { baseOf, refreshStandoffs } from '../model/holes';
 import { amend, edit, select, store, toast, uniqueName } from '../state';
 import { mountLabels, snapshot } from '../model/built';
@@ -227,8 +227,14 @@ export function settleOverlaps(rails?: (pr: PanelReport) => (string | undefined)
     const along = pr.collisions.some((pair) => { const [a, b] = railsOf(pair); return !!a && a === b && on.includes(a); });
     const across = pr.collisions.some((pair) => { const [a, b] = railsOf(pair); return !!a && !!b && a !== b && (on.includes(a) || on.includes(b)); });
     if (!along && !across) return;
-    let moved: string[] = [], slid: string[] = [];
-    amend((q) => { if (q.panel.auto) return; if (along) moved = spreadOut(q, pr, 2, on); if (across) slid = spreadRails(q, pr, 2); });
+    let moved: string[] = [], slid: string[] = [], own: string[] = [];
+    // (on a built rack, a board new since that pushes a built dock along goes into a dock of its own instead)
+    amend((q) => { if (q.panel.auto) return; if (along) own = ownDocks(q, pr); if (own.length) return; if (along) moved = spreadOut(q, pr, 2, on); if (across) slid = spreadRails(q, pr, 2); });
+    if (own.length) {
+      const names = own.map((id) => store.get().project?.modules.find((m) => m.id === id)?.board.name ?? 'The board');
+      toast(`${names.join(' and ')} ${own.length > 1 ? 'went into docks of their own' : 'went into a dock of its own'}: in the free slot of a built dock ${own.length > 1 ? 'they' : 'it'} would push the docks you built along the rail. ⌘Z undoes it.`);
+      return;
+    }
     const railNames = slid.map((id) => pr.rails.findIndex((x) => x.id === id) + 1).sort((a, b) => a - b);
     const rails2 = railNames.length ? `${railNames.length > 1 ? `Rails ${railNames.slice(0, -1).join(', ')} and ${railNames[railNames.length - 1]}` : `Rail ${railNames[0]}`} slid across to make room, as a board now reaches over ${railNames.length > 1 ? 'them' : 'it'}. ⌘Z undoes it.` : '';
     if (moved.length) toast(rails2 ? `${say(moved.length).replace(/ ⌘Z undoes it\.$/, '')} ${rails2}` : say(moved.length));

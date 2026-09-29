@@ -466,7 +466,14 @@ export function generatePanel(p: Project): GenResult {
     const start = on.length ? Math.min(...on.map((q) => q.mt.at! + q.lo + q.soft[0])) : 0;
     if (r.length == null) r.length = Math.ceil(Math.max(need, 50) - 1e-6);
     else if (start < -0.5) warnings.push(`Rail ${r.id.replace(/^r/, '')}: a mount hangs ${round(-start, 0)} mm off the start of the rail. Drag it along, or press Auto-arrange.`);
-    else if (need - margin > r.length + 0.5) warnings.push(`Rail ${r.id.replace(/^r/, '')}: the mounts run past the end of the ${r.length} mm rail (need ${Math.ceil(need)} mm).`);
+    else if (need - margin > r.length + 0.5 && p.built) {
+      // a built rack's rail is the one you cut: docks that now run past its end need a longer one (What's new says to
+      // cut it), and Check says so rather than leave them hanging off it
+      const n = r.id.replace(/^r/, ''), was = r.length;
+      r.length = Math.ceil(need - 1e-6);
+      warnings.push(`Rail ${n}: the docks now run past the end of the ${was} mm rail you cut, so it has to be ${r.length} mm long. Cut a longer rail (What's new has the step), or move a board somewhere else in the Rails step.`);
+      checks.push({ group: 'Panel', name: `Rail ${n} length`, value: `${r.length} mm, cut ${was}`, status: 'bad', detail: `The docks on rail ${n} run past the end of the ${was} mm rail you cut: a longer one (${r.length} mm) is needed, or move a board off it.` });
+    } else if (need - margin > r.length + 0.5) warnings.push(`Rail ${r.id.replace(/^r/, '')}: the mounts run past the end of the ${r.length} mm rail (need ${Math.ceil(need)} mm).`);
     else if (P.stands !== false && on.length && (start < STAND.len - STAND.back + 1 - 0.05 || need - margin > r.length - (STAND.len - STAND.back + 1) + 0.05)) warnings.push(`Rail ${r.id.replace(/^r/, '')}: a mount sits within ${STAND.len - STAND.back + 1} mm of a rail end, where the table stand's end block goes. Move it in or lengthen the rail.`);
   }
 

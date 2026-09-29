@@ -686,6 +686,30 @@ export function nearestFree(rep: PanelReport, mountId: string, railId: string, a
 }
 
 /**
+ * On a built rack: a board added since that went into a free slot of a built dock, where it now reaches over the dock
+ * beside it, goes into a dock of its own instead (the generator finds it a free gap, else the end of a rail), so no
+ * built dock has to slide along. Returns the ids of the boards it moved. Pure: uses what the last build measured.
+ */
+export function ownDocks(p: Project, rep: PanelReport): string[] {
+  const b = p.built;
+  if (!b) return [];
+  const built = new Set(b.boards), builtMounts = new Set(Object.keys(b.mounts ?? {}));
+  const mountOf = (id: string) => rep.mounts.find((x) => x.id === id) ?? rep.mounts.find((x) => x.id === rep.modules.find((q) => q.id === id)?.mount);
+  const out: string[] = [];
+  for (const pair of rep.collisions) {
+    const ms = pair.map(mountOf);
+    if (!ms[0] || !ms[1] || ms[0].rail !== ms[1].rail) continue;
+    for (const mt of ms) {
+      // a dock that was there when it was built (racks built before docks' places were kept: one with a built board in it)
+      if (!(builtMounts.has(mt!.id) || mt!.slots.some((s) => s.module && built.has(s.module)))) continue;
+      for (const s of mt!.slots) if (s.module && !built.has(s.module) && !out.includes(s.module)) out.push(s.module);
+    }
+  }
+  for (const id of out) appendDock(p, id);
+  return out;
+}
+
+/**
  * Tidy a rack laid out by hand: along each rail, in the order the mounts are in, slide each one on just far enough to
  * clear the one before it by `clear` mm. Nothing that already clears moves, and nothing changes rail, turn or slot.
  * Returns the ids of the mounts that moved. Pure: uses the positions the last build measured.
