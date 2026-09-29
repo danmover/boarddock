@@ -8,7 +8,6 @@ Nothing BoardDock makes has been printed and tried yet, so anything below about 
 
 ## 0. Most important (from the user, 29 Sep, on v0.2.0)
 
-- **Allegro boards must import.** A zip of an Allegro project (its reports, bom.txt, dangling_lines.rpt, drc.txt and more, and three release 17 boards under `output/02_…_top/physical/`: the board, `artwork.brd` and `backup.brd`) gives only "None of the files could be read" and the "format is not published" message for each .brd. Plan: read Allegro .brd files natively (outline, holes, parts and their places, board thickness), worked out from public boards whose Gerber, drill and placement files show the right answer, without KiCad's code (GPL); read whatever fabrication outputs Allegro puts in such a zip (`.art` Gerbers, NC drill with `nc_param.txt`, `place_txt.txt`, component reports); and when nothing is readable, list every file in the zip and say why each was passed over.
 - **Wires bend unnaturally, all of a sudden.** Seen in v0.2.0; where and on which cables still to find out.
 
 ## 1. From the second round of test users
