@@ -3,6 +3,7 @@ import { TEMPLATES } from '../src/model/templates';
 import { newModule, newProject } from '../src/model/library';
 import { autoLinks } from '../src/model/links';
 import { dropModule, edit, loadProject, putBoards, setActive, store, undo } from '../src/state';
+import { connectIfNone } from '../src/ui/linkOps';
 
 const T = (id: string) => TEMPLATES.find((t) => t.id === id)!.make();
 
@@ -67,5 +68,21 @@ describe('project edits', () => {
     expect(store.get().project!.modules[0].board.name).not.toBe('Mine');
     undo();
     expect(store.get().project!.modules[0].board.name).toBe('Mine');
+  });
+
+  it('Next from the Plugs step connects a rack with no cables, and leaves one you started connecting alone', () => {
+    store.set({ project: null, past: [], future: [], sel: [] });
+    putBoards([T('rpi4'), T('uno'), T('usb_hub')], false);
+    expect(store.get().project!.links ?? []).toEqual([]);
+    expect(connectIfNone()).toBe(true);
+    const n = store.get().project!.links!.length;
+    expect(n).toBeGreaterThan(0);
+    // ⌘Z takes them all back in one go
+    undo();
+    expect(store.get().project!.links ?? []).toEqual([]);
+    // one cable of your own: nothing more is added
+    edit((p) => { const [a] = autoLinks(p); p.links = [a]; });
+    expect(connectIfNone()).toBe(false);
+    expect(store.get().project!.links!.length).toBe(1);
   });
 });

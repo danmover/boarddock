@@ -13,6 +13,7 @@ import { Mark } from './ui/art';
 import { MATERIALS } from './model/library';
 import { estimate, packPlates } from './cad/export';
 import { openFiles } from './ui/importFlow';
+import { connectIfNone } from './ui/linkOps';
 import { describe, removeItems } from './ui/pickOps';
 import { Icon, I } from './ui/icons';
 import { WiringView } from './ui/WiringView';
@@ -214,7 +215,7 @@ export function App() {
           {project && (
             <div className="foot">
               {si > 0 && <button className="btn back" onClick={() => goStep(STEPS[si - 1].id)}><Icon d={I.left} /> {STEPS[si - 1].label}</button>}
-              {si < STEPS.length - 1 ? <button className="btn primary" onClick={() => goStep(STEPS[si + 1].id)}>Next: {STEPS[si + 1].label} <Icon d={I.right} /></button> : (
+              {si < STEPS.length - 1 ? <button className="btn primary" onClick={() => { if (step === 'plugs') connectIfNone(); goStep(STEPS[si + 1].id); }}>Next: {STEPS[si + 1].label} <Icon d={I.right} /></button> : (
                 <>
                   <button className="btn ghost" onClick={() => goStep('import')} title="Back to Start to add a board"><Icon d={I.plus} /> Board</button>
                   <button className="btn primary" onClick={() => window.dispatchEvent(new Event('boarddock:download'))}><Icon d={I.download} /> Download .zip</button>

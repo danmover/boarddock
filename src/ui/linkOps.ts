@@ -44,6 +44,18 @@ export function addLinks(only?: NonNullable<import('../model/types').Link['kind'
 }
 
 /**
+ * Leaving the Plugs step with Next on a rack with no cables at all: Auto-connect first (one undo step, with its toast),
+ * so the rack isn't built with none. A rack you have connected yourself, even in part, is left as it is. True when it
+ * connected something.
+ */
+export function connectIfNone(): boolean {
+  const p = store.get().project;
+  if (!p || (p.links ?? []).length || !autoLinks(p, plugPlaces()).length) return false;
+  addLinks();
+  return true;
+}
+
+/**
  * Rewire: take out every cable Auto-connect made (the ones you connected yourself stay) and connect again, measured on
  * the rack as it is laid out now. A built rack keeps its cables (they are bought): it asks first.
  */
