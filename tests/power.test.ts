@@ -5,8 +5,10 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { TEMPLATES } from '../src/model/templates';
 import { newModule, newProject, setLayout } from '../src/model/library';
-import { allPlugs, autoLinks, compatible, numberLinks, PC, plugsOf, portBudget, powerFeeds, powerShort, refusal, ROUTER, strongerPower, wiringAdvice } from '../src/model/links';
+import { allPlugs, autoLinks, compatible, connectNote, numberLinks, PC, plugsOf, portBudget, powerFeeds, powerShort, refusal, ROUTER, strongerPower, wiringAdvice } from '../src/model/links';
 import { mainsBudget, powerBudget } from '../src/model/power';
+import { portUses } from '../src/model/portuse';
+import { poweredBoards } from '../src/model/lights';
 import { hostTotal, needOf } from '../src/model/powerdata';
 import { cableLines } from '../src/model/cablelist';
 import { autoAssign } from '../src/cad/dockplan';
@@ -324,5 +326,24 @@ describe('a charger left idle, and the switch to your router', () => {
     // a switch with nothing on it doesn't need one
     const q = rack(['uno', 'net_switch5']);
     expect(autoLinks(q).some((l) => [l.a.module, l.b.module].includes(ROUTER))).toBe(false);
+  });
+});
+
+describe("an Arduino's barrel jack", () => {
+  it('takes a supply\'s lead, is cradled once it has one, and leaves the USB as the way in', () => {
+    const p = newProject(TEMPLATES.find((t) => t.id === 'uno')!.make());
+    const pack = newModule(TEMPLATES.find((t) => t.id === 'dc_pack_12v')!.make());
+    p.modules.push(pack);
+    const pl = plugsOf(p);
+    const jack = pl.find((x) => x.module === p.modules[0] && x.comp.conn?.type === 'barrel')!, lead = pl.find((x) => x.module === pack && x.role === 'dc-out')!;
+    expect(jack.role).toBe('other');
+    // it can be cabled by hand (the voltage is yours to check), which counts as power
+    expect(refusal(p, lead, jack)).toBeNull();
+    expect(connectNote(lead, jack)).toMatch(/voltages or polarity/);
+    p.links = numberLinks([{ id: 'dc1', a: lead.ref, b: jack.ref, kind: 'power' }]);
+    expect(poweredBoards(p).has(p.modules[0].id)).toBe(true);
+    // its port is in use with a cable, and the USB keeps its cradle
+    const uses = portUses(p, p.modules[0]);
+    expect([uses.get(jack.comp.ref), uses.get('USB')]).toEqual(['cable', 'main']);
   });
 });

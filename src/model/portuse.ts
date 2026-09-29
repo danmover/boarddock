@@ -26,7 +26,9 @@ export function portUses(p: Project, m: Module): Map<string, UseWhy> {
   const box = m.board.kind === 'box';
   // the port a board is powered through when nothing says otherwise: its power input, else its main USB
   const powerIns = plugs.filter((c) => role(c) === 'power-in' || (!box && role(c) === 'power-in-dc'));
-  const main = !cabled.size && !powerIns.length ? plugs.find((c) => role(c) === 'device' || role(c) === 'hub-up') : undefined;
+  // (a lead on an Arduino's barrel jack doesn't stop its USB being the way in: it is still how you program it)
+  const jacks = new Set(plugs.filter((c) => !box && c.conn!.type === 'barrel' && role(c) === 'other').map((c) => c.ref));
+  const main = ![...cabled].some((r) => !jacks.has(r)) && !powerIns.length ? plugs.find((c) => role(c) === 'device' || role(c) === 'hub-up') : undefined;
   for (const c of plugs) {
     const use = c.conn!.use ?? 'auto';
     let why: UseWhy;

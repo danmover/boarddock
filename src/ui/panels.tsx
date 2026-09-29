@@ -832,6 +832,10 @@ function ConnEditor({ list }: { list: Comp[] }) {
   const t = type ? connById(type) : undefined;
   const mixed = (v: number | undefined) => (v === undefined ? NaN : v);
   const flag = (k: 'cradle' | 'cap' | 'guard' | 'tie') => cs.every((c) => c[k]);
+  // a port nothing is plugged into gets no cradle, cap, collar or tie: asking for one says you'll plug it in
+  const p = useApp((s) => s.project)!, uses = portUses(p, activeModule(p));
+  const bare = list.filter((c) => !inUse(uses.get(c.ref)));
+  const want = (x: Comp) => { if (!inUse(uses.get(x.ref))) x.conn!.use = 'yes'; };
   return (
     <>
       <Section title={one ? `${list[0].ref}: connector` : `${list.length} connectors`}>
@@ -871,11 +875,11 @@ function ConnEditor({ list }: { list: Comp[] }) {
         <p className="hint">Only ports with a plug in them get a cradle, cap, collar or zip-tie anchor: nothing is printed for a port you never use (its opening in the wall is still there). Automatic counts a port as used when a cable to it is in the app, or it is how the board gets power. Say Yes for what you'll plug in yourself: a screen, a keyboard, a supply off the rack.</p>
       </Section>
       <Section title="Protection">
-        <Check label="Cradle: carries the plug body outside the wall" value={flag('cradle')} onChange={(v) => set((x) => { if (x.conn!.entry === 'edge') x.conn!.cradle = v; })} />
-        <Check label="Snap-on cap: locks the plug into the cradle" value={flag('cap') && flag('cradle')} onChange={(v) => set((x) => { if (x.conn!.entry !== 'edge') return; x.conn!.cap = v; if (v) x.conn!.cradle = true; })} />
-        <Check label="Guard collar around the opening" value={flag('guard')} onChange={(v) => set((x) => { x.conn!.guard = v; })} />
-        <Check label="Zip-tie anchor for the cable" value={flag('tie')} onChange={(v) => set((x) => { x.conn!.tie = v; })} />
-        <p className="hint">Neighbouring cradles on one edge merge automatically and share one cap.</p>
+        <Check label="Cradle: carries the plug body outside the wall" value={flag('cradle')} onChange={(v) => set((x) => { if (x.conn!.entry === 'edge') { x.conn!.cradle = v; if (v) want(x); } })} />
+        <Check label="Snap-on cap: locks the plug into the cradle" value={flag('cap') && flag('cradle')} onChange={(v) => set((x) => { if (x.conn!.entry !== 'edge') return; x.conn!.cap = v; if (v) { x.conn!.cradle = true; want(x); } })} />
+        <Check label="Guard collar around the opening" value={flag('guard')} onChange={(v) => set((x) => { x.conn!.guard = v; if (v) want(x); })} />
+        <Check label="Zip-tie anchor for the cable" value={flag('tie')} onChange={(v) => set((x) => { x.conn!.tie = v; if (v) want(x); })} />
+        <p className="hint">Neighbouring cradles on one edge merge automatically and share one cap.{bare.length > 0 && ` ${bare.length === 1 ? 'This port is' : `${bare.length} of these ports are`} empty, so nothing is printed for ${bare.length === 1 ? 'it' : 'them'}: ticking one of these says you'll plug ${bare.length === 1 ? 'it' : 'them'} in.`}</p>
       </Section>
     </>
   );

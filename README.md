@@ -352,7 +352,7 @@ A lone rail gets short feet on each end block, so it stands on a wider footprint
 
 Each plug gets a role from its type, its name and its board:
 - a Raspberry Pi's USB-A ports are hosts, and its USB-C is its power input;
-- an Arduino's USB-B is a device, and its barrel jack is an optional 7–12 V input;
+- an Arduino's USB-B is a device, and its barrel jack is an optional 7–12 V input: a DC supply's lead can be cabled to it by hand (BoardDock can't check the voltage or polarity), which counts as powering the board and gives the jack its cradle and cap. Nothing is printed for a port with no plug in it, so ticking a cradle, cap, guard or tie anchor on an empty port in the Plugs step marks it as one you'll plug in;
 - a hub's ports feed devices;
 - a charger's ports give power.
 

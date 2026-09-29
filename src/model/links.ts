@@ -112,6 +112,9 @@ export function compatible(ra: PlugRole, rb: PlugRole): boolean {
 
 export interface PlugInfo { ref: PlugRef; module: Module; comp: Comp; role: PlugRole; label: string }
 
+/** A barrel jack on a board that also takes power over USB (an Arduino): a DC input it doesn't need. */
+export const optionalDc = (x: { role: PlugRole; comp: Comp; module: Module }) => x.role === 'other' && x.comp.conn?.type === 'barrel' && x.module.board.kind !== 'box';
+
 function modulePlugs(m: Module, out: PlugInfo[] = []): PlugInfo[] {
   for (const c of m.board.comps) {
     if (!c.conn || c.hidden) continue;
@@ -190,7 +193,9 @@ export function refusal(p: Project, a: PlugInfo, b: PlugInfo): string | null {
   if (has('mains-in') && has('mains-out') && hasOutlets(a.module) && hasOutlets(b.module)) return "A powerboard's lead goes to the wall, never into another powerboard: plug each one into the wall.";
   if (has('mains-out') && has('wire')) return "A mains outlet only takes a mains plug. BoardDock doesn't wire mains through screw terminals or relays: that belongs in a proper enclosure, wired by someone qualified to.";
   if ((has('mains-out') || has('mains-in')) && !compatible(a.role, b.role)) return has('mains-out') ? "A mains outlet only takes a mains plug: a charger's lead or a plug pack." : "A mains lead goes into a powerboard's outlet (or the wall), nothing else.";
-  if (!compatible(a.role, b.role)) return `${a.label} is ${ROLE_SAYS[a.role]}, and ${b.label} is ${ROLE_SAYS[b.role]}: they don't plug into each other.`;
+  // (an Arduino's barrel jack, on a board that also takes power over USB, is a DC input you may leave empty: a supply's lead goes in it)
+  const dcLead = (x: PlugInfo, y: PlugInfo) => x.role === 'dc-out' && optionalDc(y);
+  if (!compatible(a.role, b.role) && !dcLead(a, b) && !dcLead(b, a)) return `${a.label} is ${ROLE_SAYS[a.role]}, and ${b.label} is ${ROLE_SAYS[b.role]}: they don't plug into each other.`;
   // a barrel jack takes a supply's plug, or a pigtail lead to screw terminals: never header pins (a Pi's GPIO)
   const dcIn = a.role === 'power-in-dc' ? a : b.role === 'power-in-dc' ? b : null, w = a.role === 'wire' ? a : b.role === 'wire' ? b : null;
   if (dcIn && w && dcIn.comp.conn?.type === 'barrel' && w.comp.conn?.type !== 'terminal') return `${dcIn.label} is a barrel jack: it takes a supply's plug, or a pigtail lead to screw terminals, not header pins.`;
@@ -205,7 +210,7 @@ export function refusal(p: Project, a: PlugInfo, b: PlugInfo): string | null {
 export const canCable = (p: Project, a: PlugInfo, b: PlugInfo) => refusal(p, a, b) == null;
 /** Something to check yourself after connecting these two, or null. */
 export function connectNote(a: PlugInfo, b: PlugInfo): string | null {
-  if ((a.role === 'dc-out' && b.role === 'power-in-dc') || (b.role === 'dc-out' && a.role === 'power-in-dc')) return "BoardDock can't check voltages or polarity: make sure the supply's label matches what the DC input takes before you plug it in.";
+  if ((a.role === 'dc-out' && (b.role === 'power-in-dc' || optionalDc(b))) || (b.role === 'dc-out' && (a.role === 'power-in-dc' || optionalDc(a)))) return "BoardDock can't check voltages or polarity: make sure the supply's label matches what the DC input takes before you plug it in.";
   return null;
 }
 

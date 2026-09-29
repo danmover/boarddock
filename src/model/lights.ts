@@ -114,7 +114,10 @@ export function boxLight(b: Board): Pick<Light, 'colour' | 'pattern'> {
 export function poweredBoards(p: Project): Set<string> {
   const out = new Set<string>();
   const byId = new Map(p.modules.map((m) => [m.id, m]));
-  const role = (mod: string, ref: string) => { const m = byId.get(mod), c = m?.board.comps.find((x) => x.ref === ref.replace(/:2$/, '')); return m && c ? plugRole(m, c) : 'other'; };
+  const role = (mod: string, ref: string) => { const m = byId.get(mod), c = m?.board.comps.find((x) => x.ref === ref.replace(/:2$/, '')); const r = m && c ? plugRole(m, c) : 'other';
+    // a barrel jack on a board that also has USB, with a lead on it, is what powers it
+    return r === 'other' && c?.conn?.type === 'barrel' && m?.board.kind !== 'box' ? 'power-in-dc' : r;
+  };
   const takes = new Set(['power-in', 'power-in-dc', 'device', 'hub-up', 'mains-in']);
   for (const l of p.links ?? []) {
     if (takes.has(role(l.a.module, l.a.ref))) out.add(l.a.module);
