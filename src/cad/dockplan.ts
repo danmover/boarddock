@@ -316,13 +316,14 @@ export function tongueOk(m: Module, o: Pick<Orientation, 'edge' | 'lie'>): boole
 /**
  * A way to dock a board with its tongue under the Check step's limit, keeping the dock's turn: another edge standing
  * up, or lying flat; the one that keeps its plugs easiest to reach, none pointing into the table. Null when there is none.
+ * `limit`: the share of the material's yield the tongue root may reach (0.8 is Check's failing line; 0.4 its warning).
  */
-export function shorterLever(m: Module, railDir: 'h' | 'v', turn: Turn, slot = 0): { edge: EdgeName; lie?: 'flat' } | null {
+export function shorterLever(m: Module, railDir: 'h' | 'v', turn: Turn, slot = 0, limit = 0.8): { edge: EdgeName; lie?: 'flat' } | null {
   const y = (MATERIALS[m.holder.material] ?? MATERIALS.PETG).yield, sz = holderSize(m);
   let best: { edge: EdgeName; lie?: 'flat'; score: number } | null = null;
   for (const lie of [undefined, 'flat'] as const) for (const edge of EDGES) {
     const depth = edge === 'bottom' || edge === 'top' ? sz.y : sz.x;
-    if (tongueStress(depth, lie) >= 0.8 * y) continue;
+    if (tongueStress(depth, lie) >= limit * y) continue;
     const o = bestDock(m, railDir, slot, [turn], [edge], lie);
     if (o.access.some((a) => a.ok === 'blocked')) continue;
     if (!best || o.score > best.score) best = { edge, ...(lie ? { lie } : {}), score: o.score };

@@ -535,6 +535,7 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 .checkrow:last-child { border-bottom: 0; }
 .checkrow .grow { flex: 1; min-width: 0; }
 .checkrow .hint { margin-top: 2px; }
+.checkrow .verdictrow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 5px; }
 
 /* ------------------------------------------------------------------ responsive */
 @media (max-width: 1180px) {

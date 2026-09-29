@@ -2,7 +2,7 @@
 // exactly where they are, so nothing jumps.
 import type { EdgeName, GenResult, PanelReport, Project, RailMount, Slot, Turn } from '../model/types';
 import { round, uid } from '../geom/poly';
-import { appendDock, bestDock, seatBoard, dropEmptied, nearestFree, ownDocks, spreadOut, spreadRails, withRiders } from '../cad/dockplan';
+import { appendDock, bestDock, seatBoard, shorterLever, dropEmptied, nearestFree, ownDocks, spreadOut, spreadRails, withRiders } from '../cad/dockplan';
 import { baseOf, columnable, refreshStandoffs } from '../model/holes';
 import { amend, edit, select, store, toast, uniqueName } from '../state';
 import { mountLabels, snapshot } from '../model/built';
@@ -300,8 +300,33 @@ export const makeRoom = () => settleOverlaps(undefined, (n) => `${n > 1 ? `${n} 
 
 /** Dock a board the way that keeps its tongue under Check's limit (shorterLever's pick), making room for it. */
 export function dockShorter(mountId: string, slot: number, fix: { edge: EdgeName; lie?: 'flat' }) {
-  setSlot(mountId, slot, (s) => { s.edge = fix.edge; if (fix.lie) s.lie = 'flat'; else delete s.lie; });
+  dockShorterAll([{ mount: mountId, slot, fix }]);
+}
+
+/** Several boards docked a shorter way, in one undo step. */
+export function dockShorterAll(fixes: { mount: string; slot: number; fix: { edge: EdgeName; lie?: 'flat' } }[]) {
+  panelEdit((p) => {
+    for (const { mount, slot, fix } of fixes) {
+      const s = p.panel.mounts.find((x) => x.id === mount)?.slots[slot];
+      if (!s) continue;
+      s.edge = fix.edge;
+      if (fix.lie) s.lie = 'flat'; else delete s.lie;
+    }
+  });
   makeRoom();
+}
+
+/**
+ * A way to dock a board so its tongue root stays under `limit` of the material's yield (0.8: Check's failing line;
+ * 0.4: its warning), with where it sits now. Null when it is not in a dock or no other way of docking does better.
+ */
+export function leverFix(p: Project, pr: PanelReport, moduleId: string, limit = 0.8): { mount: string; slot: number; fix: { edge: EdgeName; lie?: 'flat' } } | null {
+  const q = pr.modules.find((x) => x.id === moduleId), mt = q && pr.mounts.find((x) => x.id === q.mount);
+  const rail = mt && pr.rails.find((r) => r.id === mt.rail), m = p.modules.find((x) => x.id === moduleId);
+  if (!q || !mt || mt.kind !== 'dock' || !rail || !m) return null;
+  const fix = shorterLever(m, rail.dir, mt.turn, q.slot, limit);
+  // (the way it sits now is no fix)
+  return fix && !(fix.edge === q.edge && (fix.lie ?? null) === (q.lie ?? null)) ? { mount: mt.id, slot: q.slot, fix } : null;
 }
 
 export function autoArrange() {
