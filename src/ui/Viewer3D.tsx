@@ -328,6 +328,7 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
       const moved = controls.update();
       if (!c.dirty && !moved) return;
       c.dirty = false;
+      c.fx?.declutter(camera);
       composer.render();
       c.placeLabels?.();
       // what the scene before this one used, freed only now it has been drawn without it

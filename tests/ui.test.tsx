@@ -141,3 +141,13 @@ describe('your printer', () => {
     expect(store.get().project!.printer).toMatchObject({ name: other.name, bed: other.bed });
   });
 });
+
+describe('labels where off-rack leads go', () => {
+  it('on a crowded view, the nearest keep their place and those that would lie on them are left out', async () => {
+    const { keepApart } = await import('../src/ui/liveFx');
+    // two far apart, a third on top of the second but further away, a fourth on top of the first and nearer
+    const ls = [{ x: 0, y: 0, hw: 0.1, hh: 0.03, d: 500 }, { x: 0.5, y: 0.5, hw: 0.1, hh: 0.03, d: 300 }, { x: 0.52, y: 0.51, hw: 0.1, hh: 0.03, d: 400 }, { x: 0.05, y: 0.01, hw: 0.1, hh: 0.03, d: 200 }];
+    expect(keepApart(ls)).toEqual([false, true, false, true]);
+    expect(keepApart([ls[0], ls[1]])).toEqual([true, true]);
+  });
+});
