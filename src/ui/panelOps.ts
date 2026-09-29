@@ -7,6 +7,7 @@ import { baseOf, columnable, refreshStandoffs } from '../model/holes';
 import { amend, edit, select, store, toast, uniqueName } from '../state';
 import { mountLabels, snapshot } from '../model/built';
 import { isProbe } from '../model/probes';
+import { isPlugPack } from '../model/powerdata';
 
 const rep = () => store.get().result?.report.panel ?? null;
 
@@ -377,6 +378,33 @@ export function duplicateModule(i: number) {
 }
 
 /** Put a board in a new dock at the end of a rail. */
+/**
+ * The boards that could go into slot `mountId` (a dock, its free slot): any board of its own, not a stack's rider, a
+ * plug pack or one already in that dock; the ones off the rails first. `where`: the dock it would leave.
+ */
+export function putBehindOptions(p: Project, pr: PanelReport | null | undefined, mountId: string): { id: string; name: string; where?: string }[] {
+  const mt = pr?.mounts.find((x) => x.id === mountId), labels = mountLabels(pr);
+  if (!mt || mt.kind !== 'dock') return [];
+  const onRail = new Map<string, string>();
+  for (const x of pr!.mounts) for (const s of x.slots) if (s.module) onRail.set(s.module, labels.get(x.id) ?? x.id);
+  return p.modules
+    .filter((m) => baseOf(p, m) === m && !isPlugPack(m.board) && !mt.slots.some((s) => s.module === m.id))
+    .map((m) => ({ id: m.id, name: m.board.name, where: onRail.has(m.id) ? `dock ${onRail.get(m.id)}` : undefined }))
+    .sort((a, b) => Number(!!a.where) - Number(!!b.where));
+}
+
+/** The docks board `id` could share: another board's dock with a free slot (not the dock it is in), by that board's name. */
+export function shareDockOptions(p: Project, pr: PanelReport | null | undefined, id: string): { id: string; name: string; mount: string; slot: number }[] {
+  const out: { id: string; name: string; mount: string; slot: number }[] = [];
+  for (const mt of pr?.mounts ?? []) {
+    if (mt.kind !== 'dock' || mt.slots.some((s) => s.module === id)) continue;
+    const slot = mt.slots.findIndex((s) => !s.module), other = mt.slots.find((s) => s.module)?.module;
+    const m = p.modules.find((x) => x.id === other);
+    if (slot >= 0 && m) out.push({ id: m.id, name: m.board.name, mount: mt.id, slot });
+  }
+  return out;
+}
+
 export function appendToRail(moduleId: string, railId: string) {
   panelEdit((p) => {
     for (const mt of p.panel.mounts) for (const sl of mt.slots) if (sl.module === moduleId) sl.module = null;

@@ -1,7 +1,7 @@
 // Rails step: the whole rack as a tree (rails > docks > front / back slots > boards, with stacked boards nested
 // under the board they sit on). Drag any board onto a slot, a rail, another board (to stack it) or the tray.
 // Automatic until the first change by hand; every change is undoable.
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Access, EdgeName, Module, PanelReport, Project, Turn } from '../model/types';
 import { baseOf, columnable, columnOf, isSmall, ridersOf, stackAlign, stackGap, stackHardware, stackMode } from '../model/holes';
 import { bbox } from '../geom/poly';
@@ -9,8 +9,9 @@ import { companionLabel, isProbe } from '../model/probes';
 import { isAccessory } from '../model/links';
 import { edit, isSel, select, setActive, store, toast, useApp } from '../state';
 import { Check, Chip, Num, Pick, Section, Seg } from './controls';
-import { accessCounts, MODULE_DRAG, PALETTE } from './PanelEditor';
-import { addDock, addRail, appendToRail, autoArrange, dockShorter, makeRoom, tidyUp, duplicateModule, newRailWith, placeMount, quickLayout, removeMounts, removeRails, seat, setKind, setLever, setRail, setSlot, setStackMode, stackOn, swapSlots, turnMounts, unseat } from './panelOps';
+import { accessCounts, PALETTE } from './PanelEditor';
+import { beginDrag, isDragging, registerZone } from './dragBoard';
+import { putBehindOptions, addDock, addRail, appendToRail, autoArrange, dockShorter, makeRoom, tidyUp, duplicateModule, newRailWith, placeMount, quickLayout, removeMounts, removeRails, seat, setKind, setLever, setRail, setSlot, setStackMode, stackOn, swapSlots, turnMounts, unseat } from './panelOps';
 import { shorterLever, turnLabel } from '../cad/dockplan';
 import { mountLabels } from '../model/built';
 import { Icon, I } from './icons';
@@ -47,17 +48,13 @@ function AccessList({ list }: { list: Access[] }) {
   );
 }
 
-/** Drop zone for dragged boards. */
+/** Drop zone for dragged boards (see dragBoard.ts): spread `props` on the element that takes the drop. */
 function useDrop(onDrop: (id: string) => void) {
   const [over, setOver] = useState(false);
-  return {
-    over,
-    props: {
-      onDragOver: (e: React.DragEvent) => { if (e.dataTransfer.types.includes(MODULE_DRAG)) { e.preventDefault(); e.stopPropagation(); setOver(true); } },
-      onDragLeave: () => setOver(false),
-      onDrop: (e: React.DragEvent) => { const id = e.dataTransfer.getData(MODULE_DRAG); setOver(false); if (id) { e.preventDefault(); e.stopPropagation(); onDrop(id); } },
-    },
-  };
+  const key = useId(), latest = useRef(onDrop);
+  latest.current = onDrop;
+  useEffect(() => registerZone(key, { over: (on) => setOver(on), drop: (id) => latest.current(id) }), [key]);
+  return { over, props: { 'data-drop': key } };
 }
 
 function BoardChip({ m, color, rider, children, acc }: { m: Module; color: string; rider?: boolean; children?: ReactNode; acc?: Access[] }) {
@@ -71,10 +68,12 @@ function BoardChip({ m, color, rider, children, acc }: { m: Module; color: strin
     if (!stackOn(id, m.id)) store.set({ toast: 'That would put a board on top of itself.' });
   });
   return (
-    <div className={`rchip ${rider ? 'rider' : ''} ${p.active === i ? 'sel' : ''} ${d.over ? 'over' : ''}`} draggable {...d.props}
-      onDragStart={(e) => { e.dataTransfer.setData(MODULE_DRAG, m.id); e.dataTransfer.effectAllowed = 'move'; e.stopPropagation(); }}
-      onClick={(e) => { e.stopPropagation(); setActive(i); select([{ kind: 'module', id: m.id }]); }}
+    <div className={`rchip ${rider ? 'rider' : ''} ${p.active === i ? 'sel' : ''} ${d.over ? 'over' : ''}`} {...d.props}
+      // (by pointer, so a finger can too: a touch drags by the grip, so the list still scrolls)
+      onPointerDown={(e) => { const t = e.target as Element; if (t.closest('button, select, input, a') || (e.pointerType === 'touch' && !t.closest('.grip'))) return; beginDrag(e, m.id, m.board.name); }}
+      onClick={(e) => { e.stopPropagation(); if (isDragging()) return; setActive(i); select([{ kind: 'module', id: m.id }]); }}
       title="Drag onto a slot, a rail, or another board to stack it on top">
+      <span className="grip" aria-hidden="true">⠿</span>
       <i style={{ background: color }} />
       <span className="grow" title={m.board.name}>{isProbe(m) ? companionLabel(p, m) : m.board.name}{rider && <small style={{ color: 'var(--subtle)', fontWeight: 400 }}> · {({ bolted: 'bolted on top', towers: 'printed layer', column: 'in a column' } as const)[stackMode(p, m)]}</small>}</span>
       {acc && <AccessChips list={acc} />}
@@ -341,6 +340,21 @@ function DockRow({ mt, railDir, rep, col, mod, accOf, stackRows }: {
   );
 }
 
+/** An empty dock slot: a way to fill it without dragging ("Put behind…"): every board that could go there, by name. */
+function PutHere({ mountId, slot }: { mountId: string; slot: number }) {
+  const p = useApp((s) => s.project)!;
+  const rep = useApp((s) => s.result?.report.panel);
+  const opts = putBehindOptions(p, rep, mountId);
+  if (!opts.length) return null;
+  return (
+    <select className="putbehind" value="" aria-label={slot ? 'Put a board behind the one in front' : 'Put a board in this slot'} onClick={(e) => e.stopPropagation()}
+      onChange={(e) => { if (e.target.value) seat(e.target.value, { mount: mountId, slot }); }}>
+      <option value="">{slot ? 'Put behind…' : 'Put here…'}</option>
+      {opts.map((o) => <option key={o.id} value={o.id}>{o.name}{o.where ? ` (from ${o.where})` : ''}</option>)}
+    </select>
+  );
+}
+
 /**
  * What Check fails for a board in the rack tree, right where it sits, with the fix when there is one: a tongue over
  * its limit gets "Dock by the X edge" (or "Lay it flat") when another way of docking keeps its lever short enough.
@@ -386,6 +400,7 @@ function Slot({ mountId, slot, label, m, edge, lie, col, acc, stackRows, dock, r
             {stackRows(m)}
           </>
         ) : <span className="none">{dock ? 'empty: drop a board here' : 'empty'}</span>}
+        {!m && dock && <PutHere mountId={mountId} slot={slot} />}
       </div>
     </div>
   );

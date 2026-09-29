@@ -4,7 +4,7 @@
 // automatically keeps the rest where it is.
 import type { EdgeName } from '../model/types';
 import { edit, useApp, type SelItem } from '../state';
-import { makeRoom, setSlot, swapSlots, turnMounts } from './panelOps';
+import { makeRoom, putBehindOptions, seat, setSlot, shareDockOptions, swapSlots, turnMounts } from './panelOps';
 import { Seg } from './controls';
 
 type Edge = EdgeName | 'auto';
@@ -59,6 +59,30 @@ export function MountQuick({ item }: { item: SelItem }) {
       <button className="btn small ghost" onClick={() => turnMounts([mt.id], -90)} title="Turn the dock (Shift+R in Rails)">⟲</button>
       <button className="btn small ghost" onClick={() => turnMounts([mt.id], 90)} title="Turn the dock (R in Rails)">⟳ Turn dock</button>
       {dock && mt.slots.some((s) => s.module) && <button className="btn small ghost" onClick={() => swapSlots([mt.id])} title="Front board to the back and back to the front (F in Rails)">Swap front / back</button>}
+      {m && dock && <ShareDock id={m.id} mount={mt.id} free={mt.slots.findIndex((s) => !s.module)} />}
     </div>
+  );
+}
+
+/** Pairing back to back without dragging: this board joins another's dock, or another board goes into this dock's free slot. */
+function ShareDock({ id, mount, free }: { id: string; mount: string; free: number }) {
+  const p = useApp((s) => s.project)!;
+  const rep = useApp((s) => s.result?.report.panel);
+  const share = shareDockOptions(p, rep, id), behind = free >= 0 ? putBehindOptions(p, rep, mount).filter((o) => o.id !== id) : [];
+  return (
+    <>
+      {share.length > 0 && (
+        <select value="" aria-label="Share a dock with another board" title="Move this board into the free slot of another board's dock, back to back with it" onChange={(e) => { const t = share.find((x) => x.mount === e.target.value); if (t) seat(id, { mount: t.mount, slot: t.slot }); }}>
+          <option value="">Share a dock with…</option>
+          {share.map((o) => <option key={o.mount} value={o.mount}>{o.name}</option>)}
+        </select>
+      )}
+      {behind.length > 0 && (
+        <select value="" aria-label="Put another board behind this one" title="Put another board in the free slot of this dock, back to back with this one" onChange={(e) => { if (e.target.value) seat(e.target.value, { mount, slot: free }); }}>
+          <option value="">Put behind…</option>
+          {behind.map((o) => <option key={o.id} value={o.id}>{o.name}{o.where ? ` (from ${o.where})` : ''}</option>)}
+        </select>
+      )}
+    </>
   );
 }

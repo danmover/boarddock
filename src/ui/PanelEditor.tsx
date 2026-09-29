@@ -7,10 +7,10 @@ import type { Access, PanelReport, Project, V2 } from '../model/types';
 import { shortName } from '../model/links';
 import { companionLabel, isProbe } from '../model/probes';
 import { isSel, select, store, useApp, type SelItem } from '../state';
+import { registerZone } from './dragBoard';
 import { addDock, addRail, autoArrange, tidyUp, moveRail, nudge, placeMount, removeMounts, removeRails, seat, swapSlots, turnMounts } from './panelOps';
 
 export const PALETTE = ['#4c8dff', '#46d58b', '#f5c542', '#c084fc', '#2dd4bf', '#fb7185', '#a3e635', '#38bdf8'];
-export const MODULE_DRAG = 'application/x-boarddock-module';
 
 const ARROW: Record<string, string> = { up: '↑', down: '↓', left: '←', right: '→', front: '◉', wall: '✕' };
 
@@ -214,25 +214,16 @@ export function PanelEditor() {
     return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); };
   }, []);
 
-  const onDragOver = (e: React.DragEvent) => {
-    if (!e.dataTransfer.types.includes(MODULE_DRAG)) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    setDropAt(toWorld(e));
-  };
-  const onDrop = (e: React.DragEvent) => {
-    const id = e.dataTransfer.getData(MODULE_DRAG);
-    setDropAt(null);
-    if (!id) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const w = toWorld(e);
+  // boards dragged out of the Rails list (by pointer, see dragBoard.ts) land on a dock, a rail or free space here
+  const dropOn = (id: string, x: number, y: number) => {
+    const w = toWorld({ clientX: x, clientY: y });
     const m = mountAt(w);
     if (m && m.kind === 'dock' && (!m.slots[1]?.module || !m.slots[0]?.module)) { seat(id, { mount: m.id, slot: m.slots[0]?.module ? 1 : 0 }); return; }
     const r = railAt(w, 60);
     if (r) { seat(id, { rail: r.id, at: r.at }); return; }
     seat(id);
   };
+  useEffect(() => registerZone('canvas', { over: (on, x, y) => setDropAt(on ? toWorld({ clientX: x, clientY: y }) : null), drop: dropOn }));
 
   const fs = (n: number) => n * px;
   // dock labels already drawn this render (panel frame boxes), so later ones slide along their rail instead of overlapping
@@ -256,7 +247,7 @@ export function PanelEditor() {
   const shownDrop = dropAt ? (mountAt(dropAt) ? { m: mountAt(dropAt)! } : railAt(dropAt, 60) ? { r: railAt(dropAt, 60)! } : null) : null;
 
   return (
-    <div className="editor" style={{ position: 'absolute', inset: 0 }} onContextMenu={(e) => e.preventDefault()} onDragOver={onDragOver} onDragLeave={() => setDropAt(null)} onDrop={onDrop}>
+    <div className="editor" style={{ position: 'absolute', inset: 0 }} onContextMenu={(e) => e.preventDefault()} data-drop="canvas">
       <svg ref={svg} viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`} onWheel={onWheel} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} style={{ cursor: space ? 'grab' : 'default' }}>
         <defs>
           <pattern id="pg10" width="10" height="10" patternUnits="userSpaceOnUse"><path d="M10 0H0V10" fill="none" stroke="var(--grid)" strokeWidth={fs(0.7)} /></pattern>
