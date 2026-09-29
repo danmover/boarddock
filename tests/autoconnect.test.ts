@@ -2,7 +2,7 @@
 // Ethernet to a switch; every suggestion says why; advice names what is missing.
 import { describe, it, expect } from 'vitest';
 import { assign } from '../src/model/assign';
-import { autoLinks, wiringAdvice } from '../src/model/links';
+import { autoLinks, ROUTER, wiringAdvice } from '../src/model/links';
 import { TEMPLATES } from '../src/model/templates';
 import { newModule, newProject } from '../src/model/library';
 
@@ -63,7 +63,9 @@ describe('auto-connect', () => {
     expect(wiringAdvice(p).some((a) => a.add === 'net_switch8')).toBe(true);
     p.modules.push(newModule(T('net_switch8')));
     const ls = autoLinks(p).filter((l) => l.kind === 'net');
-    expect(ls.length).toBe(3);
+    // each board's Ethernet to the switch, and the switch's uplink to your router
+    expect(ls.filter((l) => ![l.a.module, l.b.module].includes(ROUTER)).length).toBe(3);
+    expect(ls.filter((l) => [l.a.module, l.b.module].includes(ROUTER)).length).toBe(1);
   });
   it('advice: boards without power ask for a charger (a Pi 5 its own 27 W supply)', () => {
     const p = rack(['rpi5', 'rpi5', 'uno', 'uno', 'uno', 'uno', 'uno']);

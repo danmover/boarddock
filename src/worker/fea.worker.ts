@@ -11,8 +11,8 @@ self.onmessage = (e: MessageEvent) => {
       const res = clipFea(loops, dims, W, E, nu, h, (s) => (self as any).postMessage({ id, progress: s }));
       (self as any).postMessage({ id, ok: true, result: res });
     } else if (type === 'dock') {
-      const { latch, shoe, E, nu, h } = payload;
-      const res = dockFea(latch, shoe, E, nu, h, (s) => (self as any).postMessage({ id, progress: s }));
+      const { latch, shoe, grip, E, nu, h } = payload;
+      const res = dockFea(latch, shoe, E, nu, h, (s) => (self as any).postMessage({ id, progress: s }), grip);
       (self as any).postMessage({ id, ok: true, result: res });
     } else if (type === 'validate') {
       (self as any).postMessage({ id, ok: true, result: cantileverCheck(0.1) });

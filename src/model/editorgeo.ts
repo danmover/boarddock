@@ -61,3 +61,21 @@ export function scalePhoto(ph: Photo, a: V2, c: V2, real: number): Photo {
 
 /** Move the photo so the point `from` on it lies on `to` (a hole on the photo onto the hole on the drawing). */
 export const alignPhoto = (ph: Photo, from: V2, to: V2): Photo => ({ ...ph, x: ph.x + to[0] - from[0], y: ph.y + to[1] - from[1] });
+
+/**
+ * Where the Measure popup goes (its top left, in px inside the editor): beside the dimension's label, on the side of
+ * its line away from what it measures (`outward`: -1 up or left, 1 down or right) so it covers neither the line nor
+ * the holes and parts measured, else on the other side if that has no room. A horizontal line (axis 'x') takes it above or below, a vertical one to the
+ * left or right. `lab`: the label's centre on screen; `pop`: the popup's size; `room`: the editor's.
+ */
+export function dimPopupAt(lab: V2, axis: 'x' | 'y', outward: 1 | -1, pop: { w: number; h: number }, room: { w: number; h: number }, gap = 20, edge = 8): { left: number; top: number } {
+  const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+  const across = axis === 'x' ? 1 : 0, along = 1 - across; // the line runs along one screen axis; the popup sits across it
+  const size = axis === 'x' ? pop.h : pop.w, room1 = axis === 'x' ? room.h : room.w;
+  const before = lab[across] - gap - size, after = lab[across] + gap;
+  const sides = outward < 0 ? [before, after] : [after, before];
+  const start = sides.find((v) => v >= edge && v + size <= room1 - edge) ?? clamp(sides[0], edge, Math.max(edge, room1 - size - edge));
+  const len = axis === 'x' ? pop.w : pop.h, room2 = axis === 'x' ? room.w : room.h;
+  const mid = clamp(lab[along] - len / 2, edge, Math.max(edge, room2 - len - edge)); // centred on the label along the line
+  return axis === 'x' ? { left: mid, top: start } : { left: start, top: mid };
+}

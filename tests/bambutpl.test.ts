@@ -80,3 +80,25 @@ describe("a Bambu printer's own code in a slice", () => {
     expect(() => withOwnCode(kiri, { ...own, start: 'M191 S{chamber_temperature[0]}' }, ps, 'PETG')).toThrow(/chamber_temperature/);
   });
 });
+
+describe('temperatures a printer can do', () => {
+  it("never puts a bed past the printer's limit into its G-code, and says so", async () => {
+    const { filamentOn, printerByName } = await import('../src/model/printers');
+    const { bambuVars } = await import('../src/slice/bambutpl');
+    const { kiriProcess } = await import('../src/slice/profiles');
+    const mini = printerByName('Bambu Lab A1 mini')!, ps = { name: mini.name, bed: mini.bed, spacing: 6, maxZ: mini.maxZ };
+    const g = { x0: 10, y0: 10, x1: 100, y1: 100, z1: 20, layers: 100 };
+    // ABS asks for 100 °C (105 on the first layer); the A1 mini's bed stops at 80 °C
+    const abs = filamentOn(mini, 'ABS');
+    expect([abs.bed, abs.bedFirst]).toEqual([80, 80]);
+    expect(abs.capped[0]).toMatch(/ABS wants a 105 °C bed and the Bambu Lab A1 mini's heats to 80 °C at most/);
+    const v = bambuVars(ps, 'ABS', g);
+    expect([v.bed_temperature, v.bed_temperature_initial_layer, v.bed_temperature_initial_layer_single]).toEqual([[80], [80], 80]);
+    expect(renderTemplate('M140 S[bed_temperature_initial_layer_single]', v).text).toBe('M140 S80');
+    expect(kiriProcess(mini, 'ABS', true)).toMatchObject({ outputBedTemp: 80, firstLayerBedTemp: 80 });
+    // PETG is within it; a printer whose limits aren't known keeps the filament's own figures
+    expect(filamentOn(mini, 'PETG').capped).toEqual([]);
+    expect(filamentOn(printerByName('Bambu Lab P1S'), 'PC')).toMatchObject({ bed: 100, bedFirst: 100 });
+    expect(filamentOn(null, 'ABS')).toMatchObject({ bed: 100, bedFirst: 105, capped: [] });
+  });
+});

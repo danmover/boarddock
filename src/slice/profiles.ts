@@ -5,7 +5,8 @@
 // profiles.json, see vendor/kiri/build.mjs), otherwise from a plain template for the firmware that heats, homes and
 // primes. Neither has been run on a real printer by BoardDock, which the UI says.
 import type { Material, PrinterSettings, V2 } from '../model/types';
-import { FILAMENTS, type Printer } from '../model/printers';
+import { filamentOn, type Printer } from '../model/printers';
+import { BRIM_OUT, EDGE_CLEAR, SKIRT_OUT } from '../cad/export';
 
 export type Fit = 'exact' | 'close' | 'generic' | 'none';
 export interface MachinePlan {
@@ -33,7 +34,7 @@ const UNSUPPORTED: Record<string, string> = {
  * own code from the user's Bambu Studio or OrcaSlicer (where it came from), which beats every other source. */
 export function machinePlan(pr: Printer | null, name: string, own?: string): MachinePlan {
   const firmware = pr?.firmware ?? 'marlin';
-  if (own && firmware === 'bambu') return { fit: 'exact', firmware, label: `The ${name}'s own start code`, note: `From ${own}, filled in for each print (temperatures, plate, the area to level, the height). Bambu's own code, so it knows this printer; BoardDock hasn't run it on one.` };
+  if (own && firmware === 'bambu') return { fit: 'exact', firmware, label: `The ${name}'s own start code`, note: `From ${own}, filled in for each print (temperatures, plate, the area to level, the height). BoardDock checked its moves and temperatures, which can't show it is right for this printer; nor has BoardDock run it on one.` };
   if (UNSUPPORTED[name]) return { fit: 'none', firmware, label: 'Not available', note: UNSUPPORTED[name] };
   const hit = PROFILED[name];
   if (hit) return { fit: hit.fit, kiri: hit.kiri, firmware, label: `Kiri:Moto's ${hit.kiri.replace(/\./g, ' ').replace('i3 ', '')} profile`, note: hit.note };
@@ -88,9 +89,12 @@ export function genericEnd(bed: V2): string[] {
   ];
 }
 
+/** Room the brim (or, without one, the skirt) needs between the parts and the bed's edge (mm). */
+export const roundRoom = (brim: boolean) => (brim ? BRIM_OUT : SKIRT_OUT) + EDGE_CLEAR;
+
 /** Kiri:Moto process settings for BoardDock parts: printers.ts' settings in Kiri's names. */
 export function kiriProcess(pr: Printer | null, mat: Material, brim: boolean): Record<string, number | string | boolean> {
-  const f = FILAMENTS[mat];
+  const f = filamentOn(pr, mat);
   const fast = pr?.kind === 'corexy', bowden = pr?.extruder === 'bowden';
   return {
     processName: 'BoardDock',

@@ -1,8 +1,21 @@
 // "Mark as built": remember what was printed, cut and bought, so that after adding a board Export can list just the
 // new parts, the new cables and any rail that has to be longer. Parts are recognised by their geometry, so a holder
 // that did not change is not printed again.
-import type { Built, GenResult, PanelReport, PartOut, Project } from './types';
-import { stackMode } from './holes';
+import type { Built, GenResult, Module, PanelReport, PartOut, Project } from './types';
+import { baseOf, stackMode } from './holes';
+import { isProbe } from './probes';
+import { isPlugPack } from './powerdata';
+import { packGoes } from './links';
+
+/**
+ * The boxes that need a hook-and-loop strap: those in a holder with strap loops. A probe slides into a slot instead, a
+ * plug pack sits in an outlet and never gets a holder, and a box not on a rail (or riding one that isn't) has none.
+ * `panel`: the rack's report, for which boards are on the rails; loose holders each get their own.
+ */
+export function strapBoxes(p: Project, panel?: PanelReport | null): Module[] {
+  const seated = p.layout === 'panel' ? new Set((panel?.modules ?? []).map((s) => s.id)) : null;
+  return p.modules.filter((m) => m.board.kind === 'box' && !isProbe(m) && !isPlugPack(m.board) && (!seated || seated.has(baseOf(p, m).id)));
+}
 
 /** Docks and flat clips numbered the way you count them on the rack: rail 1, second dock = "1.2". */
 export function mountLabels(panel: PanelReport | null | undefined): Map<string, string> {
@@ -60,6 +73,7 @@ export function snapshot(p: Project, res: GenResult): Built {
     names: Object.fromEntries(p.modules.map((m) => [m.id, m.board.name])),
     seats: Object.fromEntries(seatLabels(res.report.panel)),
     cableInfo: (res.report.cables ?? []).map((c) => ({ sig: cableSig(c), no: c.no, a: c.a, b: c.b, buy: c.buy })),
+    mounts: Object.fromEntries((res.report.panel?.mounts ?? []).map((m) => [m.id, { rail: m.rail, at: Math.round(m.at * 10) / 10 }])),
   };
 }
 
@@ -72,6 +86,7 @@ export interface Delta {
   removed: string[]; // boards taken off since
   revised: string[]; // boards with a new version swapped in since
   moved: { name: string; from: string; to: string }[]; // boards that sit somewhere else now
+  slid: { dock: string; rail: string; from: number; to: number }[]; // built docks that sit somewhere else along their rail now
   spare: { name: string; qty: number }[]; // printed parts the rack no longer uses
   spareCables: { no?: number; a: string; b: string }[]; // cables it no longer uses
   plan: PlanStep[]; // the same, as the steps you would take at the rack, in order
@@ -121,6 +136,8 @@ function planOf(p: Project, res: GenResult, b: Built, d: Omit<Delta, 'plan' | 'a
     out.push({ kind: 'cut', text: r.was == null ? `Cut a new ${Math.round(r.length)} mm rail for ${railText(rep, r.id)}.` : `Cut a longer rail for ${railText(rep, r.id)}: ${Math.round(r.length)} mm (yours is ${Math.round(r.was)} mm). Slide the docks across onto it in the same order.` });
     if (r.was != null && p.panel.stands !== false) out.push({ kind: 'ends', text: `Move the end block at the far end of ${railText(rep, r.id)} out to the new end, ${Math.round(r.length - r.was)} mm further.` });
   }
+  // docks slid along their rail (to make room): before any new dock goes on, from the far end back so none is in the way
+  for (const x of d.slid) out.push({ kind: 'move', text: `Slide dock ${x.dock} along ${x.rail} to ${Math.round(x.to)} mm from its start (it is at ${Math.round(x.from)} mm): press its shoe's release lever, move it, and let it click back on.` });
   for (const m of d.moved) out.push({ kind: 'move', text: `Move ${m.name} from ${m.from} to ${m.to}.`, parts: take(partsOf(p.modules.find((x) => x.board.name === m.name)?.id ?? '')) });
   // new docks: where their shoes clip on, from the rail's start
   const newMounts = [...new Set(d.parts.filter((pt) => pt.tag?.kind === 'shoe' || pt.tag?.kind === 'socket').flatMap((pt) => [pt.tag, ...(pt.tags ?? [])].map((t) => t?.mount)).filter(Boolean) as string[])];
@@ -132,6 +149,8 @@ function planOf(p: Project, res: GenResult, b: Built, d: Omit<Delta, 'plan' | 'a
   }
   for (const m of fresh) {
     if (swapped.has(m.id)) continue;
+    // a plug pack has no holder: it goes in its outlet, its lead to its board
+    if (isPlugPack(m.board)) { out.push({ kind: 'cable', text: `Push ${packGoes(p, m)}.` }); continue; }
     const where = m.on ? (stackMode(p, m) === 'bolted' ? `bolt it onto ${nameOf(m.on)} on its standoffs` : `press it onto the corner towers of ${nameOf(m.on)}'s holder`) : `plug the holder into ${seats.get(m.id) ?? 'its dock'}`;
     out.push({ kind: 'seat', text: `Seat ${m.board.name} in its holder and ${where}.`, parts: take(partsOf(m.id)) });
   }
@@ -158,12 +177,14 @@ export function delta(p: Project, res: GenResult): Delta | null {
     const sig = partSig(pt), have = left[sig] ?? 0, need = pt.qty - have;
     left[sig] = Math.max(0, have - pt.qty);
     if (need <= 0) continue;
-    // the new ones are the placements that were not there when it was built (matched by position)
+    // the new ones are the placements that were not there when it was built (matched by position), each with its
+    // own tag (a dock's shoe says which dock it is: only the new docks' are new)
     const pool = spots[sig];
-    let fresh = placements(pt);
-    if (pool) fresh = fresh.filter((T) => { const i = pool.findIndex((q) => Math.hypot(q[0] - T[12], q[1] - T[13], q[2] - T[14]) < 1); if (i < 0) return true; pool.splice(i, 1); return false; });
-    fresh = (fresh.length >= need ? fresh : placements(pt).slice(-need)).slice(0, need);
-    parts.push({ ...pt, qty: need, toAssembly: fresh[0] ?? pt.toAssembly, instances: fresh.slice(1) });
+    const all = placements(pt).map((T, k) => ({ T, tag: k ? pt.tags?.[k - 1] ?? pt.tag : pt.tag }));
+    let fresh = all;
+    if (pool) fresh = fresh.filter(({ T }) => { const i = pool.findIndex((q) => Math.hypot(q[0] - T[12], q[1] - T[13], q[2] - T[14]) < 1); if (i < 0) return true; pool.splice(i, 1); return false; });
+    fresh = (fresh.length >= need ? fresh : all.slice(-need)).slice(0, need);
+    parts.push({ ...pt, qty: need, toAssembly: fresh[0]?.T ?? pt.toAssembly, instances: fresh.slice(1).map((x) => x.T), tag: fresh[0]?.tag ?? pt.tag, tags: pt.tags && fresh.slice(1).map((x) => x.tag!) });
   }
   const had = new Set(b.cables);
   const now = res.report.cables ?? [];
@@ -206,8 +227,12 @@ export function delta(p: Project, res: GenResult): Delta | null {
     else why.set(pt, `${m.board.name} changed`);
   }
   const revised = p.modules.filter((m) => b.boards.includes(m.id) && m.revision && m.revision.at > b.at).map((m) => m.board.name);
-  const d = { parts, why, cables, rails, boards, removed, revised, moved, spare, spareCables };
-  return { ...d, plan: planOf(p, res, b, d), any: parts.length + cables.length + rails.length + removed.length + moved.length > 0 };
+  // built docks that slid along their rail since (racks marked built before docks' places were kept: none)
+  const labels = mountLabels(res.report.panel), pr = res.report.panel;
+  const slid = (pr?.mounts ?? []).flatMap((m) => { const o = b.mounts?.[m.id]; return o && o.rail === m.rail && Math.abs(o.at - m.at) > 0.5 ? [{ dock: labels.get(m.id) ?? m.id, rail: railText(pr, m.rail), from: o.at, to: m.at }] : []; })
+    .sort((x, y) => y.to - x.to); // (the one furthest along first, so each has room to go)
+  const d = { parts, why, cables, rails, boards, removed, revised, moved, slid, spare, spareCables };
+  return { ...d, plan: planOf(p, res, b, d), any: parts.length + cables.length + rails.length + removed.length + moved.length + slid.length > 0 };
 }
 
 /**

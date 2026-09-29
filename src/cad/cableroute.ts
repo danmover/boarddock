@@ -4,6 +4,7 @@
 // straight into a lane it faces, sidestep a sleeper); every combination is checked against the bounding boxes of
 // the holders, boards, plugs, docks, rails and stands, and the shortest route that hits nothing wins.
 // Rack frame: u along the rails, v across them, z up. Pure functions: no geometry kernel, no DOM.
+import type { MeshData } from '../model/types';
 
 export type Box = number[]; // [u0, v0, z0, u1, v1, z1]
 export type SegKind = 'exit' | 'escape' | 'cross' | 'street';
@@ -14,6 +15,7 @@ export interface Obstacle {
   module?: string; // the board it belongs to
   plug?: string; // "module/ref" when it is a plug
   stand?: boolean; // table stand piece: streets run through their combs
+  src?: { mesh: MeshData; T: number[] }; // the part's own shape (and where it is), to confirm a clash with
 }
 
 export interface CableEnd {

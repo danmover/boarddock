@@ -3,7 +3,7 @@
 // Linear, small displacement: each case is solved for a unit load and scaled to the travel it must reach.
 import type { Loop } from '../model/types';
 import { assemble2D, elementStrain, meshPolygons, nearestNode, pcg, q6Element, type Mesh2D } from './fea2d';
-import { NOSE_TIP } from '../cad/dockdims';
+import { GRIP, NOSE_TIP, SHOE_GRIP } from '../cad/dockdims';
 
 export interface DockFeaCase { part: 'latch' | 'shoe'; name: string; force: number; target: string; peakStrain: number; p99Strain: number; notes: string[] }
 export interface DockField { name: string; x0: number; y0: number; h: number; nx: number; ny: number; elems: Int32Array; strain: Float32Array }
@@ -46,7 +46,8 @@ function stats(m: Mesh2D, u: Float64Array, R: Float64Array, k: number) {
 const field = (name: string, m: Mesh2D, h: number, eps: Float64Array): DockField => ({ name, x0: m.x0, y0: m.y0, h, nx: m.nx, ny: m.ny, elems: m.elems, strain: Float32Array.from(eps) });
 
 /** latchLoops: latch + nose + stop post, (y, z) socket-local. shoeLoops: shoe profile, (y, z) hub. */
-export function dockFea(latchLoops: Loop[], shoeLoops: Loop[], E: number, nu: number, h = 0.1, onProgress?: (s: string) => void): DockFeaResult {
+/** gripLoops: the shoe's rail grip with a strip of the floor it hangs from (shoeFeaProfiles in dock.ts). */
+export function dockFea(latchLoops: Loop[], shoeLoops: Loop[], E: number, nu: number, h = 0.1, onProgress?: (s: string) => void, gripLoops?: Loop[]): DockFeaResult {
   const cases: DockFeaCase[] = [];
   const fields: DockField[] = [];
   let elements = 0;
@@ -77,17 +78,20 @@ export function dockFea(latchLoops: Loop[], shoeLoops: Loop[], E: number, nu: nu
   onProgress?.('Meshing the rail shoe');
   const Sh = model(shoeLoops, hs, E, nu, 14, (x, y) => (x < 14.6 && y > 7.0) || (y > 21.0 && x < 17.95));
   elements += Sh.m.elems.length;
-  const lip = nearestNode(Sh.m, 16.3, 6.0), hookAt = nearestNode(Sh.m, 21.85, 32.3), post = nearestNode(Sh.m, 19.95, 21.3);
+  const lip = nearestNode(Sh.m, 16.3, 6.0), hookAt = nearestNode(Sh.m, 21.85, 29.5), post = nearestNode(Sh.m, 19.95, 21.3);
   onProgress?.('Solving: release lever pressed');
-  // the lever's hook pulls the post toward the socket over z 30.8..33.8 (lever taken as rigid, turning on its pin)
-  u = solve(Sh, (x, y) => x > 21.6 && x < 22.0 && y > 30.8 && y < 33.8, [-1, 0]);
+  // the lever's hook pushes the post toward the socket with its lower end: 8.3 mm under the pin at rest, 11 mm under
+  // it by the time the lip is clear, so over z 28..31 of the post (measured on the geometry: tests/dinclip-review.test.ts;
+  // the lever taken as rigid, turning on its pin)
+  u = solve(Sh, (x, y) => x > 21.6 && x < 22.0 && y > 28.0 && y < 31.0, [-1, 0]);
   k = 1.7 / u[2 * lip];
   s = stats(Sh.m, u, Sh.R, k);
   const stopAt = (2.0 / Math.abs(u[2 * post] * k)) * 1.7; // lip travel when the post meets the body shelf (2.0 mm gap, SHOE_LEVER.stopGap)
   const hookTravel = Math.abs(u[2 * hookAt] * k);
-  // lever: pivot (13.4, 39.2), hook contact 6.9 below it and 8.9 outboard, pad centre 13.6 outboard
-  const Fc = Math.abs(k), padF = (Fc * (6.9 + MU * 8.9)) / 13.6, padTravel = (hookTravel * 13.6) / 6.9;
-  cases.push({ part: 'shoe', name: 'Rail shoe: release lever pressed down (jaw off the flange)', force: padF, target: 'jaw lip moves 1.7 mm clear of the rail flange', peakStrain: s.peak, p99Strain: s.p99, notes: [`pad travel ${padTravel.toFixed(1)} mm`, `${Fc.toFixed(1)} N on the post from the hook, friction 0.3 at the hook`, `stop engages at ${stopAt.toFixed(2)} mm lip travel`, s.where] });
+  // lever: pivot (13.4, 39.2); the hook's contact 9.7 mm under it on average over the stroke, 11.0 under and 5.8
+  // outboard at its end; the pad's middle 13.6 outboard
+  const Fc = Math.abs(k), th = hookTravel / 9.7, padF = (Fc * (11.0 + MU * 5.8)) / (13.6 * Math.cos(th)), padTravel = 13.6 * Math.sin(th);
+  cases.push({ part: 'shoe', name: 'Rail shoe: release lever pressed down (jaw off the flange)', force: padF, target: 'jaw lip moves 1.7 mm clear of the rail flange (1.3 mm is enough while the rail grip holds the shoe on its fixed hook)', peakStrain: s.peak, p99Strain: s.p99, notes: [`pad down ${padTravel.toFixed(1)} mm (lever turned ${((th * 180) / Math.PI).toFixed(0)}°)`, `${Fc.toFixed(1)} N on the post from the hook, friction 0.3 at the hook`, `stop engages at ${stopAt.toFixed(2)} mm lip travel`, s.where] });
   fields.push(field('Rail shoe, lever pressed', Sh.m, hs, s.eps));
   onProgress?.('Solving: clipping onto the rail');
   const a = [15.8, 6.0], b = [17.7, 3.9];
@@ -115,5 +119,19 @@ export function dockFea(latchLoops: Loop[], shoeLoops: Loop[], E: number, nu: nu
   const u3 = solve({ ...Sh, fixed: lockFix }, lipTop, [0, -1]);
   s = stats(Sh.m, u3, Sh.R, 100);
   cases.push({ part: 'shoe', name: 'Rail shoe: 100 N pull away from the wall', force: 100, target: letGo > 1000 ? `holds without relying on friction (jaw opens ${Math.abs(dn).toFixed(3)} mm per 100 N)` : muCrit <= MU ? `holds while friction on the flange exceeds ${muCrit.toFixed(2)} (PETG on steel: about 0.3 to 0.5)` : `the jaw opens: needs friction above ${muCrit.toFixed(2)} to hold`, peakStrain: s.peak, p99Strain: s.p99, notes: [`hinge reaches the strain limit at about ${((allowFor(E) / s.peak) * 100).toFixed(0)} N`, letGo > 1000 ? 'the pull runs straight down the hinge leaf: it cannot pry the jaw open, friction or not' : `without friction the jaw would let go at about ${letGo.toFixed(0)} N`] });
+  // ---- rail grip: the fork in the channel, its pad pressed back by the rail's wall ----
+  // (a model of its own, the floor it hangs from held: it runs the shoe's whole 21 mm)
+  if (gripLoops) {
+    onProgress?.('Solving: rail grip');
+    const G = model(gripLoops, hs, E, nu, 21, (_x, y) => y > 7.6);
+    elements += G.m.elems.length;
+    const padAt = SHOE_GRIP.wall - SHOE_GRIP.gap - GRIP.pre;
+    const ug = solve(G, (x, y) => x < padAt + hs * 1.5 && Math.abs(y - GRIP.pad) < 0.35, [1, 0]);
+    const kg = 1 / ug[2 * nearestNode(G.m, padAt, GRIP.pad)]; // N per mm the pad is pushed in
+    const Fg = kg * GRIP.pre, knock = (GRIP.pre + GRIP.stop) / GRIP.pre;
+    s = stats(G.m, ug, G.R, Fg);
+    cases.push({ part: 'shoe', name: `Rail shoe: rail grip pressed ${GRIP.pre} mm by the rail wall`, force: Fg, target: `slides along the rail at about ${(2 * MU * Fg).toFixed(1)} N (friction 0.3 on the pad and on the fixed hook; ${(2 * 0.2 * Fg).toFixed(1)} N at 0.2): it no longer only locates`, peakStrain: s.peak, p99Strain: s.p99, notes: [`${kg.toFixed(0)} N per mm, so ${(kg * 0.2).toFixed(1)} to ${(kg * 0.5).toFixed(1)} N for a pad pressed 0.2 to 0.5 mm (print and rail tolerance)`, `knocked across the rail, a tooth meets the wall at ${(GRIP.pre + GRIP.stop).toFixed(2)} mm: ${(s.peak * knock * 100).toFixed(2)}% peak, ${(s.p99 * knock * 100).toFixed(2)}% for 99%`, s.where] });
+    fields.push(field('Rail shoe, rail grip', G.m, hs, s.eps));
+  }
   return { cases, fields, mesh: { h, elements } };
 }

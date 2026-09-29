@@ -98,7 +98,7 @@ export interface BoxSpec {
   ribbon?: number; // a debug probe (J-Link): length of the ribbon it comes with, mm
   corner?: number; // its corners seen from above: radius (or chamfer size), mm; unset: min(4, width / 6)
   chamfer?: boolean; // corners cut straight across instead of rounded
-  pack?: { lead: number }; // a plug pack: it plugs straight into an outlet (or the wall), off the rack; lead: its own output lead, mm
+  pack?: { lead: number; own?: string }; // a plug pack: it plugs straight into an outlet (or the wall), off the rack; lead: its own output lead, mm; own: the box it came with (module id), so it isn't bought
   rating?: number; // a powerboard: what it may carry in all, A at mains voltage (unset: a typical figure for its outlets)
 }
 
@@ -200,7 +200,9 @@ export interface PrinterSettings {
   gcodeEnd?: string;
   // a Bambu Lab printer's own start, end and layer-change code, in Bambu Studio's template language, read from the
   // user's own Bambu Studio or OrcaSlicer (BoardDock doesn't ship it): filled in for every print
-  bambu?: { start: string; end?: string; layer?: string; from: string };
+  // `ok`: the notes from src/slice/startcheck.ts the user read and accepted for this code (ids; blocking ones can't be)
+  // `for`: the printer it was loaded for
+  bambu?: { start: string; end?: string; layer?: string; from: string; for?: string; ok?: string[] };
   plate?: string; // the build plate, as Bambu Studio names it ("Textured PEI Plate", "Cool Plate"...)
 }
 
@@ -289,6 +291,7 @@ export interface Built {
   names?: Record<string, string>; // module id -> board name then (to say what was taken off)
   seats?: Record<string, string>; // module id -> where it sat ("dock 1.3 back")
   cableInfo?: { sig: string; no?: number; a: string; b: string; buy: number }[]; // the cables as bought
+  mounts?: Record<string, { rail: string; at: number }>; // dock id -> the rail it was clipped on and where (mm from its start)
 }
 
 export interface Project {
@@ -354,6 +357,7 @@ export interface PartOut {
   anim?: Anim;
   anims?: Anim[]; // one per further placement
   displayMesh?: MeshData; // what the 3D view shows instead of `mesh` (same frame), e.g. without a print-in-place lever
+  boxMesh?: MeshData; // what boxes round the part (for cables to keep clear of) are taken from, if not `mesh`: a rail shoe or DIN clip without the grip that hangs inside its rail
 }
 
 /** How a light behaves: on, a steady blink, a heartbeat, flickering activity, slow breathing, a relay chase, a rainbow. */

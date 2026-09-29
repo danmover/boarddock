@@ -5,9 +5,9 @@ import { zipSync, strToU8 } from 'fflate';
 import type { Material, MeshData, PrinterSettings } from '../model/types';
 import { printerByName } from '../model/printers';
 import { writeStl } from '../cad/export';
-import { kiriDevice, kiriProcess, machinePlan, type MachinePlan } from './profiles';
-import { renderTemplate, type TplValue } from './bambutpl';
-import { FILAMENTS } from '../model/printers';
+import { kiriDevice, kiriProcess, machinePlan, roundRoom, type MachinePlan } from './profiles';
+import { bambuVars, renderTemplate, type TplValue } from './bambutpl';
+import { usableCode } from './startcheck';
 
 const kiriBase = () => new URL('kiri/', document.baseURI).href;
 
@@ -26,7 +26,7 @@ export function kiriProfiles(): Promise<Record<string, any>> {
 }
 
 export interface SliceJob { meshes: MeshData[]; printer: PrinterSettings; material: Material; brim: boolean; density: number; base: string }
-export interface Sliced { gcode: string; seconds: number; filament: number; grams: number; layers: number; plan: MachinePlan; file: string; bytes: Uint8Array }
+export interface Sliced { gcode: string; seconds: number; filament: number; grams: number; layers: number; plan: MachinePlan; file: string; bytes: Uint8Array; round: 'brim' | 'skirt' | 'none' }
 
 let busy = false;
 export const slicing = () => busy;
@@ -37,9 +37,10 @@ export async function slicePlate(job: SliceJob, onProgress: (f: number, what: st
   busy = true;
   try {
     const pr = printerByName(job.printer.name);
-    const own = pr?.firmware === 'bambu' ? job.printer.bambu : undefined;
+    // the printer's own code only once it has passed the check (a project can hold code from before, or from another printer)
+    const { own, why } = usableCode(job.printer, job.material);
     const plan = machinePlan(pr, job.printer.name, own?.from);
-    if (plan.fit === 'none') throw new Error(plan.note ?? 'No start code for this printer');
+    if (plan.fit === 'none') throw new Error(why ? `The start code loaded for this printer isn't used, so there is none to slice with. ${why}` : plan.note ?? 'No start code for this printer');
     onProgress(0, 'Loading the slicer');
     const [kiri, profiles] = await Promise.all([import(/* @vite-ignore */ kiriBase() + 'kiri-engine.js'), kiriProfiles()]);
     const profile = own ? null : plan.kiri ? (profiles[plan.kiri] ?? null) : null;
@@ -58,10 +59,12 @@ export async function slicePlate(job: SliceJob, onProgress: (f: number, what: st
     // the printer's own code goes in after slicing, when the first layer and the height are known: markers for now
     // (Bambu's part fan is P1; Bambu output marks its objects)
     const device = own ? { ...kiriDevice(plan, null, { ...job.printer, gcodeStart: MARK_START, gcodeEnd: MARK_END }, job.material), gcodeLayer: [], gcodeFan: ['M106 P1 S{fan_speed}'], extras: { bbl: {} } } : kiriDevice(plan, profile, job.printer, job.material);
-    // the skirt (3 mm out) or brim (3 mm, touching) only where the bed has room for it round the plate
+    // the skirt or brim only where the bed has room for it round the plate (Kiri:Moto puts the plate in the middle of the
+    // bed, so the room is the same on both sides)
     const room = Math.min(job.printer.bed[0] - (x1 - x0), job.printer.bed[1] - (y1 - y0)) / 2;
     const proc = kiriProcess(pr, job.material, job.brim);
-    if (room < (job.brim ? 3.6 : 4)) Object.assign(proc, { outputBrimCount: 0, outputBrimOffset: 0 });
+    const round = room < roundRoom(job.brim) ? 'none' : job.brim ? 'brim' : 'skirt';
+    if (round === 'none') Object.assign(proc, { outputBrimCount: 0, outputBrimOffset: 0 });
     eng.setMode('FDM').setDevice(device).setProcess(proc);
     await eng.slice();
     await eng.prepare();
@@ -73,37 +76,13 @@ export async function slicePlate(job: SliceJob, onProgress: (f: number, what: st
     const name = `${job.base}.gcode${bambu ? '.3mf' : ''}`;
     const bytes = bambu ? bambu3mf(gcode, st, ...(await plateImages(job.meshes, [512, 128]))) : strToU8(gcode);
     onProgress(1, 'Done');
-    return { gcode, ...st, plan, file: name, bytes };
+    return { gcode, ...st, plan, file: name, bytes, round };
   } finally {
     busy = false;
   }
 }
 
 export const MARK_START = ';; BoardDock: start code', MARK_END = ';; BoardDock: end code';
-
-/**
- * What a Bambu Studio template needs for this print: the filament's temperatures and type, the plate, the first
- * layer's area (the printer levels just there), the height, a few fixed answers (one extruder, 0.4 mm nozzle, printed
- * layer by layer). Names used by Bambu's own start, end and layer code for its printers.
- */
-export function bambuVars(ps: PrinterSettings, mat: Material, g: { x0: number; y0: number; x1: number; y1: number; z1: number; layers: number }): Record<string, TplValue> {
-  const f = FILAMENTS[mat], flow = f.flow;
-  const plateTemp = { cool_plate_temp: [f.bed], eng_plate_temp: [f.bed], hot_plate_temp: [f.bed], textured_plate_temp: [f.bed], cool_plate_temp_initial_layer: [f.bedFirst], eng_plate_temp_initial_layer: [f.bedFirst], hot_plate_temp_initial_layer: [f.bedFirst], textured_plate_temp_initial_layer: [f.bedFirst] };
-  return {
-    ...plateTemp,
-    nozzle_temperature_initial_layer: [f.nozzleFirst], nozzle_temperature: [f.nozzle], nozzle_temperature_range_low: [f.range[0]], nozzle_temperature_range_high: [f.range[1]],
-    bed_temperature: [f.bed], bed_temperature_initial_layer: [f.bedFirst], bed_temperature_initial_layer_single: f.bedFirst,
-    filament_type: [mat], filament_max_volumetric_speed: [flow], flush_temperatures: [f.nozzle], flush_volumetric_speeds: [flow],
-    initial_extruder: 0, initial_no_support_extruder: 0, nozzle_diameter: [0.4], filament_diameter: [1.75],
-    curr_bed_type: ps.plate ?? 'Textured PEI Plate',
-    outer_wall_volumetric_speed: Math.min(flow, 12),
-    first_layer_print_min: [Math.round(g.x0 * 10) / 10, Math.round(g.y0 * 10) / 10], first_layer_print_max: [Math.round(g.x1 * 10) / 10, Math.round(g.y1 * 10) / 10],
-    first_layer_print_size: [Math.round((g.x1 - g.x0) * 10) / 10, Math.round((g.y1 - g.y0) * 10) / 10],
-    first_layer_center_no_wipe_tower: [Math.round(((g.x0 + g.x1) / 2) * 10) / 10, Math.round(((g.y0 + g.y1) / 2) * 10) / 10],
-    max_layer_z: Math.round(g.z1 * 100) / 100, printable_height: ps.maxZ ?? 180, total_layer_count: g.layers, layer_num: 0, layer_z: 0,
-    spiral_mode: false, print_sequence: 'by layer', timelapse_type: 0, has_wipe_tower: false,
-  };
-}
 
 /** Kiri:Moto's G-code with the printer's own start, end and layer-change code filled in and put where the markers
  * are, and the progress (M73) at every layer, as Bambu's printers show it. Refuses code it can't fill in. */

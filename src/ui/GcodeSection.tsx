@@ -1,12 +1,13 @@
 // Export › G-code: slice a plate right here with Kiri:Moto, see its layers, download the G-code; or open the plate in
 // the user's own slicer (desktop app).
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { MeshData, V2 } from '../model/types';
+import type { Material, MeshData, V2 } from '../model/types';
 import { MATERIALS } from '../model/library';
-import { printerByName } from '../model/printers';
+import { filamentOn, printerByName } from '../model/printers';
 import { defaultCode, machinePlan } from '../slice/profiles';
-import { bambuVars, gcodeLayers, kiriProfiles, slicePlate, type Sliced } from '../slice/kiri';
-import { fromProfileJson, renderTemplate } from '../slice/bambutpl';
+import { gcodeLayers, kiriProfiles, slicePlate, type Sliced } from '../slice/kiri';
+import { fromProfileJson } from '../slice/bambutpl';
+import { checkOwnCode, ownUsable, usableCode, type Finding } from '../slice/startcheck';
 import { activeModule, edit, toast, useApp } from '../state';
 import { Pick, Section, download } from './controls';
 import { Icon, I } from './icons';
@@ -18,7 +19,9 @@ export function GcodeSection({ plates, plateMeshes, plate3mf, base, brim, plateK
   const p = useApp((s) => s.project)!;
   const mat = activeModule(p).holder.material;
   const pr = printerByName(p.printer.name);
-  const plan = machinePlan(pr, p.printer.name, p.printer.bambu?.from);
+  // a printer's own code is only used once it has passed the check (see BambuCode)
+  const ownUse = useMemo(() => usableCode(p.printer, mat).own, [p.printer, mat]);
+  const plan = machinePlan(pr, p.printer.name, ownUse?.from);
   const [prog, setProg] = useState<{ i: number; f: number; what: string } | null>(null);
   const [done, setDone] = useState<Record<number, Sliced>>({});
   const [fail, setFail] = useState<Record<number, string>>({});
@@ -61,11 +64,12 @@ export function GcodeSection({ plates, plateMeshes, plate3mf, base, brim, plateK
       <p className="hint" style={{ marginTop: 0 }}>
         Slice here with <a href="https://grid.space/kiri/" target="_blank" rel="noreferrer">Kiri:Moto</a>, an open-source slicer that runs inside BoardDock. It uses the settings above for {mat}. {plan.firmware === 'bambu' ? 'Bambu Lab printers get a .gcode.3mf to send or copy to the SD card.' : 'You get a .gcode file for the SD card, USB stick or printer web page.'}
       </p>
+      {filamentOn(pr, mat).capped.map((t) => <div key={t} className="fitnote close" role="note"><b>Held back to what the {p.printer.name} can do</b><span>{t}</span></div>)}
       <div className={`fitnote ${plan.fit}`}>
         <b>{plan.fit === 'none' ? (pr?.firmware === 'bambu' ? `One step first: the ${p.printer.name}'s own start code` : `No in-app G-code for the ${p.printer.name}`) : `Start code: ${plan.label}`}</b>
         {plan.note && <span>{plan.note}</span>}
       </div>
-      {pr?.firmware === 'bambu' && <BambuCode preset={pr.orca} />}
+      {pr?.firmware === 'bambu' && <BambuCode preset={pr.orca} mat={mat} />}
       {plan.fit !== 'none' && (
         <>
           <div className="slicelist">
@@ -73,7 +77,7 @@ export function GcodeSection({ plates, plateMeshes, plate3mf, base, brim, plateK
               const r = done[i], on = prog?.i === i;
               return (
                 <div key={i} className={`slicerow${look === i && r ? ' on' : ''}`}>
-                  <span className="nm">Plate {i + 1}{r && <small title="Kiri:Moto's estimate for its speeds">{fmtTime(r.seconds)} · {r.grams.toFixed(0)} g · {r.layers} layers</small>}</span>
+                  <span className="nm">Plate {i + 1}{r && <small title="Kiri:Moto's estimate for its speeds">{fmtTime(r.seconds)} · {r.grams.toFixed(0)} g · {r.layers} layers</small>}{r?.round === 'none' && <small className="bad" title="The parts leave too little room to the bed's edge for it, so this plate is sliced without one">no {brim ? 'brim' : 'skirt'}</small>}</span>
                   {!ok(i) ? <span className="res"><small className="bad">bigger than the bed</small></span> : on ? (
                     <span className="prog"><span className="bar"><i style={{ width: `${Math.round(prog!.f * 100)}%` }} /></span><small>{prog!.what}…</small></span>
                   ) : r ? (
@@ -156,19 +160,32 @@ const PLATES = ['Textured PEI Plate', 'Cool Plate', 'Engineering Plate', 'High T
  * A Bambu Lab printer's own start, end and layer-change code: read from the user's Bambu Studio or OrcaSlicer (the
  * desktop app finds it), from its profile files, or pasted in. BoardDock doesn't ship it (it is Bambu's, under their
  * licence); it keeps the copy in this project and fills it in for every print. And which build plate is on.
+ * Whatever comes in is checked first (startcheck.ts): code that can't be this printer's start code isn't kept, and code
+ * that only looks odd is kept once the user has read why and said to use it.
  */
-function BambuCode({ preset }: { preset: string }) {
+function BambuCode({ preset, mat }: { preset: string; mat: Material }) {
   const ps = useApp((s) => s.project!.printer);
   const desk = (window as any).boarddockDesktop as Desk | undefined;
+  type Own = NonNullable<typeof ps.bambu>;
   const [paste, setPaste] = useState<{ start: string; end: string; layer: string } | null>(null);
+  // code just given, not yet kept: what is wrong with it
+  const [held, setHeld] = useState<{ b: Own; found: Finding[] } | null>(null);
   const file = useRef<HTMLInputElement>(null);
   const own = ps.bambu;
-  const put = (b: NonNullable<typeof ps.bambu>) => {
-    // check it fills in before keeping it: every name it uses has to be one BoardDock knows
-    const v = bambuVars(ps, 'PETG', { x0: 20, y0: 20, x1: 120, y1: 120, z1: 30, layers: 150 });
-    const unknown = [...new Set([b.start, b.end, b.layer].flatMap((t) => { try { return t ? renderTemplate(t, v).unknown : []; } catch (e) { toast(`That code has a mistake in it: ${(e as Error).message}`); return ['?']; } }))];
+  const found = useMemo(() => (own ? checkOwnCode(own, ps, mat) : []), [own, ps, mat]);
+  const keep = (b: Own) => {
     edit((q) => { q.printer.bambu = b; });
-    toast(unknown.length ? `Loaded, but it uses ${unknown.join(', ')}, which BoardDock can't fill in yet: slicing will stop and say so.` : `The ${ps.name}'s own start code is in (from ${b.from}). Slice a plate: it is filled in for each print.`);
+    setHeld(null);
+    toast(`The ${ps.name}'s own start code is in (from ${b.from}). Slice a plate: it is filled in for each print.`);
+  };
+  /** Keep it if it passes; else say what is wrong (and false, so the paste boxes stay open to fix it). */
+  const put = (b: Own, extra: string[] = []) => {
+    const code = { ...b, for: ps.name };
+    const f = checkOwnCode(code, ps, mat, extra);
+    if (!f.length) { keep(code); return true; }
+    setHeld({ b: code, found: f });
+    toast(f.some((x) => x.stop) ? "That code can't be used as it is: the reasons are under the buttons." : 'That code needs a look before it is used: see under the buttons.');
+    return false;
   };
   const readDesk = async () => {
     const r = await desk!.bambuProfile!(preset);
@@ -177,14 +194,17 @@ function BambuCode({ preset }: { preset: string }) {
   };
   const readFiles = async (fl: FileList) => {
     let b: { start?: string; end?: string; layer?: string } = {};
-    const names: string[] = [];
+    const names: string[] = [], called: string[] = [];
     for (const f of [...fl]) {
-      try { const x = fromProfileJson(await f.text()); b = { start: x.start ?? b.start, end: x.end ?? b.end, layer: x.layer ?? b.layer }; names.push(f.name); } catch { toast(`${f.name} is not a Bambu Studio or OrcaSlicer profile (.json).`); }
+      try { const x = fromProfileJson(await f.text()); b = { start: x.start ?? b.start, end: x.end ?? b.end, layer: x.layer ?? b.layer }; names.push(f.name); if (x.name) called.push(x.name); } catch { toast(`${f.name} is not a Bambu Studio or OrcaSlicer profile (.json).`); }
     }
     if (!b.start) { toast('No machine start G-code in those files: pick the one ending "template machine_start_gcode.json" (or the printer\'s own .json), and the end and layer ones with it.'); return; }
-    put({ start: b.start, end: b.end, layer: b.layer, from: names.join(', ') });
+    put({ start: b.start, end: b.end, layer: b.layer, from: names.join(', ') }, called);
   };
   const lines = (t?: string) => (t ? t.split('\n').length : 0);
+  const used = !!own && ownUsable(own, found);
+  // what to show about code that isn't being used: the code just given, else the code the project holds
+  const shown = held ?? (own && !used ? { b: own, found } : null);
   return (
     <div className="bambucode">
       <div className="row" style={{ alignItems: 'end' }}>
@@ -192,12 +212,13 @@ function BambuCode({ preset }: { preset: string }) {
       </div>
       {own ? (
         <p className="hint" style={{ margin: '6px 0' }}>
-          <b>Its own start code is in</b>, from {own.from}: start {lines(own.start)} lines{own.end ? `, end ${lines(own.end)}` : ''}{own.layer ? `, layer change ${lines(own.layer)}` : ''}. It is saved in this project.{' '}
-          <button className="btn small ghost" onClick={() => edit((q) => { delete q.printer.bambu; })}>Forget it</button>
+          <b>{used ? 'Its own start code is in' : 'Start code kept, not used'}</b>, from {own.from}: start {lines(own.start)} lines{own.end ? `, end ${lines(own.end)}` : ''}{own.layer ? `, layer change ${lines(own.layer)}` : ''}. It is saved in this project.{' '}
+          <button className="btn small ghost" onClick={() => { edit((q) => { delete q.printer.bambu; }); setHeld(null); }}>Forget it</button>
         </p>
       ) : (
-        <p className="hint" style={{ margin: '6px 0' }}>Bambu's printers need their own start code (it heats, levels the area you print on, wipes and primes the nozzle, and knows where this printer's purge and wipe spots are). It comes with Bambu Studio and OrcaSlicer, free: {desk?.bambuProfile ? 'read it from yours,' : ''} open its profile files, or paste it in. BoardDock keeps a copy in this project and fills it in for each print.</p>
+        <p className="hint" style={{ margin: '6px 0' }}>Bambu's printers need their own start code (it heats, levels the area you print on, wipes and primes the nozzle, and knows where this printer's purge and wipe spots are). It comes with Bambu Studio and OrcaSlicer, free: {desk?.bambuProfile ? 'read it from yours,' : ''} open its profile files, or paste it in. BoardDock checks that it looks like start code for the {ps.name} before it uses it, and keeps a copy in this project to fill in for each print.</p>
       )}
+      {shown && <CodeNotes found={shown.found} ok={held ? undefined : own?.ok} onUse={(ids) => keep({ ...shown.b, ok: ids })} onDrop={held ? () => setHeld(null) : undefined} />}
       <div className="btns">
         {desk?.bambuProfile && <button className="btn small soft" onClick={readDesk}>Read it from Bambu Studio / OrcaSlicer</button>}
         <button className="btn small ghost" onClick={() => file.current?.click()}>Open its profile files…</button>
@@ -218,9 +239,26 @@ function BambuCode({ preset }: { preset: string }) {
           <label className="field"><span>Machine start G-code</span><textarea className="mono" rows={7} spellCheck={false} value={paste.start} onChange={(e) => setPaste({ ...paste, start: e.target.value })} /></label>
           <label className="field"><span>Machine end G-code</span><textarea className="mono" rows={4} spellCheck={false} value={paste.end} onChange={(e) => setPaste({ ...paste, end: e.target.value })} /></label>
           <label className="field"><span>Layer change G-code</span><textarea className="mono" rows={3} spellCheck={false} value={paste.layer} onChange={(e) => setPaste({ ...paste, layer: e.target.value })} /></label>
-          <button className="btn small primary" disabled={!paste.start.trim()} onClick={() => { put({ start: paste.start, end: paste.end || undefined, layer: paste.layer || undefined, from: 'code you pasted' }); setPaste(null); }}>Use it</button>
+          <button className="btn small primary" disabled={!paste.start.trim()} onClick={() => { if (put({ start: paste.start, end: paste.end || undefined, layer: paste.layer || undefined, from: 'code you pasted' })) setPaste(null); }}>Use it</button>
         </div>
       )}
+    </div>
+  );
+}
+
+/** What the check found in a printer's own code, plainly, and what can be done about it. Findings that stop it can't be accepted. */
+function CodeNotes({ found, ok, onUse, onDrop }: { found: Finding[]; ok?: string[]; onUse: (ids: string[]) => void; onDrop?: () => void }) {
+  const stops = found.filter((f) => f.stop), looks = found.filter((f) => !f.stop && !ok?.includes(f.id));
+  if (!stops.length && !looks.length) return null;
+  return (
+    <div className={`fitnote ${stops.length ? 'none' : 'close'}`} role="alert">
+      <b>{stops.length ? "This code can't be used" : 'Have a look before this code is used'}</b>
+      <ul style={{ margin: '2px 0', paddingLeft: 18 }}>{[...stops, ...looks].map((f) => <li key={f.id}>{f.text}</li>)}</ul>
+      <span>{stops.length ? "It isn't used for any print. Fix it in your slicer and load it again, or slice this plate in Bambu Studio or OrcaSlicer." : "If it is right, use it anyway: what you accepted is kept with it in this project. If not, load the printer's own code again."}</span>
+      <div className="btns">
+        {!stops.length && <button className="btn small primary" onClick={() => onUse([...(ok ?? []), ...looks.map((f) => f.id)])}>Use it anyway</button>}
+        {onDrop && <button className="btn small ghost" onClick={onDrop}>Leave it out</button>}
+      </div>
     </div>
   );
 }

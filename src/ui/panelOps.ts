@@ -2,7 +2,7 @@
 // exactly where they are, so nothing jumps.
 import type { EdgeName, GenResult, PanelReport, Project, RailMount, Slot, Turn } from '../model/types';
 import { round, uid } from '../geom/poly';
-import { appendDock, bestDock, seatBoard, dropEmptied, nearestFree, spreadOut, withRiders } from '../cad/dockplan';
+import { appendDock, bestDock, seatBoard, dropEmptied, nearestFree, ownDocks, spreadOut, spreadRails, withRiders } from '../cad/dockplan';
 import { baseOf, refreshStandoffs } from '../model/holes';
 import { amend, edit, select, store, toast, uniqueName } from '../state';
 import { mountLabels, snapshot } from '../model/built';
@@ -213,8 +213,9 @@ export function seat(moduleId: string, target?: { mount: string; slot: number } 
 
 /**
  * Once the rack is built again after a change by hand: where docks on a rail now overlap (a bigger board in a back
- * slot reaches further), slide them apart along that rail, as part of the same undo step. `rails`: which rails to
- * look at (all of them when left out); `say`: the toast, given how many docks moved.
+ * slot reaches further), slide them apart along that rail; where a dock reaches over the next rail's docks (a board
+ * laid flat reaches across its rail), slide that rail and the ones beyond it across. All in the same undo step.
+ * `rails`: which rails to look at (all of them when left out); `say`: the toast, given how many docks moved.
  */
 export function settleOverlaps(rails?: (pr: PanelReport) => (string | undefined)[], say: (n: number) => string = (n) => `${n > 1 ? `${n} docks` : 'A dock'} slid along the rail to make room, as the new board made its dock reach further. ⌘Z undoes it.`) {
   afterBuild((r) => {
@@ -222,10 +223,22 @@ export function settleOverlaps(rails?: (pr: PanelReport) => (string | undefined)
     if (!pr || store.get().project?.panel.auto) return;
     const on = rails ? rails(pr).filter((x): x is string => !!x) : pr.rails.map((x) => x.id);
     const mountOf = (id: string) => pr.mounts.find((x) => x.id === id) ?? pr.mounts.find((x) => x.id === pr.modules.find((q) => q.id === id)?.mount);
-    if (!pr.collisions.some((pair) => pair.every((id) => { const rl = mountOf(id)?.rail; return !!rl && on.includes(rl) && rl === mountOf(pair[0])?.rail; }))) return;
-    let moved: string[] = [];
-    amend((q) => { if (!q.panel.auto) moved = spreadOut(q, pr, 2, on); });
-    if (moved.length) toast(say(moved.length));
+    const railsOf = (pair: string[]) => pair.map((id) => mountOf(id)?.rail);
+    const along = pr.collisions.some((pair) => { const [a, b] = railsOf(pair); return !!a && a === b && on.includes(a); });
+    const across = pr.collisions.some((pair) => { const [a, b] = railsOf(pair); return !!a && !!b && a !== b && (on.includes(a) || on.includes(b)); });
+    if (!along && !across) return;
+    let moved: string[] = [], slid: string[] = [], own: string[] = [];
+    // (on a built rack, a board new since that pushes a built dock along goes into a dock of its own instead)
+    amend((q) => { if (q.panel.auto) return; if (along) own = ownDocks(q, pr); if (own.length) return; if (along) moved = spreadOut(q, pr, 2, on); if (across) slid = spreadRails(q, pr, 2); });
+    if (own.length) {
+      const names = own.map((id) => store.get().project?.modules.find((m) => m.id === id)?.board.name ?? 'The board');
+      toast(`${names.join(' and ')} ${own.length > 1 ? 'went into docks of their own' : 'went into a dock of its own'}: in the free slot of a built dock ${own.length > 1 ? 'they' : 'it'} would push the docks you built along the rail. ⌘Z undoes it.`);
+      return;
+    }
+    const railNames = slid.map((id) => pr.rails.findIndex((x) => x.id === id) + 1).sort((a, b) => a - b);
+    const rails2 = railNames.length ? `${railNames.length > 1 ? `Rails ${railNames.slice(0, -1).join(', ')} and ${railNames[railNames.length - 1]}` : `Rail ${railNames[0]}`} slid across to make room, as a board now reaches over ${railNames.length > 1 ? 'them' : 'it'}. ⌘Z undoes it.` : '';
+    if (moved.length) toast(rails2 ? `${say(moved.length).replace(/ ⌘Z undoes it\.$/, '')} ${rails2}` : say(moved.length));
+    else if (rails2) toast(rails2);
   });
 }
 
@@ -389,13 +402,14 @@ export function quickLayout(kind: 'row' | 'rows' | 'cols') {
   select([]);
 }
 
-/** How a stacked board is held, and its standoff length. */
-export function setStackMode(moduleId: string, mode: 'bolted' | 'towers', gap?: number) {
+/** How a stacked board is held, and its standoff length (null: BoardDock picks it again). */
+export function setStackMode(moduleId: string, mode: 'bolted' | 'towers', gap?: number | null) {
   edit((p) => {
     const m = p.modules.find((x) => x.id === moduleId);
     if (!m) return;
     m.onMode = mode;
-    if (gap != null) m.onGap = gap;
+    if (gap === null) delete m.onGap;
+    else if (gap != null) m.onGap = gap;
     const below = p.modules.find((x) => x.id === m.on);
     if (below) refreshStandoffs(p, below);
   });
@@ -427,6 +441,7 @@ export function markBuilt() {
 }
 
 export function unmarkBuilt() {
+  if (!confirm("Forget that this rack is built? Export will list everything to print, cut and buy again, and new boards no longer keep to the free spots. ⌘Z undoes it.")) return;
   edit((p) => { delete p.built; });
 }
 

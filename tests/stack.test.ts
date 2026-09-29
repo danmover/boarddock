@@ -3,7 +3,7 @@ import { initKernel } from '../src/cad/kernel';
 import { generate } from '../src/cad/assembly';
 import { TEMPLATES } from '../src/model/templates';
 import { newModule, newProject } from '../src/model/library';
-import { detectHoleRoles, stackAlign, stackLayers, stackMode } from '../src/model/holes';
+import { detectHoleRoles, STANDOFF_LENGTHS, stackAlign, stackGap, stackHardware, stackLayers, stackMode, stackNeed } from '../src/model/holes';
 import type { Board, Comp } from '../src/model/types';
 import { printability } from '../src/cad/export';
 
@@ -70,6 +70,38 @@ describe('stacks on the rails', () => {
     for (const h of holders) expect(printability(h.mesh).slope).toBeLessThan(8);
     expect(r.report.warnings.some((w) => /loose piece/.test(w))).toBe(false);
   }, 300000);
+});
+
+describe('standoffs for a board bolted on top', () => {
+  it('are long enough to clear the tallest part under the board, never shorter than a HAT\'s 11 mm', async () => {
+    // a HAT covers the Pi's GPIO end only: its 8.5 mm header and the leads under the HAT fit in 11 mm
+    const p = newProject(T('rpi4'));
+    const h = newModule(hat()); h.on = p.modules[0].id; h.onMode = 'bolted';
+    p.modules.push(h);
+    expect(stackGap(p, h)).toBe(11);
+    // a Pi 4 on a Pi 4 covers its USB and Ethernet jacks, 16 mm tall: it needs 20 mm standoffs
+    const q = newProject(T('rpi4'));
+    const top = newModule(T('rpi4')); top.on = q.modules[0].id; top.onMode = 'bolted';
+    q.modules.push(top);
+    const n = stackNeed(q.modules[0].board, top.board);
+    expect(n.under!.h).toBeGreaterThan(15.9);
+    expect(n.need).toBeGreaterThan(n.under!.h + 1);
+    expect(stackGap(q, top)).toBe(STANDOFF_LENGTHS.find((x) => x >= n.need));
+    expect(stackGap(q, top)).toBe(20);
+    expect(stackHardware(q, top)!.gap).toBe(20); // what the shopping list asks for
+    const L = stackLayers(q, q.modules[0])[0].bolted[0];
+    expect(L.dz).toBe(20);
+    // your own length stands, and Check fails when it is too short, saying what it needs
+    top.onGap = 11;
+    expect(stackGap(q, top)).toBe(11);
+    await initKernel();
+    const r = generate(q);
+    const c = r.report.checks.find((x) => /bolted on top/.test(x.name))!;
+    expect(c.status).toBe('bad');
+    expect(c.detail).toMatch(/Too short: the USB\d? under it stands 16(\.\d)? mm tall .* needs 1\d(\.\d)? mm \(20 mm standoffs\)/);
+    delete top.onGap;
+    expect(generate(q).report.checks.find((x) => /bolted on top/.test(x.name))!.status).toBe('info');
+  }, 120_000);
 });
 
 describe('frame holders', () => {

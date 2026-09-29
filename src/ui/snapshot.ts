@@ -1,11 +1,12 @@
-// Small 3D pictures (board tiles, holder styles) rendered once off screen with the 3D view's materials and light,
-// then kept as images: a real look at the board or holder instead of a sketch.
+// Small 3D pictures (board tiles, toolbox parts, holder styles) rendered once off screen with the 3D view's materials
+// and light (LIGHT: the same levels, from the same sides), then kept as images: the board, part or holder the way the
+// 3D view shows it, instead of a sketch.
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { Ghost } from '../model/types';
 import type { PicPart } from '../worker/client';
-import { surface } from './Viewer3D';
+import { LIGHT, surface } from './Viewer3D';
 import { store } from '../state';
 
 // The renderer, lights, floor and materials are made once and kept: making them new for every picture made three.js
@@ -17,20 +18,20 @@ function setup() {
   if (R) return R;
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.0;
+  renderer.toneMappingExposure = LIGHT.exposure;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.setClearColor(0x000000, 0);
   const scene = new THREE.Scene();
   const env = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
   scene.environment = env;
-  scene.environmentIntensity = 0.75;
-  const hemi = new THREE.HemisphereLight(0xf4f7ff, 0x3a4048, 0.8);
-  const key = new THREE.DirectionalLight(0xfff6ec, 2.6);
+  scene.environmentIntensity = LIGHT.env;
+  const hemi = new THREE.HemisphereLight(0xf4f7ff, 0x3a4048, LIGHT.hemi);
+  const key = new THREE.DirectionalLight(0xfff6ec, LIGHT.key);
   key.castShadow = true;
   key.shadow.mapSize.set(512, 512);
   key.shadow.radius = 6; key.shadow.bias = -0.0005; key.shadow.normalBias = 0.4;
-  const rim = new THREE.DirectionalLight(0xa9d4ff, 0.8);
+  const rim = new THREE.DirectionalLight(0xa9d4ff, LIGHT.rim);
   // a soft contact shadow on an invisible floor
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.ShadowMaterial({ opacity: 0.22 }));
   floor.receiveShadow = true;
@@ -41,18 +42,20 @@ function setup() {
 
 let queue: Promise<unknown> = Promise.resolve();
 const cache = new Map<string, Promise<string>>();
+// kept for the session under the light they were rendered in: pictures from before a change of light render again
+const kept = `bd.pic.${LIGHT.exposure}.${LIGHT.key}.`;
 
 /** Picture of these meshes, as a PNG data URL (cached by key; one render at a time). */
 export function picture(key: string, make: () => Promise<PicPart[]>, w = 320, h = 220, view: [number, number, number] = [0.55, -0.9, 0.95]): Promise<string> {
   const hit = cache.get(key);
   if (hit) return hit;
-  try { const s = sessionStorage.getItem(`bd.pic.${key}`); if (s) { const p = Promise.resolve(s); cache.set(key, p); return p; } } catch { /* private mode */ }
+  try { const s = sessionStorage.getItem(kept + key); if (s) { const p = Promise.resolve(s); cache.set(key, p); return p; } } catch { /* private mode */ }
   const job = queue.then(async () => {
     const parts = await make();
     // let clicks and typing through between pictures, and wait while the rack builds (the pictures can wait)
     await quiet();
     const url = await render(parts, w, h, view);
-    try { sessionStorage.setItem(`bd.pic.${key}`, url); } catch { /* full */ }
+    try { sessionStorage.setItem(kept + key, url); } catch { /* full */ }
     return url;
   });
   queue = job.catch(() => undefined);
@@ -91,12 +94,13 @@ async function render(parts: PicPart[], w: number, h: number, view: [number, num
   scene.add(root);
   root.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(root), c = box.getCenter(new THREE.Vector3()), r = box.getSize(new THREE.Vector3()).length() / 2 || 10;
-  // light and the floor, placed for this picture
-  key.position.set(c.x + r * 1.2, c.y - r * 0.8, c.z + r * 2.4);
+  // light and the floor, placed for this picture (the key and rim from where the 3D view has them)
+  const kd = new THREE.Vector3(...LIGHT.keyDir).normalize(), rd = new THREE.Vector3(...LIGHT.rimDir).normalize();
+  key.position.copy(c).addScaledVector(kd, r * 2.8);
   key.target.position.copy(c);
   Object.assign(key.shadow.camera, { left: -r * 1.6, right: r * 1.6, top: r * 1.6, bottom: -r * 1.6, near: 0.1, far: r * 8 });
   key.shadow.camera.updateProjectionMatrix();
-  rim.position.set(c.x - r * 2, c.y + r * 1.5, c.z + r);
+  rim.position.copy(c).addScaledVector(rd, r * 2.7);
   floor.scale.set(r * 8, r * 8, 1);
   floor.position.set(c.x, c.y, box.min.z - 0.02);
   floor.updateMatrixWorld();

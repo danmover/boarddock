@@ -231,6 +231,13 @@ export function migrate(p: any): Project {
     p = { version: 2, modules: [{ id: 'm0', board: p.board, holder: p.holder }], active: 0, arrange: { ...DEFAULT_ARRANGE }, mount: p.mount, stand: p.stand, printer: p.printer };
   }
   if (!p?.modules?.length) throw new Error('Not a BoardDock project file');
+  // a switch's or powered hub's barrel input was saved as a plug that leaves the rack: it is a DC input (its supply goes on the rack)
+  for (const m of p.modules) {
+    const s = m.board?.box;
+    if (m.board?.kind !== 'box' || !s?.groups || !/switch|hub/i.test(m.board.name ?? '')) continue;
+    for (const g of s.groups) if (g.type === 'barrel' && g.role === 'other') { g.role = 'power-in-dc'; g.volts ??= 12; }
+    for (const c of m.board.comps ?? []) if (c.conn?.type === 'barrel' && c.role === 'other') c.role = 'power-in-dc';
+  }
   // v2 -> v3: boards go onto DIN rail docks, laid out automatically
   return {
     ...p,

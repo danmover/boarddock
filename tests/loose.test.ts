@@ -9,7 +9,8 @@ import { autoLinks, numberLinks } from '../src/model/links';
 import { badgeText } from '../src/model/cablebadge';
 import { buyText } from '../src/model/cablebuy';
 import { leadStub } from '../src/cad/boardviz';
-import { generate, stackOrder } from '../src/cad/assembly';
+import { generate, looseOrder, stackOrder } from '../src/cad/assembly';
+import { addProbes } from '../src/model/probes';
 import { initKernel } from '../src/cad/kernel';
 import type { Ghost, PartOut } from '../src/model/types';
 
@@ -31,7 +32,8 @@ describe('stack hardware', () => {
     const hat = newModule(T('rpi4'));
     hat.on = p.modules[0].id;
     p.modules.push(hat);
-    expect(stackHardware(p, hat)).toEqual({ n: 4, screws: 8, size: 'M2.5', gap: 11, shared: true });
+    // (a whole Pi on a Pi covers its 16 mm USB jacks: 20 mm standoffs, not a HAT's 11)
+    expect(stackHardware(p, hat)).toEqual({ n: 4, screws: 8, size: 'M2.5', gap: 20, shared: true });
 
     const q = newProject(T('uno'));
     const shield = newModule(T('uno'));
@@ -128,6 +130,10 @@ describe('plugs and leads in 3D', () => {
     expect(b.hi[2] - 50).toBeLessThan(60);
     expect(Math.max(b.hi[0] - b.lo[0], b.hi[1] - b.lo[1])).toBeLessThan(6);
     expect(g.fx?.fade).toMatchObject({ label: 'to a screen', d: [0, 0, 1] });
+    // only as far as the way out is clear (a hub's supply lead ran into the next dock), and never under 6 mm
+    const short = boxOf(leadStub('y', [0, 0, 50], [0, 0, 1], 5, 'to a screen', { kind: 'plug' }, { seq: 0, dir: [0, 0, 1] }, 12));
+    expect(short.hi[2] - 50).toBeCloseTo(12, 1);
+    expect(boxOf(leadStub('z', [0, 0, 50], [0, 0, 1], 5, 'x', { kind: 'plug' }, { seq: 0, dir: [0, 0, 1] }, 1)).hi[2] - 50).toBeCloseTo(6, 1);
   });
 
   it("a headless Pi's HDMI cradles go, and in a rack its unused plugs get tails, not cables to the table", () => {
@@ -160,6 +166,26 @@ describe('plugs and leads in 3D', () => {
     expect(r2.ghosts.some((g) => g.tag?.kind === 'plug' && g.tag.module === pi && /HDMI/.test(g.tag.refs?.[0] ?? ''))).toBe(false);
   }, 300_000);
 
+  it('draws no lead from the empty socket of a stacked pair', async () => {
+    await initKernel();
+    // an Uno on the lower USB2 socket of a Pi 4, nothing in the upper one: the pair counted as in use as a whole, so
+    // the empty upper socket got a plug and a lead "to a computer", through the Uno's cable beside it
+    const p = newProject(T('rpi4'));
+    const uno = newModule(T('uno'));
+    p.modules.push(uno);
+    const pi = p.modules[0];
+    p.links = numberLinks([{ id: 'l1', a: { module: uno.id, ref: 'USB' }, b: { module: pi.id, ref: 'USB2' }, kind: 'usb' }]);
+    const r = generate(p);
+    const plugs = r.ghosts.filter((g) => g.tag?.kind === 'plug' && g.tag.module === pi.id && g.tag.refs?.[0] === 'USB2');
+    expect(plugs.some((g) => /lower/.test(g.name))).toBe(true);
+    expect(plugs.filter((g) => /upper/.test(g.name))).toEqual([]);
+    expect(r.ghosts.filter((g) => /^off-rack cable/.test(g.name) && /USB2/.test(g.name)).map((g) => g.name)).toEqual([]);
+    // the same socket cabled off the rack (to your computer) still gets its lead
+    p.links = numberLinks([...p.links, { id: 'l2', a: { module: pi.id, ref: 'USB2:2' }, b: { module: '@pc', ref: 'USB' }, kind: 'usb' }]);
+    const r2 = generate(p);
+    expect(r2.ghosts.filter((g) => /^off-rack cable/.test(g.name) && /USB2:2/.test(g.name)).length).toBe(1);
+  }, 120_000);
+
   it('cable badges put where the cable goes first', () => {
     expect(badgeText('Power: Powerboard, 4 outlets + USB → Pi 5')).toBe('Power → Pi 5');
     expect(badgeText('Power: Powerboard, 4 outlets + USB → Pi 5 2')).toBe('Power → Pi 5 2');
@@ -191,4 +217,27 @@ describe('each loose holder its own clip', () => {
     p.modules[1].clip = { off: true };
     expect(clips(generate(p))).toBe(1);
   }, 300_000);
+});
+
+describe('probes among loose holders', () => {
+  beforeAll(async () => { await initKernel(); });
+
+  it('puts a J-Link beside the board it debugs, even one added last, not at the far end of the row', () => {
+    const p = newProject(T('example_dual_swd'));
+    p.modules.push(newModule(T('uno')), newModule(T('pico')));
+    setLayout(p, 'loose');
+    p.arrange.mode = 'side';
+    const board = p.modules[0];
+    const [jl] = addProbes(p, board.id, ['J_SWD1']);
+    // one added from the library and cabled later goes last in the list
+    p.modules = [...p.modules.filter((m) => m !== jl), jl];
+    expect(looseOrder(p).modules.map((m) => m.id)).toEqual([board.id, jl.id, p.modules[1].id, p.modules[2].id]);
+    // in 3D: the J-Link's holder sits between its board's and the Uno's along the row
+    const r = generate(p), x = (id: string) => r.report.frames![id][12];
+    expect(x(jl.id)).toBeGreaterThan(x(board.id));
+    expect(x(jl.id)).toBeLessThan(x(p.modules[1].id));
+    // stacked or back to back, the order stays as it is (back to back takes the first two)
+    p.arrange.mode = 'back';
+    expect(generate(p).report.frames![p.modules[1].id]).toBeDefined();
+  }, 120_000);
 });

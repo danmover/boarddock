@@ -3,7 +3,7 @@
 // are listed apart and never bought; jumper wires are bought by the wire; a cable to your computer is a 2 m one.
 import { buyText } from './cablebuy';
 import type { GenReport, Link, PlugRef, Project } from './types';
-import { baseRef, cableNumbers, findModule, isAccessory, PC, plugName, plugRole, shortName } from './links';
+import { baseRef, cableNumbers, findModule, isAccessory, PC, plugName, plugRole, ROUTER, shortName } from './links';
 import { isPlugPack } from './powerdata';
 
 export type CableOut = NonNullable<GenReport['cables']>[number];
@@ -57,6 +57,8 @@ export function cableLines(p: Project, cables: CableOut[], onlyNew = false): Cab
     if (A.m.id === PC || B.m.id === PC) {
       const rack = A.m.id === PC ? B : A;
       add(`2 m ${plugName(rack.type)} to USB-A cable, to your computer (USB-C at that end if your computer only has USB-C)`, [no(l)]);
+    } else if (A.m.id === ROUTER || B.m.id === ROUTER) {
+      add('Ethernet cable to your router, as long as the run to it (measure it: 2 m if the router is beside the rack)', [no(l)]);
     } else if (isPlugPack(A.m.board) || isPlugPack(B.m.board)) {
       if (l.kind === 'mains') mains(l);
       else { const pk = isPlugPack(A.m.board) ? A.m : B.m, to = pk === A.m ? B.m : A.m; comes.push(`${tag(no(l))}the ${pk.board.name}'s own lead to the ${shortName(to.board.name)} (about ${((pk.board.box?.pack?.lead ?? 1500) / 1000).toFixed(1)} m: check it reaches)`); }

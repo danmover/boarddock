@@ -1,3 +1,4 @@
+import { billOfMaterials, bomCsv } from '../model/bom';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { zipSync, strToU8 } from 'fflate';
 import type { Board, Comp, Hole, HoleRole, Module, PartOut, Project, V2 } from '../model/types';
@@ -15,25 +16,24 @@ import { TEMPLATES } from '../model/templates';
 import { ACCEPT } from '../import';
 import { openRevision } from './importFlow';
 import { bbox, compRect, roundedRectLoop, round, uid } from '../geom/poly';
-import { activeModule, closeProject, dropModule, edit, editMod, isSel, select, setActive, store, toast, useApp, type SelItem, type Step } from '../state';
+import { activeModule, closeProject, dropModule, edit, editMod, isSel, rememberPrinter, select, setActive, store, toast, useApp, type SelItem, type Step } from '../state';
 import { kindName, rackCount, rackName, sameKind } from '../model/diff';
 import { Check, Chip, Num, Pick, Section, Seg, Text, download, safeName } from './controls';
-import { estimate, packPlates, placedMesh, write3mf, writeStl } from '../cad/export';
+import { BRIM_OUT, EDGE_CLEAR, estimate, fitsBed, packPlates, placedMesh, write3mf, writeStl } from '../cad/export';
 import { buildTestKit, runClipFea } from '../worker/client';
 import type { ClipFeaResult } from '../fea/clipfea';
 import { clipDims } from '../cad/dinclip';
 import { RackBuilder } from './RackBuilder';
 import { duplicateModule, markBuilt, unmarkBuilt } from './panelOps';
 import { removeItems } from './pickOps';
-import { delta, partsFor, type Delta } from '../model/built';
+import { delta, partsFor, strapBoxes, type Delta } from '../model/built';
 import { baseOf as stackBase, ridersOf } from '../model/holes';
 import { DockFeaSection } from './DockFea';
 import { mainsBudget, mainsText, powerBudget, powerText } from '../model/power';
 import { saveBoard } from '../model/myboards';
 import { ackNote, summarizeChecks } from '../model/checkSummary';
-import { boardSig, useKeptPicture } from './pics';
-import { paletteFor } from '../model/palette';
-import { PartPic } from './Toolbox';
+import { boardSig, tileUrl, useKeptPicture } from './pics';
+import { CompPic } from './Toolbox';
 import { BoxEditor } from './BoxEditor';
 import { BoardCheck } from './BoardCheck';
 import { needOf } from '../model/powerdata';
@@ -74,12 +74,6 @@ export function ImportPanel() {
       <div className="btns" style={{ marginTop: 12 }}><button className="btn danger small" onClick={() => { if (confirm('Close this project? Save it first (⌘S): unsaved changes are kept only in this browser until you start a new one.')) closeProject(); }}>Close project</button></div>
     </div>
   );
-}
-
-/** Does a packed plate fit the bed (a part bigger than the bed gets a "plate" of its own that doesn't)? */
-export function fitsBed(pl: { used: V2 }, bed: V2, spacing: number): boolean {
-  const u = [pl.used[0] - spacing, pl.used[1] - spacing];
-  return (u[0] <= bed[0] + 0.5 && u[1] <= bed[1] + 0.5) || (u[0] <= bed[1] + 0.5 && u[1] <= bed[0] + 0.5);
 }
 
 /** "3 × Raspberry Pi 4B, Pico and 2 × USB hub": boards of a kind counted, not listed one by one. */
@@ -149,14 +143,14 @@ function usePicture(key: string, make: () => Promise<PicPart[]>, w?: number, h?:
   return url;
 }
 
-/** Version of the pictures in public/tiles (scripts/render-tiles.mjs makes them): bump it after re-rendering. */
-const TILE_V = 2;
 const tileFailed = new Set<string>();
 
 export function BoardThumb({ id }: { id: string }) {
-  // the picture shipped with the app, rendered ahead of time; a live render only if it is missing
-  const [live, setLive] = useState(() => tileFailed.has(id));
-  if (!live) return <img className="thumb pic" src={new URL(`tiles/${id}.webp?v=${TILE_V}`, document.baseURI).href} alt="" draggable={false} decoding="async" onError={() => { tileFailed.add(id); setLive(true); }} />;
+  // the picture shipped with the app, rendered ahead of time from the template's 3D model as it is now (tiles.json);
+  // a live render only if there is none
+  const shipped = tileUrl(id);
+  const [live, setLive] = useState(() => !shipped || tileFailed.has(id));
+  if (!live) return <img className="thumb pic" src={shipped!} alt="" draggable={false} decoding="async" onError={() => { tileFailed.add(id); setLive(true); }} />;
   return <LiveThumb id={id} />;
 }
 
@@ -164,7 +158,7 @@ function LiveThumb({ id }: { id: string }) {
   let b = thumbCache.get(id);
   if (!b) { b = TEMPLATES.find((t) => t.id === id)!.make(); thumbCache.set(id, b); }
   const board = b;
-  const pic = usePicture(`board:${id}:v2`, () => boardPicture(board), 280, 180, [0.5, -1, 0.8]);
+  const pic = usePicture(`board:${id}:${boardSig(board)}`, () => boardPicture(board), 280, 180, [0.5, -1, 0.8]);
   if (pic) return <img className="thumb pic" src={pic} alt="" draggable={false} />;
   return <BoardSketch b={b} />;
 }
@@ -370,7 +364,7 @@ function PartsTab() {
         <div key={g} className="pgroup">
           <h5>{g} <small>{cs.length}</small></h5>
           <div className="plist">
-            {cs.slice(0, 200).map((c) => <PartRow key={c.id} c={c} />)}
+            {cs.slice(0, 200).map((c) => <PartRow key={c.id} c={c} box={b.kind === 'box'} />)}
           </div>
         </div>
       ))}
@@ -383,14 +377,13 @@ function PartsTab() {
   );
 }
 
-function PartRow({ c }: { c: Comp }) {
+function PartRow({ c, box }: { c: Comp; box: boolean }) {
   const sel = useApp((s) => s.sel);
-  const it = paletteFor(c);
   const on = isSel(sel, c.id);
   const dir = c.conn?.entry === 'edge' ? ['right', 'top', 'left', 'bottom'][Math.round(((((c.conn.angle % 360) + 360) % 360)) / 90) % 4] : null;
   return (
     <button className={`prow ${on ? 'on' : ''}`} onClick={(e) => { select([{ kind: 'comp', id: c.id }], e.shiftKey || e.metaKey ? 'toggle' : 'set'); if (store.get().view !== 'editor') store.set({ view: 'editor' }); }}>
-      <span className="prow-pic">{it ? <PartPic item={it} /> : <i style={{ background: c.kind === 'module' ? '#3d5872' : c.kind === 'led' ? '#ffd166' : c.kind === 'hot' ? '#b8553a' : '#3d4957' }} />}</span>
+      <span className="prow-pic"><CompPic c={c} box={box} /></span>
       <span className="prow-txt">
         <b>{c.ref}{c.value ? <em> {c.value}</em> : null}</b>
         <small>{c.conn ? plugName(c.conn.type) : c.pkg}{dir ? `, ${dir} edge` : ''}</small>
@@ -1028,7 +1021,7 @@ export function MountPanel() {
       <div style={{ marginBottom: 10 }}>{pick}</div>
       <p className="lede">Holders without rail docks: stack them, set them side by side or back to back, clip one flat onto a DIN rail, or give it a stand socket.</p>
       <LayoutSection />
-      <Section title="DIN rail clip" right={<Check label="" value={M.kind === 'din'} onChange={(v) => setM((m) => { m.kind = v ? 'din' : 'none'; m.picked = true; })} />}>
+      <Section title="DIN rail clip" toggle={{ value: M.kind === 'din', onChange: (v) => setM((m) => { m.kind = v ? 'din' : 'none'; m.picked = true; }) }}>
         {M.kind === 'din' ? (
           <>
             <p className="hint" style={{ marginTop: 0 }}><b>To remove: pull the tab towards you.</b> The lower jaw swings off the rail and the holder tilts free in the same motion. Nothing to push sideways, no screwdriver, and it works with neighbours packed tight. The clip snaps into the holder in four orientations.</p>
@@ -1052,7 +1045,7 @@ export function MountPanel() {
           </>
         ) : <p className="hint" style={{ marginTop: 0 }}>No DIN clip. The flat base also sticks well with double-sided foam tape.</p>}
       </Section>
-      <Section title="Stand socket (female)" right={<Check label="" value={S.enabled} onChange={(v) => setS((s) => { s.enabled = v; })} />}>
+      <Section title="Stand socket (female)" toggle={{ value: S.enabled, onChange: (v) => setS((s) => { s.enabled = v; }) }}>
         {S.enabled ? (
           <>
             <div className="row">
@@ -1258,6 +1251,7 @@ export function ExportPanel() {
     });
     for (const x of parts) files[`parts/${safeName(x.id)}_${safeName(x.name)}.stl`] = writeStl([x.mesh]);
     files[`${base}.boarddock.json`] = strToU8(JSON.stringify(p, null, 1));
+    files['BOM.csv'] = strToU8(bomCsv(billOfMaterials(p, res)));
     const pr = printerByName(p.printer.name), mat = activeModule(p).holder.material;
     const settings = [`Print settings (${pr?.name ?? p.printer.name}, ${mat}${pr ? `, printer preset "${pr.orca}"` : ''}):`, ...printSettings(pr, mat, tallness(parts, p.printer.maxZ ?? 250).tall).map((r) => `  ${r.name}: ${r.value}  (${r.basis}: ${r.why})`)].join('\n');
     files['README.txt'] = strToU8(printNotes(p, res, plates.length, tot, shopping(p, res, onlyNew ? d : null, tot, scope === 'pick' ? pickSet : undefined)).replace('Print: 0.2 mm layers, 3 walls, 15% infill, NO supports. Parts are already in print orientation.', settings));
@@ -1293,7 +1287,7 @@ export function ExportPanel() {
       </div>
       <button className="btn primary" style={{ width: '100%', justifyContent: 'center', marginBottom: 10 }} onClick={() => zipAll()}><Icon d={I.download} /> {scope === 'all' ? 'Download everything' : scope === 'new' ? "Download what's new" : 'Download these'} (.zip)</button>
       <Section title="Printer">
-        <Pick label="Printer" value={p.printer.name} options={[...PRINTERS.map((x) => [x.name, x.name] as [string, string]), ['Custom', 'Custom']]} onChange={(v) => setP((x) => { const pr = PRINTERS.find((q) => q.name === v); delete x.gcodeStart; delete x.gcodeEnd; if (pr) Object.assign(x, { ...pr, spacing: x.spacing }); else x.name = 'Custom'; })} />
+        <Pick label="Printer" value={p.printer.name} options={[...PRINTERS.map((x) => [x.name, x.name] as [string, string]), ['Custom', 'Custom']]} onChange={(v) => setP((x) => { rememberPrinter(v); const pr = PRINTERS.find((q) => q.name === v); delete x.gcodeStart; delete x.gcodeEnd; if (pr) Object.assign(x, { ...pr, spacing: x.spacing }); else x.name = 'Custom'; })} />
         <div className="row3" style={{ marginTop: 8 }}>
           <Num label="Bed X" value={p.printer.bed[0]} min={50} onChange={(v) => setP((x) => { x.bed = [v, x.bed[1]]; x.name = 'Custom'; })} />
           <Num label="Bed Y" value={p.printer.bed[1]} min={50} onChange={(v) => setP((x) => { x.bed = [x.bed[0], v]; x.name = 'Custom'; })} />
@@ -1308,11 +1302,12 @@ export function ExportPanel() {
       <Section title={`${plates.length} plate${plates.length > 1 ? 's' : ''}`}>
         <div className="plates">
           {plates.map((pl, i) => {
-            const big = !fitsBed(pl, p.printer.bed, p.printer.spacing);
+            const big = !fitsBed(pl, p.printer.bed);
             return (
             <div key={i} className={`plate ${big ? 'toobig' : ''}`}>
               <PlateThumb pl={pl} bed={p.printer.bed} />
-              {big && <div className="err" style={{ marginTop: 6 }}>{pl.items[0].part.name} is {Math.round(pl.used[0] - p.printer.spacing)} × {Math.round(pl.used[1] - p.printer.spacing)} mm: bigger than the {p.printer.name} bed ({p.printer.bed[0]} × {p.printer.bed[1]} mm). Pick a printer with a bigger bed above, or turn the board so its holder is smaller (Board step).</div>}
+              {big && <div className="err" style={{ marginTop: 6 }}>{pl.items[0].part.name} is {Math.round(pl.used[0])} × {Math.round(pl.used[1])} mm: bigger than the {p.printer.name} bed ({p.printer.bed[0]} × {p.printer.bed[1]} mm). Pick a printer with a bigger bed above, or turn the board so its holder is smaller (Board step).</div>}
+              {!big && pl.edge < BRIM_OUT + EDGE_CLEAR && <div className="hint" style={{ marginTop: 6 }}>{pl.items[0].part.name} leaves {Math.max(0, pl.edge).toFixed(1)} mm to the nearest bed edge, too tight for a brim or skirt ({(BRIM_OUT + EDGE_CLEAR).toFixed(1)} mm). The app slices this plate without one; in your own slicer, leave the brim off it.</div>}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 }}>
                 <span>Plate {i + 1} · {pl.items.length} part{pl.items.length === 1 ? '' : 's'}{big ? ' · does not fit' : ''}</span>
                 <span className="btns"><button className="btn small" onClick={() => download(`${base}_plate${i + 1}.stl`, writeStl(plateMeshes(i)))}>STL</button><button className="btn small" onClick={() => download(`${base}_plate${i + 1}.3mf`, write3mf(pl.items.map((it, k) => ({ name: `${it.part.name} ${k + 1}`, mesh: placedMesh(it, p.printer.bed, pl.used) }))))}>3MF</button></span>
@@ -1327,6 +1322,7 @@ export function ExportPanel() {
         </div>
       </Section>
       <ShoppingList p={p} lines={shopping(p, res, onlyNew ? d : null, tot, scope === 'pick' ? pickSet : undefined)} />
+      <BomSection p={p} res={res} base={base} />
       {!p.built && <BuildSection d={d} />}
       {p.layout === 'panel' && <TestKitSection />}
       <Section title="Estimate">
@@ -1338,7 +1334,7 @@ export function ExportPanel() {
         <p className="hint">Rough: 3 walls, 5 top/bottom layers, 15% infill, 0.2 mm layers, {activeModule(p).holder.material}. Your slicer's numbers are the real ones.</p>
       </Section>
       <PrintSettings parts={parts} />
-      <GcodeSection plates={plates.length} plateKey={plates} fits={plates.map((pl) => fitsBed(pl, p.printer.bed, p.printer.spacing))} plateMeshes={plateMeshes} brim={tallness(parts, p.printer.maxZ ?? 250).tall.length > 0} plate3mf={(i) => write3mf(plates[i].items.map((it, k) => ({ name: `${it.part.name} ${k + 1}`, mesh: placedMesh(it, p.printer.bed, plates[i].used) })))} base={base} />
+      <GcodeSection plates={plates.length} plateKey={plates} fits={plates.map((pl) => fitsBed(pl, p.printer.bed))} plateMeshes={plateMeshes} brim={tallness(parts, p.printer.maxZ ?? 250).tall.length > 0} plate3mf={(i) => write3mf(plates[i].items.map((it, k) => ({ name: `${it.part.name} ${k + 1}`, mesh: placedMesh(it, p.printer.bed, plates[i].used) })))} base={base} />
     </div>
   );
 }
@@ -1436,7 +1432,7 @@ function BuildSection({ d }: { d: Delta | null }) {
 
 type Res = NonNullable<ReturnType<typeof store.get>['result']>;
 /** Everything to print, cut and buy (or only what's new since the rack was built). */
-function shopping(p: Project, res: Res, d: Delta | null, tot: { g: number; m: number }, pick?: Set<string>): { head: string; items: string[] }[] {
+export function shopping(p: Project, res: Res, d: Delta | null, tot: { g: number; m: number }, pick?: Set<string>): { head: string; items: string[] }[] {
   const out: { head: string; items: string[] }[] = [];
   // a bolted board: a standoff on each hole it shares with the board below, a screw in each end, sized from the holes
   const bolts = (m: Project['modules'][number]) => {
@@ -1446,9 +1442,9 @@ function shopping(p: Project, res: Res, d: Delta | null, tot: { g: number; m: nu
     return `${h.n} × ${h.size} standoff, ${h.gap} mm, and ${h.screws} × ${h.size} screw (${m.board.name} on ${below}: ${h.shared ? `the ${h.n} holes they share` : 'no holes line up, so check where yours go'})`;
   };
   if (pick) {
-    const other: string[] = [];
+    const other: string[] = [], strap = new Set(strapBoxes(p, res.report.panel).map((x) => x.id));
     for (const m of p.modules.filter((x) => pick.has(x.id))) {
-      if (m.board.kind === 'box' && !isProbe(m)) other.push(`12 mm hook-and-loop strap for the ${m.board.name}`);
+      if (strap.has(m.id)) other.push(`12 mm hook-and-loop strap for the ${m.board.name}`);
       const b = m.on && pick.has(m.on) ? bolts(m) : null;
       if (b) other.push(b);
     }
@@ -1457,9 +1453,10 @@ function shopping(p: Project, res: Res, d: Delta | null, tot: { g: number; m: nu
     return out;
   }
   const count = (xs: string[]) => { const m = new Map<string, number>(); for (const x of xs) m.set(x, (m.get(x) ?? 0) + 1); return [...m.entries()].map(([k, n]) => `${n} × ${k}`); };
-  if (d && (d.removed.length || d.moved.length || d.spareCables.length)) out.push({ head: 'On the rack', items: [
+  if (d && (d.removed.length || d.moved.length || d.slid.length || d.spareCables.length)) out.push({ head: 'On the rack', items: [
     ...d.removed.map((n) => `Take off ${n}`),
     ...d.moved.map((m) => `Move ${m.name} from ${m.from} to ${m.to}`),
+    ...d.slid.map((x) => `Slide dock ${x.dock} along ${x.rail} to ${Math.round(x.to)} mm (it is at ${Math.round(x.from)} mm)`),
     ...d.spareCables.map((c) => `Cable ${c.no != null ? `#${c.no} ` : ''}(${c.a} to ${c.b}) is no longer used`),
   ] });
   const rails = d ? d.rails.map((r) => r.length) : (res.report.panel?.rails ?? []).map((r) => r.length);
@@ -1472,8 +1469,8 @@ function shopping(p: Project, res: Res, d: Delta | null, tot: { g: number; m: nu
   const newIds = new Set(p.built ? p.modules.filter((m) => !p.built!.boards.includes(m.id)).map((m) => m.id) : p.modules.map((m) => m.id));
   const mods = p.modules.filter((m) => !d || newIds.has(m.id));
   const other: string[] = [];
-  // straps: one line with the total, the lengths per box after it
-  const straps = mods.filter((m) => m.board.kind === 'box' && !isProbe(m)).map((m) => { const b = m.board.box; return { name: m.board.name, per: b ? Math.ceil((2 * (b.w + b.h) + 80) / 50) * 5 : 30 }; });
+  // straps: one line with the total, the lengths per box after it (only boxes that get a holder: not a plug pack)
+  const straps = strapBoxes(p, res.report.panel).filter((m) => mods.includes(m)).map((m) => { const b = m.board.box; return { name: m.board.name, per: b ? Math.ceil((2 * (b.w + b.h) + 80) / 50) * 5 : 30 }; });
   if (straps.length) {
     const lo = Math.min(...straps.map((x) => x.per)), hi = Math.max(...straps.map((x) => x.per)), all = straps.reduce((a, x) => a + 2 * x.per, 0);
     other.push(`${2 * straps.length} × 12 mm hook-and-loop strap, ${lo === hi ? `about ${lo} cm` : `${lo} to ${hi} cm`} each (${(all / 100).toFixed(1)} m in all, or a roll to cut): 2 for each of ${straps.length > 3 ? `the ${straps.length} boxes` : straps.map((x) => x.name).join(', ')}`);
@@ -1493,6 +1490,25 @@ function shopping(p: Project, res: Res, d: Delta | null, tot: { g: number; m: nu
   if (adapters.size) out.push({ head: 'Debug probes', items: [...adapters.entries()].map(([k, who]) => `${who.length} × ${k} (${who.length > 2 ? `${who.length} probes` : who.join(', ')})`) });
   out.push({ head: 'Filament', items: [`about ${tot.g.toFixed(0)} g of ${activeModule(p).holder.material} (roughly ${fmtMin(tot.m)} of printing)`] });
   return out;
+}
+
+/** The bill of materials: the whole rack, every group with its quantities (folded away: it is long), and as a CSV. */
+function BomSection({ p, res, base }: { p: Project; res: Res; base: string }) {
+  const bom = useMemo(() => billOfMaterials(p, res), [p, res]);
+  return (
+    <Section title="Bill of materials" right={<button className="btn ghost small" title="The bill of materials as a spreadsheet (CSV)" onClick={() => download(`${base}_bom.csv`, bomCsv(bom), 'text/csv')}>CSV</button>}>
+      <details className="bom">
+        <summary>Everything the rack is made of, and how many: {bom.reduce((n, g) => n + g.rows.length, 0)} lines</summary>
+        <table className="table"><tbody>
+          {bom.map((g) => [
+            <tr key={g.head}><th colSpan={3}>{g.head}</th></tr>,
+            ...g.rows.map((r, i) => <tr key={`${g.head}${i}`}><td className="num">{r.qty}</td><td>{r.item}</td><td style={{ color: 'var(--subtle)' }}>{r.note ?? ''}</td></tr>),
+          ])}
+        </tbody></table>
+      </details>
+      <p className="hint">The build guide's printout ends with this list, and the download has it as BOM.csv.</p>
+    </Section>
+  );
 }
 
 function ShoppingList({ p, lines }: { p: Project; lines: { head: string; items: string[] }[] }) {

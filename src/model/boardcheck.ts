@@ -101,12 +101,25 @@ export function boardIssues(b: Board): BoardIssue[] {
   return out;
 }
 
-/** M3 holes 3.5 mm in from each corner of the board's box, where the board is there and no part is. */
+/**
+ * M3 holes in the board's corners, 3.5 mm in from its edges, where no part is. Each comes in at 45° from a corner of
+ * the board's box until it is that far inside, so a round or cut-cornered board gets its holes where it has board (on
+ * a circle, at 45° round the rim).
+ */
 export function cornerHoles(b: Board): Hole[] {
-  const bb = bbox(b.outline), inset = 3.5, d = 3.2;
-  const want: [number, number][] = [[bb.x0 + inset, bb.y0 + inset], [bb.x1 - inset, bb.y0 + inset], [bb.x0 + inset, bb.y1 - inset], [bb.x1 - inset, bb.y1 - inset]];
+  const bb = bbox(b.outline), inset = 3.5, d = 3.2, cx = (bb.x0 + bb.x1) / 2, cy = (bb.y0 + bb.y1) / 2;
+  const corners: [number, number][] = [[bb.x0, bb.y0], [bb.x1, bb.y0], [bb.x0, bb.y1], [bb.x1, bb.y1]];
+  const want = corners.flatMap(([x0, y0]) => {
+    // in at 45° (a rectangle's hole lands 3.5 mm in from both edges, as always), no further than half the board
+    const ux = Math.sign(cx - x0) * Math.SQRT1_2, uy = Math.sign(cy - y0) * Math.SQRT1_2, L = Math.min(bb.x1 - bb.x0, bb.y1 - bb.y0) * Math.SQRT1_2;
+    for (let t = inset * Math.SQRT2; t < L; t += 0.25) {
+      const q: [number, number] = [x0 + ux * t, y0 + uy * t];
+      if (inside(q, b.outline) && nearestEdge(q, b.outline).d >= inset - 0.01) return [q];
+    }
+    return [];
+  });
   return want
-    .filter(([x, y]) => inside([x, y], b.outline) && nearestEdge([x, y], b.outline).d >= d / 2 + 1 && !b.comps.some((c) => !c.hidden && c.side === 'top' && inside([x, y], compRect(c, d / 2 + 0.5))) && !b.holes.some((h) => dist([h.x, h.y], [x, y]) < 4))
+    .filter(([x, y]) => !b.comps.some((c) => !c.hidden && c.side === 'top' && inside([x, y], compRect(c, d / 2 + 0.5))) && !b.holes.some((h) => dist([h.x, h.y], [x, y]) < 4))
     .map(([x, y]) => ({ id: uid('h'), x: round(x, 2), y: round(y, 2), d, plated: true, use: 'auto' as const }));
 }
 

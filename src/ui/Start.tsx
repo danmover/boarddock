@@ -4,7 +4,8 @@
 import { useRef, useState } from 'react';
 import type { Board } from '../model/types';
 import { ACCEPT } from '../import';
-import { activeModule, putBoards, store, toast, useApp } from '../state';
+import { activeModule, myPrinter, putBoards, rememberPrinter, store, toast, useApp } from '../state';
+import { PRINTERS } from '../model/library';
 import { summarizeChecks } from '../model/checkSummary';
 import { droppedFiles, openFiles } from './importFlow';
 import { addBoards } from './AddBoard';
@@ -58,6 +59,7 @@ export function StartStage() {
             <HeroArt />
             <h1>Dock any PCB. <span>No screws. No supports.</span></h1>
             <p>Bring your boards in: from their design files, from the library below, or drawn by hand. BoardDock builds a light holder round each one, docks them on DIN rails with every plug reachable, routes and sizes every cable, and walks you through putting it together.</p>
+            <MyPrinter />
           </header>
         )}
 
@@ -103,5 +105,19 @@ export function StartStage() {
         </details>
       </div>
     </div>
+  );
+}
+
+/** Which printer you print on, asked up front: the plates, the parts too big for its bed and the times are for it. */
+function MyPrinter() {
+  const [name, setName] = useState(() => myPrinter() ?? PRINTERS[0].name);
+  return (
+    <label className="start-printer">
+      <span>Your printer</span>
+      <select value={name} onChange={(e) => { setName(e.target.value); rememberPrinter(e.target.value); }}>
+        {PRINTERS.map((x) => <option key={x.name} value={x.name}>{x.name}</option>)}
+      </select>
+      <small>Plates, parts that need splitting and print times are for it. Change it any time in Export.</small>
+    </label>
   );
 }

@@ -4,12 +4,17 @@
 // last in the steps; a mains load per powerboard; "Your computer" off the rack; one cable list everywhere.
 import { describe, it, expect, beforeAll } from 'vitest';
 import { TEMPLATES } from '../src/model/templates';
-import { newModule, newProject } from '../src/model/library';
-import { allPlugs, autoLinks, compatible, numberLinks, PC, plugsOf, portBudget, powerFeeds, powerShort, refusal, strongerPower, wiringAdvice } from '../src/model/links';
+import { newModule, newProject, setLayout } from '../src/model/library';
+import { allPlugs, autoLinks, compatible, numberLinks, PC, plugsOf, portBudget, powerFeeds, powerShort, refusal, ROUTER, strongerPower, wiringAdvice } from '../src/model/links';
 import { mainsBudget, powerBudget } from '../src/model/power';
 import { hostTotal, needOf } from '../src/model/powerdata';
 import { cableLines } from '../src/model/cablelist';
 import { autoAssign } from '../src/cad/dockplan';
+import { delta, snapshot, strapBoxes } from '../src/model/built';
+import { ownSupply } from '../src/model/boxes';
+import { migrate } from '../src/model/library';
+import { billOfMaterials } from '../src/model/bom';
+import { generate } from '../src/cad/assembly';
 import { generatePanel } from '../src/cad/panelgen';
 import { initKernel } from '../src/cad/kernel';
 import type { Link, Project } from '../src/model/types';
@@ -189,4 +194,135 @@ describe('assembly', () => {
     const r3 = generatePanel(rack(['power_dist']));
     expect(r3.report.checks.find((c) => c.name === 'DC inputs with no supply')?.value).toMatch(/IN/);
   }, 120_000);
+});
+
+describe('straps on the shopping list', () => {
+  beforeAll(async () => { await initKernel(); });
+  const names = (ms: { board: { name: string } }[]) => ms.map((m) => m.board.name);
+
+  it('are for boxes in a holder on the rack: not a plug pack, a probe or a box off the rails', () => {
+    const p = rack(['rpi5', 'psu_pi5', 'dc_pack_12v', 'pb4', 'usb_hub7', 'jlink']);
+    p.links = numberLinks(autoLinks(p));
+    const r = generatePanel(p);
+    expect(r.report.panel!.unplaced).toEqual([]);
+    expect(names(strapBoxes(p, r.report.panel))).toEqual(['Powerboard, 4 outlets', 'Powered USB hub']);
+    // exactly the boxes the holders were built with strap loops for
+    const looped = r.report.checks.filter((c) => c.name === 'Strap loops').map((c) => c.module).sort();
+    expect(strapBoxes(p, r.report.panel).map((m) => m.id).sort()).toEqual(looped);
+    // a box with no rail yet has no holder to strap it in
+    const q = rack(['rpi5', 'pb4', 'usb_hub7']);
+    q.panel.auto = false;
+    q.panel.rails = []; q.panel.mounts = [];
+    const r2 = generatePanel(q);
+    expect(r2.report.panel!.unplaced.length).toBe(3);
+    expect(strapBoxes(q, r2.report.panel)).toEqual([]);
+    expect(r2.report.checks.some((c) => c.name === 'Strap loops')).toBe(false);
+  }, 120_000);
+
+  it('are for loose holders too, but still not a plug pack', () => {
+    const p = rack(['rpi5', 'psu_pi4', 'usb_hub7', 'jlink']);
+    setLayout(p, 'loose');
+    expect(names(strapBoxes(p))).toEqual(['Powered USB hub']);
+  });
+});
+
+describe("a switch's or powered hub's own supply", () => {
+  beforeAll(async () => { await initKernel(); });
+
+  it('asks for a supply on its DC input, and its own goes in a free outlet with its lead to the box', () => {
+    const p = rack(['rpi4', 'rpi4', 'net_switch5', 'usb_hub7', 'pb4']);
+    const sw = byName(p, /switch/)[0], hub = byName(p, /Powered USB hub/)[0];
+    for (const box of [sw, hub]) expect(plugsOf(p).filter((x) => x.module === box && x.role === 'power-in-dc').length, box.board.name).toBe(1);
+    p.links = numberLinks(autoLinks(p));
+    // nothing gives either of them 12 V yet: the To do list says so, with the supply they came with to add
+    const adds = wiringAdvice(p).filter((a) => a.add?.startsWith('own:')).map((a) => a.add);
+    expect(adds.sort()).toEqual([`own:${sw.id}`, `own:${hub.id}`].sort());
+    expect(portBudget(p).unwired).toEqual([]); // (not "wires you connect yourself")
+    for (const box of [sw, hub]) p.modules.push(newModule(ownSupply(box)!));
+    p.links = numberLinks(autoLinks(p));
+    for (const box of [sw, hub]) {
+      const pack = p.modules.find((m) => m.board.box?.pack?.own === box.id)!;
+      expect(pack.board.name).toBe(`${box.board.name} supply, 12 V`);
+      // its 12 V lead to the box's DC input, and the pack itself in one of the powerboard's outlets
+      const dc = p.links.find((l) => l.kind === 'power' && [l.a.module, l.b.module].includes(pack.id))!;
+      expect(other(dc, pack.id).module).toBe(box.id);
+      const mains = p.links.find((l) => l.kind === 'mains' && [l.a.module, l.b.module].includes(pack.id))!;
+      expect(other(mains, pack.id).module).toBe(byName(p, /Powerboard/)[0].id);
+    }
+    expect(wiringAdvice(p).filter((a) => a.add?.startsWith('own:'))).toEqual([]);
+    // a barrel jack never goes to header pins (a Pi's GPIO); a pigtail to screw terminals is fine
+    const q = rack(['rpi4', 'relay4', 'net_switch5']), pl = plugsOf(q);
+    const dc = pl.find((x) => x.role === 'power-in-dc' && /switch/.test(x.module.board.name))!;
+    expect(refusal(q, dc, pl.find((x) => x.role === 'wire' && x.comp.conn?.type === 'header')!)).toMatch(/barrel jack.*not header pins/);
+    expect(refusal(q, dc, pl.find((x) => x.role === 'wire' && x.comp.conn?.type === 'terminal')!)).toBeNull();
+  });
+
+  it("is at the input's voltage, never bought, and older racks' switches get a DC input", () => {
+    const p = rack(['rpi4', 'net_switch5']);
+    const sw = p.modules[1];
+    sw.board.box!.groups.find((g) => g.role === 'power-in-dc')!.volts = 5;
+    const b = ownSupply(sw)!;
+    expect(b.name).toBe('Network switch, 5 ports supply, 5 V');
+    expect(b.box!.groups.find((g) => g.role === 'dc-out')!.volts).toBe(5);
+    p.modules.push(newModule(b));
+    const bom = billOfMaterials(p, generate(p));
+    expect(bom.find((g) => g.head === 'Boxes and supplies')!.rows.map((r) => r.item)).not.toContain(b.name);
+    expect(bom.find((g) => g.head.startsWith('Comes with the parts'))!.rows).toContainEqual({ qty: 1, item: b.name, note: 'comes with the Network switch, 5 ports' });
+    // a rack saved when a switch's barrel was a plug that left the rack
+    const old = JSON.parse(JSON.stringify(rack(['rpi4', 'net_switch8'])));
+    const g = old.modules[1].board.box.groups.find((x: { type: string }) => x.type === 'barrel');
+    g.role = 'other'; delete g.volts;
+    for (const c of old.modules[1].board.comps) if (c.conn?.type === 'barrel') c.role = 'other';
+    const q = migrate(old);
+    expect(plugsOf(q).filter((x) => x.role === 'power-in-dc').map((x) => x.module.board.name)).toEqual(['Network switch, 8 ports']);
+    expect(q.modules[1].board.box!.groups.find((x) => x.type === 'barrel')!.volts).toBe(12);
+  }, 120_000);
+
+  it("says where a plug pack goes, in the steps and in What's new: into its outlet, its lead to its board", () => {
+    const p = rack(['rpi5', 'pb4']);
+    const r0 = generate(p), pr = r0.report.panel!;
+    p.panel.rails = pr.rails.map((x) => ({ id: x.id, x: x.x, y: x.y, dir: x.dir, length: x.length }));
+    p.panel.mounts = pr.mounts.map((m) => ({ id: m.id, rail: m.rail, at: m.at, kind: m.kind, turn: m.turn, lever: m.leverSide > 0 ? 'pos' as const : 'neg' as const, slots: m.slots.map((s) => ({ module: s.module, edge: s.edge })) }));
+    p.panel.auto = false;
+    p.built = snapshot(p, r0);
+    p.modules.push(newModule(T('psu_pi5')));
+    p.links = numberLinks(autoLinks(p));
+    const r = generate(p);
+    const where = /the USB-C supply, 27 W \(5 A\) into Powerboard, 4 outlets AC\d, its lead to Raspberry Pi 5 J_PWR/;
+    expect(r.steps!.find((s) => /leave the rack/.test(s.text))!.text).toMatch(where);
+    const plan = delta(p, r)!.plan;
+    expect(plan.find((s) => s.kind === 'cable')!.text).toMatch(new RegExp(`^Push ${where.source}\\.$`));
+    expect(plan.some((s) => s.kind === 'seat')).toBe(false); // (no holder, no dock)
+  }, 120_000);
+});
+
+describe('a charger left idle, and the switch to your router', () => {
+  it('says which boards go without power and why a charger beside them powers nothing', () => {
+    // USB-A charger ports give 2.4 A; a Pi 4 wants 3 A over USB-C
+    const p = rack(['rpi4', 'rpi4', 'usb_charger', 'pb4']);
+    p.links = numberLinks(autoLinks(p));
+    expect(p.links.filter((l) => l.kind === 'power')).toEqual([]);
+    const txt = wiringAdvice(p).map((a) => a.text);
+    expect(txt).toContain('2 boards need power (Pi 4B) and no free port gives enough: the free ones give 2.4 A at most, they need 3 A or more.');
+    expect(txt).toContain('The USB charger powers nothing: its ports give 2.4 A, less than the boards without power need.');
+    // with every board powered, a spare supply is said to be spare
+    const q = rack(['rpi5', 'psu_pi5', 'psu_pi5', 'pb4']);
+    q.links = numberLinks(autoLinks(q));
+    expect(wiringAdvice(q).map((a) => a.text)).toContain('The USB-C supply, 27 W (5 A) powers nothing: every board has its power. Keep it for boards to come, or take it off the rack.');
+  });
+
+  it("gives a switch with boards on it an uplink to your router, off the rack, once", () => {
+    const p = rack(['rpi4', 'rpi4', 'net_switch5']);
+    p.links = numberLinks(autoLinks(p));
+    const sw = p.modules[2];
+    const up = p.links.filter((l) => [l.a.module, l.b.module].includes(ROUTER));
+    expect(up.length).toBe(1);
+    expect(other(up[0], ROUTER).module).toBe(sw.id);
+    expect(p.links.filter((l) => l.kind === 'net' && [l.a.module, l.b.module].includes(sw.id)).length).toBe(3);
+    expect(cableLines(p, []).buy.some((x) => /^1 × Ethernet cable to your router/.test(x))).toBe(true);
+    expect(autoLinks(p).filter((l) => [l.a.module, l.b.module].includes(ROUTER))).toEqual([]); // (not again)
+    // a switch with nothing on it doesn't need one
+    const q = rack(['uno', 'net_switch5']);
+    expect(autoLinks(q).some((l) => [l.a.module, l.b.module].includes(ROUTER))).toBe(false);
+  });
 });

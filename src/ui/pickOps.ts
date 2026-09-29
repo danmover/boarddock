@@ -62,6 +62,8 @@ export function describe(p: Project, it: SelItem): { title: string; sub: string;
       const refs = it.fkind === 'pin' ? (it.refs ?? []).map((id) => `hole ${(m?.board.holes.findIndex((h) => h.id === id) ?? -1) + 1}`).join(', ') : (it.refs ?? []).join(' + ');
       const all: Partial<Record<string, string>> = { spring: 'Hold it with snap pins instead', notch: 'Remove the finger notches', label: 'Remove the label', stand: 'Remove the stand', clip: 'Remove the DIN clip' };
       const removable = it.fkind === 'seat' || it.fkind === 'rim' ? null : it.fkind === 'dock' ? 'Take off the panel' : it.fkind === 'tower' ? 'Unstack' : it.fkind === 'plug' ? 'Ignore this connector' : it.fkind === 'pin' ? 'Remove this pin (hole left free)' : all[it.fkind ?? ''] ?? `Remove this ${name}`;
+      // (an anti-rattle spring is tagged as one, and is no clip)
+      if (it.fkind === 'spring' && it.refs?.includes('anti-rattle')) return { title: 'anti-rattle spring', sub: `${m?.board.name ?? ''}${p.modules.length > 1 ? ` · board ${idx(it.module) + 1}` : ''}`, color: 'var(--accent)', removable: 'Hold it with snap pins instead' };
       return { title: `${refs ? refs + ' ' : ''}${name}`, sub: `${m?.board.name ?? ''}${p.modules.length > 1 ? ` · board ${idx(it.module) + 1}` : ''}`, color: it.fkind === 'cap' ? '#f2c94c' : it.fkind === 'plug' ? 'var(--copper)' : 'var(--accent)', removable };
     }
   }

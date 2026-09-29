@@ -4,6 +4,8 @@
 // `[name[i]]` (a value), `{expression}` (arithmetic, comparisons, && || !, "strings", name[index], min, max, int,
 // round, abs), and `{if ...}` / `{elsif ...}` / `{else}` / `{endif}` blocks. A name it doesn't know is never
 // guessed: the print is refused and the names are listed. Pure.
+import type { Material, PrinterSettings } from '../model/types';
+import { filamentOn, printerByName } from '../model/printers';
 
 export type TplValue = number | string | boolean | (number | string | boolean)[];
 export interface Rendered { text: string; unknown: string[] }
@@ -159,4 +161,28 @@ export function fromProfileJson(text: string): { start?: string; end?: string; l
   const d = JSON.parse(text);
   const s = (v: unknown) => (typeof v === 'string' ? v : Array.isArray(v) ? v.join('\n') : undefined);
   return { start: s(d.machine_start_gcode), end: s(d.machine_end_gcode), layer: s(d.layer_change_gcode), name: typeof d.name === 'string' ? d.name : undefined };
+}
+
+/**
+ * What a Bambu Studio template needs for this print: the filament's temperatures and type, the plate, the first
+ * layer's area (the printer levels just there), the height, a few fixed answers (one extruder, 0.4 mm nozzle, printed
+ * layer by layer). Names used by Bambu's own start, end and layer code for its printers.
+ */
+export function bambuVars(ps: PrinterSettings, mat: Material, g: { x0: number; y0: number; x1: number; y1: number; z1: number; layers: number }): Record<string, TplValue> {
+  const f = filamentOn(printerByName(ps.name), mat), flow = f.flow;
+  const plateTemp = { cool_plate_temp: [f.bed], eng_plate_temp: [f.bed], hot_plate_temp: [f.bed], textured_plate_temp: [f.bed], cool_plate_temp_initial_layer: [f.bedFirst], eng_plate_temp_initial_layer: [f.bedFirst], hot_plate_temp_initial_layer: [f.bedFirst], textured_plate_temp_initial_layer: [f.bedFirst] };
+  return {
+    ...plateTemp,
+    nozzle_temperature_initial_layer: [f.nozzleFirst], nozzle_temperature: [f.nozzle], nozzle_temperature_range_low: [f.range[0]], nozzle_temperature_range_high: [f.range[1]],
+    bed_temperature: [f.bed], bed_temperature_initial_layer: [f.bedFirst], bed_temperature_initial_layer_single: f.bedFirst,
+    filament_type: [mat], filament_max_volumetric_speed: [flow], flush_temperatures: [f.nozzle], flush_volumetric_speeds: [flow],
+    initial_extruder: 0, initial_no_support_extruder: 0, nozzle_diameter: [0.4], filament_diameter: [1.75],
+    curr_bed_type: ps.plate ?? 'Textured PEI Plate',
+    outer_wall_volumetric_speed: Math.min(flow, 12),
+    first_layer_print_min: [Math.round(g.x0 * 10) / 10, Math.round(g.y0 * 10) / 10], first_layer_print_max: [Math.round(g.x1 * 10) / 10, Math.round(g.y1 * 10) / 10],
+    first_layer_print_size: [Math.round((g.x1 - g.x0) * 10) / 10, Math.round((g.y1 - g.y0) * 10) / 10],
+    first_layer_center_no_wipe_tower: [Math.round(((g.x0 + g.x1) / 2) * 10) / 10, Math.round(((g.y0 + g.y1) / 2) * 10) / 10],
+    max_layer_z: Math.round(g.z1 * 100) / 100, printable_height: ps.maxZ ?? 180, total_layer_count: g.layers, layer_num: 0, layer_z: 0,
+    spiral_mode: false, print_sequence: 'by layer', timelapse_type: 0, has_wipe_tower: false,
+  };
 }

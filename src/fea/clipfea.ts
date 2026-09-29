@@ -3,6 +3,9 @@
 import type { Loop } from '../model/types';
 import { assemble2D, elementStrain, meshPolygons, nearestNode, pcg, q6Element } from './fea2d';
 import type { clipDims } from '../cad/dinclip';
+import { GRIP } from '../cad/dockdims';
+
+const RAIL = { flangeFront: 7.5 }; // (dinclip.ts RAIL: the flanges' front face)
 
 type Dims = ReturnType<typeof clipDims>;
 
@@ -77,6 +80,29 @@ export function clipFea(loops: Loop[], d: Dims, W: number, E: number, nu: number
     const px = a[0] + t * (b[0] - a[0]), py = a[1] + t * (b[1] - a[1]);
     return t > 0.15 && t < 0.95 && Math.hypot(x - px, y - py) < h * 0.8;
   }, nrm, -(d.eL + 0.1), `lip pushed ${(d.eL + 0.1).toFixed(2)} mm down to pass the flange edge`);
+  // rail grip: the fork under the top wall, everything else held, its pad pushed back GRIP.pre by the wall
+  onProgress?.('Solving the rail grip');
+  const padV = d.gripWall + d.gripGap + GRIP.pre;
+  const gfix = new Uint8Array(S.n);
+  for (let i = 0; i < m.nNodes; i++) { const x = m.nodeXY[2 * i], y = m.nodeXY[2 * i + 1]; if (x > RAIL.flangeFront + 0.15 || y < d.gripWall - 9) { gfix[2 * i] = 1; gfix[2 * i + 1] = 1; } }
+  const gf = new Float64Array(S.n);
+  const gids: number[] = [];
+  for (let i = 0; i < m.nNodes; i++) if (!gfix[2 * i] && m.nodeXY[2 * i + 1] > padV - h * 1.5 && Math.abs(m.nodeXY[2 * i] - GRIP.pad) < 0.35) gids.push(i);
+  if (gids.length) {
+    for (const i of gids) gf[2 * i + 1] = -1 / gids.length;
+    const ug = pcg(S, gf, gfix, 1e-8).u;
+    let dv = 0; for (const i of gids) dv += ug[2 * i + 1] / gids.length;
+    const kg = 1 / Math.abs(dv), Fg = kg * GRIP.pre;
+    // (peak and 99% over the fork alone: the rest of the clip is held)
+    const eps = elementStrain(m, ug, R).map((e) => e * Fg);
+    const inFork = (ge: number) => { const x = m.x0 + ((ge % m.nx) + 0.5) * h, y = m.y0 + (Math.floor(ge / m.nx) + 0.5) * h; return x < RAIL.flangeFront + 0.1 && y > d.gripWall - 9 && y < d.gripWall + 1; };
+    const sorted = Float64Array.from(eps.filter((_, i) => inFork(m.elems[i]))).sort();
+    const knock = (GRIP.pre + GRIP.stop) / GRIP.pre;
+    cases.push({
+      name: `Rail grip: pad pressed ${GRIP.pre} mm by the rail's top wall`, force: Fg, target: `holds the clip down on the top flange: it slides along the rail at about ${(2 * 0.3 * Fg).toFixed(1)} N (friction 0.3); ${kg.toFixed(0)} N per mm of pad travel; a knock that lifts the clip takes it to ${((sorted[sorted.length - 1] * knock) * 100).toFixed(2)}% before the tooth meets the wall`,
+      peakStrain: sorted[sorted.length - 1], p99Strain: sorted[Math.floor(sorted.length * 0.99)], lipMove: [0, 0], notes: [`${(kg * 0.2).toFixed(1)} to ${(kg * 0.5).toFixed(1)} N for 0.2 to 0.5 mm (print and rail tolerance)`],
+    });
+  }
   // strain field of the release case for display
   const strain = Float32Array.from(rel.eps);
   return {

@@ -6,7 +6,7 @@ import { TEMPLATES } from '../src/model/templates';
 import { newModule, newProject } from '../src/model/library';
 import { autoLinks, numberLinks } from '../src/model/links';
 import { addAdapters, addProbes, companionLabel, fillWires, stackProbes } from '../src/model/probes';
-import { appendDock, seatBoard, autoAssign, bestDock, dropEmptied, nearestFree, seatCompanion, seatCompanions, shorterLever, spreadOut, tongueStress } from '../src/cad/dockplan';
+import { appendDock, seatBoard, autoAssign, bestDock, dropEmptied, nearestFree, ownDocks, seatCompanion, seatCompanions, shorterLever, spreadOut, spreadRails, tongueStress } from '../src/cad/dockplan';
 import { generatePanel } from '../src/cad/panelgen';
 import { initKernel } from '../src/cad/kernel';
 import { delta, snapshot } from '../src/model/built';
@@ -113,6 +113,33 @@ describe('docking', () => {
     expect(before.collisions.length).toBeGreaterThan(0);
     expect(spreadOut(p, before, 2).length).toBeGreaterThan(0);
     expect(generatePanel(p).report.panel!.collisions).toEqual([]);
+  }, 600000);
+
+  it('slides the next rails across when a board laid flat reaches over them', async () => {
+    await initKernel();
+    // small boards on three rails 83 and 110 mm apart; the Mega on the first, laid flat, reaches 73 to 168 mm across
+    const p = rack(['mega', 'uno', 'pico', 'nano', 'esp32', 'pico', 'nano', 'uno']);
+    p.panel.maxRail = 200;
+    const pr = generatePanel(p).report.panel!;
+    p.panel.rails = pr.rails.map((x) => ({ id: x.id, x: x.x, y: x.y, dir: x.dir, length: null }));
+    p.panel.mounts = pr.mounts.map((m) => ({ id: m.id, rail: m.rail, at: m.at, kind: m.kind, turn: m.turn, lever: m.leverSide > 0 ? 'pos' as const : 'neg' as const, slots: m.slots.map((s) => ({ ...s })) }));
+    p.panel.auto = false;
+    expect(p.panel.rails.length).toBe(3);
+    const railOf = (rep: PanelReport, id: string) => rep.mounts.find((m) => m.id === id)?.rail ?? rep.mounts.find((m) => m.id === rep.modules.find((q) => q.id === id)?.mount)?.rail;
+    const mega = p.modules[0].id, mt = p.panel.mounts.find((m) => m.slots.some((s) => s.module === mega))!, k = mt.slots.findIndex((s) => s.module === mega);
+    expect(mt.rail).toBe(p.panel.rails[0].id);
+    for (const edge of ['bottom', 'right'] as const) {
+      const q = structuredClone(p), y0 = q.panel.rails.map((r) => r.y);
+      q.panel.mounts.find((m) => m.id === mt.id)!.slots[k] = { module: mega, edge, lie: 'flat' };
+      const before = generatePanel(q).report.panel!;
+      expect(before.collisions.filter((c) => railOf(before, c[0]) !== railOf(before, c[1])).length, edge).toBeGreaterThan(0);
+      expect(spreadRails(q, before, 2), edge).toEqual([q.panel.rails[1].id, q.panel.rails[2].id]);
+      expect(generatePanel(q).report.panel!.collisions, edge).toEqual([]);
+      // the first rail stays; the ones beyond keep their gap to each other
+      expect(q.panel.rails[0].y).toBe(y0[0]);
+      expect(q.panel.rails[1].y).toBeLessThan(y0[1]);
+      expect(q.panel.rails[2].y - q.panel.rails[1].y).toBeCloseTo(y0[2] - y0[1], 5);
+    }
   }, 600000);
 
   it('gives probes taken off their stack a dock right beside their board', () => {
@@ -261,5 +288,61 @@ describe('racks laid out by hand or built', () => {
     p.modules.push(hub);
     expect(seatBoard(p, hub.id).where).toBe('new');
     expect(p.panel.mounts.length).toBe(docks + 1);
+  }, 120_000);
+
+  it("lists only the new dock as new in What's new, not the docks already built", () => {
+    const p = rack(['rpi4', 'uno']);
+    p.panel.pairs = false;
+    build(p);
+    const hub = newModule(T('usb_hub'));
+    p.modules.push(hub);
+    expect(seatBoard(p, hub.id).where).toBe('new');
+    const r = generatePanel(p), d = delta(p, r)!;
+    const docks = d.plan.filter((s) => s.kind === 'dock');
+    expect(docks.length).toBe(1);
+    expect(docks[0].text).toMatch(/dock 1\.3/);
+    // its shoe and socket, and nothing for the built docks
+    expect(docks[0].parts?.reduce((n, x) => n + x.qty, 0)).toBe(2);
+  }, 120_000);
+
+  it('gives a board added to a built rack its own dock rather than slide the built docks along', () => {
+    const p = rack(['rpi4', 'uno', 'pico']);
+    build(p);
+    const at0 = new Map(p.panel.mounts.map((m) => [m.id, m.at]));
+    const pi5 = newModule(T('rpi5'));
+    p.modules.push(pi5);
+    expect(seatBoard(p, pi5.id).where).toBe('slot');
+    // in the free slot behind the Uno it reaches over the Pi 4's dock
+    const r1 = generatePanel(p);
+    expect(r1.report.panel!.collisions.length).toBeGreaterThan(0);
+    expect(ownDocks(p, r1.report.panel!)).toEqual([pi5.id]);
+    const r2 = generatePanel(p), pr = r2.report.panel!;
+    expect(pr.collisions).toEqual([]);
+    for (const m of pr.mounts) if (at0.has(m.id)) expect(m.at, m.id).toBeCloseTo(at0.get(m.id)!, 1);
+    expect(pr.mounts.find((m) => m.slots.some((s) => s.module === pi5.id))!.id).not.toMatch(/^d1\./);
+    const d = delta(p, r2)!;
+    expect(d.slid).toEqual([]);
+    expect(d.plan.filter((s) => s.kind === 'dock').length).toBe(1);
+    // nothing to do on a rack with no new boards
+    expect(ownDocks(p, r2.report.panel!)).toEqual([]);
+  }, 120_000);
+
+  it('says to slide a built dock, and fails Check with a longer rail to cut, when docks run past the rail you cut', () => {
+    const p = rack(['rpi4', 'uno']);
+    p.panel.pairs = false;
+    build(p);
+    const rail = p.panel.rails[0], cut = rail.length!;
+    const last = [...p.panel.mounts].sort((a, b) => b.at! - a.at!)[0];
+    last.at = last.at! + 40; // slid along, past the end of the rail
+    const r = generatePanel(p), pr = r.report.panel!;
+    const bad = r.report.checks.find((c) => c.status === 'bad' && /^Rail 1 length/.test(c.name));
+    expect(bad?.detail).toMatch(new RegExp(`${cut} mm rail you cut`));
+    expect(pr.rails[0].length).toBeGreaterThan(cut + 30);
+    const d = delta(p, r)!;
+    expect(d.slid.map((x) => Math.round(x.to - x.from))).toEqual([40]);
+    const kinds = d.plan.map((s) => s.kind);
+    expect(kinds).toContain('cut');
+    expect(d.plan.find((s) => s.kind === 'move')?.text).toMatch(/^Slide dock 1\.\d along rail 1 to \d+ mm from its start \(it is at \d+ mm\)/);
+    expect(kinds.indexOf('cut')).toBeLessThan(kinds.indexOf('move'));
   }, 120_000);
 });

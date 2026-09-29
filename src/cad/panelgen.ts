@@ -16,18 +16,18 @@ import { basis, dir, I4, inv, mul, pt as ptM, rotZ, tr, type M4 } from '../geom/
 import { filletPath, leadStub, moveFx, powerFx, ribbonMesh, sphereMesh, tubeMesh } from './boardviz';
 import { poweredBoards } from '../model/lights';
 import { inUse, portUses, type UseWhy } from '../model/portuse';
-import { baseRef, cableFlow, cableNumbers, cablePurpose, cableToBuy, findModule, KIND_COLOR, KIND_NAME, offRackModule, offRackTo, plugRole, plugsOf, refText, shortName } from '../model/links';
+import { baseRef, cableFlow, cableNumbers, cablePurpose, cableToBuy, findModule, KIND_COLOR, KIND_NAME, offRackModule, offRackTo, packGoes, plugRole, plugsOf, refText, shortName } from '../model/links';
 import { isPlugPack } from '../model/powerdata';
 import { cableTag, TAG } from './cabletag';
 import { mainsBudget, mainsText, powerBudget, powerText } from '../model/power';
 import { buildModule, builtLevels, transformMesh, type ArrangeHooks, type ModuleOut } from './generate';
 import { baseOf, ridersOf, stackLayers, type StackLayer } from '../model/holes';
-import { box, freeAll, toMesh, unionMF, type MF } from './kernel';
+import { box, freeAll, fromMesh, toMesh, unionMF, type MF } from './kernel';
 import { END_POSE, LEN_X, rail as railSolid, shoe, shoeBody, shoeLever, SHOE_LEVER, socket, SOCKET_Z } from './dock';
 import { EAR } from './dockdims';
 import { autoAssign, bestDock, classify, clipToRail, dockSite, EDGES, edgeNormal, plugDirs, railMatrix, slotMatrix, withRiders } from './dockplan';
 import { capStress, pieceMesh, planStands, railI, standBoxes, STAND, type StandLane } from './railstand';
-import { assemble, bendRadius, bestRoute, escapes, hits, lead, ribbonRoute, slope, type Box, type CableEnd, type Choice, type Obstacle, type RibbonEnd, type Route } from './cableroute';
+import { assemble, bendRadius, bestRoute, escapes, hits, lead, ribbonRoute, segInBox, slope, type Box, type CableEnd, type Choice, type Hit, type Obstacle, type RibbonEnd, type Route } from './cableroute';
 import { settleCables } from './cablesim';
 import { isDebugPort, isProbe, isUartPort, jumperToBuy, jumperWiring, ribbonOf, uartWiring } from '../model/probes';
 
@@ -101,18 +101,22 @@ function stackPlan(p: Project, layers: StackLayer[], dockEdge: EdgeName | null) 
   });
 }
 
-const boltedOf = (L: StackLayer) => L.bolted.map((bo) => ({ b: bo.mod.board, dx: bo.dx, dy: bo.dy, dz: bo.dz, mid: bo.mod.id }));
+const boltedOf = (L: StackLayer) => L.bolted.map((bo) => ({ b: bo.mod.board, dx: bo.dx, dy: bo.dy, dz: bo.dz, mid: bo.mod.id, gap: bo.gap, need: bo.need, under: bo.under, below: bo.below, own: bo.mod.onGap != null }));
 
-let shoeRest: (ReturnType<typeof rest> & { body: MeshData; lever: MeshData }) | null = null, sockRest: ReturnType<typeof rest> | null = null;
+let shoeRest: (ReturnType<typeof rest> & { body: MeshData; lever: MeshData; env: MeshData }) | null = null, sockRest: ReturnType<typeof rest> | null = null;
 
-/** The shoe in its print pose, plus its body and its lever alone in the same frame (shown in two colours). */
+/** The shoe in its print pose, plus its body and its lever alone in the same frame (shown in two colours), and its
+ * envelope for boxes round it: without the rail grip, which hangs inside the rail's channel (the rail's own box covers
+ * it, and it took the shoe's box 2.5 mm down beside the rail, where cables pass). */
 function shoeRested() {
   const all = shoe();
   const r = rest(all, END_POSE.pose);
   const dz = -all.transform(END_POSE.pose as any).boundingBox().min[2]; // the rest translation
   const place = (m: MF) => toMesh(m.transform(END_POSE.pose as any).translate([0, 0, dz]));
-  return { ...r, body: place(shoeBody()), lever: place(shoeLever()) };
+  return { ...r, body: place(shoeBody()), lever: place(shoeLever()), env: place(all.subtract(box(-LEN_X, -14, -1, LEN_X, -4.2, 7.5))) };
 }
+/** The mesh a part's box is taken from, for cables and leads to keep clear of. */
+const boxMesh = (pt: PartOut) => pt.boxMesh ?? pt.mesh;
 
 function rest(m: MF, pose: M4): { mesh: MeshData; back: M4; volume: number; size: [number, number, number] } {
   const pm = m.transform(pose as any);
@@ -466,7 +470,14 @@ export function generatePanel(p: Project): GenResult {
     const start = on.length ? Math.min(...on.map((q) => q.mt.at! + q.lo + q.soft[0])) : 0;
     if (r.length == null) r.length = Math.ceil(Math.max(need, 50) - 1e-6);
     else if (start < -0.5) warnings.push(`Rail ${r.id.replace(/^r/, '')}: a mount hangs ${round(-start, 0)} mm off the start of the rail. Drag it along, or press Auto-arrange.`);
-    else if (need - margin > r.length + 0.5) warnings.push(`Rail ${r.id.replace(/^r/, '')}: the mounts run past the end of the ${r.length} mm rail (need ${Math.ceil(need)} mm).`);
+    else if (need - margin > r.length + 0.5 && p.built) {
+      // a built rack's rail is the one you cut: docks that now run past its end need a longer one (What's new says to
+      // cut it), and Check says so rather than leave them hanging off it
+      const n = r.id.replace(/^r/, ''), was = r.length;
+      r.length = Math.ceil(need - 1e-6);
+      warnings.push(`Rail ${n}: the docks now run past the end of the ${was} mm rail you cut, so it has to be ${r.length} mm long. Cut a longer rail (What's new has the step), or move a board somewhere else in the Rails step.`);
+      checks.push({ group: 'Panel', name: `Rail ${n} length`, value: `${r.length} mm, cut ${was}`, status: 'bad', detail: `The docks on rail ${n} run past the end of the ${was} mm rail you cut: a longer one (${r.length} mm) is needed, or move a board off it.` });
+    } else if (need - margin > r.length + 0.5) warnings.push(`Rail ${r.id.replace(/^r/, '')}: the mounts run past the end of the ${r.length} mm rail (need ${Math.ceil(need)} mm).`);
     else if (P.stands !== false && on.length && (start < STAND.len - STAND.back + 1 - 0.05 || need - margin > r.length - (STAND.len - STAND.back + 1) + 0.05)) warnings.push(`Rail ${r.id.replace(/^r/, '')}: a mount sits within ${STAND.len - STAND.back + 1} mm of a rail end, where the table stand's end block goes. Move it in or lengthen the rail.`);
   }
 
@@ -485,7 +496,9 @@ export function generatePanel(p: Project): GenResult {
   const linked = new Set(live.flatMap((l) => [`${l.a.module}/${l.a.ref}`, `${l.b.module}/${l.b.ref}`]));
   // plugs whose cable leaves the rack: one cabled to your computer or to a plug pack in an outlet, a board's cradled
   // plug with nothing in the rack on the other end, a box's supply
-  const toOff = new Set((p.links ?? []).flatMap((l) => [[l.a, l.b], [l.b, l.a]]).filter(([, o]) => offRackModule(findModule(p, o.module))).map(([me]) => `${me.module}/${baseRef(me.ref)}`));
+  const offLinks = (p.links ?? []).flatMap((l) => [[l.a, l.b], [l.b, l.a]]).filter(([, o]) => offRackModule(findModule(p, o.module))).map(([me]) => me);
+  const toOff = new Set(offLinks.map((me) => `${me.module}/${baseRef(me.ref)}`));
+  const toOffExact = new Set(offLinks.map((me) => `${me.module}/${me.ref}`)); // (the upper of a pair of sockets keeps its :2)
   const uses = new Map<string, Map<string, UseWhy>>();
   const offRack = (module: string, ref: string) => {
     const m = mods.get(module)?.m, c = m?.board.comps.find((x) => x.ref === ref);
@@ -528,7 +541,7 @@ export function generatePanel(p: Project): GenResult {
         // the holder goes into its dock and the latch clicks (onto its clip: it snaps)
         const IN: Motion = { seq: b0 + 4, dir: [0, 0, 1], dist: 70, style: 'snap' };
         const nm = s.mod.board.name, box = s.mod.board.kind === 'box';
-        if (hasRod) steps.push({ seq: b0 + 1, text: `Slide the release rod into the spine of the ${nm} holder.` });
+        if (hasRod) steps.push({ seq: b0 + 1, text: `Push the release rod into the spine of the ${nm} holder until it clicks.` });
         steps.push({ seq: b0 + 2, text: isProbe(s.mod) ? `Slide the ${nm} down into its slot, plugs out.` : box ? `Set the ${nm} into its holder and strap it down with a hook-and-loop strap through the loops.` : `Snap the ${nm} into its holder: it clicks under the spring clips or onto the pins.` });
         if (stacked) steps.push({ seq: b0 + 3, text: [...s.riders].map((x) => (layers.some((L) => L.mod === x) ? (isProbe(x) ? `Press the next slot onto the corner towers and slide the ${x.board.name} down into it.` : `Press the ${x.board.name} holder onto the corner towers.`) : `Bolt the ${x.board.name} onto the ${nm} on its standoffs.`)).join(' ') });
         steps.push({ seq: b0 + 4, text: q.mt.kind === 'dock' ? `Push the ${nm} holder straight into its dock until the latch clicks.` : layers[0].out.parts.some((pt) => pt.id.endsWith('_clip2')) ? `Press both halves of the ${nm} holder onto their rail clips, end to end.` : `Press the ${nm} holder onto its rail clip.` });
@@ -561,9 +574,15 @@ export function generatePanel(p: Project): GenResult {
               // a plug where a cable goes: in the rack (the routed cable leaves it), or off it where the board has a
               // cradle for one (a screen, a supply) or a box takes its supply (mains, DC in). A free port stays empty.
               const k2 = /upper/.test(g.name) ? `${key}:2` : key;
-              const shown = linked.has(k2) || (!/upper|lower/.test(g.name) && linked.has(`${key}:2`)) || offRack(g.tag.module!, g.tag.refs?.[0] ?? '');
+              // one of a stacked pair of sockets (a Pi's USB-A) is a plug of its own: shown when it has a cable on the
+              // rack or one to something off it; a pair in use with neither cabled (you plug it in yourself) shows the
+              // lower one. (The whole pair counting as in use drew a lead "to a computer" from an empty socket.)
+              const pair = /upper|lower/.test(g.name), mate = /upper/.test(g.name) ? key : `${key}:2`;
+              const shown = pair
+                ? linked.has(k2) || toOffExact.has(k2) || (!/upper/.test(g.name) && !linked.has(mate) && !toOffExact.has(mate) && offRack(g.tag.module!, g.tag.refs?.[0] ?? ''))
+                : linked.has(k2) || linked.has(`${key}:2`) || offRack(g.tag.module!, g.tag.refs?.[0] ?? '');
               if (!shown) continue;
-              if (!linked.has(k2) && !linked.has(`${key}:2`)) hang.add(k2);
+              if (pair ? !linked.has(k2) : !linked.has(k2) && !linked.has(`${key}:2`)) hang.add(k2);
             }
             const own = moveAnim(g.anim, L.T);
             let a: Anim | undefined = own;
@@ -600,7 +619,7 @@ export function generatePanel(p: Project): GenResult {
     if (sh && so) {
       const out: [number, number, number] = [0, 0, 1];
       const tags = (kind: 'shoe' | 'socket') => dockIds.map((id) => ({ kind, mount: id }));
-      parts.push({ ...base, id: 'dock_shoe', name: 'Rail shoe (press-down release lever)', qty: docks.length, mesh: sh.mesh, displayMesh: sh.body, toAssembly: shoeInst[0], instances: shoeInst.slice(1), volume: sh.volume, size: sh.size, color: '#5b6570',
+      parts.push({ ...base, id: 'dock_shoe', name: 'Rail shoe (press-down release lever)', qty: docks.length, mesh: sh.mesh, displayMesh: sh.body, boxMesh: sh.env, toAssembly: shoeInst[0], instances: shoeInst.slice(1), volume: sh.volume, size: sh.size, color: '#5b6570',
         tag: tags('shoe')[0], tags: tags('shoe').slice(1), anim: shoeAn[0], anims: shoeAn.slice(1) });
       display.push({ ...base, id: 'dock_lever', name: 'Rail release lever (prints with the shoe)', qty: docks.length, mesh: sh.lever, toAssembly: shoeInst[0], instances: shoeInst.slice(1), volume: 0, size: sh.size, color: '#ff4d5e',
         tag: tags('shoe')[0], tags: tags('shoe').slice(1), anim: shoeAn[0], anims: shoeAn.slice(1) });
@@ -650,15 +669,15 @@ export function generatePanel(p: Project): GenResult {
     for (const pt of parts) {
       if (pt.tag?.kind === 'railstand') continue;
       [pt.toAssembly, ...(pt.instances ?? [])].forEach((T, i) => {
-        const b = emptyBox(); boxOf(pt.mesh.pos, T, b);
+        const b = emptyBox(); boxOf(boxMesh(pt).pos, T, b);
         const t = i ? pt.tags?.[i - 1] ?? pt.tag : pt.tag;
-        obs.push({ box: uvBox(b), label: labelOf(t, pt.name), module: t?.module });
+        obs.push({ box: uvBox(b), label: labelOf(t, pt.name), module: t?.module, src: { mesh: pt.displayMesh ?? pt.mesh, T } });
       });
     }
     for (const g of ghosts) {
       if (g.tag?.kind === 'cable') continue;
       const b = emptyBox(); boxOf(g.mesh.pos, I4, b);
-      obs.push({ box: uvBox(b), label: labelOf(g.tag, g.name), module: g.tag?.module, plug: g.tag?.kind === 'plug' ? `${g.tag.module}/${g.tag.refs?.[0]}` : undefined });
+      obs.push({ box: uvBox(b), label: labelOf(g.tag, g.name), module: g.tag?.module, plug: g.tag?.kind === 'plug' ? `${g.tag.module}/${g.tag.refs?.[0]}` : undefined, src: { mesh: g.mesh, T: I4 } });
     }
     const pre = stands ? planStands(standRails, streets, []) : null;
     if (pre) for (const sb of standBoxes(pre)) obs.push({ ...sb, stand: true });
@@ -746,6 +765,12 @@ export function generatePanel(p: Project): GenResult {
       return { L: S[S.length - 1], at, part: (s0: number, s1: number) => [at(s0), ...P.filter((_, i) => S[i] > s0 && S[i] < s1), at(s1)] };
     };
     const tagMeshes = new Map<string, { mesh: MeshData; volume: number; size: [number, number, number] }>();
+    const confirmHits = (hs: Hit[], pts: number[][], r: number) => {
+      if (!hs.some((h) => h.ob.src) || pts.length < 2) return hs;
+      const tube = fromMesh(tubeMesh(pts, Math.max(0.3, r - 0.3), 12));
+      if (!tube) return hs;
+      return hs.filter((h) => { const o = h.ob.src && fromMesh(h.ob.src.mesh, h.ob.src.T); return !o || tube.intersect(o).volume() > 0.2; });
+    };
     // every cable's planned way, with its bends as a cable takes them (arcs of about four diameters, no kinks)
     const bendR = (q: (typeof routes)[number]) => (q.l.kind === 'debug' ? 7 : q.l.kind === 'jumper' ? 6 : bendRadius(q.d / 2));
     const lay = () => routes.map((q) => {
@@ -802,11 +827,32 @@ export function generatePanel(p: Project): GenResult {
     const nameOfLink = (id: string) => { const l = routes.find((q) => q.l.id === id)?.l; return l ? `${nameOf2(l.a.module)} ${l.a.ref}` : id; };
     if (sim.touching.length) warnings.push(`${sim.touching.length} pair${sim.touching.length > 1 ? 's' : ''} of cables still press on each other after settling (${sim.touching.slice(0, 3).map(([a, b]) => `${nameOfLink(a)} and ${nameOfLink(b)}`).join('; ')}): give them more room, or connect other plugs.`);
     if (routes.length) checks.push({ group: 'Panel', name: 'Cables settled', value: sim.touching.length ? `${sim.touching.length} pair${sim.touching.length > 1 ? 's' : ''} pressing` : 'none through another', status: sim.touching.length ? 'warn' : 'ok', detail: `every cable was let settle with the others${laidOut ? ` (their planned routes met in ${laidOut} place${laidOut > 1 ? 's' : ''})` : ''}: where two cross one lies over the other, where they run together they lie side by side, each keeps its length and stays in its plugs, runs straight out of them before it bends, sags a little where it hangs free and sits in the stands' combs. Ribbons stay where they were laid and the rest settle round them.${sim.kinked.length ? ` ${sim.kinked.length} still bend${sim.kinked.length > 1 ? '' : 's'} tighter than a cable likes somewhere (squeezed between plugs close together): ${sim.kinked.slice(0, 3).map(nameOfLink).join('; ')}.` : ''}` });
-    const tagPts: number[][] = []; // where the tags already placed are (rack frame)
+    // where the tags already placed are (assembly frame), and every settled cable's beads (rack frame), on 6 mm grids
+    const G = 6, cell = (q: number[]) => `${Math.floor(q[0] / G)},${Math.floor(q[1] / G)},${Math.floor(q[2] / G)}`;
+    const inGrid = <T>(grid: Map<string, T[]>, q: number[], f: (x: T) => boolean) => {
+      const i = Math.floor(q[0] / G), j = Math.floor(q[1] / G), k = Math.floor(q[2] / G);
+      for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (let c = -1; c <= 1; c++) for (const x of grid.get(`${i + a},${j + b},${k + c}`) ?? []) if (f(x)) return true;
+      return false;
+    };
+    const tagGrid = new Map<string, number[][]>();
+    const addTagPt = (q: number[]) => { const k = cell(q); (tagGrid.get(k) ?? tagGrid.set(k, []).get(k)!).push(q); };
+    const tagNear = (q: number[]) => inGrid(tagGrid, q, (w) => Math.hypot(w[0] - q[0], w[1] - q[1], w[2] - q[2]) < 1.2);
+    const beadGrid = new Map<string, [number, number][]>();
+    sim.paths.forEach((P, cj) => P.forEach((q, i) => { const k = cell(q); (beadGrid.get(k) ?? beadGrid.set(k, []).get(k)!).push([cj, i]); }));
+    /** Whether a point (rack frame) is inside a cable other than cable qi near arc length s (where its own tag wraps it);
+     * beads are 2.5 mm apart, so the check reaches half a step further, for the cable between them. */
+    const beadNear = (u: number[], qi: number, s: number) => inGrid(beadGrid, u, ([cj, i]) => {
+      if (cj === qi && Math.abs(i * 2.5 - s) < 8) return false;
+      const P = sim.paths[cj][i], rr = routes[cj].d / 2 + 0.4;
+      return (P[0] - u[0]) ** 2 + (P[1] - u[1]) ** 2 + (P[2] - u[2]) ** 2 < rr * rr + 1.5625;
+    });
     for (const [qi, q] of routes.entries()) {
       const { l, d, free } = q;
-      const { hit } = planned[qi];
       const path = sim.paths[qi].map(xy);
+      // what the router found the route running into, by bounding boxes, confirmed against the parts themselves: the
+      // cable as it settled (0.3 mm thinner: it may brush) intersected with each one's real shape. What doesn't
+      // really touch is no clash (a warning that turns out to be a close shave only worries people)
+      const hit = confirmHits(planned[qi].hit, path, d / 2);
       let len = 0;
       for (let i = 1; i < path.length; i++) len += Math.hypot(path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1], path[i][2] - path[i - 1][2]);
       const kind = l.kind ?? 'usb';
@@ -906,42 +952,44 @@ export function generatePanel(p: Project): GenResult {
           return { o, t, x, y: y.map((v, i) => (v * yy[i] < 0 ? -v : v)) };
         };
         // a hand-width from its plug, where the cable runs straight and the tag touches nothing: no holder, rail,
-        // stand, board or other cable or tag
+        // stand, board or other cable or tag. The ring and the whole flag are checked, every 2 mm, at both faces
         const r0 = d / 2 + 0.2 + TAG.wall, sh = TAG.flagW / 2 - 0.5;
-        const clearAt = (s: number, f: number) => {
-          const { o, x, y } = spotAt(s, f);
-          const t0 = along(s - 6).t, t1 = along(s + 6).t;
-          if (t0[0] * t1[0] + t0[1] * t1[1] + t0[2] * t1[2] < 0.9) return false; // bent here
+        const tagShape = (o: number[], t: number[], x: number[], y: number[]) => {
           const pts: number[][] = [];
-          for (const k of [r0, r0 + 5, r0 + TAG.flagL - 1.5]) for (const w of k === r0 ? [0] : [-sh, 0, sh]) pts.push([o[0] + x[0] * k + y[0] * w, o[1] + x[1] * k + y[1] * w, o[2] + x[2] * k + y[2] * w]);
-          for (const w of [-r0, r0]) pts.push([o[0] + y[0] * w, o[1] + y[1] * w, o[2] + y[2] * w]);
-          pts.push([o[0] - x[0] * r0, o[1] - x[1] * r0, o[2] - x[2] * r0]);
-          return pts.every((q) => {
+          for (const a of [-TAG.height / 2 + 0.2, 0, TAG.height / 2 - 0.2]) {
+            const c = [o[0] + t[0] * a, o[1] + t[1] * a, o[2] + t[2] * a];
+            for (let k = r0; k <= r0 + TAG.flagL - 1; k += 2) for (let w = -sh; w <= sh + 1e-9; w += sh / 2) pts.push([c[0] + x[0] * k + y[0] * w, c[1] + x[1] * k + y[1] * w, c[2] + x[2] * k + y[2] * w]);
+            for (const [kx, ky] of [[0, r0], [0, -r0], [-r0, 0], [-r0 * 0.7, r0 * 0.7], [-r0 * 0.7, -r0 * 0.7]]) pts.push([c[0] + x[0] * kx + y[0] * ky, c[1] + x[1] * kx + y[1] * ky, c[2] + x[2] * kx + y[2] * ky]);
+          }
+          return pts;
+        };
+        // (how many of those points are blocked: none, and the spot is clear)
+        const blockedAt = (s: number, f: number) => {
+          const { o, t, x, y } = spotAt(s, f);
+          const t0 = along(s - 6).t, t1 = along(s + 6).t;
+          if (t0[0] * t1[0] + t0[1] * t1[1] + t0[2] * t1[2] < 0.9) return Infinity; // bent here
+          let n = 0;
+          for (const q of tagShape(o, t, x, y)) {
             const u = uv(q);
-            if (stands && u[2] < -STAND.H + 0.3) return false; // the table
-            if (obs.some((ob) => ob.box[0] - 0.3 < u[0] && u[0] < ob.box[3] + 0.3 && ob.box[1] - 0.3 < u[1] && u[1] < ob.box[4] + 0.3 && ob.box[2] - 0.3 < u[2] && u[2] < ob.box[5] + 0.3)) return false;
-            for (const [cj, P] of sim.paths.entries()) {
-              const rr = (cj === qi ? 0 : routes[cj].d / 2) + 0.4;
-              for (let i = 0; i < P.length; i += 1) {
-                if (cj === qi && Math.abs(i * 2.5 - s) < 8) continue; // its own cable, where it wraps it
-                const dx = P[i][0] - u[0], dy = P[i][1] - u[1], dz = P[i][2] - u[2];
-                if (dx * dx + dy * dy + dz * dz < (cj === qi ? routes[cj].d / 2 + 0.4 : rr) ** 2) return false;
-              }
-            }
-            return !tagPts.some((w) => Math.hypot(w[0] - q[0], w[1] - q[1], w[2] - q[2]) < 3);
-          });
+            if ((stands && u[2] < -STAND.H + 0.3)
+              || obs.some((ob) => ob.box[0] - 0.3 < u[0] && u[0] < ob.box[3] + 0.3 && ob.box[1] - 0.3 < u[1] && u[1] < ob.box[4] + 0.3 && ob.box[2] - 0.3 < u[2] && u[2] < ob.box[5] + 0.3)
+              || beadNear(u, qi, s) || tagNear(q)) n++;
+          }
+          return n;
         };
         const place = (s0: number, lo: number, hi: number) => {
-          for (let k = 0; k < 24; k++) {
-            const s = s0 + (k % 2 ? -1 : 1) * Math.ceil(k / 2) * 6;
+          // outwards from the preferred spot in 3 mm steps; failing a clear spot, the one that touches least
+          let best = { s: s0, f: 0, n: Infinity };
+          for (let k = 0; k < 80; k++) {
+            const s = s0 + (k % 2 ? -1 : 1) * Math.ceil(k / 2) * 3;
             if (s < lo || s > hi) continue;
-            for (let f = 0; f < 4; f++) if (clearAt(s, f)) return { s, f };
+            for (let f = 0; f < 4; f++) { const n = blockedAt(s, f); if (n === 0) return { s, f }; if (n < best.n) best = { s, f, n }; }
           }
-          return { s: s0, f: 0 };
+          return best;
         };
         const spot = ({ s, f }: { s: number; f: number }) => {
           const { o, t, x, y } = spotAt(s, f);
-          for (const k of [r0, r0 + 6, r0 + TAG.flagL - 1.5]) tagPts.push([o[0] + x[0] * k, o[1] + x[1] * k, o[2] + x[2] * k]);
+          for (const q of tagShape(o, t, x, y)) addTagPt(q);
           return basis(x, y, t, [o[0] - t[0] * 1.5, o[1] - t[1] * 1.5, o[2] - t[2] * 1.5]);
         };
         const s1 = Math.min(90, len * 0.3), lo = Math.min(s1, lead(d / 2) + 12);
@@ -951,7 +999,7 @@ export function generatePanel(p: Project): GenResult {
       }
     }
     const clashing = cables.filter((c) => c.clash);
-    for (const c of clashing) warnings.push(`The ${c.a} to ${c.b} cable runs into ${c.clash}. Move or turn one of the boards, or connect it to another plug (routes are checked against bounding boxes, so this may be a close shave rather than a real clash).`);
+    for (const c of clashing) warnings.push(`The ${c.a} to ${c.b} cable runs into ${c.clash}. Move or turn one of the boards, or connect it to another plug.`);
     if (cables.length) checks.push({ group: 'Panel', name: 'Cable routes', value: clashing.length ? `${clashing.length} of ${cables.length} touch something` : `all ${cables.length} clear`, status: clashing.length ? 'warn' : 'ok', detail: clashing.length ? clashing.map((c) => `${c.a} to ${c.b}: ${c.clash}`).join('; ') : 'no clash found in the model: every route misses the holders, boards, plugs, docks, rails and stands, checked with their bounding boxes (a rough check: route the real cables with care)' });
     const long = cables.filter((c) => c.length > 1200);
     if (long.length) warnings.push(`${long.map((c) => `${c.a} to ${c.b}`).join(', ')}: over 1.2 m of ${long.length > 1 ? 'cable each' : 'cable'}. Put the two boards closer (Auto-arrange keeps connected boards together).`);
@@ -976,18 +1024,30 @@ export function generatePanel(p: Project): GenResult {
   // a board whose only supply is a DC input with nothing on it: a supply off the rack, or none at all
   const dcFree = plugsOf(p).filter((x) => (x.role === 'power-in-dc' || (x.role === 'wire' && /^(v?in|pwr|power|dc ?in)\d*$/i.test(x.comp.ref))) && !(p.links ?? []).some((l) => [l.a, l.b].some((r) => r.module === x.ref.module && r.ref === x.ref.ref)));
   // (a box, such as a network switch, comes with its own plug pack: only a note for it)
-  if (dcFree.length) checks.push({ group: 'Power', name: 'DC inputs with no supply', value: dcFree.map((x) => `${shortName(x.module.board.name)} ${x.comp.ref}`).join(', '), status: dcFree.every((x) => x.module.board.kind === 'box') ? 'info' : 'warn', module: dcFree[0].module.id,
-    detail: `${dcFree.length > 1 ? 'These boards take' : 'This board takes'} power only through a DC input (a barrel jack or an input terminal) with nothing on it. Give ${dcFree.length > 1 ? 'each' : 'it'} a DC supply (Start › Hubs and chargers has a 12 V plug pack) and check its voltage and polarity against the board's label: BoardDock can't check either. If ${dcFree.length > 1 ? 'they have their' : 'it has its'} own supply off the rack, this is fine.` });
+  const dcBoards = dcFree.filter((x) => x.module.board.kind !== 'box'), dcBoxes = dcFree.filter((x) => x.module.board.kind === 'box');
+  if (dcBoards.length) checks.push({ group: 'Power', name: 'DC inputs with no supply', value: dcBoards.map((x) => `${shortName(x.module.board.name)} ${x.comp.ref}`).join(', '), status: 'warn', module: dcBoards[0].module.id,
+    detail: `${dcBoards.length > 1 ? 'These boards take' : 'This board takes'} power only through a DC input (a barrel jack or an input terminal) with nothing on it. Give ${dcBoards.length > 1 ? 'each' : 'it'} a DC supply (Start › Hubs and chargers has a 12 V plug pack) and check its voltage and polarity against the board's label: BoardDock can't check either. If ${dcBoards.length > 1 ? 'they have their' : 'it has its'} own supply off the rack, this is fine.` });
+  if (dcBoxes.length) checks.push({ group: 'Power', name: 'Boxes with nothing on their DC input', value: [...new Set(dcBoxes.map((x) => shortName(x.module.board.name)))].join(', '), status: 'info', module: dcBoxes[0].module.id,
+    detail: `${dcBoxes.length > 1 ? 'These boxes have' : 'This box has'} nothing on ${dcBoxes.length > 1 ? 'their' : 'its'} DC input. The supply ${dcBoxes.length > 1 ? 'each' : 'it'} came with can go on the rack: the Plugs step's To do list has Add its supply, and Auto-connect puts it in a free outlet. Plugged in off the rack, this is fine.` });
   if ((p.links ?? []).some((l) => l.kind === 'mains') || p.modules.some((m) => m.board.comps.some((c) => c.conn?.type.startsWith('ac_'))))
     checks.push({ group: 'Power', name: 'Mains: what BoardDock checks', value: 'plugs and outlets only', status: 'info',
       detail: "BoardDock checks which mains plug goes into which outlet, never a powerboard into another, and adds up the load it knows about. It can't check your powerboard, its lead or earth, or the wall socket, and it doesn't model mains wiring through screw terminals or relays: that belongs in a proper enclosure, wired by someone qualified to. Plug the powerboards into the wall last, with their switches off." });
 
   // ---- cables that leave the rack (to a screen, a supply, the mains): out of the plug, a bend down, along the table ----
+  // (each drawn out of its plug only as far as it is clear of everything but its own board: a supply lead out of a
+  // hub's DC jack used to run into the next dock along the rail)
+  const solid = hang.size ? [
+    ...parts.flatMap((pt) => [pt.toAssembly, ...(pt.instances ?? [])].map((T, j) => { const b = emptyBox(); boxOf(boxMesh(pt).pos, T, b); return { b, module: (j ? pt.tags?.[j - 1] ?? pt.tag : pt.tag)?.module }; })),
+    ...ghosts.filter((g) => g.tag && g.tag.kind !== 'cable' && g.mat !== 'cable').map((g) => { const b = emptyBox(); boxOf(g.mesh.pos, I4, b); return { b, module: g.tag?.module }; }),
+  ] : [];
   for (const k of hang) {
     const e = ends.get(k);
     if (!e) continue;
     const i = k.indexOf('/'), module = k.slice(0, i), ref = k.slice(i + 1), m = mods.get(module)?.m, c = m?.board.comps.find((x) => x.ref === baseRef(ref));
-    ghosts.push(leadStub(`off-rack cable ${k}`, e.p, e.d, e.cable, m && c ? offRackTo(m, c) : 'off the rack', { kind: 'plug', module, refs: [baseRef(ref)] }, { seq: toWall(module, ref) ? WALL_SEQ : PLUG_SEQ, dir: [0, 0, 1], dist: 0, grow: true }));
+    const r = Math.max(1.1, e.cable / 2), far = e.p.map((v, j) => v + e.d[j] * 60);
+    let clear = 60;
+    for (const sd of solid) { if (sd.module === module) continue; const t = segInBox(e.p, far, sd.b, r); if (t) clear = Math.min(clear, t[0] * 60 - 1); }
+    ghosts.push(leadStub(`off-rack cable ${k}`, e.p, e.d, e.cable, m && c ? offRackTo(m, c) : 'off the rack', { kind: 'plug', module, refs: [baseRef(ref)] }, { seq: toWall(module, ref) ? WALL_SEQ : PLUG_SEQ, dir: [0, 0, 1], dist: 0, grow: true }, clear));
   }
 
 
@@ -1044,7 +1104,8 @@ export function generatePanel(p: Project): GenResult {
   const st = (eps: number): Check['status'] => (eps <= allow * 0.85 ? 'ok' : eps <= allow * 1.1 ? 'warn' : 'bad');
   if (docks.length) {
     // PETG numbers from the in-app 2D FEA (0.06 mm mesh), scaled by stiffness; the Check tab reruns it for your material
-    checks.push({ group: 'Panel', name: 'Rail shoe release', value: `${(1.4 * eR).toFixed(1)} N press`, status: 'info', detail: 'lift the boards out, then press the ridged pad of the lever beside the socket down (about 8 mm) and lift the dock off the rail. The lever is printed in place on its pin; its hook pulls the jaw off the flange, and the jaw spring lifts it back. A stop meets the post at 2.2 mm of jaw travel (1.7 needed), so the hinge cannot be over-bent. Each dock puts its lever on the side of the rail with the most room.' });
+    checks.push({ group: 'Panel', name: 'Rail shoe release', value: `${(2.4 * eR).toFixed(1)} N press`, status: 'info', detail: `lift the boards out, then press the ridged pad of the lever beside the socket down (about 5 mm) and lift the dock off the rail. The lever is printed in place on its pin, 0.35 mm clear all round, and a bead round the pin's middle keeps it from sliding off; its hook pushes the jaw off the flange, and the jaw spring lifts it back. A stop meets the post at 2.2 mm of jaw travel (1.7 needed), so the hinge cannot be over-bent; pressing on past the stop loads the lever's tower, which reaches its strain limit at about ${Math.round(28 * eR * (allow / 0.02))} N on the pad. Each dock puts its lever on the side of the rail with the most room.` });
+    checks.push({ group: 'Panel', name: 'Rail shoe grip', value: `${(9.6 * eR).toFixed(1)} N preload`, status: st(0.011), detail: `a sprung pad in the rail's channel presses the rail's wall and holds each shoe against its fixed hook, so a dock doesn't slide along the rail by itself: pushing one along takes about ${(5.7 * eR).toFixed(1)} N (friction 0.3; before, it only sat on the rail with 0.8 mm of play across it and nothing pressing). 0.35 mm of preload; ${(5.5 * eR).toFixed(0)} to ${(13.7 * eR).toFixed(0)} N over print and rail tolerance. 1.1% peak strain (0.6% for 99% of it); a tooth stops a knock across the rail at 0.8 mm. The grip hangs 1.7 mm into the rail, from 4.5 mm out from its middle: a screw head in the rail that reaches under it must be under 4.8 mm tall (pan, cheese, button and countersunk heads and M5 socket caps pass; M6 socket caps don't).` });
     checks.push({ group: 'Panel', name: 'Rail shoe hinge', value: '1.9% peak', status: st(0.019), detail: 'uniform 0.9 mm leaf above the lip, at its root fillet; 99% of the shoe stays under 0.6%. Clipping on: 4.3 N (PETG) at the jaw ramp.' });
     checks.push({ group: 'Panel', name: 'Socket latch (per board)', value: `${(9.8 * eR).toFixed(1)} N to plug in`, status: st(0.018), detail: `1.8% peak at the spring root while the tongue goes in, 1.3% while the button releases it; the nose clears the groove after 1.9 mm of the 3.1 mm button stroke; a stop post prevents over-bending` });
     checks.push({ group: 'Panel', name: 'Rail shoe pull-off', value: `~${Math.round(90 * (allow / 0.02))} N`, status: 'ok', detail: 'the hinge leaf stands above the lip, so a pull straight up off the rail runs down the leaf and cannot pry the jaw open, friction or not; this is where the hinge reaches its strain limit.' });
@@ -1091,7 +1152,7 @@ export function generatePanel(p: Project): GenResult {
   if (rails.length) steps.push({ seq: 110, text: has('Rail saddle') ? `Lay ${rails.length > 1 ? 'each rail in its saddles' : 'the rail in its saddles'}.` : `Lay out the rail${rails.length > 1 ? 's' : ''}.` });
   if (has('Rail end block')) steps.push({ seq: 120, text: 'Push an end block onto each end of every rail, all the way in (a snug fit).' });
   if (has('Stand spacer') || has('Stand foot')) steps.push({ seq: 130, text: `Slide the spacer bars${has('Stand foot') ? ' and feet' : ''} into the blocks' dovetails along the rails${pieces.some((x) => /comb/.test(x.name)) ? '; the ones with combs go where the cables will run' : ''}.` });
-  if (docks.length) steps.push({ seq: 200, text: 'Clip a rail shoe on at every dock: hook it under the rail on the side away from the lever and press it down until it clicks.' });
+  if (docks.length) steps.push({ seq: 200, text: 'Clip a rail shoe on at every dock: hook it under the rail on the side away from the lever and press it down until it clicks. It grips the rail where it is, so clip it on at its place (a firm push slides it along).' });
   const flats = placed.length - docks.length;
   if (docks.length || flats) steps.push({ seq: 210, text: `${docks.length ? 'Press a socket into each shoe, turned the way it is shown.' : ''}${docks.length && flats ? ' ' : ''}${flats ? `Clip the flat rail clip${flats > 1 ? 's' : ''} onto the rail.` : ''}` });
   for (const k of CABLE_ORDER) {
@@ -1104,7 +1165,9 @@ export function generatePanel(p: Project): GenResult {
     if (k === 'mains') { steps.push({ seq: cableSeq(k), text: `With every powerboard still unplugged from the wall, plug the mains leads and plug packs into their outlets: ${cs.map((c) => `${c.no ? `#${c.no} ` : ''}${c.a} to ${c.b}`).join(', ')}.` }); continue; }
     steps.push({ seq: cableSeq(k), text: `Plug in the ${KIND_NAME[k]} cable${cs.length > 1 ? 's' : ''}: ${cs.map((c) => `${c.no ? `#${c.no} ` : ''}${c.a} to ${c.b} (${c.buy} m)`).join(', ')}${combed ? '. Press each one into its comb slot as you go' : ''}.` });
   }
-  if (ghosts.some((g) => g.tag?.kind === 'plug' && g.anim?.seq === PLUG_SEQ)) steps.push({ seq: PLUG_SEQ, text: 'Plug in the cables that leave the rack (supplies, screens, your computer). Nothing goes into the wall yet.' });
+  // (a plug pack goes straight into its outlet, its lead is its own: no cable on the rack, so it's said here)
+  const packs = p.modules.filter((m) => isPlugPack(m.board) && (p.links ?? []).some((l) => l.a.module === m.id || l.b.module === m.id)).map((m) => packGoes(p, m));
+  if (ghosts.some((g) => g.tag?.kind === 'plug' && g.anim?.seq === PLUG_SEQ)) steps.push({ seq: PLUG_SEQ, text: `Plug in the cables that leave the rack (supplies, screens, your computer).${packs.length ? ` Push each plug pack into its outlet and its lead into its board: ${packs.join('; ')}.` : ''} Nothing goes into the wall yet.` });
   if (parts.some((x) => x.tag?.kind === 'cap')) steps.push({ seq: CAP_SEQ, text: 'Snap the caps over the plugs to lock them in.' });
   if (parts.some((x) => x.tag?.kind === 'cabletag')) steps.push({ seq: TAG_SEQ, text: 'Snap a numbered tag round each end of every cable, a hand-width from the plug: the numbers match the Wiring view and the shopping list.' });
   // the wall, last of all: every terminal checked and every switch off first

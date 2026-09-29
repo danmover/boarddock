@@ -1,7 +1,7 @@
 // Builds every printable part for a project: the board holder (tray), DIN clip, plug caps, plus display ghosts
 // (board, components, plugs, rail) and a report of checks. All parts come out in print orientation.
 import type { Anim, Board, Check, Comp, EdgeName, Feature, GenResult, Ghost, HolderSettings, Loop, MeshData, MountSettings, PartOut, PickTag, Pin, Project, V2 } from '../model/types';
-import { holeKeepout, isMountHole } from '../model/holes';
+import { holeKeepout, isMountHole, STANDOFF_LENGTHS } from '../model/holes';
 import { boxProblems } from '../model/boxes';
 import { DEBUG_TYPES, isDebugPort, isUartPort } from '../model/links';
 import { headerPins, UART_WIRES, uartPins } from '../model/probes';
@@ -11,7 +11,7 @@ import { usedRefs } from '../model/portuse';
 import { bbox, centroid, compRect, extentAlong, inside, rad, rayExit, round, segDist } from '../geom/poly';
 import type { CS, MF } from './kernel';
 import { box, circle2, csLoops, cyl, ext, extCh, freeAll, K, orientedBox, poly, rect2, roundCS, sweepTZ, toMesh, unionCS, unionMF } from './kernel';
-import { buildClip, clipDims, clipSlots, hookOffset4, railProfile } from './dinclip';
+import { buildClip, clipDims, clipSlots, hookOffset4, RAIL, railProfile } from './dinclip';
 import { textCS, textWidth } from './font';
 import { computeLevels } from './levels';
 import { boardDetail, moveFx, plugDetail, plugUp } from './boardviz';
@@ -34,7 +34,9 @@ export interface ArrangeHooks {
 export interface Job {
   p: Project; mi: number; b: Board; H: HolderSettings; din: boolean; stand: boolean; hooks: ArrangeHooks; name: string;
   level?: number; // 0 = bottom of a stack (default), 1 = the board above it...
-  bolted?: { b: Board; dx: number; dy: number; dz: number; mid: string }[]; // boards screwed on top on standoffs (shown, no holder of their own)
+  // boards screwed on top on standoffs (shown, no holder of their own); gap: the standoffs, need: what they have to
+  // clear, under: the part under it that sets that, below: the board it sits on, own: the length was set by hand
+  bolted?: { b: Board; dx: number; dy: number; dz: number; mid: string; gap?: number; need?: number; under?: { ref: string; h: number } | null; below?: string; own?: boolean }[];
   mount?: MountSettings; // overrides p.mount (panel flat clips)
   dock?: { edge: EdgeName; fit?: number; shift?: number; lie?: 'flat' }; // holder plugs into a rail dock with this board edge (shift: its tongue that far off the middle; lie: flat, by an ear on that edge)
   used?: string[]; // the plugs that will have something in them (set by buildModule from the project): only they get cradles, caps, collars and ties
@@ -58,6 +60,7 @@ interface Ctx {
   pos: MF[]; // added to the holder
   neg: MF[]; // cut from the holder
   late: MF[]; // added after the cuts (cradles etc. carry their own cuts)
+  hard: MF[]; // cut from everything, late parts too: space a mechanism needs (the release rod's tunnel)
   keep: CS[]; // zones the base pattern must avoid
   blocked: { poly: Loop; why: string }[]; // wall stretches used by openings/features (tabs and labels avoid them)
   parts: PartOut[];
@@ -65,6 +68,7 @@ interface Ctx {
   standoffs: { x: number; y: number; r: number }[];
   keepouts: { rect: Loop; need: number; why: string }[];
   dock: DockSite | null;
+  ear?: EarSite | null; // lying flat: where the dock's ear is
   mid: string; // module id
   frame: boolean; // frame style: rim, corner guards and ribs instead of a full base and wall
   rimH: number; // frame rim height
@@ -203,9 +207,18 @@ function wiredPins(C: Ctx, c: Comp): { pin: Pin; colour: string }[] {
   return u ? UART_WIRES.map((wd) => ({ pin: u[wd.key], colour: wd.colour })) : [];
 }
 
-/** Boxes (hubs, chargers, probes) sit in low guards: no spring clips, notches or label. Hubs and chargers are strapped down. */
-const holderFor = (H: HolderSettings, b: Board): HolderSettings =>
-  isAccessory(b) ? { ...H, tabs: 'off', hold: 'pins', notches: false, label: '', wallAbove: Math.min(H.wallAbove, -(b.thickness - 8)), standoff: H.standoff ?? 1.2, minStandoff: 1.2 } : H;
+/**
+ * Boxes (hubs, chargers, probes) sit in low guards: no spring clips, notches or label. Hubs and chargers are strapped
+ * down. A box on a flat DIN clip stands clear of the clip's snap hooks, which reach up through the holder's base.
+ */
+const holderFor = (H: HolderSettings, b: Board, clipped = false): HolderSettings => {
+  if (!isAccessory(b)) return H;
+  const low = clipped ? CLIP_HOOK_RISE + 0.4 : 1.2;
+  return { ...H, tabs: 'off', hold: 'pins', notches: false, label: '', wallAbove: Math.min(H.wallAbove, -(b.thickness - 8)), standoff: Math.max(H.standoff ?? 1.2, low), minStandoff: low };
+};
+
+/** How far a flat DIN clip's snap hooks reach up past the top of the plate they grip (the holder's base). */
+const CLIP_HOOK_RISE = clipSlots(20).lipTop - clipSlots(20).plateT;
 
 /** A holder's heights as it is really built: box settings applied, and raised over the dock's spine when docked. */
 export function builtLevels(b: Board, H0: HolderSettings, dockEdge?: EdgeName | null) {
@@ -215,7 +228,8 @@ export function builtLevels(b: Board, H0: HolderSettings, dockEdge?: EdgeName | 
 
 function build(job: Job): ModuleOut {
   const { p, b } = job;
-  const H = holderFor(job.H, b);
+  const M0 = job.mount ?? p.mount;
+  const H = holderFor(job.H, b, !!job.din && M0.kind === 'din' && M0.mode === 'flat');
   const warnings: string[] = [...b.notes];
   const checks: Check[] = [];
   const mat = MATERIALS[H.material];
@@ -240,7 +254,7 @@ function build(job: Job): ModuleOut {
   const inner = O.offset(H.gap, 'Round');
   const outer = O.offset(H.gap + H.wall, 'Round');
   const frame = (H.style ?? 'frame') === 'frame';
-  const C: Ctx = { p, job, H, b, base, s, zb, zt, zw, O, inner, outer, warnings, checks, pos: [], neg: [], late: [], keep: [], blocked: [], parts: [], ghosts: [], standoffs: [], keepouts, dock: site,
+  const C: Ctx = { p, job, H, b, base, s, zb, zt, zw, O, inner, outer, warnings, checks, pos: [], neg: [], late: [], hard: [], keep: [], blocked: [], parts: [], ghosts: [], standoffs: [], keepouts, dock: site, ear,
     mid: p.modules[job.mi]?.id ?? `m${job.mi}`, frame, rimH: Math.min(zb - 0.3, base + 1.2), ribNodes: [], features: [], plugs: [] };
   checks.push({ group: 'Board', name: 'Clearance under the board', value: `${round(s, 1)} mm`, status: 'info', detail: needMax ? `tallest underside item needs ${round(needMax, 1)} mm (${keepouts.sort((a, c) => c.need - a.need)[0].why}); deeper items get pockets in the base` : 'nothing under the board' });
 
@@ -299,6 +313,8 @@ function build(job: Job): ModuleOut {
   let holder = unionMF(C.pos);
   if (C.neg.length) holder = holder.subtract(unionMF(C.neg));
   if (C.late.length) holder = unionMF([holder, ...C.late]);
+  // nothing added late (a tie anchor, a tower's arm) may fill the release rod's tunnel
+  if (C.hard.length) holder = holder.subtract(unionMF(C.hard));
   const pieces = holder.decompose();
   if (pieces.length > 1) {
     // keep the main body, report stray islands (can happen with odd user geometry)
@@ -439,7 +455,10 @@ function connectors(C: Ctx) {
     const sEdge = inside(mouth, C.b.outline) ? Math.min(rayExit(mouth, d, C.b.outline), 50) : -Math.min(rayExit(mouth, [-d[0], -d[1]], C.b.outline), 50);
     const toOut = sEdge + H.gap + H.wall; // outer face of the wall
     const zLo = zAx - ph / 2 - cl, zHi = Math.max(zAx + ph / 2 + cl, zw + 1);
-    C.neg.push(orientedBox(mouth, d, Math.min(-0.6, sEdge - 0.5), toOut + 4, -(pw / 2 + cl), pw / 2 + cl, zLo, zHi + 20));
+    const opening = orientedBox(mouth, d, Math.min(-0.6, sEdge - 0.5), toOut + 4, -(pw / 2 + cl), pw / 2 + cl, zLo, zHi + 20);
+    C.neg.push(opening);
+    // (and again after everything: a neighbouring plug's collar, 2 mm away on a Pi's USB pair, reached into it)
+    C.hard.push(opening);
     C.blocked.push({ poly: orientedRect(mouth, d, -2, toOut + 2, -(pw / 2 + cl + 3), pw / 2 + cl + 3), why: c.ref });
     // right-angle pins: a jumper's housing on each pin with a wire, straight out
     if (cn.type === 'pins_ra') {
@@ -596,36 +615,76 @@ function cradleGroup(C: Ctx, g: CradleSpec[], H: HolderSettings) {
   C.checks.push({ group: 'Plugs', name: `Cap legs (${refs})`, value: `${(eps * 100).toFixed(2)}% strain`, status: strainStatus(C, eps), detail: `${round(L, 1)} mm legs, ${round(hook, 2)} mm hooks under the cradle ledges; they flex within the layers` });
 }
 
-/** Loops on the two long sides of a box: a hook-and-loop strap goes over the box and through them. */
-function strapLoops(C: Ctx) {
-  const H = C.H, ol = C.b.outline, bb = bbox(ol);
-  // the strap runs over the top between a pair of loops on two opposite sides, the long ones if their ports leave room
-  // (else round the box the other way): keep it off ports on those sides and on top
-  // (a side port only gets in the way when its plug reaches down to the loops, 7 mm tall)
-  const low = (c: Comp) => C.zt + c.conn!.zc - c.conn!.plug.h / 2 < 8;
-  const spots = (alongX: boolean) => {
-    const L0 = alongX ? bb.x0 : bb.y0, L = alongX ? bb.x1 - bb.x0 : bb.y1 - bb.y0;
-    const busy = C.b.comps.filter((c) => c.conn && !c.hidden && (c.conn.entry === 'top' || ((alongX ? Math.abs(Math.sin(rad(c.conn.angle))) > 0.7 : Math.abs(Math.cos(rad(c.conn.angle))) > 0.7) && low(c))))
-      .map((c) => { const at = (alongX ? c.x : c.y) - L0, half = Math.max(c.w, c.l, c.conn!.plug.w) / 2 + 10; return [at - half, at + half]; });
-    const free = (f: number) => !busy.some(([a, b]) => f * L > a && f * L < b);
-    const pick = (want: number, lo: number, hi: number) => { let best: number | null = null; for (let f = lo; f <= hi + 1e-9; f += 0.01) if (free(f) && (best == null || Math.abs(f - want) < Math.abs(best - want))) best = f; return best; };
-    return [pick(0.28, 0.1, 0.46), pick(0.72, 0.54, 0.9)];
+/** A strap loop's size: its slot takes a 12 mm strap (13 mm wide), 1.5 mm ends; 7 mm tall, or as low as 3.5 mm under a
+ * plug. `strap`, `tie`: how far each side of the loop's middle the strap (12 mm, 1 mm clear) or a zip tie (4.8 mm, 0.6
+ * mm clear) needs to be free of plugs. */
+export const STRAP_LOOP = { slot: 6.5, half: 8, tall: 7, low: 3.5, strap: 7.5, tie: 3 };
+
+/**
+ * Where a box's strap loops go: a pair of spots along two opposite sides (the strap runs over the top from a loop on one
+ * side to the loop across from it). What goes through the loop (a strap, or with `tie` a zip tie) keeps clear of every
+ * plug on those sides and on top, since it runs up the whole side; a loop's ends (16 mm) may reach under a side plug,
+ * and that loop is made lower to pass under it. `at`: the loop's middle, mm along the side from its start; `tall`: the
+ * loop's height. Null when no spot is clear on that half of the side.
+ */
+export function strapSpots(b: Board, zt: number, alongX: boolean, tie = false): ({ at: number; tall: number } | null)[] {
+  const bb = bbox(b.outline), S = STRAP_LOOP, band = tie ? S.tie : S.strap;
+  const L0 = alongX ? bb.x0 : bb.y0, L = alongX ? bb.x1 - bb.x0 : bb.y1 - bb.y0;
+  const onSide = (c: Comp) => c.conn!.entry === 'edge' && (alongX ? Math.abs(Math.sin(rad(c.conn!.angle))) : Math.abs(Math.cos(rad(c.conn!.angle)))) > 0.7;
+  // every port that may take a plug (one marked as never used gets none, so the strap may cross it)
+  const ports = b.comps.filter((c) => c.conn && !c.hidden && c.conn.use !== 'no' && (c.conn.entry === 'top' || onSide(c))).map((c) => {
+    const at = (alongX ? c.x : c.y) - L0, top = c.conn!.entry === 'top';
+    const half = top ? Math.max(c.w, c.l, c.conn!.plug.w) / 2 : c.conn!.plug.w / 2;
+    // the lowest the plug (and the opening cut for it, 0.6 mm round it) comes, holder frame
+    const bottom = top ? Infinity : (c.side === 'top' ? zt + c.conn!.zc : zt - b.thickness - c.conn!.zc) - c.conn!.plug.h / 2 - 0.6;
+    return { a: at - half, b: at + half, bottom };
+  });
+  const spot = (at: number) => {
+    if (ports.some((q) => at + band > q.a && at - band < q.b)) return null; // it would cross a plug
+    let tall = S.tall;
+    for (const q of ports) if (at + S.half > q.a - 0.5 && at - S.half < q.b + 0.5) tall = Math.min(tall, q.bottom - 0.8);
+    return tall >= S.low ? { at, tall } : null;
   };
+  // each loop in its own half of the side, nearest a quarter in from its end; full height before a lowered one
+  const pick = (want: number, lo: number, hi: number) => {
+    let best: { at: number; tall: number } | null = null;
+    const cost = (s: { at: number; tall: number }) => Math.abs(s.at - want) + (s.tall < S.tall ? L : 0);
+    for (let at = lo; at <= hi + 1e-9; at += 0.25) { const s = spot(at); if (s && (!best || cost(s) < cost(best))) best = s; }
+    return best;
+  };
+  // (a loop may reach 1 mm past the box's end: the holder's outline is a wall and a gap further out)
+  const end = S.half - 1;
+  return [pick(0.28 * L, end, L / 2 - end), pick(0.72 * L, L / 2 + end, L - end)];
+}
+
+/**
+ * Loops on two opposite sides of a box: a hook-and-loop strap goes over the box and through them. The long sides if a
+ * strap there misses the plugs, else the short ones; failing both, spots where a zip tie passes between the plugs.
+ */
+function strapLoops(C: Ctx) {
+  const H = C.H, bb = bbox(C.b.outline), S = STRAP_LOOP;
   const long = bb.x1 - bb.x0 >= bb.y1 - bb.y0;
-  let alongX = long, [fa, fb] = spots(alongX);
-  if (fa == null || fb == null) { const [ga, gb] = spots(!long); if (ga != null && gb != null) { alongX = !long; fa = ga; fb = gb; } }
-  if (fa == null || fb == null) C.warnings.push('The strap loops could not all miss the ports: check that the strap clears them.');
-  for (const f of [fa ?? 0.28, fb ?? 0.72]) for (const side of [-1, 1]) {
-    const q: V2 = alongX ? [bb.x0 + (bb.x1 - bb.x0) * f, side > 0 ? bb.y1 : bb.y0] : [side > 0 ? bb.x1 : bb.x0, bb.y0 + (bb.y1 - bb.y0) * f];
+  const tries: [boolean, boolean][] = [[long, false], [!long, false], [long, true], [!long, true]];
+  const hit = tries.map(([ax, tie]) => ({ ax, tie, spots: strapSpots(C.b, C.zt, ax, tie) })).find((t) => t.spots.every(Boolean));
+  const alongX = hit?.ax ?? long, tie = hit?.tie ?? false;
+  const L = alongX ? bb.x1 - bb.x0 : bb.y1 - bb.y0;
+  if (!hit) C.warnings.push('The strap loops could not all miss the ports: check that the strap clears them.');
+  else if (tie) C.warnings.push('No gap between this box\'s plugs is wide enough for a 12 mm strap: thread a zip tie through each pair of loops instead, between the plugs.');
+  // no clear spot at all: the loops go a quarter in from each end, as low as a loop goes
+  const spots = hit?.spots ?? [{ at: 0.28 * L, tall: S.low }, { at: 0.72 * L, tall: S.low }];
+  for (const s of spots) for (const side of [-1, 1]) {
+    const { at, tall } = s!;
+    const q: V2 = alongX ? [bb.x0 + at, side > 0 ? bb.y1 : bb.y0] : [side > 0 ? bb.x1 : bb.x0, bb.y0 + at];
     const n: V2 = alongX ? [0, side] : [side, 0];
     const t0 = H.gap + H.wall - 0.4, t1 = t0 + 5.5;
-    const blk = orientedBox(q, n, t0, t1, -8, 8, 0, 7).subtract(orientedBox(q, n, t0 + 1.6, t0 + 3.9, -6.5, 6.5, -1, 8));
+    const blk = orientedBox(q, n, t0, t1, -S.half, S.half, 0, tall).subtract(orientedBox(q, n, t0 + 1.6, t0 + 3.9, -S.slot, S.slot, -1, tall + 1));
     C.late.push(blk);
-    wallPiece(C, add(q, left(n), -9), left(n), 0, 18, 7);
-    C.blocked.push({ poly: orientedRect(q, n, -2, t1 + 1, -9, 9), why: 'strap loop' });
-    feat(C, 'tie', orientedRect(q, n, t0, t1, -8, 8), 0, 7, ['strap']);
+    wallPiece(C, add(q, left(n), -(S.half + 1)), left(n), 0, 2 * S.half + 2, tall);
+    C.blocked.push({ poly: orientedRect(q, n, -2, t1 + 1, -(S.half + 1), S.half + 1), why: 'strap loop' });
+    feat(C, 'tie', orientedRect(q, n, t0, t1, -S.half, S.half), 0, tall, ['strap']);
   }
-  C.checks.push({ group: 'Holder', name: 'Strap loops', value: '4', status: 'info', detail: `thread a 12 mm hook-and-loop strap (or two zip ties) over the box through the loops on each ${alongX === long ? 'long' : 'short'} side${alongX === long ? '' : ' (the long sides are busy with ports)'}` });
+  const lowered = spots.some((s) => s!.tall < S.tall);
+  C.checks.push({ group: 'Holder', name: 'Strap loops', value: '4', status: 'info', detail: `thread ${tie ? 'a zip tie' : 'a 12 mm hook-and-loop strap (or two zip ties)'} over the box through the loops on each ${alongX === long ? 'long' : 'short'} side${alongX === long ? '' : ' (the long sides are busy with ports)'}${lowered ? '; a loop under a plug is made lower to pass under it' : ''}` });
 }
 
 /**
@@ -664,16 +723,23 @@ function tieAnchor(C: Ctx, at: V2, edgeConn: { d: V2; half: number; sEdge: numbe
     q = pick;
     n = edgeConn.d;
   } else {
+    // (a plug from above: the nearest stretch of wall, but not by the dock's edge, beside a flat dock's ear or where
+    // something else already is, and not so far off that the cable would reach it the long way round)
+    const free = (pt: V2) => (!C.dock || C.dock.L0 - (pt[0] * C.dock.n[0] + pt[1] * C.dock.n[1]) > 9)
+      && (!C.ear || C.ear.L0 - (pt[0] * C.ear.n[0] + pt[1] * C.ear.n[1]) > 9 || Math.abs(pt[0] * C.ear.e[0] + pt[1] * C.ear.e[1] - C.ear.tc) > EAR.hx + 6)
+      && !C.blocked.some((bl) => inside(pt, bl.poly));
     let best = { d: Infinity, q: at as V2, n: [0, -1] as V2 };
     for (let i = 0; i < b.outline.length; i++) {
       const a = b.outline[i], c = b.outline[(i + 1) % b.outline.length];
-      const dx = c[0] - a[0], dy = c[1] - a[1], L2 = dx * dx + dy * dy || 1;
-      const tt = Math.max(0, Math.min(1, ((at[0] - a[0]) * dx + (at[1] - a[1]) * dy) / L2));
-      const pq: V2 = [a[0] + tt * dx, a[1] + tt * dy];
-      const dd = Math.hypot(pq[0] - at[0], pq[1] - at[1]);
-      const L = Math.sqrt(L2);
-      if (dd < best.d) best = { d: dd, q: pq, n: [dy / L, -dx / L] };
+      const dx = c[0] - a[0], dy = c[1] - a[1], L2 = dx * dx + dy * dy || 1, L = Math.sqrt(L2);
+      for (let k = 0; k <= Math.ceil(L); k++) {
+        const tt = Math.min(1, k / Math.max(1, L));
+        const pq: V2 = [a[0] + tt * dx, a[1] + tt * dy];
+        const dd = Math.hypot(pq[0] - at[0], pq[1] - at[1]);
+        if (dd < best.d && free(pq)) best = { d: dd, q: pq, n: [dy / L, -dx / L] };
+      }
     }
+    if (best.d > 40) return; // nowhere near: the plug does without one
     q = best.q;
     n = best.n;
   }
@@ -864,7 +930,7 @@ const sweepT = (prof: CS, t0: number, t1: number) => prof.extrude(t1 - t0).trans
  * Build one leaf in its local frame: cut its zone clear, add the anchor and the tapered leaf (root fillet, rounded
  * tip), and hand back the heights for the lip, which the caller adds.
  */
-function leafBody(C: Ctx, st: LeafSite, f: Leaf, face: number, top: number) {
+function leafBody(C: Ctx, st: LeafSite, f: Leaf, face: number, top: number, refs?: string[]) {
   const H = C.H, gw = H.gap + H.wall, L = f.L;
   // the zone: everything outside the inner slit, from the anchor's root to past the tip, bed to sky
   C.neg.push(placeLeaf(box(0, -(gw + 4), -1, L + SLIT, face + SLIT, top + 30), st));
@@ -886,7 +952,7 @@ function leafBody(C: Ctx, st: LeafSite, f: Leaf, face: number, top: number) {
   const leaf = ext(planCS, 0, top);
   C.late.push(placeLeaf(anchor, st), placeLeaf(leaf, st));
   C.blocked.push({ poly: st.zone, why: 'spring clip' });
-  feat(C, 'spring', st.zone, 0, top + 1);
+  feat(C, 'spring', st.zone, 0, top + 1, refs);
 }
 
 /**
@@ -986,7 +1052,7 @@ function clips(C: Ctx, mode: ReturnType<typeof holdOf>): Loop[] {
       const zc = (t: number) => C.zt + t - (stop + d0.preload); // its 45 degree face, touching the board's top edge
       const top = zc(d0.tip) + 0.2 + (d0.tip - d0.face) / Math.tan(rad(RAMP));
       const dz = designBow({ L, h: top, mat, gap: H.gap, stop });
-      leafBody(C, st, dz.leaf, dz.face, top);
+      leafBody(C, st, dz.leaf, dz.face, top, ['anti-rattle']); // (it presses on the board: the collision test allows that)
       const { tip, face } = dz, f = dz.leaf;
       const prof = poly([[face - 0.4, zc(face - 0.4)], [tip, zc(tip)], [tip, zc(tip) + 0.2], [face, top], [face - 0.4, top]], 'NonZero');
       const s1 = f.L - 0.3, s0 = s1 - f.lipLen, w = tip - face;
@@ -1431,7 +1497,7 @@ function mountDin(C: Ctx) {
       const Wd: V2 = [-ev[1], ev[0]]; // z x ev
       const o = add(add(a, ev, -d.vc), Wd, -W / 2);
       const T = matFromBasis([0, 0, 1], [ev[0], ev[1], 0], [Wd[0], Wd[1], 0], [o[0], o[1], -d.uF]);
-      C.parts.push(part(i ? 'clip2' : 'clip', 'DIN rail clip (pull tab)', clip, T, '#ff6b5b', 1, { kind: 'clip', module: C.mid }, { seq: 2, dir: [0, 0, -1] }));
+      C.parts.push({ ...part(i ? 'clip2' : 'clip', 'DIN rail clip (pull tab)', clip, T, '#ff6b5b', 1, { kind: 'clip', module: C.mid }, { seq: 2, dir: [0, 0, -1] }), boxMesh: clipEnvelope(clip, d, W) });
       railGhost(C, T, W);
       if (!i) clipChecks(C, d, tabExt);
     });
@@ -1480,11 +1546,17 @@ function mountDin(C: Ctx) {
     const Wd = [U[1] * Vv[2] - U[2] * Vv[1], U[2] * Vv[0] - U[0] * Vv[2], U[0] * Vv[1] - U[1] * Vv[0]];
     const o = [face[0] - U[0] * d.uF - Vv[0] * d.vc - Wd[0] * (W / 2), face[1] - U[1] * d.uF - Vv[1] * d.vc - Wd[1] * (W / 2), zc - U[2] * d.uF - Vv[2] * d.vc - Wd[2] * (W / 2)];
     const T = matFromBasis(U, Vv, Wd, o);
-    C.parts.push(part('clip', 'DIN rail clip (pull tab)', clip, T, '#ff6b5b', 1, { kind: 'clip', module: C.mid }, { seq: 2, dir: [n[0], n[1], 0] }));
+    C.parts.push({ ...part('clip', 'DIN rail clip (pull tab)', clip, T, '#ff6b5b', 1, { kind: 'clip', module: C.mid }, { seq: 2, dir: [n[0], n[1], 0] }), boxMesh: clipEnvelope(clip, d, W) });
     (C as any).clipAt = c0;
     railGhost(C, T, W);
     clipChecks(C, d, tabExt);
   }
+}
+
+/** The clip without its rail grip, which hangs inside the rail's channel (the rail's own box covers it): what boxes
+ * round the clip are taken from, for cables to keep clear of. */
+function clipEnvelope(clip: MF, d: ReturnType<typeof clipDims>, W: number): MeshData {
+  return meshFrom(clip.subtract(box(-1, d.gripWall - 9, -1, RAIL.flangeFront, d.gripWall + 1, W + 1)));
 }
 
 function clipChecks(C: Ctx, d: ReturnType<typeof clipDims>, tabExt: number) {
@@ -1493,6 +1565,9 @@ function clipChecks(C: Ctx, d: ReturnType<typeof clipDims>, tabExt: number) {
   const eps = (3 * 1.0 * 0.65) / (2 * L * L);
   C.checks.push({ group: 'DIN clip', name: 'Holder snap hooks', value: `${(eps * 100).toFixed(2)}% strain`, status: strainStatus(C, eps), detail: `${round(L, 1)} mm hooks, 0.55 mm catch; click the holder on in any of 4 orientations` });
   C.checks.push({ group: 'DIN clip', name: 'Release', value: 'pull the tab toward you', status: 'info', detail: `lip engagement ${d.eL} mm, travel stop after ~1.9 mm. Run the clip FEA in the Check tab for forces and strain.${tabExt > 0 ? ` Tab lengthened by ${round(tabExt, 1)} mm so it reaches past the holder edge.` : ''}` });
+  // the rail grip: a 2D FEA of the fork gives about 0.46 N per mm of clip width in PETG, 1.1% peak (0.6% for 99%)
+  const eR = MATERIALS[C.H.material].E / MATERIALS.PETG.E, Fg = 0.46 * (C.job.mount ?? C.p.mount).clipWidth * eR;
+  C.checks.push({ group: 'DIN clip', name: 'Rail grip', value: `${round(Fg, 1)} N preload`, status: strainStatus(C, 0.011), detail: `a sprung pad in the rail's channel presses the rail's top wall and holds the clip down on the top flange, so it doesn't slide along the rail by itself: pushing it along takes about ${round(0.6 * Fg, 1)} N (friction 0.3). Before, it only sat on the rail, with 0.65 mm of play up and down and nothing pressing. A screw head in the rail that reaches under the grip (4.5 mm or more from the rail's middle) must be under 4.8 mm tall.` });
 }
 
 function railGhost(C: Ctx, T: number[], W: number) {
@@ -1667,7 +1742,12 @@ function boltedGhosts(C: Ctx, bo: NonNullable<Job['bolted']>[number]) {
     C.plugs.push({ module: mid, ref: c.ref, p: [pe[0], pe[1], zAx - off], d: [d[0], d[1], 0], cable: cn.plug.cable });
     if (off) C.plugs.push({ module: mid, ref: `${c.ref}:2`, p: [pe[0], pe[1], zAx + off], d: [d[0], d[1], 0], cable: cn.plug.cable });
   }
-  C.checks.push({ group: 'Stack', name: `${b.name} bolted on top`, value: `${round(dz, 1)} mm standoffs`, status: 'info', detail: `sits on standoffs screwed into the holes it shares with ${C.b.name}; those holes get no holder pins and the holder leaves room under them for screw heads or nuts. Its plugs get no cradles of their own.` });
+  const gap = bo.gap ?? dz, short = bo.need != null && gap < bo.need - 0.05;
+  const clears = bo.under ? `the ${bo.under.ref} under it stands ${bo.under.h} mm tall on the ${bo.below}` : '';
+  const why = short
+    ? ` Too short: ${clears}, so it needs ${bo.need} mm (${STANDOFF_LENGTHS.find((x) => x >= bo.need!) ?? Math.ceil(bo.need!)} mm standoffs). Set the length in the Rails step, or clear it to let BoardDock pick.`
+    : bo.under && !bo.own && gap > 11 ? ` Longer than a HAT's 11 mm: ${clears}.` : '';
+  C.checks.push({ group: 'Stack', name: `${b.name} bolted on top`, value: `${round(gap, 1)} mm standoffs`, status: short ? 'bad' : 'info', detail: `sits on standoffs screwed into the holes it shares with ${C.b.name}; those holes get no holder pins and the holder leaves room under them for screw heads or nuts. Its plugs get no cradles of their own.${why}` });
 }
 
 /** Press-fit socket for a Ø4 tower peg, open at z = 0: three crush ribs make it a firm fit. */
@@ -1692,7 +1772,9 @@ function arrangeFeatures(C: Ctx) {
       const d: V2 = [cen[0] - q[0], cen[1] - q[1]];
       const L = Math.hypot(d[0], d[1]) || 1;
       const u: V2 = [d[0] / L, d[1] / L];
-      const arm = orientedBox(q, u, 0, L, -2.5, 2.5, 0, Math.min(C.zw, 6)).subtract(ext(C.inner, -1, 100));
+      // (and clear of the peg socket: the arm starts at the tower's middle, over the socket)
+      let arm = orientedBox(q, u, 0, L, -2.5, 2.5, 0, Math.min(C.zw, 6)).subtract(ext(C.inner, -1, 100));
+      if (socket) arm = arm.subtract(pegSocket(q));
       C.late.push(tw, arm);
       C.blocked.push({ poly: orientedRect(q, u, -4, 8, -5, 5), why: 'tower' });
       feat(C, 'tower', [[q[0] - 3.5, q[1] - 3.5], [q[0] + 3.5, q[1] + 3.5]], 0, height + (peg ? 4 : 0));
@@ -1737,6 +1819,7 @@ function dockFeatures(C: Ctx, s: DockSite) {
   // drops in past it from above)
   C.pos.push(f.add.transform(D as any).subtract(ext(C.inner, C.zb - 0.2, C.zt + 60)));
   C.neg.push(f.cut.transform(D as any));
+  C.hard.push(f.tunnel.transform(D as any));
   C.keep.push(poly(tsPoly(s, s.tc - HD.spineHx - 1.2, s.tc + HD.spineHx + 1.2, -1, s.far + 1)), poly(tsPoly(s, s.tc - HD.base.hx - 1.2, s.tc + HD.base.hx + 1.2, -1, s.ped + 1.5)));
   const r = rod(f.zg1, s.side);
   C.parts.push(part('rod', 'Release rod + button', r.m.transform(D as any), ID, '#ff5d6c', 1, { kind: 'rod', module: C.mid }, { seq: 3.5, dir: [-s.n[0], -s.n[1], 0] }));
@@ -1749,7 +1832,7 @@ function dockFeatures(C: Ctx, s: DockSite) {
   const eRatio = mat.E / MATERIALS.PETG.E;
   // tongue root at the socket mouth, bending under an out-of-plane push on the far edge
   const tb = 2 * TONGUE.hx, th = TONGUE.y1 - TONGUE.y0, F = 20, Mo = F * s.far, sig = Mo / ((tb * th * th) / 6);
-  C.checks.push({ group: 'Dock', name: 'Release', value: `press the button, ${HD.stroke} mm`, status: 'info', detail: `thumb on the button at the ${({ bottom: 'top', top: 'bottom', left: 'right', right: 'left' } as Record<EdgeName, string>)[s.edge]} edge, two fingers under the grip bar, squeeze and lift. About ${(4.0 * eRatio).toFixed(1)} N (${H.material}); the latch spring returns the button. Rod: ${round(r.len, 0)} mm, printed flat.` });
+  C.checks.push({ group: 'Dock', name: 'Release', value: `press the button, ${HD.stroke} mm`, status: 'info', detail: `thumb on the button at the ${({ bottom: 'top', top: 'bottom', left: 'right', right: 'left' } as Record<EdgeName, string>)[s.edge]} edge, two fingers under the grip bar, squeeze and lift. About ${(4.0 * eRatio).toFixed(1)} N (${H.material}); the latch spring returns the button. Rod: ${round(r.len, 0)} mm, printed flat; push it into its tunnel until it clicks, and it can't slide back out.` });
   C.checks.push({ group: 'Dock', name: `Tongue root, ${F} N push on the far edge`, value: `${round(sig, 0)} MPa`, status: sig < 0.4 * mat.yield ? 'ok' : sig < 0.8 * mat.yield ? 'warn' : 'bad', detail: `${round(s.far, 0)} mm lever onto the ${tb} × ${th} mm tongue (${H.material} yields at ~${mat.yield} MPa). Hold the holder while plugging in stiff cables at the far end${sig >= 0.8 * mat.yield ? ` (this is ${sig >= 0.9 * mat.yield ? 'within 10% of' : 'near'} where it yields: try laying this board flat on its dock, Rails step, and compare this check, or print it in a stronger material)` : ''}.` });
   if (s.under && C.zb > DOCK_MIN_ZB - 0.2) C.checks.push({ group: 'Dock', name: 'Board raised over the rod spine', value: `${round(C.zb, 1)} mm`, status: 'info', detail: 'the release-rod spine runs under the board' });
 }
@@ -1771,6 +1854,7 @@ function earFeatures(C: Ctx, s: EarSite) {
   const f = flatHolderDock(EAR.len + s.inset + H.wall * 0.7, C.job.dock?.fit ?? 0);
   C.pos.push(f.add.transform(D as any));
   C.neg.push(f.cut.transform(D as any));
+  C.hard.push(f.cut.transform(D as any)); // (the key's dovetail groove and the rod's tunnel)
   // the key and the rod print lying down as a standing holder's tongue and rod do (socket y up): the tongue flat, its
   // layers along it; the dovetail and the tunnel stand straight up; the rod on its side
   const PR = inv(dockFrame('bottom', 0, 0)), toHolder = mul(D, dockFrame('bottom', 0, 0));
@@ -1781,8 +1865,8 @@ function earFeatures(C: Ctx, s: EarSite) {
   if (s.conflicts.length) C.warnings.push(`Dock ear on the ${s.edge} edge: ${s.conflicts.join(', ')} ${s.conflicts.length > 1 ? 'are' : 'is'} in the way. Pick another dock edge in the Rails step.`);
   C.checks.push({ group: 'Dock', name: 'Lying flat', value: `ear on the ${s.edge} edge`, status: 'info', detail: `the holder lies top face up on its dock by a tab on its ${s.edge} edge, with the same tongue and socket as a standing one: so it takes the same shoe and socket, and a J-Link or adapter can stand behind it in the socket's other half.` });
   const eRatio = mat.E / MATERIALS.PETG.E;
-  C.checks.push({ group: 'Dock', name: 'Release', value: `press the button, ${HD.stroke} mm`, status: 'info', detail: `thumb on the button on the tab, fingers under the tab, squeeze and lift the holder straight up. About ${(4.0 * eRatio).toFixed(1)} N (${H.material}); the latch spring returns the button. Rod: ${round(r.len, 0)} mm, printed flat.` });
-  C.checks.push({ group: 'Dock', name: 'Dock key', value: 'slides in under the tab', status: 'info', detail: `the tongue is a small key of its own, printed on its side so its layers run along it (as a standing holder's tongue does). Slide its dovetail into the groove under the tab from the tab's tip, then put the release rod in from the top: the rod through both locks the key in. Dovetail ${2 * EAR.dove.root}–${2 * EAR.dove.top} mm, ${EAR.dove.gap} mm clearance a side: not print-tested yet.` });
+  C.checks.push({ group: 'Dock', name: 'Release', value: `press the button, ${HD.stroke} mm`, status: 'info', detail: `thumb on the button on the tab, fingers under the tab, squeeze and lift the holder straight up. About ${(4.0 * eRatio).toFixed(1)} N (${H.material}); the latch spring returns the button. Rod: ${round(r.len, 0)} mm, printed flat; push it in until it clicks, and it can't slide back out.` });
+  C.checks.push({ group: 'Dock', name: 'Dock key', value: 'slides in under the tab', status: 'info', detail: `the tongue is a small key of its own, printed on its side so its layers run along it (as a standing holder's tongue does). Slide its dovetail into the groove under the tab from the tab's tip, then push the release rod in from the top until it clicks: the rod through both locks the key in, and a barb under a ledge at the top of its tunnel keeps the rod in. Dovetail ${2 * EAR.dove.root}–${2 * EAR.dove.top} mm, ${EAR.dove.gap} mm clearance a side: not print-tested yet.` });
   // a press on the far side of the holder (plugging in from above) bends the tongue at the socket mouth the same way
   // a push on a standing holder's far edge does
   const tb = 2 * TONGUE.hx, th = TONGUE.y1 - TONGUE.y0, F = 20, lever = s.far - (TONGUE.y0 + TONGUE.y1) / 2, sig = (F * lever) / ((tb * th * th) / 6);

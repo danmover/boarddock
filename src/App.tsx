@@ -13,6 +13,7 @@ import { Mark } from './ui/art';
 import { MATERIALS } from './model/library';
 import { estimate, packPlates } from './cad/export';
 import { openFiles } from './ui/importFlow';
+import { connectIfNone } from './ui/linkOps';
 import { describe, removeItems } from './ui/pickOps';
 import { Icon, I } from './ui/icons';
 import { WiringView } from './ui/WiringView';
@@ -97,12 +98,13 @@ export function App() {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement).tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (store.get().addSheet) return; // the Add a board window has the keyboard (Delete would take out what is picked behind it)
       const cmd = e.metaKey || e.ctrlKey;
       if (cmd && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
       if (cmd && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); }
       if (cmd && e.key.toLowerCase() === 's' && project) { e.preventDefault(); saveProject(); }
       if (e.key === '?' || (e.key === '/' && e.shiftKey)) setKeys((k) => !k);
-      if (!cmd && e.key.toLowerCase() === 'a' && project && !store.get().addSheet) { e.preventDefault(); store.set({ addSheet: true }); }
+      if (!cmd && e.key.toLowerCase() === 'a' && project) { e.preventDefault(); store.set({ addSheet: true }); }
       if (e.key === 'Escape') setKeys(false);
       // 1-7: the steps (not while the rails view uses the keys for its docks, nor in the board editor)
       if (!cmd && !e.altKey && project && /^[1-7]$/.test(e.key) && store.get().view !== 'panel') { goStep(STEPS[+e.key - 1].id); return; }
@@ -213,7 +215,7 @@ export function App() {
           {project && (
             <div className="foot">
               {si > 0 && <button className="btn back" onClick={() => goStep(STEPS[si - 1].id)}><Icon d={I.left} /> {STEPS[si - 1].label}</button>}
-              {si < STEPS.length - 1 ? <button className="btn primary" onClick={() => goStep(STEPS[si + 1].id)}>Next: {STEPS[si + 1].label} <Icon d={I.right} /></button> : (
+              {si < STEPS.length - 1 ? <button className="btn primary" onClick={() => { if (step === 'plugs') connectIfNone(); goStep(STEPS[si + 1].id); }}>Next: {STEPS[si + 1].label} <Icon d={I.right} /></button> : (
                 <>
                   <button className="btn ghost" onClick={() => goStep('import')} title="Back to Start to add a board"><Icon d={I.plus} /> Board</button>
                   <button className="btn primary" onClick={() => window.dispatchEvent(new Event('boarddock:download'))}><Icon d={I.download} /> Download .zip</button>

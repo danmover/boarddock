@@ -1,35 +1,57 @@
-// The board editor's toolbox: every plug, header, hole and tall part as a picture of it on a scrap of board. Click
-// one to pick it up (it follows the pointer over the board, snapping to an edge if it goes on one), then click where
-// it goes; or drag it onto the board. Search, or narrow to one kind.
+// The board editor's toolbox: every plug, header, hole and tall part as a picture of its own 3D model on a scrap of
+// board. Click one to pick it up (it follows the pointer over the board, snapping to an edge if it goes on one), then
+// click where it goes; or drag it onto the board. Search, or narrow to one kind.
 import { useEffect, useMemo, useState } from 'react';
-import { PALETTE, PALETTE_GROUPS, demoBoard, type PaletteItem } from '../model/palette';
+import { PALETTE, PALETTE_GROUPS, demoBoard, partBoard, paletteFor, samePart, type PaletteItem } from '../model/palette';
+import type { Board, Comp } from '../model/types';
 import { boardPicture } from '../worker/client';
 import { picture } from './snapshot';
+import { boardSig, tileUrl } from './pics';
 import { bbox, compRect } from '../geom/poly';
 
-/** Version of the toolbox pictures in public/tiles/pal (scripts/render-tiles.mjs makes them). */
-const PAL_V = 2;
 const failed = new Set<string>();
 export const PART_DRAG = 'application/x-boarddock-part';
 
-/** A part's picture: rendered ahead of time, else rendered here once (and kept), a top-view sketch meanwhile. */
+/**
+ * A toolbox entry's picture: its own 3D model on a scrap of board (demoBoard), rendered ahead of time while that is
+ * still the model (tiles.json), else rendered here.
+ */
 export function PartPic({ item }: { item: PaletteItem }) {
-  const [live, setLive] = useState(() => failed.has(item.id));
-  const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => {
-    if (!live) return;
-    let on = true;
-    picture(`pal:${item.id}:v${PAL_V}`, () => boardPicture(demoBoard(item)), 168, 120, [0.42, -1, 0.9]).then((u) => on && setUrl(u)).catch(() => {});
-    return () => { on = false; };
-  }, [live, item.id]);
-  if (!live) return <img className="pic" src={new URL(`tiles/pal/${item.id}.webp?v=${PAL_V}`, document.baseURI).href} alt="" draggable={false} decoding="async" loading="lazy" onError={() => { failed.add(item.id); setLive(true); }} />;
-  if (url) return <img className="pic" src={url} alt="" draggable={false} />;
-  return <PartSketch item={item} />;
+  const shipped = tileUrl(`pal/${item.id}`);
+  const [live, setLive] = useState(() => !shipped || failed.has(item.id));
+  const b = useMemo(() => (live ? demoBoard(item) : null), [live, item.id]);
+  if (!b) return <img className="pic" src={shipped!} alt="" draggable={false} decoding="async" loading="lazy" onError={() => { failed.add(item.id); setLive(true); }} />;
+  return <ScrapPic b={b} />;
 }
 
-/** Top view of the demo board, while its picture renders. */
-function PartSketch({ item }: { item: PaletteItem }) {
-  const b = useMemo(() => demoBoard(item), [item.id]);
+/**
+ * A part of a board in its lists: the toolbox entry's picture when the part is just what that entry puts down, else
+ * a picture of this part itself (its own size, pins and look), so a 1 x 18 header never shows as a 1 x 6. A box's
+ * ports are openings in its housing, not parts: they show the socket they take.
+ */
+export function CompPic({ c, box }: { c: Comp; box: boolean }) {
+  const it = paletteFor(c);
+  const own = useMemo(() => (it && !box && !samePart(c, it) ? partBoard(c) : null), [c, it, box]);
+  if (own) return <ScrapPic b={own} />;
+  return it ? <PartPic item={it} /> : <i style={{ background: c.kind === 'module' ? '#3d5872' : c.kind === 'led' ? '#ffd166' : c.kind === 'hot' ? '#b8553a' : '#3d4957' }} />;
+}
+
+/** A small board's 3D picture (a part on its scrap), rendered once and kept; a top view of it meanwhile. */
+function ScrapPic({ b }: { b: Board }) {
+  const key = `scrap:${boardSig(b)}`;
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let on = true;
+    setUrl(null);
+    picture(key, () => boardPicture(b), 168, 120, [0.42, -1, 0.9]).then((u) => on && setUrl(u)).catch(() => {});
+    return () => { on = false; };
+  }, [key]);
+  if (url) return <img className="pic" src={url} alt="" draggable={false} />;
+  return <ScrapSketch b={b} />;
+}
+
+/** Top view of a scrap of board with its part, while its picture renders. */
+function ScrapSketch({ b }: { b: Board }) {
   const bb = bbox(b.outline), pad = 2, w = bb.x1 - bb.x0 + 2 * pad, h = bb.y1 - bb.y0 + 2 * pad;
   const P = (l: [number, number][]) => 'M' + l.map((q) => `${(q[0] - bb.x0 + pad).toFixed(1)},${(bb.y1 - q[1] + pad).toFixed(1)}`).join('L') + 'Z';
   return (

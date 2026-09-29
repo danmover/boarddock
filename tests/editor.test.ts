@@ -4,7 +4,7 @@ import { describe, it, expect } from 'vitest';
 import { TEMPLATES } from '../src/model/templates';
 import { layoutDims, lineMates, setDim, type DimBox } from '../src/model/dims';
 import { boardCopper, partPins } from '../src/model/copper';
-import { alignPhoto, fitPhoto, scalePhoto, snapBox, snapLines } from '../src/model/editorgeo';
+import { alignPhoto, dimPopupAt, fitPhoto, scalePhoto, snapBox, snapLines } from '../src/model/editorgeo';
 import { PALETTE, demoBoard, paletteFor } from '../src/model/palette';
 import { drawnBoard } from '../src/ui/DrawBoard';
 import { bbox, inside } from '../src/geom/poly';
@@ -61,6 +61,39 @@ describe('dimension layout', () => {
     const b = pi();
     b.dims!.push({ id: 'dx', a: { k: 'edge', at: 'x0' }, b: { k: 'comp', id: 'nope', at: 'c' }, axis: 'x' } as Dim);
     expect(layoutDims(b, 0.1).map((q) => q.id)).not.toContain('dx');
+  });
+});
+
+describe('the Measure popup', () => {
+  const pop = { w: 236, h: 120 }, room = { w: 800, h: 600 };
+  it('sits beside the dimension line, on the side away from the board, centred on the label', () => {
+    // a horizontal line above the board: the popup above it; below the board: below it
+    expect(dimPopupAt([400, 300], 'x', -1, pop, room)).toEqual({ left: 400 - 118, top: 300 - 20 - 120 });
+    expect(dimPopupAt([400, 300], 'x', 1, pop, room)).toEqual({ left: 400 - 118, top: 320 });
+    // a vertical line right of the board: to its right; left of it: to its left
+    expect(dimPopupAt([400, 300], 'y', 1, pop, room)).toEqual({ left: 420, top: 240 });
+    expect(dimPopupAt([400, 300], 'y', -1, pop, room)).toEqual({ left: 400 - 20 - 236, top: 240 });
+  });
+
+  it('never covers the label or its line while either side has room, and stays inside the editor', () => {
+    for (const axis of ['x', 'y'] as const) for (const outward of [-1, 1] as const) for (let x = 0; x <= 800; x += 50) for (let y = 0; y <= 600; y += 50) {
+      const { left, top } = dimPopupAt([x, y], axis, outward, pop, room);
+      expect(left).toBeGreaterThanOrEqual(8); expect(top).toBeGreaterThanOrEqual(8);
+      expect(left + pop.w).toBeLessThanOrEqual(792); expect(top + pop.h).toBeLessThanOrEqual(592);
+      // the line (through the label, along x or y) and the label's pill are clear of it whenever it is not squeezed
+      const clear = axis === 'x' ? y < top - 9 || y > top + pop.h + 9 : x < left - 9 || x > left + pop.w + 9;
+      const roomy = axis === 'x' ? y - 29 - pop.h >= 8 || y + 29 + pop.h <= 592 : x - 29 - pop.w >= 8 || x + 29 + pop.w <= 792;
+      if (roomy) expect(clear).toBe(true);
+    }
+  });
+
+  it('goes to the other side when the preferred one has no room, and keeps inside a small editor', () => {
+    // a line at the top of the editor, popup wanted above: below it instead
+    expect(dimPopupAt([400, 60], 'x', -1, pop, room).top).toBe(80);
+    // a vertical line at the right edge, popup wanted to its right: to its left
+    expect(dimPopupAt([780, 300], 'y', 1, pop, room).left).toBe(780 - 20 - 236);
+    // a phone-width editor narrower than the popup: pinned to the left margin, not off the edge
+    expect(dimPopupAt([100, 300], 'x', -1, pop, { w: 250, h: 600 }).left).toBe(8);
   });
 });
 

@@ -53,12 +53,27 @@ const seedOf = (s: string) => { let h = 7; for (let i = 0; i < s.length; i++) h 
 interface LightObj { sprite: THREE.Sprite; dot: THREE.Mesh; base: THREE.Color; pattern: LightPattern; seed: number; i: number; size: number; level: number; dark: boolean }
 interface FlowObj { beads: THREE.Mesh[]; pts: number[][]; cum: number[]; len: number; speed: number; on: boolean }
 
-export interface LiveFx { tick(now: number): boolean; setLive(on: boolean): void; hide(v: boolean): void; dispose(): void }
+export interface LiveFx { tick(now: number): boolean; setLive(on: boolean): void; hide(v: boolean): void; declutter(camera: THREE.PerspectiveCamera): void; dispose(): void }
+
+/**
+ * Which of these labels (centre, half width and height on screen, distance from the eye) to show so none lies on
+ * another: the nearest first keep their place; one that would overlap a label already kept is left out.
+ */
+export function keepApart(ls: { x: number; y: number; hw: number; hh: number; d: number }[]): boolean[] {
+  const kept: number[][] = [], out = ls.map(() => false);
+  for (const i of ls.map((_, k) => k).sort((a, b) => ls[a].d - ls[b].d)) {
+    const l = ls[i], r = [l.x - l.hw, l.y - l.hh, l.x + l.hw, l.y + l.hh];
+    if (kept.some((k) => r[0] < k[2] && k[0] < r[2] && r[1] < k[3] && k[1] < r[3])) continue;
+    kept.push(r);
+    out[i] = true;
+  }
+  return out;
+}
 
 /** Hang the live touches on the meshes of the ghosts that have them. `live` false: lights on steady, no pulses. */
 export function liveFx(items: { gh: Ghost; mesh: THREE.Object3D }[], live: boolean): LiveFx {
   const lights: LightObj[] = [], flows: FlowObj[] = [], extras: THREE.Object3D[] = [], tags: { at: THREE.Vector3; texts: string[]; mesh: THREE.Object3D }[] = [];
-  const made: { dispose(): void }[] = [];
+  const made: { dispose(): void }[] = [], labels: THREE.Sprite[] = [];
   const dotGeo = new THREE.SphereGeometry(1, 12, 8), beadGeo = new THREE.SphereGeometry(1, 10, 6);
   made.push(dotGeo, beadGeo);
   for (const { gh, mesh } of items) {
@@ -144,6 +159,7 @@ export function liveFx(items: { gh: Ghost; mesh: THREE.Object3D }[], live: boole
     tag.position.copy(g.at);
     g.mesh.add(tag);
     extras.push(tag);
+    labels.push(tag);
   }
   let on = live, last = -1;
   const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -194,6 +210,21 @@ export function liveFx(items: { gh: Ghost; mesh: THREE.Object3D }[], live: boole
       for (const o of [...lights.flatMap((L) => [L.sprite, L.dot]), ...flows.flatMap((f) => f.beads), ...extras]) {
         if (v) { o.userData.was = o.visible; o.visible = false; } else o.visible = !!o.userData.was;
       }
+    },
+    // where-it-goes labels are the same size on screen at any distance, so on a big rack seen whole they pile up: the
+    // nearest keep their place and any that would lie on one of them wait until the view comes closer
+    declutter(camera) {
+      if (labels.length < 2) return;
+      const P = camera.projectionMatrix.elements, v = new THREE.Vector3();
+      const shown = (s: THREE.Object3D) => { for (let o: THREE.Object3D | null = s.parent; o; o = o.parent) if (!o.visible) return false; return true; };
+      const list = labels.filter(shown).map((s) => {
+        s.getWorldPosition(v);
+        const d = v.distanceTo(camera.position), q = v.project(camera);
+        // (a label keeps its size on screen: its half width and height in the view's -1 to 1 units)
+        return { s, x: q.x, y: q.y, hw: (s.scale.x * P[0]) / 2 + 0.01, hh: (s.scale.y * P[5]) / 2 + 0.01, d };
+      });
+      const keep = keepApart(list);
+      list.forEach((l, i) => { l.s.visible = keep[i]; });
     },
     dispose() {
       for (const L of lights) { L.sprite.removeFromParent(); L.dot.removeFromParent(); }
