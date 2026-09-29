@@ -27,5 +27,7 @@ npm run typecheck
 
 ## Releases
 
-Push a tag `vX.Y.Z`. The release workflow builds the Windows, macOS and Linux installers, attaches them to
-a GitHub release, and publishes the web app to GitHub Pages.
+Bump the version (`npm version X.Y.Z --no-git-tag-version`), write the notes in `.github/release-notes/vX.Y.Z.md`
+(install steps, what's new, known limits; GitHub's list of changes is added after them), then push a tag `vX.Y.Z`.
+The release workflow builds the Windows, macOS and Linux installers, attaches them to a GitHub release, and
+publishes the web app to GitHub Pages.

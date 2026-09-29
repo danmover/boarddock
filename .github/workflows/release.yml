@@ -15,12 +15,16 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - name: Create the draft release
+        # (the notes written for this tag, .github/release-notes/vX.Y.Z.md, come first, then GitHub's list of changes)
         run: |
           if gh release list --repo "$GITHUB_REPOSITORY" --json tagName --jq '.[].tagName' | grep -qx "$GITHUB_REF_NAME"; then
             echo "A release for $GITHUB_REF_NAME exists already"
           else
-            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --title "${GITHUB_REF_NAME#v}" --generate-notes
+            notes=()
+            [ -f ".github/release-notes/$GITHUB_REF_NAME.md" ] && notes=(--notes-file ".github/release-notes/$GITHUB_REF_NAME.md")
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --title "${GITHUB_REF_NAME#v}" "${notes[@]}" --generate-notes
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

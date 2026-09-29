@@ -55,6 +55,11 @@ Everything is checked with FEA and packed onto as few print plates as possible.
 | **Web app** | [danmover.github.io/boarddock](https://danmover.github.io/boarddock) (nothing is uploaded; all processing runs in your browser) |
 | **From source** | `npm install` then `npm run dev` (see [Development](#development)) |
 
+Installing the desktop app:
+- **Windows:** run `BoardDock-…-win-x64-setup.exe` (it lets you pick the folder), or run the `…-portable.exe` with no install.
+- **macOS:** open the `.dmg` and drag BoardDock into Applications.
+- **Linux:** `chmod +x` the `.AppImage` and run it, or install the `.deb` with `sudo apt install ./BoardDock-…-linux-amd64.deb`.
+
 The desktop builds are not code-signed yet:
 - On **macOS**, right-click the app and choose **Open** the first time.
 - On **Windows**, choose **More info → Run anyway**.
