@@ -28,7 +28,7 @@ import { GRIP } from './dockdims';
  * 1, its flanges' top at 7.5). `gap`: how far the part moves off the wall, from where it is drawn, before its hook
  * meets the flange edge (the pad is drawn that much, and GRIP.pre, into the wall). `under`: the part's underside over
  * the rail. The root block stays 5.8 mm over the panel and 4.5 mm or more from the rail's middle: pan, cheese, button
- * and countersunk screw heads in the rail pass under it.
+ * and countersunk screw heads in the rail pass under it, and M5 socket caps stay inside it (M6 ones don't).
  */
 export function railGrip(gap: number, under: number, map: (s: number, h: number) => V2): CS {
   const { t, s0, arm: [a0, a1], knee: rk, root, leg, pad, pre, stop } = GRIP;
