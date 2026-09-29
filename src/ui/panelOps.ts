@@ -466,6 +466,38 @@ export function bedNote(p: Project, boards: { name: string; outline: [number, nu
   return ` ${big.length === 1 ? `${big[0].name}'s holder` : `The holders of ${big.map((b) => b.name).join(', ')}`} will not fit the ${p.printer.name} bed (${bx} × ${by} mm): a printer with a bigger bed can be picked in Export.`;
 }
 
+type Went = { id: string; rail: string; kind: string; at?: number | null; slots: { module: string | null }[] };
+
+/** Where each of these boards sits: from the rack's report once it is built (`now`), else from the layout by hand. */
+function whereWent(p: Project, ids: string[], before: PanelReport | null, now: PanelReport | null, short = false): string[] {
+  const seen = new Set((before?.mounts ?? []).map((x) => x.id)), labels = mountLabels(now ?? before);
+  const nameOf = (id?: string | null) => p.modules.find((x) => x.id === id)?.board.name;
+  return ids.flatMap((id) => {
+    const mt: Went | undefined = now ? now.mounts.find((x) => x.id === now.modules.find((q) => q.id === id)?.mount) : p.panel.mounts.find((x) => x.slots.some((s) => s.module === id));
+    if (!mt) return [];
+    const name = nameOf(id) ?? 'It', known = labels.get(mt.id), other = nameOf(mt.slots.find((s) => s.module && s.module !== id)?.module);
+    if (seen.has(mt.id) && known) return [short ? `${name}: the free slot of dock ${known}` : `${name} went into the free slot of dock ${known}${other ? `, back to back with ${other}` : ''} (nothing new to print but its holder)`];
+    const k = (now ?? p.panel).rails.findIndex((x) => x.id === mt.rail) + 1;
+    const rail = k ? ` on rail ${k}` : '';
+    if (short) return [`${name}: a new ${mt.kind === 'flat' ? 'clip' : 'dock'}${known ? ` ${known}` : ''}${rail}`];
+    return [`${name} got a new ${mt.kind === 'flat' ? 'clip' : 'dock'}${known ? ` (dock ${known})` : ''}${rail}${now && mt.at != null ? `, ${Math.round(mt.at)} mm along it` : ', in the first gap that fits or on the end of the rail (Check says if the rail gets longer)'}`];
+  });
+}
+
+/**
+ * Once the rack is built with the new boards: the toast again, with where each went (dock numbers and places now
+ * known). `now` is the toast as it was; `again` makes the new one from the note. Skipped when another toast came since.
+ */
+export function sayWhereWent(ids: string[], now: string, again: (note: string) => string, act?: { label: string; run: () => void }) {
+  const before = rep();
+  afterBuild((r) => {
+    const p = store.get().project;
+    if (store.get().toast !== now || !p || p.layout !== 'panel' || !r.report.panel) return;
+    const spots = whereWent(p, ids, before, r.report.panel, ids.length > 3);
+    if (spots.length) toast(again(` ${spots.join(ids.length > 3 ? '; ' : '. ')}${p.panel.auto ? '' : '; the rest stay put'}.`), act);
+  });
+}
+
 /**
  * One line on where newly added boards go. With `ids` (the boards just added, on a rack laid out by hand or built),
  * where each one actually went: a free slot of a dock already there, or a new dock.
@@ -475,16 +507,7 @@ export function placementNote(p: Project, ids?: string[]): string {
   // an unbuilt rack that lays itself out: nothing to say (the add toast stays short)
   if (p.panel.auto && !p.built) return '';
   if (p.panel.auto) return ' Auto-arrange lays out the whole rack again with it (mark the rack as built in Export to keep boards where they are).';
-  const r = rep(), labels = mountLabels(r);
-  const spots = (ids ?? []).map((id) => {
-    const mt = p.panel.mounts.find((x) => x.slots.some((s) => s.module === id));
-    if (!mt) return null;
-    const m = p.modules.find((x) => x.id === id), other = mt.slots.find((s) => s.module && s.module !== id)?.module;
-    const known = labels.get(mt.id);
-    if (known) return `${m?.board.name ?? 'It'} went into the free slot of dock ${known}${other ? `, back to back with ${p.modules.find((x) => x.id === other)?.board.name}` : ''} (nothing new to print but its holder)`;
-    const k = p.panel.rails.findIndex((x) => x.id === mt.rail) + 1;
-    return `${m?.board.name ?? 'It'} got a new dock${k ? ` on rail ${k}` : ''}, in the first gap that fits or on the end of the rail (Check says if the rail gets longer)`;
-  }).filter(Boolean) as string[];
+  const spots = whereWent(p, ids ?? [], rep(), null);
   if (spots.length && spots.length <= 3) return ` ${spots.join('. ')}; the rest stay put.`;
   return ' Each goes into a free dock slot where it docks well (nothing new to print but its holder), else a new dock in the first gap on the rails or on the end of a rail, which then gets longer (Check says by how much); the rest stay put.';
 }

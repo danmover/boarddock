@@ -270,7 +270,8 @@ export function putBoards(bs: Board[], replace: boolean, opts: { stay?: boolean;
   if (!cur || replace) {
     setBoard(bs[0]);
     if (bs.length > 1) { const past = state.past; putBoards(bs.slice(1), false, { keepActive: true }); store.set({ past }); }
-    store.set({ replaceMode: false });
+    // several files into a new rack: stay on Start (its rack card lists them) rather than open the first
+    store.set({ replaceMode: false, ...(opts.stay && !cur ? { step: 'import' as const, view: 'library' as const } : {}) });
     return;
   }
   const p = structuredClone(cur);
