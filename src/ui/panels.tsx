@@ -1,3 +1,4 @@
+import { billOfMaterials, bomCsv } from '../model/bom';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { zipSync, strToU8 } from 'fflate';
 import type { Board, Comp, Hole, HoleRole, Module, PartOut, Project, V2 } from '../model/types';
@@ -1258,6 +1259,7 @@ export function ExportPanel() {
     });
     for (const x of parts) files[`parts/${safeName(x.id)}_${safeName(x.name)}.stl`] = writeStl([x.mesh]);
     files[`${base}.boarddock.json`] = strToU8(JSON.stringify(p, null, 1));
+    files['BOM.csv'] = strToU8(bomCsv(billOfMaterials(p, res)));
     const pr = printerByName(p.printer.name), mat = activeModule(p).holder.material;
     const settings = [`Print settings (${pr?.name ?? p.printer.name}, ${mat}${pr ? `, printer preset "${pr.orca}"` : ''}):`, ...printSettings(pr, mat, tallness(parts, p.printer.maxZ ?? 250).tall).map((r) => `  ${r.name}: ${r.value}  (${r.basis}: ${r.why})`)].join('\n');
     files['README.txt'] = strToU8(printNotes(p, res, plates.length, tot, shopping(p, res, onlyNew ? d : null, tot, scope === 'pick' ? pickSet : undefined)).replace('Print: 0.2 mm layers, 3 walls, 15% infill, NO supports. Parts are already in print orientation.', settings));
@@ -1327,6 +1329,7 @@ export function ExportPanel() {
         </div>
       </Section>
       <ShoppingList p={p} lines={shopping(p, res, onlyNew ? d : null, tot, scope === 'pick' ? pickSet : undefined)} />
+      <BomSection p={p} res={res} base={base} />
       {!p.built && <BuildSection d={d} />}
       {p.layout === 'panel' && <TestKitSection />}
       <Section title="Estimate">
@@ -1493,6 +1496,25 @@ export function shopping(p: Project, res: Res, d: Delta | null, tot: { g: number
   if (adapters.size) out.push({ head: 'Debug probes', items: [...adapters.entries()].map(([k, who]) => `${who.length} × ${k} (${who.length > 2 ? `${who.length} probes` : who.join(', ')})`) });
   out.push({ head: 'Filament', items: [`about ${tot.g.toFixed(0)} g of ${activeModule(p).holder.material} (roughly ${fmtMin(tot.m)} of printing)`] });
   return out;
+}
+
+/** The bill of materials: the whole rack, every group with its quantities (folded away: it is long), and as a CSV. */
+function BomSection({ p, res, base }: { p: Project; res: Res; base: string }) {
+  const bom = useMemo(() => billOfMaterials(p, res), [p, res]);
+  return (
+    <Section title="Bill of materials" right={<button className="btn ghost small" title="The bill of materials as a spreadsheet (CSV)" onClick={() => download(`${base}_bom.csv`, bomCsv(bom), 'text/csv')}>CSV</button>}>
+      <details className="bom">
+        <summary>Everything the rack is made of, and how many: {bom.reduce((n, g) => n + g.rows.length, 0)} lines</summary>
+        <table className="table"><tbody>
+          {bom.map((g) => [
+            <tr key={g.head}><th colSpan={3}>{g.head}</th></tr>,
+            ...g.rows.map((r, i) => <tr key={`${g.head}${i}`}><td className="num">{r.qty}</td><td>{r.item}</td><td style={{ color: 'var(--subtle)' }}>{r.note ?? ''}</td></tr>),
+          ])}
+        </tbody></table>
+      </details>
+      <p className="hint">The build guide's printout ends with this list, and the download has it as BOM.csv.</p>
+    </Section>
+  );
 }
 
 function ShoppingList({ p, lines }: { p: Project; lines: { head: string; items: string[] }[] }) {

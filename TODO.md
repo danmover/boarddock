@@ -4,10 +4,6 @@ What still needs doing on BoardDock, in the order it's being worked through. New
 
 Nothing BoardDock makes has been printed and tried yet, so anything below about fit, strength or clips is from the model and its checks, not from a real print.
 
-## 0. Serious: the shopping list counts hook-and-loop straps for plug packs
-
-From the second round of test users (B21 below): a plug pack goes in an outlet and never gets a holder, so it needs no strap, but the shopping list counts one. A wrong number on the shopping list: being fixed first in a batch of small fixes.
-
 ## 1. Toolbox pictures to match the 3D models
 
 The board editor's toolbox pictures (each plug, header, part) no longer look like the 3D model of the same thing: redraw them from the models, or check each against its model.
@@ -21,7 +17,7 @@ Go through the clip in depth, measuring rather than guessing:
 - that every piece is printable;
 - (done: a box on a flat clip now stands 2.3 mm up, clear of the snap hooks that reach 1.9 mm above the base; they went 0.7 mm into it.)
 
-## 3. Bill of materials and a build guide
+## 3. Bill of materials and a build guide (the bill of materials is in; the build guide is next)
 
 A proper bill of materials at the end (printed parts, boards, cables, rails, supplies, with quantities) and a step-by-step build view: each step's text with its 3D view, next and back, usable on a phone at the bench, and printable. Start from what's already there (the shopping list in Export and the assembly Steps).
 
@@ -81,16 +77,16 @@ Check each cradle and cap prints well in every orientation, and fit a cap only w
 9. Check's "to look at" items: give each a verdict ("OK to print" / "worth a look") and a fix button where one exists, and group repeated Tongue root lines with a count. Prefer spring clips where "Hold: Auto" picks snap pins that end up in this list. Drop the standoff notice for library templates (or fix the Uno template).
 10. On Start, the multi-pick "+" only shows on hover (nothing to tap on a phone): show it at rest or as a quantity stepper, and let the count be typed.
 11. Draw your own: add debug and UART header options with a pinout. Offer a J-Link for a drawn board's debug header, list headers without a probe on Plugs, and make "Add J-Links" cover every board.
-12. Measure popup: size its checkbox normally, focus and select the number when it opens, and put the popup beside the dimension line.
-13. The "DIN rail clip" and stand socket checkboxes only toggle on the tiny box: make the whole title a label.
+12. (Done, not seen in a real browser: Measure popup checkbox, focus and place.)
+13. (Done: whole titles toggle the DIN rail clip and stand socket.)
 14. The Rails canvas and list mislabel docks: say "lies flat, tab on its bottom edge" and "standing, parts face front", and show "mixed" when docks differ.
 15. On a phone, a selected mains cable's panel is cut off. Wrap it, and add the length, plug types, outlet name and a "switch off before plugging in" note.
 16. After importing several files, stay on Start with a "Check the boards" button.
-17. After "Add 16 boards", the Board step opens on #2: open on the first.
+17. (Done: the Board step opens on the first board.)
 18. What's new says to seat a plug-pack supply "in its holder … into its dock": say to plug it into outlet ACn, switched off, and run its lead to the board. Have "Also print" say what each part is for.
 19. After adding to a built rack, the message should say where each new board went.
 20. Steps: an "only what's new" mode that plays just the since-built checklist on the existing rack.
-21. The shopping list counts straps for plug packs: count only boxes that get a rail holder. (Moved to item 0.)
+21. (Done: the shopping list counts straps only for boxes in a holder on the rack.)
 22. Print settings say "Brim: none" but the in-app slice lays a brim: make them agree.
 23. Once the start code is known, the main Export button should be "Slice and download all G-code" (in the background, zipped), and the G-code should go in "Download everything".
 24. Layout toggles and Check are slow on a 16-board rack (switching back to Stand up took 39 s): cache each layout choice's result, and show progress while it works.
@@ -101,12 +97,12 @@ Check each cradle and cap prints well in every orientation, and fit a cap only w
 1. A "pack new boards only" Auto-arrange option: lay out only boards not yet placed, and leave the rest where they are.
 2. KiCad "New version": a 0.8 mm connector move on the example board caused an overlap. The warning now shows, but why the imported bodies overlap was never found.
 3. At 375 px wide, a label pill wider than its board is clipped at the edge of the Rails view.
-4. Tick the perfboard reminder off when a hole is edited.
+4. (Done: the perfboard reminder ticks itself off when a hole is edited.)
 5. Wiring view: move length badges out from under cards, and put a dropped card in a free spot.
 6. On phones, hint text still talks about clicking and hovering: use touch wording.
 7. Links can end at the virtual "@pc" (your computer): check that everything looking up a link's board uses findModule, not p.modules.find (boardviz, assembly and the exporters in particular).
 8. Make sure Plugs › "Cables to buy" uses the same wording and lengths as the shopping list (buyText).
-9. The "Add a board" window should keep keyboard focus inside it while open, and give it back when it closes.
+9. (Done: the Add a board window keeps focus inside and gives it back.)
 
 ## Found along the way
 
@@ -116,3 +112,5 @@ Each: how bad (1 to 5), what's wrong, where, and how it was seen.
 - 1 · `npm test` takes about 160 s, most of it building holders and racks (the collision test's quick racks add about 30 s).
 - 2 · Top-entry plugs (a debug header) got their zip-tie anchor on the nearest wall with no other check; one sat in the Dual-MCU board's dock socket. Fixed in the collision work (`src/cad/generate.ts` tieAnchor). Seen with the collision test.
 - 1 · A picked anti-rattle spring was named "spring clip" in the 3D view's panel. Fixed (`src/ui/pickOps.ts`). Seen while tagging the springs for the collision test.
+- 3 · Loose layout builds a holder with strap loops for a plug pack (elsewhere a plug pack never gets a holder), so the 3D model and the shopping list disagree. `generateLoose` in `src/cad/assembly.ts` has no `isPlugPack` check. Seen by the small-fixes agent on a loose Pi 5 rack with a 27 W supply.
+- 2 · The loose assembly steps say to strap a plug pack down (same cause, `src/cad/assembly.ts` around line 197).
