@@ -18,6 +18,11 @@ export const HD = {
   spineHx: 3.0, spineY1: 10.0, tunnelHx: 1.8, tunnelY: [6.2, 8.8] as V2, rodHx: 1.6, rodY: [6.4, 8.6] as V2, voidHx: 1.8, voidY1: 5.0,
   base: { hx: 10.0, y1: 10.0, t: 3.0 }, grip: { hx: 12.0, t: 4.0, gap: 10.0 }, head: { hx: 8.0, y1: 14.0, t: 3.0 },
   rodRest: -1.58, stroke: 3.1, backY: 0.5,
+  // the rod clicks in: a barb on a finger (x 0.7..1.6, hanging from the button head) springs out under a ledge at the
+  // top of its tunnel, into a pocket long enough for the whole stroke. `ledge`: how deep the ledge is; `barb`: how far
+  // the barb stands out from the rod (it passes a 1.8 mm half-width ledge by bending the finger 0.3 mm, once);
+  // `pocket`: the pocket's half-width on the barb's side
+  catch: { ledge: 2.0, barb: 0.5, pocket: 2.35 },
 };
 /** Holder frame height (above the bed) of the spine top: the board must sit above it. */
 export const SPINE_TOP = HD.spineY1 - HD.backY;
@@ -44,3 +49,16 @@ export function headSpan(side: number): [number, number] {
  * underside is that far above it); `dove`: the dovetail, half-widths at its root and at its top, height, clearance.
  */
 export const EAR = { len: 15, hx: 12, t: 4.5, ped: 3, dove: { root: 3.4, top: 4.4, h: 2.4, gap: 0.2 } };
+
+/**
+ * The rail grip (dinclip.ts railGrip) on the shoe and the pull-tab clip: a fork in the rail's channel whose pad
+ * presses one wall. `t`: leg and arm thickness (two 0.45 mm lines); `s0`: the leg's face off the wall as drawn; `arm`:
+ * the arm's underside and top over the panel; `knee`: the knee's radius; `root`: where the arm meets its root block,
+ * across from the wall; `leg`: the leg's foot over the panel; `pad`: the height of the pad's 0.7 mm flat; `pre`: how
+ * far the wall pushes the pad in once the part sits on its hook; `stop`: how much further a knock can push it before
+ * the tooth meets the wall.
+ */
+export const GRIP = { t: 0.9, s0: 0.3, arm: [5.8, 6.7] as V2, knee: 1.5, root: 6.7, leg: 1.4, pad: 2.6, pre: 0.35, stop: 0.45 };
+/** The shoe's rail grip: the -y wall's inner face, and how far the shoe moves off it before its fixed hook meets the
+ * flange edge (the hook's inside at -17.9, the flange edge at -17.5). */
+export const SHOE_GRIP = { wall: -12.5, gap: 0.4 };

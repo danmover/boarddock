@@ -47,8 +47,8 @@ export function DockFeaSection() {
   };
   const allow = mat.strainAllow;
   return (
-    <Section title="Dock FEA · latch and rail shoe">
-      <p className="hint" style={{ marginTop: 0 }}>2D plane-stress models of the two springs every dock relies on, in {matName} (E {mat.E} MPa): the socket latch (18 mm wide) and the rail shoe hinge (two 7 mm leaves). Each case is scaled to the travel it has to reach.</p>
+    <Section title="Dock FEA · latch, rail shoe and grip">
+      <p className="hint" style={{ marginTop: 0 }}>2D plane-stress models of the springs every dock relies on, in {matName} (E {mat.E} MPa): the socket latch (18 mm wide), the rail shoe hinge (two 7 mm leaves) and the shoe's rail grip (21 mm). Each case is scaled to the travel it has to reach.</p>
       <div className="btns" style={{ alignItems: 'center' }}>
         <button className="btn primary" disabled={!!busy} onClick={run}>{busy ? 'Running…' : 'Run dock FEA'}</button>
         <Check label="Fine mesh (0.06 mm)" value={fine} onChange={setFine} />

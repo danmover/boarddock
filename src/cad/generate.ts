@@ -11,7 +11,7 @@ import { usedRefs } from '../model/portuse';
 import { bbox, centroid, compRect, extentAlong, inside, rad, rayExit, round, segDist } from '../geom/poly';
 import type { CS, MF } from './kernel';
 import { box, circle2, csLoops, cyl, ext, extCh, freeAll, K, orientedBox, poly, rect2, roundCS, sweepTZ, toMesh, unionCS, unionMF } from './kernel';
-import { buildClip, clipDims, clipSlots, hookOffset4, railProfile } from './dinclip';
+import { buildClip, clipDims, clipSlots, hookOffset4, RAIL, railProfile } from './dinclip';
 import { textCS, textWidth } from './font';
 import { computeLevels } from './levels';
 import { boardDetail, moveFx, plugDetail, plugUp } from './boardviz';
@@ -1494,7 +1494,7 @@ function mountDin(C: Ctx) {
       const Wd: V2 = [-ev[1], ev[0]]; // z x ev
       const o = add(add(a, ev, -d.vc), Wd, -W / 2);
       const T = matFromBasis([0, 0, 1], [ev[0], ev[1], 0], [Wd[0], Wd[1], 0], [o[0], o[1], -d.uF]);
-      C.parts.push(part(i ? 'clip2' : 'clip', 'DIN rail clip (pull tab)', clip, T, '#ff6b5b', 1, { kind: 'clip', module: C.mid }, { seq: 2, dir: [0, 0, -1] }));
+      C.parts.push({ ...part(i ? 'clip2' : 'clip', 'DIN rail clip (pull tab)', clip, T, '#ff6b5b', 1, { kind: 'clip', module: C.mid }, { seq: 2, dir: [0, 0, -1] }), boxMesh: clipEnvelope(clip, d, W) });
       railGhost(C, T, W);
       if (!i) clipChecks(C, d, tabExt);
     });
@@ -1543,11 +1543,17 @@ function mountDin(C: Ctx) {
     const Wd = [U[1] * Vv[2] - U[2] * Vv[1], U[2] * Vv[0] - U[0] * Vv[2], U[0] * Vv[1] - U[1] * Vv[0]];
     const o = [face[0] - U[0] * d.uF - Vv[0] * d.vc - Wd[0] * (W / 2), face[1] - U[1] * d.uF - Vv[1] * d.vc - Wd[1] * (W / 2), zc - U[2] * d.uF - Vv[2] * d.vc - Wd[2] * (W / 2)];
     const T = matFromBasis(U, Vv, Wd, o);
-    C.parts.push(part('clip', 'DIN rail clip (pull tab)', clip, T, '#ff6b5b', 1, { kind: 'clip', module: C.mid }, { seq: 2, dir: [n[0], n[1], 0] }));
+    C.parts.push({ ...part('clip', 'DIN rail clip (pull tab)', clip, T, '#ff6b5b', 1, { kind: 'clip', module: C.mid }, { seq: 2, dir: [n[0], n[1], 0] }), boxMesh: clipEnvelope(clip, d, W) });
     (C as any).clipAt = c0;
     railGhost(C, T, W);
     clipChecks(C, d, tabExt);
   }
+}
+
+/** The clip without its rail grip, which hangs inside the rail's channel (the rail's own box covers it): what boxes
+ * round the clip are taken from, for cables to keep clear of. */
+function clipEnvelope(clip: MF, d: ReturnType<typeof clipDims>, W: number): MeshData {
+  return meshFrom(clip.subtract(box(-1, d.gripWall - 9, -1, RAIL.flangeFront, d.gripWall + 1, W + 1)));
 }
 
 function clipChecks(C: Ctx, d: ReturnType<typeof clipDims>, tabExt: number) {
@@ -1556,6 +1562,9 @@ function clipChecks(C: Ctx, d: ReturnType<typeof clipDims>, tabExt: number) {
   const eps = (3 * 1.0 * 0.65) / (2 * L * L);
   C.checks.push({ group: 'DIN clip', name: 'Holder snap hooks', value: `${(eps * 100).toFixed(2)}% strain`, status: strainStatus(C, eps), detail: `${round(L, 1)} mm hooks, 0.55 mm catch; click the holder on in any of 4 orientations` });
   C.checks.push({ group: 'DIN clip', name: 'Release', value: 'pull the tab toward you', status: 'info', detail: `lip engagement ${d.eL} mm, travel stop after ~1.9 mm. Run the clip FEA in the Check tab for forces and strain.${tabExt > 0 ? ` Tab lengthened by ${round(tabExt, 1)} mm so it reaches past the holder edge.` : ''}` });
+  // the rail grip: a 2D FEA of the fork gives about 0.46 N per mm of clip width in PETG, 1.1% peak (0.6% for 99%)
+  const eR = MATERIALS[C.H.material].E / MATERIALS.PETG.E, Fg = 0.46 * (C.job.mount ?? C.p.mount).clipWidth * eR;
+  C.checks.push({ group: 'DIN clip', name: 'Rail grip', value: `${round(Fg, 1)} N preload`, status: strainStatus(C, 0.011), detail: `a sprung pad in the rail's channel presses the rail's top wall and holds the clip down on the top flange, so it doesn't slide along the rail by itself: pushing it along takes about ${round(0.6 * Fg, 1)} N (friction 0.3). Before, it only sat on the rail, with 0.65 mm of play up and down and nothing pressing. Screw heads in the rail under the grip must be under 4.8 mm tall.` });
 }
 
 function railGhost(C: Ctx, T: number[], W: number) {
@@ -1820,7 +1829,7 @@ function dockFeatures(C: Ctx, s: DockSite) {
   const eRatio = mat.E / MATERIALS.PETG.E;
   // tongue root at the socket mouth, bending under an out-of-plane push on the far edge
   const tb = 2 * TONGUE.hx, th = TONGUE.y1 - TONGUE.y0, F = 20, Mo = F * s.far, sig = Mo / ((tb * th * th) / 6);
-  C.checks.push({ group: 'Dock', name: 'Release', value: `press the button, ${HD.stroke} mm`, status: 'info', detail: `thumb on the button at the ${({ bottom: 'top', top: 'bottom', left: 'right', right: 'left' } as Record<EdgeName, string>)[s.edge]} edge, two fingers under the grip bar, squeeze and lift. About ${(4.0 * eRatio).toFixed(1)} N (${H.material}); the latch spring returns the button. Rod: ${round(r.len, 0)} mm, printed flat.` });
+  C.checks.push({ group: 'Dock', name: 'Release', value: `press the button, ${HD.stroke} mm`, status: 'info', detail: `thumb on the button at the ${({ bottom: 'top', top: 'bottom', left: 'right', right: 'left' } as Record<EdgeName, string>)[s.edge]} edge, two fingers under the grip bar, squeeze and lift. About ${(4.0 * eRatio).toFixed(1)} N (${H.material}); the latch spring returns the button. Rod: ${round(r.len, 0)} mm, printed flat; push it into its tunnel until it clicks, and it can't slide back out.` });
   C.checks.push({ group: 'Dock', name: `Tongue root, ${F} N push on the far edge`, value: `${round(sig, 0)} MPa`, status: sig < 0.4 * mat.yield ? 'ok' : sig < 0.8 * mat.yield ? 'warn' : 'bad', detail: `${round(s.far, 0)} mm lever onto the ${tb} × ${th} mm tongue (${H.material} yields at ~${mat.yield} MPa). Hold the holder while plugging in stiff cables at the far end${sig >= 0.8 * mat.yield ? ` (this is ${sig >= 0.9 * mat.yield ? 'within 10% of' : 'near'} where it yields: try laying this board flat on its dock, Rails step, and compare this check, or print it in a stronger material)` : ''}.` });
   if (s.under && C.zb > DOCK_MIN_ZB - 0.2) C.checks.push({ group: 'Dock', name: 'Board raised over the rod spine', value: `${round(C.zb, 1)} mm`, status: 'info', detail: 'the release-rod spine runs under the board' });
 }
@@ -1853,8 +1862,8 @@ function earFeatures(C: Ctx, s: EarSite) {
   if (s.conflicts.length) C.warnings.push(`Dock ear on the ${s.edge} edge: ${s.conflicts.join(', ')} ${s.conflicts.length > 1 ? 'are' : 'is'} in the way. Pick another dock edge in the Rails step.`);
   C.checks.push({ group: 'Dock', name: 'Lying flat', value: `ear on the ${s.edge} edge`, status: 'info', detail: `the holder lies top face up on its dock by a tab on its ${s.edge} edge, with the same tongue and socket as a standing one: so it takes the same shoe and socket, and a J-Link or adapter can stand behind it in the socket's other half.` });
   const eRatio = mat.E / MATERIALS.PETG.E;
-  C.checks.push({ group: 'Dock', name: 'Release', value: `press the button, ${HD.stroke} mm`, status: 'info', detail: `thumb on the button on the tab, fingers under the tab, squeeze and lift the holder straight up. About ${(4.0 * eRatio).toFixed(1)} N (${H.material}); the latch spring returns the button. Rod: ${round(r.len, 0)} mm, printed flat.` });
-  C.checks.push({ group: 'Dock', name: 'Dock key', value: 'slides in under the tab', status: 'info', detail: `the tongue is a small key of its own, printed on its side so its layers run along it (as a standing holder's tongue does). Slide its dovetail into the groove under the tab from the tab's tip, then put the release rod in from the top: the rod through both locks the key in. Dovetail ${2 * EAR.dove.root}–${2 * EAR.dove.top} mm, ${EAR.dove.gap} mm clearance a side: not print-tested yet.` });
+  C.checks.push({ group: 'Dock', name: 'Release', value: `press the button, ${HD.stroke} mm`, status: 'info', detail: `thumb on the button on the tab, fingers under the tab, squeeze and lift the holder straight up. About ${(4.0 * eRatio).toFixed(1)} N (${H.material}); the latch spring returns the button. Rod: ${round(r.len, 0)} mm, printed flat; push it in until it clicks, and it can't slide back out.` });
+  C.checks.push({ group: 'Dock', name: 'Dock key', value: 'slides in under the tab', status: 'info', detail: `the tongue is a small key of its own, printed on its side so its layers run along it (as a standing holder's tongue does). Slide its dovetail into the groove under the tab from the tab's tip, then push the release rod in from the top until it clicks: the rod through both locks the key in, and a barb under a ledge at the top of its tunnel keeps the rod in. Dovetail ${2 * EAR.dove.root}–${2 * EAR.dove.top} mm, ${EAR.dove.gap} mm clearance a side: not print-tested yet.` });
   // a press on the far side of the holder (plugging in from above) bends the tongue at the socket mouth the same way
   // a push on a standing holder's far edge does
   const tb = 2 * TONGUE.hx, th = TONGUE.y1 - TONGUE.y0, F = 20, lever = s.far - (TONGUE.y0 + TONGUE.y1) / 2, sig = (F * lever) / ((tb * th * th) / 6);

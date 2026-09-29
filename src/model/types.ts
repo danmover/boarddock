@@ -354,6 +354,7 @@ export interface PartOut {
   anim?: Anim;
   anims?: Anim[]; // one per further placement
   displayMesh?: MeshData; // what the 3D view shows instead of `mesh` (same frame), e.g. without a print-in-place lever
+  boxMesh?: MeshData; // what boxes round the part (for cables to keep clear of) are taken from, if not `mesh`: a rail shoe or DIN clip without the grip that hangs inside its rail
 }
 
 /** How a light behaves: on, a steady blink, a heartbeat, flickering activity, slow breathing, a relay chase, a rainbow. */
