@@ -1225,3 +1225,13 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 .copyto-body { margin-top: 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); display: flex; flex-direction: column; gap: 3px; }
 .copyto-body details { margin-top: 4px; }
 .copyto-body summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+
+/* Checklist */
+.cl-section h4 span { color: var(--muted); font-weight: 400; margin-left: 6px; }
+.cl-group { margin: 0 0 8px; }
+.cl-head { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 600; margin: 8px 0 3px; cursor: pointer; }
+.cl-line { display: flex; align-items: baseline; gap: 8px; padding: 3px 0 3px 2px; font-size: 12.8px; cursor: pointer; }
+.cl-line input, .cl-head input { flex: none; align-self: center; }
+.cl-qty { flex: none; min-width: 28px; text-align: right; color: var(--muted); font-family: var(--mono); font-size: 12px; }
+.cl-item small { color: var(--subtle); }
+.cl-line.done .cl-item { text-decoration: line-through; color: var(--subtle); }

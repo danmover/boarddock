@@ -33,6 +33,7 @@ import { mainsBudget, mainsText, powerBudget, powerText } from '../model/power';
 import { netSpread } from '../model/netlength';
 import { copyHolder } from '../model/copyto';
 import { CopyTo } from './CopyTo';
+import { ChecklistButton } from './Checklist';
 import { saveBoard } from '../model/myboards';
 import { ackNote, summarizeChecks } from '../model/checkSummary';
 import { boardSig, tileUrl, useKeptPicture } from './pics';
@@ -1525,7 +1526,7 @@ function ShoppingList({ p, lines }: { p: Project; lines: { head: string; items: 
   const rail = lines.some((g) => g.head === 'Rails');
   const loose = p.layout === 'loose', nLinks = (p.links ?? []).length;
   return (
-    <Section title="Shopping list">
+    <Section title="Shopping list" right={<ChecklistButton />}>
       {lines.map((g) => (
         <div key={g.head} style={{ marginBottom: 6 }}>
           <div className="field"><span>{g.head}</span></div>

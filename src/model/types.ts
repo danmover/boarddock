@@ -299,6 +299,7 @@ export interface Project {
   version: 3;
   name?: string; // what the user calls this rack (file names, the header); unset: made from the boards
   built?: Built;
+  ticks?: string[]; // the checklist's ticked lines (their keys; see model/checklist.ts)
   oneNetLength?: boolean; // buy every routed Ethernet lead at one length: the longest route, rounded up to a stock length
   links?: Link[]; // cables between boards
   wiring?: { pos?: Record<string, [number, number]> }; // the Wiring view: where each board's card was put (module id -> x, y)

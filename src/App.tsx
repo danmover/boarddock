@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { activeModule, closeProject, redo, select, setActive, store, toast, toastPast, undo, useApp, type Layer, type SelItem, type Step } from './state';
 import { generateProject } from './worker/client';
 import { AddBoardSheet } from './ui/AddBoard';
+import { ChecklistSheet } from './ui/Checklist';
 import { Viewer3D } from './ui/Viewer3D';
 import { BoardEditor, type Tool } from './ui/BoardEditor';
 import { StartStage } from './ui/Start';
@@ -74,7 +75,7 @@ export function App() {
 
   // rebuild whenever the project changes (debounced, latest wins; unchanged holders come from the worker's cache), but
   // not for what the build never reads: the rack's name, where the Wiring view's cards sit, marking it built
-  const buildKey = useMemo(() => (project ? JSON.stringify({ ...project, name: undefined, wiring: undefined, built: undefined }) : ''), [project]);
+  const buildKey = useMemo(() => (project ? JSON.stringify({ ...project, name: undefined, wiring: undefined, built: undefined, ticks: undefined, oneNetLength: undefined }) : ''), [project]);
   const latestProject = useRef(project);
   latestProject.current = project;
   useEffect(() => {
@@ -165,6 +166,7 @@ export function App() {
       )}
       {keys && <Shortcuts onClose={() => setKeys(false)} />}
       <AddBoardSheet />
+      <ChecklistSheet />
       <header className="topbar">
         <div className="brand"><Mark className="mark" /><span className="word">Board<b>Dock</b></span></div>
         {project && <span className="projname" title={project.name ? rackCount(project) : 'Name this rack on the Start step'}>{project.name?.trim() || (project.modules.length > 1 ? rackCount(project) : activeModule(project).board.name)}</span>}
