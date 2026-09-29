@@ -40,7 +40,7 @@ const uartNets = (c: Comp) => {
 const plugTypeName: Record<string, string> = {
   usb_c: 'USB-C', usb_micro_b: 'micro-USB', usb_mini_b: 'mini-USB', usb_a: 'USB-A', usb_a_dual: 'USB-A', usb_b: 'USB-B',
   hdmi_micro: 'micro-HDMI', hdmi_mini: 'mini-HDMI', hdmi_a: 'HDMI', rj45: 'RJ45', barrel: 'DC barrel', audio35: '3.5 mm', terminal: 'wires', header: 'jumper',
-  swd10: '10-pin debug', cortex20: '20-pin Cortex debug', jtag20: '20-pin debug', dsub: 'D-sub', dp: 'DisplayPort', rj11: 'RJ11', rca: 'RCA', bnc: 'BNC', sma: 'SMA', ufl: 'u.FL', xt60: 'XT60', xt30: 'XT30', sd: 'SD card', microsd: 'microSD', fpc: 'flat cable', idc: 'ribbon', idc_ra: 'ribbon', wtb_side: 'wire plug', jst_gh: 'JST-GH', jst_zh: 'JST-ZH', jst_ph: 'JST-PH', jst_xh: 'JST-XH', picoblade: 'PicoBlade', kk254: 'KK plug', microfit: 'Micro-Fit', minifit: 'Mini-Fit', tagconnect: 'Tag-Connect', iec_c7: 'mains (C7)', pins_ra: 'pins', ac_au: 'AU outlet', ac_uk: 'UK outlet', ac_us: 'US outlet', ac_eu: 'EU outlet', mains_lead: 'mains lead',
+  swd10: '10-pin debug', cortex20: '20-pin Cortex debug', jtag20: '20-pin debug', dsub: 'D-sub', dp: 'DisplayPort', rj11: 'RJ11', rca: 'RCA', bnc: 'BNC', sma: 'SMA', ufl: 'u.FL', xt60: 'XT60', xt30: 'XT30', sd: 'SD card', microsd: 'microSD', fpc: 'flat cable', idc: 'ribbon', idc_ra: 'ribbon', wtb_side: 'wire plug', jst_gh: 'JST-GH', jst_zh: 'JST-ZH', jst_ph: 'JST-PH', jst_xh: 'JST-XH', picoblade: 'PicoBlade', kk254: 'KK plug', microfit: 'Micro-Fit', minifit: 'Mini-Fit', tagconnect: 'Tag-Connect', iec_c7: 'mains (C7)', iec_c14: 'mains (C13)', sata: 'SATA', sfp: 'SFP', minidin: 'mini-DIN', pins_ra: 'pins', ac_au: 'AU outlet', ac_uk: 'UK outlet', ac_us: 'US outlet', ac_eu: 'EU outlet', mains_lead: 'mains lead',
 };
 
 export function plugRole(m: Module, c: Comp): PlugRole {
@@ -53,8 +53,8 @@ export function plugRole(m: Module, c: Comp): PlugRole {
   const hub = box && /hub/.test(name), charger = box && /charg|power|supply|psu/.test(name);
   const powerRef = /pwr|power|vin|j_pwr|\bdc\b/.test(ref);
   if (t.startsWith('ac_')) return 'mains-out';
-  if (t === 'iec_c7' || t === 'mains_lead') return 'mains-in';
-  if (t === 'rj45') return 'net';
+  if (t === 'iec_c7' || t === 'iec_c14' || t === 'mains_lead') return 'mains-in';
+  if (t === 'rj45' || t === 'sfp') return 'net';
   if (t.startsWith('hdmi') || t === 'dp') return 'video';
   if (t === 'audio35' || t === 'rca') return 'audio';
   if (t === 'terminal' || t === 'header' || t === 'idc' || t === 'idc_ra') return 'wire';
@@ -76,12 +76,14 @@ export function offRackTo(m: Module, c: Comp): string {
   const t = c.conn?.type ?? '', role = plugRole(m, c);
   if (t.startsWith('hdmi') || t === 'dp') return 'to a screen';
   if (role === 'mains-in' || t.startsWith('iec') || t === 'mains_lead') return 'to the wall';
-  if (t === 'rj45') return 'to the network';
+  if (t === 'rj45' || t === 'sfp') return 'to the network';
   if (t === 'audio35' || t === 'rca') return 'to speakers';
   if (t === 'rj11') return 'to the phone line';
   if (t === 'sma' || t === 'ufl') return 'to its antenna';
   if (t === 'bnc') return 'to a scope or instrument';
   if (t === 'dsub') return 'to a computer or instrument';
+  if (t === 'sata') return 'to a drive';
+  if (t === 'minidin') return 'to a keyboard, mouse or instrument';
   if (t === 'xt60' || t === 'xt30') return 'to its battery';
   if (t === 'fpc') return 'to its display or camera';
   if (role === 'power-in' || role === 'power-in-dc' || t === 'barrel' || role === 'other') return 'to its power supply';

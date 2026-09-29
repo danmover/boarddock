@@ -2,7 +2,7 @@
 // "Custom connector"; each sized for its pins where the name says how many, and plain parts left alone.
 import { describe, it, expect, beforeAll } from 'vitest';
 import { initKernel } from '../src/cad/kernel';
-import { classify, CONNECTORS, guessPackage, nameCircuits, newModule, newProject } from '../src/model/library';
+import { classify, CONN_REF, CONNECTORS, guessPackage, nameCircuits, newModule, newProject } from '../src/model/library';
 import { compatible, isDebugPort, isUartPort, KIND_COLOR, numberLinks, offRackTo, plugRole } from '../src/model/links';
 import { uartPins } from '../src/model/probes';
 import { generate } from '../src/cad/assembly';
@@ -149,5 +149,92 @@ describe('serial headers by their pins', () => {
     const c = classify({ id: 'x', ref: 'J8', pkg: 'JST_GH_BM04B-GHS-TBT_1x04_P1.25mm_Vertical', side: 'top', x: 0, y: 0, rot: 0, w: 1, l: 1, h: 1, kind: 'generic', tht: false, pins: [pin(1, 'VCC'), pin(2, 'UART1_TX'), pin(3, 'UART1_RX'), pin(4, 'GND')] } as Comp, false);
     expect(c.conn?.type).toBe('jst_gh');
     expect(isUartPort(c)).toBe(true);
+  });
+});
+
+describe('connectors as Allegro libraries name them', () => {
+  beforeAll(async () => { await initKernel(); });
+  const plain = (pkg: string, ref: string, value = '') => expect(guessPackage(pkg, ref, value).conn, `${pkg} on ${ref}`).toBeUndefined();
+
+  it('IPC-7251 header names (Allegro libraries, Ultra Librarian, SamacSys), sized for their pins', () => {
+    const one = guessPackage('HDRV10W64P254_1X10_2540X254X850B', 'J1');
+    expect([one.conn?.id, one.kind]).toEqual(['header', 'header']);
+    expect([one.w, one.l]).toEqual([expect.closeTo(25.4, 3), expect.closeTo(2.54, 3)]);
+    const two = guessPackage('HDRV20W64P254_2X10_2540X508X850B', 'J1');
+    expect([two.w, two.l]).toEqual([expect.closeTo(25.4, 3), expect.closeTo(5.08, 3)]);
+    expect(guessPackage('HDRRA10W64P254_1X10_2540X254X850B', 'J1').h).toBeCloseTo(2.5 + 2.54, 3); // right-angle: low
+    expect(type('HDRV10W64P127_2X5_1270X254X600B')).toBe('swd10'); // 2 x 5 at 1.27 mm: the Cortex debug connector
+    expect(guessPackage('SIP4', 'J1').w).toBeCloseTo(4 * 2.54, 3);
+  });
+
+  it('the maker in front of a part number, or its dashes taken out, is the same part', () => {
+    const same = (a: string, b: string, id: string) => { expect(type(a), a).toBe(id); expect(type(b), b).toBe(id); };
+    same('SAMTEC_SHF-110-01-L-D-TH', 'SHF11001LDTH', 'cortex20');
+    same('SAMTEC_TSW-110-07-L-S', 'TSW11007LS', 'header');
+    expect(guessPackage('TSW11007LS', 'J3').w).toBeCloseTo(25.4, 3);
+    expect(guessPackage('SAMTEC_TSW-110-07-L-D', 'J3').l).toBeCloseTo(5.08, 3);
+    same('TE_5745781-4', '57457814', 'dsub');
+    same('BEL_A829-1A1T-91B', 'A8291A1T91B', 'rj45');
+    same('CNC_3020-10-0200-00', '302010020000', 'idc_ra');
+    same('CNC_3020-10-0100-00', '302010010000', 'idc');
+    expect(guessPackage('302010020000', 'J1').w).toBeCloseTo(5 * 2.54 + 7.6, 2); // sized for its 10 pins
+    same('MULTICOMP_MC000046', 'MC000046', 'terminal'); // Multicomp's 2-way 5 mm screw terminal block
+    expect(type('WURTH_61300611121')).toBe('header');
+    expect(guessPackage('HARWIN_M20-9990345', 'J1').w).toBeCloseTo(3 * 2.54, 3);
+    expect(guessPackage('SULLINS_PBC03SAAN', 'J1').w).toBeCloseTo(3 * 2.54, 3);
+  });
+
+  it('more of the makers\' families: terminal blocks, USB-C, RJ45, D-sub, DC jacks, wire-to-board', () => {
+    const all = (id: string, names: string[]) => { for (const n of names) expect(type(n), n).toBe(id); };
+    all('terminal', ['MC000046', 'MC000047', 'MC000048', 'MC001346', 'TB_2P_5MM', 'TBLOCK-I2', 'BLZP5.08HC/02', 'SL3.5/2/90', 'PTSM 0,5/ 4-2,5-H', 'AK300/2', 'CTB9350/2', 'DG350-3.5-02P', 'DB127-5.0-2P', '1715721', 'OSTTC022162']);
+    all('usb_c', ['12401610E4#2A', '12401548E4#2A', 'USB4110-GF-A', 'GSB1C41110SSHR']);
+    all('usb_a', ['USB3_A']);
+    all('usb_a_dual', ['USB3.0_A_DUAL']);
+    all('usb_b', ['USB_3.0_B']);
+    all('hdmi_a', ['HDMI_TYPE_A', 'HDMI-19']); // not USB-A's "type A"
+    all('rj45', ['HFJ11-2450E-L12RL', 'TRJG0926HENL', 'SS-6488-NF']);
+    all('dsub', ['DB15', 'VGA_DB15HD', 'SUBD9', 'SUB-D_9', 'L717SDE09P', '172-E09-2', 'DE-9']);
+    all('barrel', ['KLDHCX-0202-A', 'PWR_JACK', 'DCPWR', 'EJ508A', 'PJ1-063', 'DC POWER 2.1MM', 'DC-005']);
+    all('fpc', ['FH28-30S-0.5SH', 'XF2M-2415-1A']);
+    all('sma', ['73251-1150', 'MMCX_VERT', 'SMB_RA', 'SMA_EDGE']); // MMCX, MCX and SMB come as (slightly big) SMAs
+    all('jst_xh', ['B2B-EH-A']);
+    all('jst_ph', ['DF11-8DP-2DS', 'DF3-2P-2DS']);
+    all('picoblade', ['DF13-4P-1.25DSA', 'Molex_Pico-EZmate_78171']);
+    all('microfit', ['Molex_Nano-Fit']);
+    all('minifit', ['Molex_Mega-Fit_170', 'Molex_Ultra-Fit_172']);
+    all('kk254', ['B2P-VH', 'TE_640456-2', 'MOLEX_26-48-1045']);
+    all('idc', ['3M_N2510-6002-RB', '61201021621']);
+    // a 3.96 mm family is as wide as its pitch says, not the 2.54 mm one's
+    expect(guessPackage('B4P-VH', 'J1').w).toBeCloseTo(3 * 3.96 + 2.54, 2);
+    expect(nameCircuits('B2P-VH')).toBe(2);
+  });
+
+  it('chips, diodes and other parts named like connectors stay plain', () => {
+    for (const [pkg, ref] of [['SMA', 'D1'], ['DO-214AC_SMA', 'D2'], ['SMA_Diode', 'D3'], ['SMB', 'D4'], ['SMBJ5.0A', 'D5'], ['TRS3232', 'U1'], ['HDMI_ESD_TPD12S016', 'U2'], ['USB4640', 'U3'], ['USB3300', 'U4'], ['TB6612FNG', 'U5'],
+      ['SPH0645LM4H', 'MK1'], ['MCXN947', 'U6'], ['ETHERNET_PHY', 'U7'], ['MAX3232_RS232', 'U8'], ['AUDIO_CODEC', 'U9'], ['DisplayPort_ESD', 'U10'], ['SIM7100', 'U11'], ['SFPD', 'U12']]) plain(pkg, ref);
+  });
+
+  it('a bare word names a connector only on a connector\'s reference', () => {
+    expect(type('HDMI', 'J1')).toBe('hdmi_a');
+    expect(type('HDMI', 'U1')).toBeUndefined();
+    expect(type('SMA', 'J2')).toBe('sma');
+    expect(type('SMA', 'D1')).toBeUndefined();
+    expect(type('X', 'HDMI1', 'HDMI')).toBe('hdmi_a'); // HDMI1 is a connector's reference
+    expect(type('X', 'ANT1', 'SMA')).toBe('sma');
+    for (const r of ['J1', 'P3', 'CN2', 'JP1', 'TB1', 'JK2', 'RJ1', 'PL1', 'SKT1', 'ANT1', 'HDMI1', 'SD1', 'SIM1', 'PWR1', 'CONN1', 'X2', 'USB1']) expect(CONN_REF.test(r), r).toBe(true);
+    for (const r of ['R1', 'C7', 'U3', 'D1', 'Q2', 'L1', 'Y1', 'SW1', 'TP1', 'K1', 'DC1']) expect(CONN_REF.test(r), r).toBe(false);
+  });
+
+  it('SATA, SFP, mini-DIN and a C14 inlet are known, and wired as what they are', () => {
+    for (const [pkg, id] of [['SATA_7P', 'sata'], ['SATA_Molex_67800', 'sata'], ['SFP_CAGE', 'sfp'], ['SFP+', 'sfp'], ['MINIDIN_6', 'minidin'], ['PS2', 'minidin'], ['IEC_C14', 'iec_c14'], ['IEC_60320_C14', 'iec_c14'], ['C14_INLET', 'iec_c14']]) expect(type(pkg), pkg).toBe(id);
+    expect(type('IEC_60320_C7')).toBe('iec_c7'); // the figure-8 one is still the C7
+    const m = newModule({ name: 'B', outline: [[0, 0], [60, 0], [60, 40], [0, 40]], thickness: 1.6, holes: [], cutouts: [], source: 't', notes: [],
+      comps: [['J1', 'SATA_7P'], ['J2', 'SFP_CAGE'], ['J3', 'MINIDIN_6'], ['J4', 'IEC_C14'], ['J5', 'RJ45_8P8C']].map(([ref, pkg]) => classify({ id: ref, ref, pkg, side: 'top', x: 30, y: 20, rot: 0, w: 1, l: 1, h: 1, kind: 'generic', tht: false } as Comp, false)) } as unknown as Board);
+    const comp = (ref: string) => m.board.comps.find((c) => c.ref === ref)!;
+    const role = (ref: string) => plugRole(m, comp(ref));
+    expect(role('J4')).toBe('mains-in'); // a mains inlet takes the wall's lead, not a supply's
+    expect(role('J2')).toBe('net');
+    expect(compatible(role('J2'), role('J5'))).toBe(true); // an SFP link to an RJ45 (a media converter)
+    expect([offRackTo(m, comp('J1')), offRackTo(m, comp('J2')), offRackTo(m, comp('J4'))]).toEqual(['to a drive', 'to the network', 'to the wall']);
   });
 });

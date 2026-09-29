@@ -37,7 +37,7 @@ const isBox = (b: Board) => b.kind === 'box';
 export const isCharger = (b: Board) => isBox(b) && /charg|power|supply|psu/i.test(b.name);
 export const isHub = (b: Board) => isBox(b) && /hub/i.test(b.name);
 /** A hub with its own power supply (a barrel or mains input, or "powered" in its name). */
-export const poweredHub = (b: Board) => isHub(b) && (/powered/i.test(b.name) || b.comps.some((c) => c.conn && (c.conn.type === 'barrel' || c.conn.type === 'iec_c7')));
+export const poweredHub = (b: Board) => isHub(b) && (/powered/i.test(b.name) || b.comps.some((c) => c.conn && (c.conn.type === 'barrel' || c.conn.type === 'iec_c7' || c.conn.type === 'iec_c14')));
 
 /** A plug pack: a supply that plugs straight into an outlet (or the wall), its own lead ending in its output plug. */
 export const isPlugPack = (b: Board) => isBox(b) && !!b.box?.pack;
