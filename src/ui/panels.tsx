@@ -31,6 +31,8 @@ import { baseOf as stackBase, ridersOf } from '../model/holes';
 import { DockFeaSection } from './DockFea';
 import { mainsBudget, mainsText, powerBudget, powerText } from '../model/power';
 import { netSpread } from '../model/netlength';
+import { copyHolder } from '../model/copyto';
+import { CopyTo } from './CopyTo';
 import { saveBoard } from '../model/myboards';
 import { ackNote, summarizeChecks } from '../model/checkSummary';
 import { boardSig, tileUrl, useKeptPicture } from './pics';
@@ -195,8 +197,7 @@ function CopyHolder() {
   const copy = (ids: string[], what: string) => {
     edit((q) => {
       for (const m of q.modules) if (ids.includes(m.id) && m.id !== me.id) {
-        Object.assign(m.holder, structuredClone({ style: H.style, wall: H.wall, base: H.base, gap: H.gap, pattern: H.pattern, cell: H.cell, rib: H.rib, wallAbove: H.wallAbove, chamfer: H.chamfer, material: H.material, feat: H.feat, tabs: H.tabs, tabLip: H.tabLip, hold: H.hold, grip: H.grip, notches: H.notches, release: H.release }));
-        if (H.color) m.holder.color = H.color; else delete m.holder.color;
+        copyHolder(H, m.holder);
       }
     });
     toast(`Copied the holder of ${me.board.name} to ${what}: style, sizes, features, material and colour. ⌘Z undoes it.`);
@@ -206,6 +207,7 @@ function CopyHolder() {
       <span>Copy these settings to</span>
       {kin.length > 1 && kin.length < p.modules.length && <button className="btn small ghost" onClick={() => copy(kin.map((m) => m.id), `the other ${kin.length - 1} ${kindName(p, me.board.name)}${kin.length > 2 ? 's' : ''}`)}><Icon d={I.copy} /> every {shortName(kindName(p, me.board.name))} ({kin.length})</button>}
       <button className="btn small ghost" onClick={() => copy(p.modules.map((m) => m.id), `all ${p.modules.length - 1} other boards`)}><Icon d={I.copy} /> every board ({p.modules.length})</button>
+      <CopyTo start={{ plugs: false, marks: false }} />
     </div>
   );
 }
@@ -622,6 +624,7 @@ export function PlugsPanel() {
         <p className="hint" style={{ marginTop: 8 }}>Tap a port's <i>empty</i> or <i>cable</i> tag to say whether you'll plug something into it yourself.</p>
       </Section>
       {chosen.length > 0 && <ConnEditor list={chosen} />}
+      {p.modules.length > 1 && <div className="copyholder"><span>Copy this board's plug settings to</span><CopyTo start={{ holder: false }} /></div>}
       <CablesSection />
     </div>
   );
