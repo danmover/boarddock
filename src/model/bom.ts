@@ -43,7 +43,13 @@ export function billOfMaterials(p: Project, res: GenResult): BomGroup[] {
   const parts = res.parts.map((x) => { const g = (x.volume / 1000) * mat.density; grams += g * x.qty; return { x, g }; });
   const kindOf = (k?: string) => PRINT_GROUP.find(([, ks]) => k && ks.includes(k))?.[0] ?? 'Other parts';
   for (const [head] of [...PRINT_GROUP, ['Other parts', []] as [string, string[]]]) {
-    const rows = parts.filter(({ x }) => kindOf(x.tag?.kind) === head).map(({ x, g }) => ({ qty: x.qty, item: x.name, note: `${g < 1 ? g.toFixed(1) : Math.round(g)} g${x.qty > 1 ? ' each' : ''}` }));
+    // parts of one name together (each holder's release rod is its own length, but a rod is a rod): how many, and
+    // what one weighs (a range when they differ)
+    const wt = (g: number) => (g < 1 ? g.toFixed(1) : String(Math.round(g)));
+    const rows = count(parts.filter(({ x }) => kindOf(x.tag?.kind) === head), ({ x }) => x.name).map(([item, xs]) => {
+      const qty = xs.reduce((a, { x }) => a + x.qty, 0), ws = [...new Set(xs.map(({ g }) => wt(g)))].sort((a, b) => +a - +b);
+      return { qty, item, note: `${ws.length > 1 ? `${ws[0]} to ${ws[ws.length - 1]}` : ws[0]} g${qty > 1 ? ' each' : ''}` };
+    });
     if (rows.length) out.push({ head: `Print: ${head.toLowerCase()}`, rows });
   }
 

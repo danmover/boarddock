@@ -4,11 +4,7 @@ What still needs doing on BoardDock, in the order it's being worked through. New
 
 Nothing BoardDock makes has been printed and tried yet, so anything below about fit, strength or clips is from the model and its checks, not from a real print.
 
-## 1. Toolbox pictures to match the 3D models
-
-The board editor's toolbox pictures (each plug, header, part) no longer look like the 3D model of the same thing: redraw them from the models, or check each against its model.
-
-## 2. DIN rail clip review
+## 1. DIN rail clip review
 
 Go through the clip in depth, measuring rather than guessing:
 - the release lever: how it frees the clip from the rail, and what keeps the lever on;
@@ -17,11 +13,7 @@ Go through the clip in depth, measuring rather than guessing:
 - that every piece is printable;
 - (done: a box on a flat clip now stands 2.3 mm up, clear of the snap hooks that reach 1.9 mm above the base; they went 0.7 mm into it.)
 
-## 3. Bill of materials and a build guide (the bill of materials is in; the build guide is next)
-
-A proper bill of materials at the end (printed parts, boards, cables, rails, supplies, with quantities) and a step-by-step build view: each step's text with its 3D view, next and back, usable on a phone at the bench, and printable. Start from what's already there (the shopping list in Export and the assembly Steps).
-
-## 4. From the second round of test users
+## 2. From the second round of test users
 
 Most serious first:
 - A switch's or powered hub's DC input is never given a supply, yet the To do list says done.
@@ -38,7 +30,7 @@ Most serious first:
 - Loose holders drop probes into the row; docks and loose holders can't be mixed.
 - Smaller things: cables beside a stand comb, an auto-connected cable through a Pi 4 holder (still there: on a rack of a Pi 4, Uno, Pico, ESP32 and the 4-port hub, Auto-connect's hub UP to Pi 4 USB2 cable "runs into the Raspberry Pi 4B holder", with or without table stands), off-rack labels crowding a big rack, toast wording, the Wiring view at 16 boards, Auto-arrange putting cabled boards on opposite rails, Forget with no confirm, the headline print time estimate, the L-shape spacing defaults, the printer not asked up front, Next not auto-connecting, Measure moving one side only, round boards' corner holes, mirrored silkscreen, bulk tools for identical boards, locking a dock or rail, per-plate control, and more wording fixes.
 
-## 5. Started before, not finished
+## 3. Started before, not finished
 
 - Collisions left after the collision test (`npm run collisions`; baseline 339 mm³ over 140 racks, from 8272; 1 layout problem):
   - Cables where they cross under a rail or at its edge (cables into rails 154 mm³, 110 in the Pi cluster, up to 1.2 mm; cable into cable 47 mm³, up to 3.6 mm): a street is 8 mm under a rail's underside, so a 6 mm Ethernet cable has 2 mm to spare and one can't lie over another there; cables going up to a plug also pass through a rail's lip overhang. Needs a choice: taller table stands (more headroom, more plastic, a taller rack), or keeping crossings and rises out from under the rails in the router. Tried and taken out, as each made the matrix worse: cables back to the side they were laid on, crossing beads kept further apart, and no brushing a rail's box.
@@ -49,7 +41,7 @@ Most serious first:
 - The spring clips flexing in the assembly animation.
 - The DIN plate slots on rack and inline mounts: a plate printed on its face.
 
-## 6. From the first round of test users
+## 4. From the first round of test users
 
 - Jumper and debug ribbons routed straight over the dock.
 - A 12 V pack auto-connecting to boards with a known DC input range (Uno, Mega).
@@ -58,7 +50,7 @@ Most serious first:
 
 Ideas: a cluster preset, isolate or X-ray the selection in 3D, a command palette, a debug bench sheet, a live buy/print/tools checklist, What's new highlighted in 3D, mains and low-voltage zones, a layout lock with change receipts.
 
-## 7. Plug protection
+## 5. Plug protection
 
 Check each cradle and cap prints well in every orientation, and fit a cap only where the pull comes out of the cradle's open side.
 
@@ -114,3 +106,9 @@ Each: how bad (1 to 5), what's wrong, where, and how it was seen.
 - 1 · A picked anti-rattle spring was named "spring clip" in the 3D view's panel. Fixed (`src/ui/pickOps.ts`). Seen while tagging the springs for the collision test.
 - 3 · Loose layout builds a holder with strap loops for a plug pack (elsewhere a plug pack never gets a holder), so the 3D model and the shopping list disagree. `generateLoose` in `src/cad/assembly.ts` has no `isPlugPack` check. Seen by the small-fixes agent on a loose Pi 5 rack with a 27 W supply.
 - 2 · The loose assembly steps say to strap a plug pack down (same cause, `src/cad/assembly.ts` around line 197).
+- 2 · The relay board template's relays are drawn as a metal can on a green slab, not the blue relay the toolbox gives (they are tagged as modules, and the module look is checked first). `src/model/templates.ts` relay4, `src/cad/boardviz.ts` partDetail. Seen by the toolbox agent in the relay board's Start tile and Parts pictures.
+- 2 · The SMA edge connector is drawn as a square metal box with a square opening, not a round threaded barrel, and the figure-8 mains socket as a plain rectangle. `src/cad/boardviz.ts` partDetail, generic connector branch. Seen by the toolbox agent in the toolbox tiles and the 3D view.
+- 1 · Female pin sockets (the Uno's J_DIG and J_ANA) are solid black bars in 3D with barely visible holes, while the board editor draws rows of gold pins. `src/cad/boardviz.ts` header branch against `src/ui/BoardEditor.tsx`. Seen by the toolbox agent in the Uno's Parts list and the editor.
+- 2 · The bill of materials gave each same-named printed part its own line ("Release rod + button" twice, 1 each; two Pi 5 holders on two lines). Fixed (`src/model/bom.ts`: one line a name, weights as a range when they differ). Seen in the printed build guide.
+- 1 · The printed guide's pictures have no cable numbers: the numbers are drawn over the 3D view, not in it. `src/ui/Viewer3D.tsx` stepPictures. Seen in the printed guide of a rack with cables.
+- 3 · The Tag-Connect footprint's 3D model was an inside-out box, and on any board with one it emptied every black part from the 3D view (jack bodies, JST housings, debug header shrouds). Fixed by the toolbox agent (`src/cad/boardviz.ts`: a shape that fails is left out on its own). Seen comparing the toolbox pictures with the 3D view.

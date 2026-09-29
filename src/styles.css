@@ -583,6 +583,10 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
   .stage .tools .tgroup button { padding-left: 8px; padding-right: 8px; }
   .stage .tabs { max-width: calc(100% - 24px); overflow-x: auto; scrollbar-width: none; }
   .player .phase { max-width: calc(100vw - 150px); }
+  /* the player's row fits a phone: the Explode slider takes what's left */
+  .player { max-width: calc(100vw - 24px); box-sizing: border-box; }
+  .player label { flex: 1 1 auto; min-width: 0; }
+  .player input[type='range'] { width: 100%; min-width: 40px; }
   .row3 { grid-template-columns: 1fr 1fr; }
   .stage { order: 1; }
   .side { order: 2; border-right: 0; }
@@ -1173,3 +1177,37 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 /* Plugs: whether a port will have a plug in it (tap to change) */
 .usechip { border: 1px solid var(--line-2); background: transparent; color: var(--subtle); border-radius: 99px; padding: 1px 8px; font-size: 11px; cursor: pointer; white-space: nowrap; }
 .usechip.on { border-color: var(--accent-line); color: var(--accent); background: var(--accent-soft); }
+
+/* the build guide: the assembly steps one at a time on a big card over the 3D view, big enough to use with a thumb */
+.guide { position: absolute; left: 12px; right: 12px; bottom: 62px; z-index: 6; max-width: 620px; margin: 0 auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+.guide .g-head { display: flex; align-items: center; gap: 8px; }
+.guide .g-head b { font-family: var(--mono); font-weight: 600; color: var(--accent); font-size: 14px; }
+.guide .grow { flex: 1; }
+.guide .g-text { margin: 0; font-size: 17px; line-height: 1.45; color: var(--fg); min-height: 2.9em; max-height: 36vh; overflow-y: auto; }
+.guide .g-nav { display: flex; gap: 8px; }
+.guide .g-nav .btn { flex: 1; justify-content: center; }
+.guide .btn { height: 48px; font-size: 15px; padding: 0 14px; }
+.guide .g-close { width: 48px; justify-content: center; padding: 0; }
+@media (max-width: 860px) { .guide { bottom: 12px; } } /* (above the stats bar, which phones don't show) */
+
+/* the printed build guide (made when Print is pressed in the guide): only it is printed */
+#printguide { display: none; }
+@media print {
+  html, body, #root { height: auto !important; overflow: visible !important; background: #fff !important; }
+  body > *:not(#printguide) { display: none !important; }
+  #printguide { display: block; color: #000; font: 11pt/1.45 system-ui, sans-serif; }
+  #printguide h1 { font-size: 18pt; margin: 0 0 4pt; }
+  #printguide .g-sub { color: #444; margin: 0 0 12pt; }
+  #printguide .g-step { break-inside: avoid; margin: 0 0 14pt; }
+  #printguide h2 { font-size: 12pt; margin: 0 0 4pt; }
+  #printguide img { display: block; width: auto; height: auto; max-width: 100%; max-height: 105mm; border: 0.5pt solid #bbb; margin: 0 0 4pt; }
+  #printguide p { margin: 0; }
+  #printguide .g-bom { break-before: page; }
+  #printguide h3 { font-size: 11pt; margin: 10pt 0 3pt; }
+  #printguide table { border-collapse: collapse; width: 100%; table-layout: fixed; }
+  #printguide td:nth-child(2) { width: 58%; }
+  #printguide td { border-bottom: 0.5pt solid #ccc; padding: 2pt 4pt; vertical-align: top; }
+  #printguide td.q { width: 3em; text-align: right; font-variant-numeric: tabular-nums; }
+  #printguide td.n { color: #444; }
+  @page { margin: 14mm; }
+}

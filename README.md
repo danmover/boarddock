@@ -67,7 +67,7 @@ The desktop builds are not code-signed yet:
 4. **Holder:** frame or tray, a preset, where the release button goes, and the features you want.
 5. **Rails:** BoardDock has already placed every board on a rail. Pick one rail, rows or columns; drag, turn, pair or stack boards if you like.
 6. **Check:** failing checks come first (each with **Show in 3D**); tap the passing / to look at / failing tiles to see only those. The boards' template reminders ("measure yours") are folded away at the bottom: tick each off with **Done** once you've done it (on the board card too); the perfboard's "measure the holes" reminder ticks itself off when you move, resize, add or remove one of its holes (not when you only reshape the board). Run the dock FEA for your material. The Start page, the step bar and the 3D view's stats all count the same way, and the step bar only flags failing checks.
-7. **Export:** download the plates and print them in PETG. The shopping list has the rail lengths, the cables (length and plug types; jumper wires by the wire; what comes with a part, like a probe's ribbon or a plug pack's lead, is listed as not to buy), straps and standoffs. The Plugs step's **Cables to buy** is the same list. The download's README has the assembly steps.
+7. **Export:** download the plates and print them in PETG. The shopping list has the rail lengths, the cables (length and plug types; jumper wires by the wire; what comes with a part, like a probe's ribbon or a plug pack's lead, is listed as not to buy), straps and standoffs. The Plugs step's **Cables to buy** is the same list. Under it, the **Bill of materials** lists everything the rack is made of, with how many: each printed part (and what one weighs), the boards, boxes and probes, the rails, the cables, the hardware (straps, a zip tie for each cable-tie anchor, standoffs and screws), the filament and the tools. **CSV** saves it as a spreadsheet, and the download has it as BOM.csv. The download's README has the assembly steps; the 3D view's **Guide** prints them with a picture of each (below).
 8. **Build it**, following the play button in the 3D view. Then press **Mark the rack as built** in Export.
 
 Every step has **Back** and **Next** at the bottom of the sidebar.
@@ -424,6 +424,7 @@ A pin header (▸) opens into its pins, with their net names from your KiCad fil
 | Change how a board is mounted, right there | pick the board (or its dock): on a rack, **Stands up** or **Lies flat**, which edge goes in the dock (or carries the tab), turn the dock, swap its front and back boards; with loose holders, the DIN clip on or off, flat on the rail, across it or along it, and which way its release tab points |
 | Fly to a part | double-click it |
 | Watch it go together | the play button. It goes step by step, the way you would build it, with an instruction for each step: saddles on the table, rails in, end blocks on, spacers in, shoes clipped on, sockets in; then for each board, its release rod into the spine, the board into its holder, anything stacked on it, and the holder into its dock; then the cables (power first, mains last), the caps, and a last step: check every screw terminal, switch the powerboards off, plug them into the wall, then switch on. **‹ ›** step back and forward; **✕** shows it assembled. |
+| Build it at the bench, one step at a time | **Guide**: each step on a big card, with **Back**, **Again**, **Next** (or ← → and Esc) and **Print** |
 | Pull it apart | the **Explode** slider |
 | Show or hide holders, docks, caps, boards, plugs, cables, cable numbers or rails | **Layers** |
 | See every keyboard shortcut (the board editor's V, H, M, T and arrows too) | **?** |
@@ -446,6 +447,9 @@ Plugs show their shells, tongues and pins. The view draws a frame only when some
 
 
 **Steps** plays the assembly the way you would do it, each part moving the way it goes in: a rail shoe is hooked under the rail and swung down; a socket is pressed into its shoe; a board is tipped in under the spring clips on its far side and pressed down on this one; a probe or adapter slides down its slot; a holder is pushed into its dock; snap-fits go a little past their seat and spring back (the click); plugs go in quickly, then their last few millimetres slowly; cables are drawn along their route as they are plugged in, and their numbers appear with them.
+
+**Guide** is the same steps for the bench: a big card over the view says which step you are on and what to do, and plays that step so you see the parts go in; **Back**, **Again** and **Next** are big enough for a thumb on a phone, and the rack is drawn in the space above the card. **Print** takes a picture of the rack after each step, all from where you are looking at it, with that step's new parts outlined in blue, and prints them with the step's words and the bill of materials at the end (or save it as a PDF from the print window). Cable numbers aren't in the pictures. The button counts the pictures as they are taken: a 13-step rack took about 40 s with no graphics card to draw them (untried on a computer with one, which should be much quicker).
+
 ## A new version of a board
 
 When a new revision of one of your boards comes out, select it (in 3D, or its chip in the Board step) and press **New version…**, or drop its files on that button. The new version takes the old one's place:

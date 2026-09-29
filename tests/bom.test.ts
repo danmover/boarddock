@@ -19,8 +19,11 @@ describe('bill of materials', () => {
     // every printed part, as many as the build makes
     const printed = bom.filter((g) => g.head.startsWith('Print: ')).flatMap((g) => g.rows);
     expect(printed.reduce((s, x) => s + x.qty, 0)).toBe(r.parts.reduce((s, x) => s + x.qty, 0));
+    // one line for each kind of part (two Pi 5s' holders, and every holder's release rod, each on one line)
+    for (const g of bom) expect(new Set(g.rows.map((x) => x.item)).size, g.head).toBe(g.rows.length);
+    expect(bom.find((g) => g.head === 'Print: holders')!.rows.reduce((s, x) => s + x.qty, 0)).toBe(r.parts.filter((x) => x.tag?.kind === 'holder').reduce((s, x) => s + x.qty, 0));
+    expect(bom.find((g) => g.head === 'Print: dock parts')!.rows.find((x) => /Release rod/.test(x.item))?.qty).toBe(r.parts.filter((x) => /Release rod/.test(x.name)).reduce((s, x) => s + x.qty, 0));
     // (a holder too long for the bed prints in two halves, as the powerboard's does: two lines)
-    expect(bom.find((g) => g.head === 'Print: holders')!.rows.length).toBe(r.parts.filter((x) => x.tag?.kind === 'holder').length);
     expect(bom.find((g) => g.head === 'Print: holders')!.rows.map((x) => x.item)).toEqual(expect.arrayContaining(['Holder: Powerboard, 4 outlets (first half)', 'Holder: Powerboard, 4 outlets (second half)']));
     // the boards, two Pi 5s counted together
     expect(group(bom, 'Boards')!.rows).toContainEqual({ qty: 2, item: 'Raspberry Pi 5' });

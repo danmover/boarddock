@@ -20,6 +20,9 @@ import { KIND_COLOR } from '../model/links';
 import { liveFx } from './liveFx';
 import { growTo } from './cableGrow';
 import { badgeText } from '../model/cablebadge';
+import { billOfMaterials } from '../model/bom';
+import { rackName } from '../model/diff';
+import { guideHtml, guideSteps, movesOf, NO_TEXT, stepSeqs } from './guide';
 
 interface Props {
   result: GenResult | null;
@@ -268,6 +271,9 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
   // t: animation time in steps (Infinity = assembled); on: playing; until: pause when t reaches it (one step at a time)
   const [play, setPlay] = useState<{ on: boolean; t: number; n: number; until?: number }>({ on: false, t: Infinity, n: 0 });
   const [explode, setExplode] = useState(0);
+  // the build guide: the steps one at a time on a big card (Back, Next, Print), for a phone at the bench
+  const [guide, setGuide] = useState(false);
+  const [printing, setPrinting] = useState(''); // while the guide's pictures are taken: how far along
   // the live touches (blinking lights, pulses along cables): on unless turned off, remembered
   const [liveOn, setLiveOn] = useState(() => { try { return localStorage.getItem('boarddock.live') !== 'off'; } catch { return true; } });
   const liveOnRef = useRef(liveOn);
@@ -295,6 +301,7 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
       composer.setSize(w, h);
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
+      applyShift(c);
       invalidate();
     });
     ro.observe(el);
@@ -309,6 +316,7 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
         if (k >= 1) c.tween = null;
         c.dirty = true;
       }
+      if (c.capturing) return; // (the printed guide's pictures are being taken: the view is theirs meanwhile)
       if (c.onFrame?.(now)) c.dirty = true;
       if (c.fx?.tick(now)) c.dirty = true;
       if (c.intro) {
@@ -576,18 +584,90 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
   const stepIdx = started ? Math.max(0, Math.min(play.n - 1, Math.ceil(play.t - 1e-6) - 1)) : 0;
   const caption = (() => {
     if (!started || !ctx.current) return '';
-    const seq = ctx.current.phases?.[stepIdx];
-    const text = (ctx.current.result as GenResult | null)?.steps?.find((s) => s.seq === seq)?.text;
-    if (!text && import.meta.env.DEV) console.warn('assembly step without a caption', seq);
-    return text ?? 'Fit the parts that are moving now.';
+    const text = guideSteps(ctx.current.phases ?? [], (ctx.current.result as GenResult | null)?.steps)[stepIdx]?.text ?? NO_TEXT;
+    if (text === NO_TEXT && import.meta.env.DEV) console.warn('assembly step without a caption', ctx.current.phases?.[stepIdx]);
+    return text;
   })();
+  // the guide plays each step it goes to (k from 1), so the parts can be seen going in
+  const showStep = (k: number) => { const n = nSteps(); if (!n) return; setExplode(0); k = Math.max(1, Math.min(n, k)); setPlay({ on: true, t: k - 1 + 1e-3, n, until: k }); }; // (just past k - 1: step k's number and words from the first frame)
+  const openGuide = () => { setGuide(true); showStep(started && play.t > 0 && play.t <= play.n ? stepIdx + 1 : 1); };
+  const closeGuide = () => { setGuide(false); setPlay({ on: false, t: Infinity, n: play.n }); };
+  const guideRef = useRef({ next: () => {}, back: () => {}, close: () => {} });
+  const lastStep = stepIdx + 1 >= play.n;
+  guideRef.current = printing ? { next: () => {}, back: () => {}, close: () => {} } // (not while the pictures are being taken)
+    : { next: () => (!lastStep ? showStep(stepIdx + 2) : play.t >= play.n ? closeGuide() : setPlay({ on: false, t: play.n, n: play.n })), back: () => showStep(stepIdx), close: closeGuide };
+  useEffect(() => {
+    if (!guide) return;
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return;
+      if (e.key === 'ArrowRight') guideRef.current.next();
+      else if (e.key === 'ArrowLeft') guideRef.current.back();
+      else if (e.key === 'Escape') guideRef.current.close();
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [guide]);
+  // leaving the assembly view (or the build going away) closes the guide
+  useEffect(() => { if (mode !== 'assembly' || !result) setGuide(false); }, [mode, result]);
+  // the rack drawn in the space above the guide's card (not behind it), and seen whole when the guide opens
+  const card = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const c = ctx.current;
+    if (!c) return;
+    const hb = host.current?.getBoundingClientRect(), cb = card.current?.getBoundingClientRect();
+    const covered = guide && hb && cb ? Math.max(0, Math.round(hb.bottom - cb.top + 8)) : 0;
+    if (covered === (c.shift ?? 0)) return;
+    const opening = !c.shift && covered > 0;
+    c.shift = covered;
+    applyShift(c);
+    if (opening && c.box && !c.box.isEmpty()) { const H = hb!.height || 1; flyTo(c, c.box, null, (1.2 * H) / Math.max(H * 0.4, H - covered)); }
+    c.invalidate();
+  }, [guide, stepIdx, caption, play.n]);
+  useEffect(() => () => { const c = ctx.current; if (c?.shift) { c.shift = 0; applyShift(c); } }, []);
+  const print = async () => {
+    const c = ctx.current, p = store.get().project, res = c?.result as GenResult | null;
+    if (!c || !p || !res || printing) return;
+    setPrinting('Getting it ready…');
+    setPlay({ ...play, on: false, until: undefined });
+    try {
+      const imgs = await stepPictures(c, (k, n) => setPrinting(`Picture ${k} of ${n}…`));
+      const steps = guideSteps(c.phases ?? [], res.steps).map((s, i) => ({ ...s, img: imgs[i] }));
+      document.getElementById('printguide')?.remove();
+      const div = document.createElement('div');
+      div.id = 'printguide';
+      div.innerHTML = guideHtml(rackName(p), steps, billOfMaterials(p, res));
+      document.body.appendChild(div);
+      const done = () => { div.remove(); window.removeEventListener('afterprint', done); };
+      window.addEventListener('afterprint', done);
+      window.print();
+    } finally { setPrinting(''); }
+  };
 
   return (
     <div style={{ position: 'absolute', inset: 0 }}>
       <div ref={host} style={{ position: 'absolute', inset: 0 }} />
       <div ref={labelsEl} className="clabels" />
       <div ref={tip} className="hovertip floating" style={{ display: 'none' }} />
-      {mode === 'assembly' && result && (
+      {mode === 'assembly' && result && guide && play.n > 0 && (
+        <div ref={card} className="guide floating" role="region" aria-label="Build guide">
+          <div className="g-head">
+            <b>Step {stepIdx + 1} of {play.n}</b>
+            <span className="grow" />
+            <button className="btn" title="Print the guide, each step with its picture, and the bill of materials at the end (or save it as a PDF)" disabled={!!printing} onClick={print}>{printing || 'Print'}</button>
+            <button className="btn g-close" title="Close the guide (Esc)" aria-label="Close the guide" disabled={!!printing} onClick={closeGuide}>✕</button>
+          </div>
+          <p className="g-text" aria-live="polite">{caption}</p>
+          <div className="g-nav">
+            <button className="btn" title="The step before (←)" disabled={stepIdx <= 0 || !!printing} onClick={() => guideRef.current.back()}>‹ Back</button>
+            <button className="btn" title="Play this step again" disabled={!!printing} onClick={() => showStep(stepIdx + 1)}>Again</button>
+            <button className="btn primary" disabled={!!printing} title={lastStep ? 'That was the last step: close the guide and show it assembled' : 'The next step (→)'} onClick={() => guideRef.current.next()}>{lastStep ? 'Finish' : 'Next ›'}</button>
+          </div>
+        </div>
+      )}
+      {mode === 'assembly' && result && !guide && (
         <div className="player floating" style={{ position: 'absolute', left: 12, bottom: 12, zIndex: 6 }}>
           <button className="play" title={play.on ? 'Pause' : started ? 'Carry on' : 'Play the assembly, step by step'} onClick={() => (play.on ? setPlay({ ...play, on: false, until: undefined }) : startPlay())}>
             {play.on ? <svg viewBox="0 0 16 16"><rect x="3.5" y="3" width="3" height="10" rx="1" fill="currentColor" /><rect x="9.5" y="3" width="3" height="10" rx="1" fill="currentColor" /></svg> : <svg viewBox="0 0 16 16"><path d="M4.5 2.8v10.4L13 8z" fill="currentColor" /></svg>}
@@ -597,11 +677,13 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
               <button className="stepbtn" title="Previous step" disabled={play.t <= 0} onClick={() => stepTo(Math.ceil(play.t - 1e-6) - 1)}>‹</button>
               <button className="stepbtn" title="Next step" disabled={play.t >= play.n} onClick={nextStep}>›</button>
               <span className="phase"><b>{stepIdx + 1}/{play.n}</b> {caption}</span>
+              <button className="stepbtn wide" title="Open the build guide: each step on a big card, with Back, Next and Print" onClick={openGuide}>Guide</button>
               <button className="stepbtn" title="Show it assembled" onClick={() => setPlay({ on: false, t: Infinity, n: play.n })}>✕</button>
             </>
           ) : (
             <>
               <button className="stepbtn wide" title="Step through the assembly one step at a time" onClick={nextStep}>Steps</button>
+              <button className="stepbtn wide" title="The build guide: each step on a big card, with Back, Next and Print (the steps with their pictures, and the bill of materials)" onClick={openGuide}>Guide</button>
               <button className={`stepbtn wide live${liveOn ? ' on' : ''}`} aria-pressed={liveOn} title={liveOn ? 'Switched on: lights blink and pulses run along the cables. Click to hold still.' : 'Switch it on: LEDs blink the way they do, boards without power stay dark, pulses run along the cables'} onClick={() => setLiveOn(!liveOn)}><i />Live</button>
               <label title="Pull the parts apart along the way they go together">Explode<input type="range" min={0} max={1} step={0.01} value={explode} onChange={(e) => setExplode(+e.target.value)} /></label>
             </>
@@ -678,8 +760,7 @@ function prepare(c: any, result: GenResult | null, mode: 'assembly' | 'print', b
       if (gh.fx) next.fx.push({ gh, mesh: objs[objs.length - 1].mesh });
     }
     // animation ranks: every distinct step (moves and appearances) in order
-    const movesOf = (a?: Anim): Motion[] => [...(a?.pre ?? []), { seq: a?.seq ?? 0, dir: a?.dir ?? [0, 0, 1], dist: a?.dist, style: a?.style, rot: a?.rot }];
-    const seqs = [...new Set(objs.flatMap((o) => [...movesOf(o.anim).map((m) => m.seq), ...(o.anim?.show != null ? [o.anim.show] : [])]))].sort((a, b) => a - b);
+    const seqs = stepSeqs(objs.map((o) => o.anim));
     const rk = (s: number) => seqs.indexOf(s);
     for (const o of objs) {
       const mv = movesOf(o.anim);
@@ -792,6 +873,7 @@ function swapIn(c: any, next: Next, result: GenResult | null, mode: 'assembly' |
   c.afterFrame.push(() => { for (const d of dead) d.dispose(); store.set({ rendering: false }); });
   world.updateMatrixWorld(true);
   const box = next.box;
+  c.box = box.clone();
   if (box.isEmpty()) return;
 
   // floor or wall, lights
@@ -855,6 +937,48 @@ function setEmissive(m: THREE.Mesh | null, level: number) {
   m.material = lit;
 }
 
+/** Look at what's shown from where the camera is now, as close as keeps all of it in the picture (each part's own
+ * corners, not a ball round everything as flyTo does, so the rack fills the picture). */
+function fitTight(c: any) {
+  const cam = c.camera as THREE.PerspectiveCamera, controls = c.controls;
+  const box = contentBox(c);
+  if (box.isEmpty()) return;
+  const center = box.getCenter(new THREE.Vector3());
+  const dir = cam.position.clone().sub(controls.target).normalize();
+  const corners: THREE.Vector3[] = [];
+  for (const o of c.objs as Obj[]) {
+    if (!o.mesh.visible) continue;
+    const b = new THREE.Box3().setFromObject(o.mesh);
+    for (let i = 0; i < 8; i++) corners.push(new THREE.Vector3(i & 1 ? b.max.x : b.min.x, i & 2 ? b.max.y : b.min.y, i & 4 ? b.max.z : b.min.z));
+  }
+  let d = Math.max(20, box.getSize(new THREE.Vector3()).length());
+  controls.target.copy(center);
+  for (let i = 0; i < 6; i++) {
+    cam.position.copy(center).addScaledVector(dir, d);
+    cam.lookAt(center);
+    cam.updateMatrixWorld(true);
+    // the middle of what's seen, then how far out its edge reaches (0.92: a margin)
+    const ps = corners.map((v) => v.clone().project(cam));
+    const mx = (Math.min(...ps.map((p) => p.x)) + Math.max(...ps.map((p) => p.x))) / 2, my = (Math.min(...ps.map((p) => p.y)) + Math.max(...ps.map((p) => p.y))) / 2;
+    const reach = Math.max(...ps.map((p) => Math.max(Math.abs(p.x - mx), Math.abs(p.y - my))));
+    const shift = new THREE.Vector3(mx, my, ps[0].z).unproject(cam).sub(new THREE.Vector3(0, 0, ps[0].z).unproject(cam));
+    center.add(shift);
+    controls.target.copy(center);
+    d *= Math.max(0.3, Math.min(3, reach / 0.92));
+  }
+  cam.position.copy(center).addScaledVector(dir, d);
+  c.tween = null;
+  controls.update();
+}
+
+/** Draw the view higher by half of what covers its bottom (the guide's card), so the rack sits in the space left. */
+function applyShift(c: any) {
+  const cam = c.camera as THREE.PerspectiveCamera;
+  const s = c.renderer.getSize(new THREE.Vector2());
+  if (c.shift) cam.setViewOffset(s.x, s.y, 0, c.shift / 2, s.x, s.y);
+  else cam.clearViewOffset();
+}
+
 function contentBox(c: any) {
   const box = new THREE.Box3();
   for (const o of c.objs as Obj[]) if (o.mesh.visible) box.expandByObject(o.mesh);
@@ -871,6 +995,61 @@ function flyTo(c: any, box: THREE.Box3, dir: THREE.Vector3 | null, k = 1.3, inst
   const p1 = center.clone().add(d.multiplyScalar(dist));
   if (instant) { cam.position.copy(p1); c.controls.target.copy(center); c.tween = null; c.invalidate(); return; }
   c.tween = { p0: cam.position.clone(), p1, q0: c.controls.target.clone(), q1: center, t0: performance.now(), dur: 480 };
+}
+
+/** A picture of the 3D view after each assembly step, for the printed guide: all from one viewpoint (the whole rack,
+ * seen the way the camera looks now), on a light backdrop, the step's own parts outlined. What's on screen is put
+ * back after. */
+async function stepPictures(c: any, progress: (k: number, n: number) => void): Promise<string[]> {
+  const { renderer, composer, camera, controls, scene, outline } = c;
+  const size = renderer.getSize(new THREE.Vector2()), ratio = renderer.getPixelRatio();
+  const was = { anim: c.anim, pos: camera.position.clone(), target: controls.target.clone(), bg: scene.background, sel: outline.selectedObjects, aspect: camera.aspect };
+  const W = 1200, H = 800;
+  c.capturing = true;
+  renderer.domElement.style.visibility = 'hidden'; // (each picture is drawn on the view's canvas, at another size)
+  renderer.setPixelRatio(1);
+  renderer.setSize(W, H, false);
+  composer.setPixelRatio(1);
+  composer.setSize(W, H);
+  camera.aspect = W / H;
+  camera.clearViewOffset();
+  c.anim = { t: Infinity, explode: 0 };
+  applyPose(c);
+  fitTight(c);
+  scene.background = new THREE.Color(1, 1, 1).multiplyScalar(12 / renderer.toneMappingExposure); // white paper, no ink on a backdrop (bright enough to stay white through the tone mapping)
+  c.fx?.hide(true);
+  const out: string[] = [];
+  try {
+    for (let k = 1; k <= c.ranks; k++) {
+      progress(k, c.ranks);
+      await new Promise((r) => setTimeout(r, 0)); // (the page stays alive between pictures)
+      c.anim = { t: k, explode: 0 };
+      applyPose(c);
+      outline.selectedObjects = (c.objs as Obj[]).filter((o) => o.rank === k - 1 && o.mesh.visible).map((o) => o.mesh);
+      composer.render();
+      out.push(renderer.domElement.toDataURL('image/jpeg', 0.85));
+    }
+  } finally {
+    c.fx?.hide(false);
+    scene.background = was.bg;
+    outline.selectedObjects = was.sel;
+    renderer.setPixelRatio(ratio);
+    renderer.setSize(size.x, size.y, false);
+    composer.setPixelRatio(ratio);
+    composer.setSize(size.x, size.y);
+    camera.aspect = was.aspect;
+    camera.updateProjectionMatrix();
+    applyShift(c);
+    camera.position.copy(was.pos);
+    controls.target.copy(was.target);
+    controls.update();
+    c.anim = was.anim;
+    applyPose(c);
+    c.capturing = false;
+    renderer.domElement.style.visibility = '';
+    c.invalidate();
+  }
+  return out;
 }
 
 /** Place every object: assembly animation (parts move in step by step, cables grow along their route) or the
