@@ -1235,3 +1235,12 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 .cl-qty { flex: none; min-width: 28px; text-align: right; color: var(--muted); font-family: var(--mono); font-size: 12px; }
 .cl-item small { color: var(--subtle); }
 .cl-line.done .cl-item { text-decoration: line-through; color: var(--subtle); }
+
+/* Start: the cluster preset */
+.start-cluster { margin: 0 0 14px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.start-cluster-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+.start-cluster-head b { display: block; font-size: 14px; }
+.start-cluster-head small { color: var(--subtle); font-size: 11.5px; }
+.start-cluster-set { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.start-cluster-set .field { display: flex; align-items: center; gap: 8px; margin: 0; }
+.start-cluster-set input[type=number] { width: 56px; }
