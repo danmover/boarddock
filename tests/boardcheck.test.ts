@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import { TEMPLATES, edgeConn } from '../src/model/templates';
 import { boardIssues, cornerHoles, fixAll, mouthGap } from '../src/model/boardcheck';
 import type { Board } from '../src/model/types';
+import { circlePts } from '../src/geom/shape';
 
 const T = (id: string): Board => TEMPLATES.find((t) => t.id === id)!.make();
 
@@ -53,5 +54,21 @@ describe('board check', () => {
     b.holes.push(...hs);
     expect(boardIssues(b).filter((x) => x.level !== 'info')).toEqual([]);
     void edgeConn;
+  });
+  it('a round board gets its corner holes on the board, round its rim, and a rectangle as before', () => {
+    const round: Board = { name: 'Round', outline: circlePts([25, 25], 25), cutouts: [], thickness: 1.6, holes: [], comps: [], source: 'test', notes: [] };
+    const hs = cornerHoles(round);
+    expect(hs.length).toBe(4);
+    // each 3.5 mm in from the rim (21.5 from the middle), at 45°
+    for (const h of hs) {
+      expect(Math.hypot(h.x - 25, h.y - 25)).toBeCloseTo(21.5, 0);
+      expect(Math.abs(Math.abs(h.x - 25) - Math.abs(h.y - 25))).toBeLessThan(0.3);
+    }
+    // a rectangle's: 3.5 mm in from both edges at its corner (those clear of parts)
+    const esp = T('esp32'), xs = esp.outline.map((q) => q[0]), ys = esp.outline.map((q) => q[1]);
+    const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+    const eh = cornerHoles(esp);
+    expect(eh.length).toBeGreaterThan(0);
+    for (const h of eh) expect([Math.min(h.x - x0, x1 - h.x), Math.min(h.y - y0, y1 - h.y)].map((v) => Math.round(v * 10) / 10)).toEqual([3.5, 3.5]);
   });
 });
