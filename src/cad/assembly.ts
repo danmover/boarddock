@@ -54,6 +54,8 @@ export function generate(p: Project): GenResult {
     // the facet check paints overhangs on the print plates; the Check step slices every part (printcheck.ts)
     if (!printCache.get(pt.mesh.pos)) printCache.set(pt.mesh.pos, printability(pt.mesh));
   }
+  // (a part's box mesh is for the router only: the rest of the app doesn't need it sent over)
+  r.parts = r.parts.map((pt) => (pt.boxMesh ? { ...pt, boxMesh: undefined } : pt));
   return r;
 }
 

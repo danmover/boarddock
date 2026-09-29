@@ -36,7 +36,7 @@ Everything is checked with FEA and packed onto as few print plates as possible.
   - Click anything (a board, a dock, a rail, a cable, a table stand, or one feature of a holder such as a cradle, cap, pin or spring clip) to see it and edit it.
   - Shift-click to pick several, then Delete to remove them all in one undoable step.
   - Play the assembly step by step, or pull it apart with the explode slider.
-- **Checks:** hand calculations for every snap, plus 2D FEA of the dock's springs (the socket latch and the rail shoe hinge) for your material. A printability check finds every overhang and bridge; the print view can paint them.
+- **Checks:** hand calculations for every snap, plus 2D FEA of the dock's springs (the socket latch, the rail shoe hinge and its rail grip) for your material. A printability check finds every overhang and bridge; the print view can paint them.
 - **Easy to correct:**
   - Switch cradles, caps, tie anchors, guards or labels off for a whole holder, choose clips or pins, or remove single features in 3D.
   - Hide small parts, ignore holes, strip plug protection, or revert to the import, for one board or all of them.
@@ -82,13 +82,13 @@ Every board sits in a holder that plugs into a dock on the rail. This is the scr
 
 | Part | What it does | Prints |
 |---|---|---|
-| **Rail shoe** (graphite, red lever) | Clips onto a TS35 rail. Its jaw wraps round the rail flange and hangs from a hinge leaf directly **above** the lip, so pulling the dock straight up can't pry it open. **To remove it:** lift the boards out, press the ridged red pad beside the socket down about 8 mm, and lift the dock off. The lever is printed in place on a pin; its hook pulls the jaw off the flange and the jaw spring lifts it back. A built-in stop protects the hinge. The lever goes on whichever side of the rail has more room; you can flip it per dock. | on its end face, lever and all |
+| **Rail shoe** (graphite, red lever) | Clips onto a TS35 rail. Its jaw wraps round the rail flange and hangs from a hinge leaf directly **above** the lip, so pulling the dock straight up can't pry it open. A sprung **rail grip** in the rail's channel presses the rail's wall and holds the shoe against its fixed hook, so a dock stays where you put it: it takes about 6 N to push one along the rail. **To remove it:** lift the boards out, press the ridged red pad beside the socket down about 5 mm, and lift the dock off. The lever is printed in place on a pin, with a bead round the pin's middle so it can't slide off; its hook pushes the jaw off the flange and the jaw spring lifts it back. A built-in stop protects the hinge. The lever goes on whichever side of the rail has more room; you can flip it per dock. | on its end face, lever and all |
 | **Socket** (blue) | Snaps into the shoe in any of four 90° turns and takes two holders back to back. It has two print-in-place latches. | on its end face |
 | **Holder** | The frame (or tray) around your board, with a tongue on its dock edge and a spine that carries the release rod. | flat on its back |
-| **Release rod** (red) | Its head is the **button on the holder's top edge**: a keycap with a shallow thumb dish, rounded corners and chevrons that point the way it moves. It uses 11% less plastic than the old square button. Press it and the rod's 45° foot wedges the latch open. The latch spring returns it. The grip bar under your fingers has a matching finger scoop. | flat |
+| **Release rod** (red) | Its head is the **button on the holder's top edge**: a keycap with a shallow thumb dish, rounded corners and chevrons that point the way it moves. It uses 11% less plastic than the old square button. Press it and the rod's 45° foot wedges the latch open. The latch spring returns it. Push the rod into its tunnel until it clicks: a barb on it springs out under a ledge at the top of the tunnel, so it can't slide back out. The grip bar under your fingers has a matching finger scoop. | flat |
 
 **Using it:**
-1. Hook the shoe under the rail and press it down until it clicks.
+1. Hook the shoe under the rail and press it down until it clicks. Its grip holds it where it is; to move it along the rail, push it firmly.
 2. Press the socket in, in whichever turn you want.
 3. Push the holder straight down into the socket until the latch clicks.
 4. **To take a board out:** put your thumb on the red button and two fingers under the grip bar, squeeze, and lift.
@@ -106,7 +106,7 @@ Plugs always win: if the button would block one, it moves.
 
 A board can also **lie flat on its dock**, top face up (out of the wall), on the same shoe and socket:
 - Its holder has a tab, the **ear**, on one edge, flush with its underside, so the holder prints base-down like any other.
-- The tongue that plugs into the socket is a small **dock key** of its own: the standing holder's pedestal and tongue, with a dovetail on top. It prints lying on its side (its tongue flat, its layers running along it, as a standing holder's tongue does), slides into a dovetail groove under the ear from the ear's tip, and the release rod locks it in: the rod goes in from the top, through the ear and the key, down to the socket's latch. The same socket and latch hold it as hold a standing holder.
+- The tongue that plugs into the socket is a small **dock key** of its own: the standing holder's pedestal and tongue, with a dovetail on top. It prints lying on its side (its tongue flat, its layers running along it, as a standing holder's tongue does), slides into a dovetail groove under the ear from the ear's tip, and the release rod locks it in: the rod goes in from the top, through the ear and the key, down to the socket's latch, and clicks in under a ledge at the top of the ear, so neither can slide out. The same socket and latch hold it as hold a standing holder.
 - The release button sits on top of the ear, clear of the board. To take the board off, put your thumb on the button and your fingers under the ear, then squeeze and lift. The rod prints lying down.
 - Two boards can lie **back to back** in one socket, ears together, reaching opposite ways. A J-Link or serial adapter can **stand** in the other half of a flat board's socket. The shoe's release lever goes on the side away from a flat board where it can.
 - The ear goes on an edge where it keeps clear of the plugs, as near the middle as it can.
@@ -548,7 +548,7 @@ Choose **Loose holders** in the Panel step for holders without a rail dock:
 - **side by side** with printed link bars;
 - **back to back** with snap rivets.
 
-Each holder can also have a flat pull-tab DIN clip or a **stand socket** (round, square, hex or D-shaped post, or a 1/4"-20 tripod nut trap). A box on the clip stands 2.3 mm up in its holder, clear of the clip's snap hooks, which come up through the base. Loose holders start without the DIN clip (tick **DIN rail clip** if you have a rail), and the shopping list and assembly notes only mention a rail when there is one.
+Each holder can also have a flat pull-tab DIN clip or a **stand socket** (round, square, hex or D-shaped post, or a 1/4"-20 tripod nut trap). A box on the clip stands 2.3 mm up in its holder, clear of the clip's snap hooks, which come up through the base. The clip has a rail grip too: a sprung pad in the rail's channel presses the rail's top wall and holds the clip down on the top flange (about 6 N for a 14 mm clip), so it doesn't slide along the rail on its own. Loose holders start without the DIN clip (tick **DIN rail clip** if you have a rail), and the shopping list and assembly notes only mention a rail when there is one.
 
 - A stack never covers a box: hubs, chargers and powerboards stand beside it on the table, so their ports and outlets stay free.
 - A board bolted onto another (a HAT on a Pi, a shield on an Arduino) gets a standoff on each hole the two share and a screw in each end, sized from those holes (M2.5 for a Pi, M3 for an Arduino); the Rails step says how many next to the board.
@@ -581,7 +581,7 @@ What the audit of the earlier parts found, and what changed:
 - Snap rivets printed 1.3 mm below the bed, which dropped a whole back-to-back plate: they rest on it, and every plate puts each part on the bed whatever pose it comes in.
 - A thin sill left in a frame's wall under an overhanging plug, and a one-layer fleck by the fingers, are gone.
 - **Thin walls:** anything under 0.4 mm wide. A slicer without thin-wall detection leaves those out; in BoardDock parts they are only details of the engraved label and the button's chevrons.
-- **Narrow slots:** gaps under 0.3 mm print closed. That matters only where something moves: the rail shoe's lever (0.35 mm round its pin) and the socket's latch nose, which now has 0.45 mm round it in its window (it had 0.2 mm, which could have welded it to the socket wall).
+- **Narrow slots:** gaps under 0.3 mm print closed. That matters only where something moves: the rail shoe's lever (0.35 mm round its pin and past the neck that carries it; the edge of its hub's opening was 0.09 mm from the neck, too tight to print apart, and the check missed it because that gap was only a sliver) and the socket's latch nose, which now has 0.45 mm round it in its window (it had 0.2 mm, which could have welded it to the socket wall).
 
 
 ![Dock FEA](docs/images/fea.png)
@@ -597,15 +597,24 @@ PETG results (E = 2100 MPa, strain limit 2%):
 |---|---|---|---|
 | Latch: holder pushed in (nose moves out 1.3 mm) | about 9 N push | 1.6% | 1.0% |
 | Latch: button pressed (nose clears the groove after 1.9 of 3.1 mm) | 3.2 N | 1.2% | 0.8% |
-| Rail shoe: lever pad pressed down (jaw opens 1.7 mm for about 8 mm of pad travel; the stop engages at 2.2 mm of jaw travel) | 1.4 N | 1.6% | 0.55% |
+| Rail shoe: lever pad pressed down (jaw opens 1.7 mm for about 5 mm of pad travel; the stop engages at 2.2 mm of jaw travel) | 2.4 N | 1.7% | 0.55% |
 | Rail shoe: pressed onto the rail | 4.3 N | 1.7–1.9% | 0.5% |
 | Rail shoe: pulled straight up off the rail | holds to about 90–120 N (the hinge's strain limit), friction or not | 1.7–2.3% at 100 N | 0.4% |
+| Rail shoe: rail grip, its pad pressed 0.35 mm by the rail's wall | 9.6 N preload (5.5–14 N over tolerance), about 6 N to slide a dock along | 1.1% | 0.6% |
 
 **Design changes that came out of this analysis**, compared with the original DIN hub:
 - **Pull-off.** The original jaw hung from a hinge outboard of its lip. Pulling the dock off the rail pried the jaw open, and in the model only friction held it: without friction it let go at about 14 N. The v3 "C-jaw" wraps round the flange edge with the hinge leaf directly above the lip, so a pull runs straight down the leaf. It no longer depends on friction; the jaw moves about 0.03 mm per 100 N. The shoe is also 5% lighter.
 - **Hinge leaf.** The lever pushes from above the hinge, so its bending peaks at the leaf's lower end. A uniform 0.9 mm leaf (two 0.45 mm lines) replaces the old 0.84–1.14 mm taper.
 - **Pinch ear (v4).** The short thumb pad sat 14 mm below the socket top and was hard to reach. The lever post now rises into a tall ridged ear whose top is 3 mm under the socket top. With the holders out, you pinch the ear and the socket together with one hand. The longer lever roughly halves the force. The ear's top lip also lets you pull it: the lip is 8 mm outboard of the hinge leaf, so a pull turns the jaw open before it can lift the dock. The shoe grows 8% (7.8 to 8.5 cm³).
 - **Press-down lever (v5).** Pinching the ear worked, but it looked clumsy and needed two opposing fingers. The ear is gone. Instead, a lever is printed in place on a pin at the top of a slim tower beside the socket, inside a C-shaped hub that wraps 290° so it can't come off. Pressing its ridged pad down about 8 mm makes the hook underneath pull the jaw's post toward the socket, and the jaw swings open about its leaf. The existing stop still limits the travel, and the jaw spring lifts the lever back. The release force is about 1.4 N. The shoe is 10.0 cm³.
+- **DIN clip review (v6).** Measured on the geometry, not guessed ([docs/din-clip-review.md](docs/din-clip-review.md)):
+  - The edge of the lever's hub was 0.09 mm from the neck that carries its pin: too tight to print apart. It is now 0.46 mm clear, and 0.35 mm is the least anywhere round the lever.
+  - Nothing held the lever on along its pin: it could slide the whole 21 mm off the end. A bead round the middle of the pin runs in a groove inside the hub, both with 45° flanks, so it prints in place without support and can't move more than 0.5 mm along the pin.
+  - The hook bears on the jaw's post with its lower end, 8 to 11 mm under the pin, not 6.9 as the FEA assumed: the release is about 2.4 N for 5 mm of pad travel (it was given as 1.4 N and 8 mm).
+  - Once the jaw is at its stop, a harder press loads the lever's pin, neck and tower. The 1.0 mm neck, with a 0.05 mm notch at its root, reached the strain limit at about 13 N on the pad. It now tapers from 1.8 mm, filleted into a wider tower: about 28 N.
+  - The shoe only located on the rail (0.8 mm of play across it, 0.3 mm out of the wall, nothing pressing), so a dock could slide along the rail, or down a vertical one. A rail grip now presses the rail's wall from inside its channel with 9.6 N and holds the shoe on its fixed hook: pushing a dock along takes about 6 N (friction 0.3). A tooth stops a knock across the rail before the grip is overstrained. The pull-tab clip has the same grip.
+  - The release rod could slide straight out of its tunnel, and a flat holder's dock key is held in its dovetail only by that rod. The rod now clicks in and stays.
+  - The shoe is 10.45 cm³.
 
 ## Printing
 
@@ -632,7 +641,7 @@ PETG results (E = 2100 MPa, strain limit 2%):
 - **Supports: none.** Overhangs are 45° chamfers, gables or short bridges, round and square holes on their side have 45° tops, the spring clips stand on the bed (their lip ledge is about 0.9 mm), and all springs flex within their print layers. The Check step proves it layer by layer (see Printability, layer by layer). Leave supports off in any slicer.
 - **What the slicers do with it:**
   - *The tongue hole.* The socket prints standing on its end, so the tongue's pocket lies on its side with its opening facing sideways. Its roof is chamfered at 45° and the centre divider halves it, so the longest bridge in the socket is about 2.3 mm. The pocket leaves 0.2 mm all round the 14 × 4.5 mm tongue. If yours prints tight (a sagging roof, or elephant's foot), raise **Tongue fit** in the Rails step.
-  - *Print-in-place parts.* The rail shoe's lever prints round its pin, 0.35 mm clear, and every slicer keeps the ring and the pin as separate loops. The socket's latch nose has 0.45 mm round it in its window. Don't lower the line width or raise the flow for these parts.
+  - *Print-in-place parts.* The rail shoe's lever prints round its pin, 0.35 mm clear (past the neck under the pin too), and every slicer keeps the ring and the pin as separate loops. The bead round the pin's middle and the groove it runs in have 45° flanks, 0.35 mm apart. The socket's latch nose has 0.45 mm round it in its window. Don't lower the line width or raise the flow for these parts.
   - *Bridges.* OrcaSlicer and PrusaSlicer spot bridges, slow down, and lay the lines across the gap with the fan up. Kiri:Moto (in the app) prints them as ordinary solid layers, so expect a little more sag on the longest bridges (9 mm on a flat-lying holder, 14.4 mm in a DIN plate's slots). Elsewhere that is cosmetic; in the DIN plate see Honest limits.
   - *Thin walls.* With thin-wall detection off (the setting BoardDock asks for, so the 0.9 mm hinge stays two full lines), walls under about 0.4 mm are left out. In BoardDock parts that is only fine label detail.
 - **Plates:** each plate becomes one STL or 3MF file with every part already placed. The estimate shows grams and print time per part.
@@ -647,6 +656,8 @@ PETG results (E = 2100 MPa, strain limit 2%):
 - A large board docked by one tongue feels a sizeable lever when you plug in a stiff cable at the far end. The tongue is 14 × 4.5 mm at the socket mouth (a Raspberry Pi 4 holder: about 25 MPa for a 20 N push on its far edge, against PETG's ~45 MPa yield), and the Check step lists it for every board. Hold the holder while you plug in.
 - The frame holder's stiffness is from geometry, not tested: the board itself stiffens the frame once it is clipped in.
 - The rail release is reached with the holders out (they cover the lever). Taking a single board out is the button on the holder, which is always reachable.
+- The rail grips (on the shoe and on the pull-tab clip) come from a 2D FEA with a textbook modulus and a guessed friction (0.3, PETG on zinc-plated steel). How firmly a dock really holds its place, and how much creep eases the 0.35 mm preload over the years, are for a print to tell. Each grip hangs 1.7 mm into the rail's channel, from 4.5 mm out from the rail's middle, so a screw head in the rail that reaches under it must be under 4.8 mm tall: pan, cheese, button and countersunk heads and M5 socket caps pass, M6 socket caps don't.
+- A holder sits in its socket with a little play: it can lift 0.3 mm before the latch's nose catches, and shift 0.3 to 0.4 mm across. Nothing presses it one way, so a bump can rattle it.
 - The table stands' press fit, the dovetails and the cable combs' snap lips are sized from typical FDM tolerances, not from test prints. The sag and cap-stress numbers are hand calculations.
 - Plug roles for Auto-connect are guessed from connector types and names, except on boxes, where you set them; check the Wiring view.
 - Cable routes are checked against bounding boxes. A route marked clear is clear; one marked as touching may still fit, since a box is bigger than the part inside it. Real cables are floppier and stiffer in places than the drawn tubes.

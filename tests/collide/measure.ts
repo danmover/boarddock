@@ -2,10 +2,10 @@
 // gives out, turned into a solid in the rack's frame (manifold-3d), and each pair that meets intersected. What is left
 // is sorted by what met what, with the few contacts a real rack has on purpose taken out (a plug in its own jack, a
 // board on its own holder's pins and pressed by its anti-rattle springs, a cable in its own plugs, a DIN clip's hooks
-// in its own holder, a rail end touching
-// its end block's crush ribs and stop). No bounding boxes are used for what is counted: they only pick which pairs to
-// intersect.
+// in its own holder, a rail end touching its end block's crush ribs and stop, a rail grip's pad pressed into its
+// rail). No bounding boxes are used for what is counted: they only pick which pairs to intersect.
 import { K, freeAll, type MF } from '../../src/cad/kernel';
+import { GRIP, SHOE_GRIP } from '../../src/cad/dockdims';
 import { compRect } from '../../src/geom/poly';
 import { mul as mulM } from '../../src/cad/assembly';
 import { stackLayers } from '../../src/model/holes';
@@ -228,6 +228,9 @@ export function measure(p: Project, r: GenResult): Measured {
     for (const q of pieces(m)) {
       // a rail end pushed into its end block: the crush ribs and the stop behind it touch it (under 0.1 mm), by design
       if (cat === 'rail/stand' && [a.cls, b.cls].includes('rail') && [a.cls, b.cls].includes('stand') && q.depth < 0.1) continue;
+      // a rail shoe's or a DIN clip's rail grip: its pad is drawn as printed, pressed into the wall of its rail by its
+      // preload and the play before the part sits on its hook (0.75 mm on a shoe, 0.55 on a clip), by design
+      if (cat === 'rail/stand' && [a.cls, b.cls].includes('rail') && [a.kind, b.kind].some((k) => k === 'shoe' || k === 'clip') && q.depth < GRIP.pre + SHOE_GRIP.gap + 0.05) continue;
       const t = cats[cat];
       t.vol += q.vol; t.depth = Math.max(t.depth, q.depth); t.n++;
       all.push({ cat, a: a.name, b: b.name, vol: q.vol, depth: q.depth, at: q.at });

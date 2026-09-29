@@ -1,5 +1,6 @@
 // Rail dock: the screwless "DIN hub" (din_hub_v2) ported to manifold.
-//  - rail shoe: clips on the rail; press the lever pad beside the socket down to release it, built-in stop
+//  - rail shoe: clips on the rail, and a grip in the rail's channel holds it where it is; press the lever pad beside
+//    the socket down to release it, built-in stop
 //  - socket: snaps into the shoe in any of four 90 degree turns, two print-in-place tongue latches
 //  - holder side: tongue, pedestal, spine with a release-rod tunnel, grip bar
 //  - release rod: its head is the button on the holder's far (top) edge; pressing it wedges the latch open
@@ -8,7 +9,8 @@
 //  socket-local: same axes, Z = 0 at the socket top; tongues plug in along -Z; holder A faces +Y
 import type { V2 } from '../model/types';
 import { box, circle2, ext, extCh, K, poly, rect2, roundCS, unionCS, unionMF, type CS, type MF } from './kernel';
-import { EAR, gripSpan, HD, headSpan, LEN_X, NOSE_TIP, TONGUE } from './dockdims';
+import { EAR, gripSpan, HD, headSpan, LEN_X, NOSE_TIP, SHOE_GRIP, TONGUE } from './dockdims';
+import { railGrip } from './dinclip';
 export { gripSpan, headSpan };
 
 const P = (pts: number[][]): CS => poly(pts as V2[], 'NonZero');
@@ -26,7 +28,7 @@ export function extXZ(c: CS, y0: number, y1: number): MF {
 const hull = (list: MF[]) => K().Manifold.hull(list);
 
 // ---------------- reference ----------------
-export { LEN_X, SHOE_TOP, SOCKET_BOTTOM, SOCKET_Z, SOCKET_HALF } from './dockdims';
+export { LEN_X, SHOE_TOP, SOCKET_BOTTOM, SOCKET_Z, SOCKET_HALF, SHOE_GRIP } from './dockdims';
 
 /** TS35 x 7.5 hat rail along X, centred on x = 0. */
 export function rail(len: number): MF {
@@ -122,17 +124,22 @@ const SHOE_JAW = [[17.7, 3.9], [20.6, 3.9], [21.9, 5.2], [21.9, 33.4], [21.5, 34
 // v5 "press-down lever": a lever on a pin at the top of a slim tower beside the socket. Press its ridged pad down
 // (toward the rail) and the hook on its underside pulls the jaw's post toward the socket: the jaw swings open about
 // its leaf, and the stop still limits it. The lever is printed in place round its pin (0.35 mm gap); its C-shaped hub
-// wraps 290 degrees so it can't come off, and the jaw spring lifts it back.
-export const SHOE_LEVER = { pivot: [13.4, 39.2] as V2, pad: [24.6, 28.8] as V2, top: 41.0, hook: 22.3, stopGap: 2.0 };
-const TOWER = [[11.2, 22.9], [13.3, 22.9], [13.3, 34.6], [12.7, 35.2], [11.8, 35.2], [11.2, 34.6]];
-const NECK = [[12.75, 33.8], [13.75, 33.8], [13.75, 38.2], [12.75, 38.2]];
+// wraps 280 degrees so it can't come off sideways, a bead round the middle of the pin in a groove in the hub keeps it
+// from sliding off the pin's ends, and the jaw spring lifts it back.
+// (Measured in the DIN clip review: the hub's open edge was 0.09 mm from the neck, which prints as one piece, and
+// nothing held the lever on along the pin. The neck was 1.0 mm with a notch at its root, where about 13 N on the pad,
+// once the jaw is at its stop, reached the strain limit; now it tapers from 1.8 mm, filleted into a wider tower: 28 N.)
+// `open`: the hub's opening, degrees; `bead`: how far the bead stands off the pin.
+export const SHOE_LEVER = { pivot: [13.4, 39.2] as V2, pad: [24.6, 28.8] as V2, top: 41.0, hook: 22.3, stopGap: 2.0, open: [-118, -39] as V2, bead: 0.6 };
+const TOWER = [[11.2, 22.9], [13.9, 22.9], [13.9, 34.5], [11.8, 34.5], [11.2, 33.9]];
+const NECK = [[12.1, 34.2], [13.9, 34.2], [13.9, 38.2], [12.9, 38.2], [12.9, 37.3]];
 
 /** The rail release lever (y, z), a separate island printed in place round the tower's pin. */
 export function leverProfile(): CS {
-  const [py, pz] = SHOE_LEVER.pivot;
+  const [py, pz] = SHOE_LEVER.pivot, [a0, a1] = SHOE_LEVER.open;
   const ring = circle2(py, pz, 3.55, 64).subtract(circle2(py, pz, 2.05, 48));
   const sec: V2[] = [[py, pz]];
-  for (let a = -111; a <= -39; a += 4) sec.push([py + 7 * Math.cos((a * Math.PI) / 180), pz + 7 * Math.sin((a * Math.PI) / 180)]);
+  for (let i = 0; i <= 20; i++) { const a = ((a0 + ((a1 - a0) * i) / 20) * Math.PI) / 180; sec.push([py + 7 * Math.cos(a), pz + 7 * Math.sin(a)]); }
   const hub = ring.subtract(poly(sec, 'NonZero'));
   const arm = roundCS(rect2(15.6, 37.8, 28.8, 40.4), 0.9);
   const hook = roundCS(rect2(22.3, 30.6, 24.3, 38.8), 0.7);
@@ -157,16 +164,21 @@ export function shoeProfile(): CS {
   let c = unionCS([P(SHOE_BODY), jawR, P(HINGE)]);
   const closed = c.offset(0.5, 'Round').offset(-0.5, 'Round');
   c = c.add(closed.intersect(unionCS([rect2(15.9, 9.8, 17.8, 11.0), rect2(15.9, 19.2, 17.8, 20.4)])));
-  // lever tower and pin, filleted into the body top
+  // lever tower and pin, filleted into the body top, and the neck filleted into the tower (it takes the lever's
+  // push once the jaw is at its stop)
   const [py, pz] = SHOE_LEVER.pivot;
   const tower = unionCS([P(TOWER), P(NECK), circle2(py, pz, 1.7, 40)]);
-  const towerF = tower.add(unionCS([tower, rect2(10.2, 21.9, 14.3, 23.0)]).offset(0.8, 'Round').offset(-0.8, 'Round').intersect(rect2(10.2, 22.0, 14.3, 25.0)));
+  const towerF = tower.add(unionCS([tower, rect2(10.2, 21.9, 14.3, 23.0)]).offset(0.8, 'Round').offset(-0.8, 'Round').intersect(rect2(10.2, 22.0, 14.3, 25.0)))
+    .add(tower.offset(0.8, 'Round').offset(-0.8, 'Round').intersect(rect2(11.3, 34.4, 12.9, 35.9)));
   c = c.add(towerF);
   // soften the outer corners of the body (0.6 mm) so the part looks moulded, not boxy
   const outer = rect2(-21, 21.2, 18.5, 23.5).add(rect2(-21, 3.5, -19.5, 23.5));
   const rounded = c.offset(-0.6, 'Round').offset(0.6, 'Round');
   c = c.subtract(outer).add(rounded.intersect(outer));
-  return c.subtract(unionCS(shoeCuts())).add(unionCS([P(HOOK_TIP), P(mir(HOOK_TIP))]));
+  // the rail grip on the fixed hook's side: it presses the rail's -y wall from inside the channel, so the shoe sits
+  // against the fixed hook (0.4 mm from it as drawn) with a preload, instead of only locating on the rail
+  const grip = railGrip(SHOE_GRIP.gap, 7.5, (s, h) => [SHOE_GRIP.wall + s, h]);
+  return c.subtract(unionCS(shoeCuts())).add(unionCS([P(HOOK_TIP), P(mir(HOOK_TIP)), grip]));
 }
 
 function shoeCuts(): CS[] {
@@ -182,6 +194,13 @@ function shoeCuts(): CS[] {
   ];
 }
 
+/** The shoe's profile for the 2D FEA: without its rail grip (the jaw, hinge and lever cases), and the grip with the
+ * strip of floor it hangs from (its own case). */
+export function shoeFeaProfiles(): { jaw: CS; grip: CS } {
+  const c = shoeProfile(), zone = rect2(-14, 0, -4.2, 7.5);
+  return { jaw: c.subtract(zone), grip: c.intersect(rect2(-14, 0, 0, 9.5)) };
+}
+
 /** Rail shoe in hub world coordinates (centred on x = 0). */
 export function shoe(): MF {
   return unionMF([shoeBody(), shoeLever()]);
@@ -193,10 +212,23 @@ export function shoeBody(): MF {
   // the hinge leaf is split into two 7 mm segments to lower the release force
   const body = extYZ(shoeProfile(), hx).subtract(box(-3.5, 16.0, 10.7, 3.5, 17.5, 19.5));
   const stop = extXZ(P([[8.1, 18.0], [hx, 18.0], [hx, 20.2], [10.3, 20.2]]), -8.1, 8.1); // x stops seat the boss chamfer
-  return unionMF([body, stop, stop.mirror([1, 0, 0])]);
+  return unionMF([body, stop, stop.mirror([1, 0, 0]), pinBead(0)]);
 }
 
-export const shoeLever = () => extYZ(leverProfile(), LEN_X / 2);
+/**
+ * The bead round the middle of the lever's pin (grow = 0), or the groove it runs in inside the lever's hub (grow =
+ * the 0.35 mm print gap): 45 degree flanks, so both print without support standing on the shoe's end face, and the
+ * lever can only slide about 0.5 mm along the pin before a flank meets the other.
+ */
+export function pinBead(grow: number): MF {
+  const [py, pz] = SHOE_LEVER.pivot, b = SHOE_LEVER.bead, w = 0.3, r0 = 1.5, rb = 1.7 + b;
+  let prof = P([[0, -(w + b + 0.2)], [r0, -(w + b + 0.2)], [rb, -w], [rb, w], [r0, w + b + 0.2], [0, w + b + 0.2]]);
+  if (grow > 0) prof = prof.offset(grow, 'Round').intersect(rect2(0, -5, 5, 5));
+  // revolved about its y axis (which becomes z), then turned so that axis runs along the pin (x)
+  return K().Manifold.revolve(prof, 64).transform([0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, py, pz, 1] as any);
+}
+
+export const shoeLever = () => extYZ(leverProfile(), LEN_X / 2).subtract(pinBead(0.35));
 
 /** Print pose for shoe and socket: standing on the -X end face. Returns [pose, inverse]. */
 export const END_POSE = { pose: [0, 0, 1, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 0, 1], inv: [0, 0, -1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1] };
@@ -230,7 +262,7 @@ export function holderDock(far: number, pedestal: number, side = 0, fit = 0) {
     // grip bar: rounded, with a shallow finger scoop in the face the fingers pull on (matches the button's dish)
     extXZ(roundCS(rect2(g0, zg0, g1, zg1), 1.2).subtract(circle2((g0 + g1) / 2, zg0 - ((g1 - g0) ** 2 / 4 + 0.64) / 1.6 + 0.8, ((g1 - g0) ** 2 / 4 + 0.64) / 1.6, 256)), HD.backY, spineY1),
   ]);
-  const tunnel = box(-HD.tunnelHx, HD.tunnelY[0], -0.2, HD.tunnelHx, HD.tunnelY[1], zg1 + 0.2); // release-rod tunnel
+  const tunnel = rodTunnel(zg1); // release-rod tunnel
   const cut = unionMF([
     tunnel,
     box(-HD.voidHx, HD.backY - 0.1, Math.max(HD.base.t, pedestal) + 1.5, HD.voidHx, HD.voidY1, zg0 - 1.5), // back channel (saves filament)
@@ -251,7 +283,7 @@ export function flatHolderDock(reach: number, fit = 0) {
   const ear = unionMF([plate, ...[-1, 1].map((sg) => extYZ(P([[y1 - 6, top - 0.01], [y1 + 0.01, top - 0.01], [y1 + 0.01, top + 5]]), 1.0).translate([sg * (EAR.hx - 1.4), 0, 0]))]);
   // the dovetail (x, z), along y from the ear's tip to the end of the pedestal: narrow at the root, wider at the top
   const dove = (g: number) => P([[-root - g, EAR.ped - 0.02], [root + g, EAR.ped - 0.02], [dt + g, EAR.ped + dh + g], [-dt - g, EAR.ped + dh + g]]);
-  const tunnel = box(-HD.tunnelHx, HD.tunnelY[0], -0.2, HD.tunnelHx, HD.tunnelY[1], top + 0.2);
+  const tunnel = rodTunnel(top);
   const cut = unionMF([extXZ(dove(gap), HD.backY - 1, HD.base.y1 + gap), tunnel]); // (open at the tip, where the key slides in)
   const key = unionMF([
     tongue(Math.min(1.0, EAR.ped), fit),
@@ -261,11 +293,33 @@ export function flatHolderDock(reach: number, fit = 0) {
   return { add: ear, cut, tunnel, key, top };
 }
 
-/** Release rod with its button head, socket-local (rest position). */
+/**
+ * Where the rod's barb sits for a tunnel whose top is at `top` (socket-local z): its catch face (flat, 0.2 mm under
+ * the ledge at rest) and its bottom (under a 45 degree lead-in).
+ */
+function rodCatch(top: number) {
+  const { ledge, barb } = HD.catch, zcat = top - ledge - 0.2;
+  return { zcat, zb: zcat - 0.4 - barb };
+}
+
+/** The release rod's tunnel, open from the socket top to `top`, with the pocket its barb clicks into under the ledge
+ * at the top: as long as the barb and the button's whole stroke, 0.3 mm to spare. */
+export function rodTunnel(top: number): MF {
+  const { zb } = rodCatch(top), [y0, y1] = HD.tunnelY;
+  return unionMF([box(-HD.tunnelHx, y0, -0.2, HD.tunnelHx, y1, top + 0.2), box(HD.tunnelHx - 0.1, y0, zb - HD.stroke - 0.3, HD.catch.pocket, y1, top - HD.catch.ledge)]);
+}
+
+/** Release rod with its button head, socket-local (rest position). `zg1`: the top of its tunnel. */
 export function rod(zg1: number, side = 0): { m: MF; len: number } {
   const zh = zg1 + HD.stroke, zf = HD.rodRest, [y0, y1] = HD.rodY, h = HD.head;
   const [x0, x1] = headSpan(side);
-  const shaft = extYZ(P([[y0, zf], [y0 + 0.6, zf], [y1, zf + 1.6], [y1, zh + 0.01], [y0, zh + 0.01]]), HD.rodHx);
+  // the shaft, and on its +x side a finger hanging from the head, cut free by a 0.5 mm slot, with the barb at its
+  // foot: pushed down the tunnel, the ledge bends the finger 0.3 mm aside and the barb clicks out under it, so the rod
+  // (and a flat holder's dock key, which it locks) can't slide back out; the barb then rides the stroke in its pocket
+  const { zcat, zb } = rodCatch(zg1), bb = HD.catch.barb, xs = HD.rodHx;
+  const shaft = extYZ(P([[y0, zf], [y0 + 0.6, zf], [y1, zf + 1.6], [y1, zh + 0.01], [y0, zh + 0.01]]), HD.rodHx)
+    .subtract(extXZ(unionCS([rect2(0.2, zb - 0.5, 0.7, zh), rect2(0.2, zb - 0.5, xs + 0.1, zb)]), y0 - 0.1, y1 + 0.1))
+    .add(extXZ(P([[xs - 0.05, zb], [xs + bb, zb + bb], [xs + bb, zcat], [xs - 0.05, zcat]]), y0, y1));
   // a keycap: softly rounded, a shallow dish in the face the thumb presses, a chamfered rim on the face you see, and
   // three chevrons engraved in it pointing the way it moves. All of it takes plastic away rather than adding it.
   const xc = (x0 + x1) / 2, hw = (x1 - x0) / 2, dish = 0.7, R = (hw * hw + dish * dish) / (2 * dish);

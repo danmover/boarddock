@@ -103,16 +103,20 @@ function stackPlan(p: Project, layers: StackLayer[], dockEdge: EdgeName | null) 
 
 const boltedOf = (L: StackLayer) => L.bolted.map((bo) => ({ b: bo.mod.board, dx: bo.dx, dy: bo.dy, dz: bo.dz, mid: bo.mod.id, gap: bo.gap, need: bo.need, under: bo.under, below: bo.below, own: bo.mod.onGap != null }));
 
-let shoeRest: (ReturnType<typeof rest> & { body: MeshData; lever: MeshData }) | null = null, sockRest: ReturnType<typeof rest> | null = null;
+let shoeRest: (ReturnType<typeof rest> & { body: MeshData; lever: MeshData; env: MeshData }) | null = null, sockRest: ReturnType<typeof rest> | null = null;
 
-/** The shoe in its print pose, plus its body and its lever alone in the same frame (shown in two colours). */
+/** The shoe in its print pose, plus its body and its lever alone in the same frame (shown in two colours), and its
+ * envelope for boxes round it: without the rail grip, which hangs inside the rail's channel (the rail's own box covers
+ * it, and it took the shoe's box 2.5 mm down beside the rail, where cables pass). */
 function shoeRested() {
   const all = shoe();
   const r = rest(all, END_POSE.pose);
   const dz = -all.transform(END_POSE.pose as any).boundingBox().min[2]; // the rest translation
   const place = (m: MF) => toMesh(m.transform(END_POSE.pose as any).translate([0, 0, dz]));
-  return { ...r, body: place(shoeBody()), lever: place(shoeLever()) };
+  return { ...r, body: place(shoeBody()), lever: place(shoeLever()), env: place(all.subtract(box(-LEN_X, -14, -1, LEN_X, -4.2, 7.5))) };
 }
+/** The mesh a part's box is taken from, for cables and leads to keep clear of. */
+const boxMesh = (pt: PartOut) => pt.boxMesh ?? pt.mesh;
 
 function rest(m: MF, pose: M4): { mesh: MeshData; back: M4; volume: number; size: [number, number, number] } {
   const pm = m.transform(pose as any);
@@ -537,7 +541,7 @@ export function generatePanel(p: Project): GenResult {
         // the holder goes into its dock and the latch clicks (onto its clip: it snaps)
         const IN: Motion = { seq: b0 + 4, dir: [0, 0, 1], dist: 70, style: 'snap' };
         const nm = s.mod.board.name, box = s.mod.board.kind === 'box';
-        if (hasRod) steps.push({ seq: b0 + 1, text: `Slide the release rod into the spine of the ${nm} holder.` });
+        if (hasRod) steps.push({ seq: b0 + 1, text: `Push the release rod into the spine of the ${nm} holder until it clicks.` });
         steps.push({ seq: b0 + 2, text: isProbe(s.mod) ? `Slide the ${nm} down into its slot, plugs out.` : box ? `Set the ${nm} into its holder and strap it down with a hook-and-loop strap through the loops.` : `Snap the ${nm} into its holder: it clicks under the spring clips or onto the pins.` });
         if (stacked) steps.push({ seq: b0 + 3, text: [...s.riders].map((x) => (layers.some((L) => L.mod === x) ? (isProbe(x) ? `Press the next slot onto the corner towers and slide the ${x.board.name} down into it.` : `Press the ${x.board.name} holder onto the corner towers.`) : `Bolt the ${x.board.name} onto the ${nm} on its standoffs.`)).join(' ') });
         steps.push({ seq: b0 + 4, text: q.mt.kind === 'dock' ? `Push the ${nm} holder straight into its dock until the latch clicks.` : layers[0].out.parts.some((pt) => pt.id.endsWith('_clip2')) ? `Press both halves of the ${nm} holder onto their rail clips, end to end.` : `Press the ${nm} holder onto its rail clip.` });
@@ -615,7 +619,7 @@ export function generatePanel(p: Project): GenResult {
     if (sh && so) {
       const out: [number, number, number] = [0, 0, 1];
       const tags = (kind: 'shoe' | 'socket') => dockIds.map((id) => ({ kind, mount: id }));
-      parts.push({ ...base, id: 'dock_shoe', name: 'Rail shoe (press-down release lever)', qty: docks.length, mesh: sh.mesh, displayMesh: sh.body, toAssembly: shoeInst[0], instances: shoeInst.slice(1), volume: sh.volume, size: sh.size, color: '#5b6570',
+      parts.push({ ...base, id: 'dock_shoe', name: 'Rail shoe (press-down release lever)', qty: docks.length, mesh: sh.mesh, displayMesh: sh.body, boxMesh: sh.env, toAssembly: shoeInst[0], instances: shoeInst.slice(1), volume: sh.volume, size: sh.size, color: '#5b6570',
         tag: tags('shoe')[0], tags: tags('shoe').slice(1), anim: shoeAn[0], anims: shoeAn.slice(1) });
       display.push({ ...base, id: 'dock_lever', name: 'Rail release lever (prints with the shoe)', qty: docks.length, mesh: sh.lever, toAssembly: shoeInst[0], instances: shoeInst.slice(1), volume: 0, size: sh.size, color: '#ff4d5e',
         tag: tags('shoe')[0], tags: tags('shoe').slice(1), anim: shoeAn[0], anims: shoeAn.slice(1) });
@@ -665,7 +669,7 @@ export function generatePanel(p: Project): GenResult {
     for (const pt of parts) {
       if (pt.tag?.kind === 'railstand') continue;
       [pt.toAssembly, ...(pt.instances ?? [])].forEach((T, i) => {
-        const b = emptyBox(); boxOf(pt.mesh.pos, T, b);
+        const b = emptyBox(); boxOf(boxMesh(pt).pos, T, b);
         const t = i ? pt.tags?.[i - 1] ?? pt.tag : pt.tag;
         obs.push({ box: uvBox(b), label: labelOf(t, pt.name), module: t?.module, src: { mesh: pt.displayMesh ?? pt.mesh, T } });
       });
@@ -1033,7 +1037,7 @@ export function generatePanel(p: Project): GenResult {
   // (each drawn out of its plug only as far as it is clear of everything but its own board: a supply lead out of a
   // hub's DC jack used to run into the next dock along the rail)
   const solid = hang.size ? [
-    ...parts.flatMap((pt) => [pt.toAssembly, ...(pt.instances ?? [])].map((T, j) => { const b = emptyBox(); boxOf(pt.mesh.pos, T, b); return { b, module: (j ? pt.tags?.[j - 1] ?? pt.tag : pt.tag)?.module }; })),
+    ...parts.flatMap((pt) => [pt.toAssembly, ...(pt.instances ?? [])].map((T, j) => { const b = emptyBox(); boxOf(boxMesh(pt).pos, T, b); return { b, module: (j ? pt.tags?.[j - 1] ?? pt.tag : pt.tag)?.module }; })),
     ...ghosts.filter((g) => g.tag && g.tag.kind !== 'cable' && g.mat !== 'cable').map((g) => { const b = emptyBox(); boxOf(g.mesh.pos, I4, b); return { b, module: g.tag?.module }; }),
   ] : [];
   for (const k of hang) {
@@ -1100,7 +1104,8 @@ export function generatePanel(p: Project): GenResult {
   const st = (eps: number): Check['status'] => (eps <= allow * 0.85 ? 'ok' : eps <= allow * 1.1 ? 'warn' : 'bad');
   if (docks.length) {
     // PETG numbers from the in-app 2D FEA (0.06 mm mesh), scaled by stiffness; the Check tab reruns it for your material
-    checks.push({ group: 'Panel', name: 'Rail shoe release', value: `${(1.4 * eR).toFixed(1)} N press`, status: 'info', detail: 'lift the boards out, then press the ridged pad of the lever beside the socket down (about 8 mm) and lift the dock off the rail. The lever is printed in place on its pin; its hook pulls the jaw off the flange, and the jaw spring lifts it back. A stop meets the post at 2.2 mm of jaw travel (1.7 needed), so the hinge cannot be over-bent. Each dock puts its lever on the side of the rail with the most room.' });
+    checks.push({ group: 'Panel', name: 'Rail shoe release', value: `${(2.4 * eR).toFixed(1)} N press`, status: 'info', detail: `lift the boards out, then press the ridged pad of the lever beside the socket down (about 5 mm) and lift the dock off the rail. The lever is printed in place on its pin, 0.35 mm clear all round, and a bead round the pin's middle keeps it from sliding off; its hook pushes the jaw off the flange, and the jaw spring lifts it back. A stop meets the post at 2.2 mm of jaw travel (1.7 needed), so the hinge cannot be over-bent; pressing on past the stop loads the lever's tower, which reaches its strain limit at about ${Math.round(28 * eR * (allow / 0.02))} N on the pad. Each dock puts its lever on the side of the rail with the most room.` });
+    checks.push({ group: 'Panel', name: 'Rail shoe grip', value: `${(9.6 * eR).toFixed(1)} N preload`, status: st(0.011), detail: `a sprung pad in the rail's channel presses the rail's wall and holds each shoe against its fixed hook, so a dock doesn't slide along the rail by itself: pushing one along takes about ${(5.7 * eR).toFixed(1)} N (friction 0.3; before, it only sat on the rail with 0.8 mm of play across it and nothing pressing). 0.35 mm of preload; ${(5.5 * eR).toFixed(0)} to ${(13.7 * eR).toFixed(0)} N over print and rail tolerance. 1.1% peak strain (0.6% for 99% of it); a tooth stops a knock across the rail at 0.8 mm. The grip hangs 1.7 mm into the rail, from 4.5 mm out from its middle: a screw head in the rail that reaches under it must be under 4.8 mm tall (pan, cheese, button and countersunk heads and M5 socket caps pass; M6 socket caps don't).` });
     checks.push({ group: 'Panel', name: 'Rail shoe hinge', value: '1.9% peak', status: st(0.019), detail: 'uniform 0.9 mm leaf above the lip, at its root fillet; 99% of the shoe stays under 0.6%. Clipping on: 4.3 N (PETG) at the jaw ramp.' });
     checks.push({ group: 'Panel', name: 'Socket latch (per board)', value: `${(9.8 * eR).toFixed(1)} N to plug in`, status: st(0.018), detail: `1.8% peak at the spring root while the tongue goes in, 1.3% while the button releases it; the nose clears the groove after 1.9 mm of the 3.1 mm button stroke; a stop post prevents over-bending` });
     checks.push({ group: 'Panel', name: 'Rail shoe pull-off', value: `~${Math.round(90 * (allow / 0.02))} N`, status: 'ok', detail: 'the hinge leaf stands above the lip, so a pull straight up off the rail runs down the leaf and cannot pry the jaw open, friction or not; this is where the hinge reaches its strain limit.' });
@@ -1147,7 +1152,7 @@ export function generatePanel(p: Project): GenResult {
   if (rails.length) steps.push({ seq: 110, text: has('Rail saddle') ? `Lay ${rails.length > 1 ? 'each rail in its saddles' : 'the rail in its saddles'}.` : `Lay out the rail${rails.length > 1 ? 's' : ''}.` });
   if (has('Rail end block')) steps.push({ seq: 120, text: 'Push an end block onto each end of every rail, all the way in (a snug fit).' });
   if (has('Stand spacer') || has('Stand foot')) steps.push({ seq: 130, text: `Slide the spacer bars${has('Stand foot') ? ' and feet' : ''} into the blocks' dovetails along the rails${pieces.some((x) => /comb/.test(x.name)) ? '; the ones with combs go where the cables will run' : ''}.` });
-  if (docks.length) steps.push({ seq: 200, text: 'Clip a rail shoe on at every dock: hook it under the rail on the side away from the lever and press it down until it clicks.' });
+  if (docks.length) steps.push({ seq: 200, text: 'Clip a rail shoe on at every dock: hook it under the rail on the side away from the lever and press it down until it clicks. It grips the rail where it is, so clip it on at its place (a firm push slides it along).' });
   const flats = placed.length - docks.length;
   if (docks.length || flats) steps.push({ seq: 210, text: `${docks.length ? 'Press a socket into each shoe, turned the way it is shown.' : ''}${docks.length && flats ? ' ' : ''}${flats ? `Clip the flat rail clip${flats > 1 ? 's' : ''} onto the rail.` : ''}` });
   for (const k of CABLE_ORDER) {
