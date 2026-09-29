@@ -9,7 +9,8 @@ import { autoLinks, numberLinks } from '../src/model/links';
 import { badgeText } from '../src/model/cablebadge';
 import { buyText } from '../src/model/cablebuy';
 import { leadStub } from '../src/cad/boardviz';
-import { generate, stackOrder } from '../src/cad/assembly';
+import { generate, looseOrder, stackOrder } from '../src/cad/assembly';
+import { addProbes } from '../src/model/probes';
 import { initKernel } from '../src/cad/kernel';
 import type { Ghost, PartOut } from '../src/model/types';
 
@@ -216,4 +217,27 @@ describe('each loose holder its own clip', () => {
     p.modules[1].clip = { off: true };
     expect(clips(generate(p))).toBe(1);
   }, 300_000);
+});
+
+describe('probes among loose holders', () => {
+  beforeAll(async () => { await initKernel(); });
+
+  it('puts a J-Link beside the board it debugs, even one added last, not at the far end of the row', () => {
+    const p = newProject(T('example_dual_swd'));
+    p.modules.push(newModule(T('uno')), newModule(T('pico')));
+    setLayout(p, 'loose');
+    p.arrange.mode = 'side';
+    const board = p.modules[0];
+    const [jl] = addProbes(p, board.id, ['J_SWD1']);
+    // one added from the library and cabled later goes last in the list
+    p.modules = [...p.modules.filter((m) => m !== jl), jl];
+    expect(looseOrder(p).modules.map((m) => m.id)).toEqual([board.id, jl.id, p.modules[1].id, p.modules[2].id]);
+    // in 3D: the J-Link's holder sits between its board's and the Uno's along the row
+    const r = generate(p), x = (id: string) => r.report.frames![id][12];
+    expect(x(jl.id)).toBeGreaterThan(x(board.id));
+    expect(x(jl.id)).toBeLessThan(x(p.modules[1].id));
+    // stacked or back to back, the order stays as it is (back to back takes the first two)
+    p.arrange.mode = 'back';
+    expect(generate(p).report.frames![p.modules[1].id]).toBeDefined();
+  }, 120_000);
 });

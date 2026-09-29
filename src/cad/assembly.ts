@@ -1,6 +1,7 @@
 // Multi-board assemblies: one holder per board, combined by stacking (corner towers with press-fit pegs),
 // side by side (bosses + printed link bars), or back to back (bases together, printed snap rivets).
-import type { Anim, Check, Comp, Feature, GenResult, Ghost, PartOut, PickTag, Project, V2 } from '../model/types';
+import type { Anim, Check, Comp, Feature, GenResult, Ghost, Module, PartOut, PickTag, Project, V2 } from '../model/types';
+import { isProbe, targetOf } from '../model/probes';
 import { bbox, round } from '../geom/poly';
 import { buildModule, computeLevels, transformMesh, type ArrangeHooks, type Job } from './generate';
 import { box, cyl, freeAll, poly, rect2, toMesh, unionMF } from './kernel';
@@ -59,7 +60,21 @@ export function generate(p: Project): GenResult {
   return r;
 }
 
-function generateLoose(p: Project): GenResult {
+/**
+ * Loose holders side by side: each probe or adapter right after the board it serves (it is added after the boards,
+ * and would otherwise sit at the far end of the row, away from its ribbon's or wires' other end).
+ */
+export function looseOrder(p: Project): Project {
+  const to = (m: Module) => (isProbe(m) ? targetOf(p, m) : null);
+  const out: Module[] = [];
+  for (const m of p.modules) if (!to(m)) out.push(m, ...p.modules.filter((x) => to(x) === m));
+  for (const m of p.modules) if (!out.includes(m)) out.push(m); // (one cabled to another probe: where it was)
+  const active = p.modules[p.active]?.id;
+  return { ...p, modules: out, active: Math.max(0, out.findIndex((m) => m.id === active)) };
+}
+
+function generateLoose(p0: Project): GenResult {
+  const p = p0.modules.length > 1 && p0.arrange.mode === 'side' ? looseOrder(p0) : p0;
   const t0 = Date.now();
   const mods = p.modules;
   const n = mods.length;
@@ -180,7 +195,7 @@ function generateLoose(p: Project): GenResult {
     // port stays empty. Cables between loose holders aren't routed, so each gets a short cut-off tail; a box's supply
     // lead hangs to the table and runs off towards the wall.
     const used = (ref: string) => (p.links ?? []).some((l) => [l.a, l.b].some((e) => e.module === mods[i].id && e.ref === ref));
-    const supply = (c: Comp) => mods[i].board.kind === 'box' && ['other', 'mains-in'].includes(plugRole(mods[i], c));
+    const supply = (c: Comp) => mods[i].board.kind === 'box' && ['other', 'mains-in', 'power-in-dc'].includes(plugRole(mods[i], c));
     const uses = portUses(p, mods[i]);
     const wanted = (ref: string) => { const c = mods[i].board.comps.find((x) => x.ref === ref.replace(/:2$/, '')); return !!c?.conn && (used(ref) || inUse(uses.get(c.ref))); };
     let powered: Set<string> | undefined;

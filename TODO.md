@@ -4,18 +4,9 @@ What still needs doing on BoardDock, in the order it's being worked through. New
 
 Nothing BoardDock makes has been printed and tried yet, so anything below about fit, strength or clips is from the model and its checks, not from a real print.
 
-## 1. DIN rail clip review
+## 1. From the second round of test users
 
-Go through the clip in depth, measuring rather than guessing:
-- the release lever: how it frees the clip from the rail, and what keeps the lever on;
-- how the tongue insert stays in its slot;
-- that the clip is tight on the rail and can't slide once it's done up;
-- that every piece is printable;
-- (done: a box on a flat clip now stands 2.3 mm up, clear of the snap hooks that reach 1.9 mm above the base; they went 0.7 mm into it.)
-
-## 2. From the second round of test users
-
-Done: switches' and powered hubs' DC inputs (the To do list asks for a supply; Add its supply puts the one it came with in a free outlet), What's new listing built docks as new, built docks sliding past the rail end (a new board gets its own dock; Slide and Cut steps; Check fails), the mains bar and boxes' own supplies, the idle charger (the advice says why) and the switch's uplink to your router, and where a plug pack goes in What's new and the steps. The start code check and the brim are being done by an agent.
+Done: switches' and powered hubs' DC inputs (the To do list asks for a supply; Add its supply puts the one it came with in a free outlet), What's new listing built docks as new, built docks sliding past the rail end (a new board gets its own dock; Slide and Cut steps; Check fails), the mains bar and boxes' own supplies, the idle charger (the advice says why) and the switch's uplink to your router, and where a plug pack goes in What's new and the steps. Agents are working on the start code check and the brim, and on the USB-serial jumper wires (they are drawn, but not where the header's pins are).
 
 Still to do, most serious first:
 - Pasted printer start code is trusted as the A1 mini's without checking it.
@@ -23,10 +14,10 @@ Still to do, most serious first:
 - No way to slice for an A1 mini without Bambu's files.
 - The page freezes for 8 to 30 s on import, step changes, adding a hub, the first 3D view and Mark built.
 - USB-serial adapter jumpers never reach the UART header.
-- Loose holders drop probes into the row; docks and loose holders can't be mixed.
+- Loose holders drop probes into the row; docks and loose holders can't be mixed. (Partly done: a probe or adapter added from the library and cabled later now sits next to its board in a side-by-side row, as Add J-Links already did. Still to decide: where a probe should go instead of the row, say on its board's holder, and how docks and loose holders would mix.)
 - Smaller things: cables beside a stand comb, an auto-connected cable through a Pi 4 holder (still there: on a rack of a Pi 4, Uno, Pico, ESP32 and the 4-port hub, Auto-connect's hub UP to Pi 4 USB2 cable "runs into the Raspberry Pi 4B holder", with or without table stands), off-rack labels crowding a big rack, toast wording, the Wiring view at 16 boards, Auto-arrange putting cabled boards on opposite rails, Forget with no confirm, the headline print time estimate, the L-shape spacing defaults, the printer not asked up front, Next not auto-connecting, Measure moving one side only, round boards' corner holes, mirrored silkscreen, bulk tools for identical boards, locking a dock or rail, per-plate control, and more wording fixes.
 
-## 3. Started before, not finished
+## 2. Started before, not finished
 
 - Collisions left after the collision test (`npm run collisions`; baseline 339 mm³ over 140 racks, from 8272; 1 layout problem):
   - Cables where they cross under a rail or at its edge (cables into rails 154 mm³, 110 in the Pi cluster, up to 1.2 mm; cable into cable 47 mm³, up to 3.6 mm): a street is 8 mm under a rail's underside, so a 6 mm Ethernet cable has 2 mm to spare and one can't lie over another there; cables going up to a plug also pass through a rail's lip overhang. Needs a choice: taller table stands (more headroom, more plastic, a taller rack), or keeping crossings and rises out from under the rails in the router. Tried and taken out, as each made the matrix worse: cables back to the side they were laid on, crossing beads kept further apart, and no brushing a rail's box.
@@ -38,7 +29,7 @@ Still to do, most serious first:
 - The spring clips flexing in the assembly animation.
 - The DIN plate slots on rack and inline mounts: a plate printed on its face.
 
-## 4. From the first round of test users
+## 3. From the first round of test users
 
 - Jumper and debug ribbons routed straight over the dock.
 - A 12 V pack auto-connecting to boards with a known DC input range (Uno, Mega).
@@ -47,7 +38,7 @@ Still to do, most serious first:
 
 Ideas: a cluster preset, isolate or X-ray the selection in 3D, a command palette, a debug bench sheet, a live buy/print/tools checklist, What's new highlighted in 3D, mains and low-voltage zones, a layout lock with change receipts.
 
-## 5. Plug protection
+## 4. Plug protection
 
 Check each cradle and cap prints well in every orientation, and fit a cap only where the pull comes out of the cradle's open side.
 
@@ -112,3 +103,8 @@ Each: how bad (1 to 5), what's wrong, where, and how it was seen.
 - 1 · Two boards of the same kind give the same advice line twice, word for word ("Raspberry Pi 4B: its GPIO is for wires you connect yourself"). `src/model/links.ts` portBudget's unwired list and wiringAdvice. Seen in the advice for a rack of two Pi 4s.
 - 2 · The Wiring view's To do list gave a port too weak to power a board as its "best" (a Pi 4's power from the other Pi's USB-A port). Fixed (`src/ui/WiringView.tsx`: it says no free port gives enough). Seen trying the switch's supply in the browser.
 - 2 · A barrel jack's best match was a Pi's GPIO header (a DC input could be cabled to any header's pins). Fixed (`src/model/links.ts` refusal: a barrel jack takes a supply's plug or a pigtail to screw terminals, never header pins). Seen in the same To do list.
+- 3 · A holder rattles in its socket: 0.32 mm of lift before the latch catches, ±0.16 and ±0.22 mm across, and nothing preloads it. `src/cad/dock.ts` tongue and socket. Measured by the DIN clip review (sliding the tongue until it met the socket); see `docs/din-clip-review.md`.
+- 3 · The narrow-slot check ignores gaps whose sliver per layer is under 0.15 mm², so a 0.09 mm print-in-place gap went unseen. `src/cad/printcheck.ts` (`gaps`, `ga < 0.15`). The shoe's old lever passed the check while its gap to the neck measured 0.09 mm.
+- 2 · The shoe's pull-off FEA holds the whole shoe body and only analyses the jaw side: the fixed hook's floor and the 1 mm wall beside the socket's hook slit are never checked. `src/fea/dockfea.ts` (the fixity `x < 14.6 && y > 7.0`). Read by the DIN clip review.
+- 2 · Dock FEA peaks move about 7 % when the pixel grid's origin shifts (adding geometry below the hook moved the pull-off limit from 121 to 113 N). `src/fea/fea2d.ts` `meshPolygons`. Seen when the rail grip went into the shoe's FEA mesh.
+- 2 · The shoe's release lever can lift 13.5° from rest (its pad rises about 3 mm) before its hub meets the neck, so a nudge may bring it against a holder above it. `src/cad/dock.ts` `SHOE_LEVER.open`. Seen in the DIN clip review's lever sweep.

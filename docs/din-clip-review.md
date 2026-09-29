@@ -1,6 +1,6 @@
 # DIN rail clip review
 
-TODO item 3: go through the clip in depth, measuring rather than guessing. There are two parts that grip a TS35 rail, and this review covers both:
+From TODO.md: go through the clip in depth, measuring rather than guessing. There are two parts that grip a TS35 rail, and this review covers both:
 
 1. **The dock's rail shoe** (`src/cad/dock.ts`), with its print-in-place press-down release lever. The socket snaps into it and the holder's tongue plugs into the socket. A board lying flat instead has a separate dock key in a dovetail under the holder's ear.
 2. **The pull-tab DIN clip** (`src/cad/dinclip.ts`) for loose holders and for flat mounts in a panel.
