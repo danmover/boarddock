@@ -19,7 +19,7 @@ import { bbox, compRect, roundedRectLoop, round, uid } from '../geom/poly';
 import { activeModule, closeProject, dropModule, edit, editMod, isSel, select, setActive, store, toast, useApp, type SelItem, type Step } from '../state';
 import { kindName, rackCount, rackName, sameKind } from '../model/diff';
 import { Check, Chip, Num, Pick, Section, Seg, Text, download, safeName } from './controls';
-import { estimate, packPlates, placedMesh, write3mf, writeStl } from '../cad/export';
+import { BRIM_OUT, EDGE_CLEAR, estimate, fitsBed, packPlates, placedMesh, write3mf, writeStl } from '../cad/export';
 import { buildTestKit, runClipFea } from '../worker/client';
 import type { ClipFeaResult } from '../fea/clipfea';
 import { clipDims } from '../cad/dinclip';
@@ -74,12 +74,6 @@ export function ImportPanel() {
       <div className="btns" style={{ marginTop: 12 }}><button className="btn danger small" onClick={() => { if (confirm('Close this project? Save it first (⌘S): unsaved changes are kept only in this browser until you start a new one.')) closeProject(); }}>Close project</button></div>
     </div>
   );
-}
-
-/** Does a packed plate fit the bed (a part bigger than the bed gets a "plate" of its own that doesn't)? */
-export function fitsBed(pl: { used: V2 }, bed: V2, spacing: number): boolean {
-  const u = [pl.used[0] - spacing, pl.used[1] - spacing];
-  return (u[0] <= bed[0] + 0.5 && u[1] <= bed[1] + 0.5) || (u[0] <= bed[1] + 0.5 && u[1] <= bed[0] + 0.5);
 }
 
 /** "3 × Raspberry Pi 4B, Pico and 2 × USB hub": boards of a kind counted, not listed one by one. */
@@ -1308,11 +1302,12 @@ export function ExportPanel() {
       <Section title={`${plates.length} plate${plates.length > 1 ? 's' : ''}`}>
         <div className="plates">
           {plates.map((pl, i) => {
-            const big = !fitsBed(pl, p.printer.bed, p.printer.spacing);
+            const big = !fitsBed(pl, p.printer.bed);
             return (
             <div key={i} className={`plate ${big ? 'toobig' : ''}`}>
               <PlateThumb pl={pl} bed={p.printer.bed} />
-              {big && <div className="err" style={{ marginTop: 6 }}>{pl.items[0].part.name} is {Math.round(pl.used[0] - p.printer.spacing)} × {Math.round(pl.used[1] - p.printer.spacing)} mm: bigger than the {p.printer.name} bed ({p.printer.bed[0]} × {p.printer.bed[1]} mm). Pick a printer with a bigger bed above, or turn the board so its holder is smaller (Board step).</div>}
+              {big && <div className="err" style={{ marginTop: 6 }}>{pl.items[0].part.name} is {Math.round(pl.used[0])} × {Math.round(pl.used[1])} mm: bigger than the {p.printer.name} bed ({p.printer.bed[0]} × {p.printer.bed[1]} mm). Pick a printer with a bigger bed above, or turn the board so its holder is smaller (Board step).</div>}
+              {!big && pl.edge < BRIM_OUT + EDGE_CLEAR && <div className="hint" style={{ marginTop: 6 }}>{pl.items[0].part.name} leaves {Math.max(0, pl.edge).toFixed(1)} mm to the nearest bed edge, too tight for a brim or skirt ({(BRIM_OUT + EDGE_CLEAR).toFixed(1)} mm). The app slices this plate without one; in your own slicer, leave the brim off it.</div>}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 }}>
                 <span>Plate {i + 1} · {pl.items.length} part{pl.items.length === 1 ? '' : 's'}{big ? ' · does not fit' : ''}</span>
                 <span className="btns"><button className="btn small" onClick={() => download(`${base}_plate${i + 1}.stl`, writeStl(plateMeshes(i)))}>STL</button><button className="btn small" onClick={() => download(`${base}_plate${i + 1}.3mf`, write3mf(pl.items.map((it, k) => ({ name: `${it.part.name} ${k + 1}`, mesh: placedMesh(it, p.printer.bed, pl.used) }))))}>3MF</button></span>
@@ -1339,7 +1334,7 @@ export function ExportPanel() {
         <p className="hint">Rough: 3 walls, 5 top/bottom layers, 15% infill, 0.2 mm layers, {activeModule(p).holder.material}. Your slicer's numbers are the real ones.</p>
       </Section>
       <PrintSettings parts={parts} />
-      <GcodeSection plates={plates.length} plateKey={plates} fits={plates.map((pl) => fitsBed(pl, p.printer.bed, p.printer.spacing))} plateMeshes={plateMeshes} brim={tallness(parts, p.printer.maxZ ?? 250).tall.length > 0} plate3mf={(i) => write3mf(plates[i].items.map((it, k) => ({ name: `${it.part.name} ${k + 1}`, mesh: placedMesh(it, p.printer.bed, plates[i].used) })))} base={base} />
+      <GcodeSection plates={plates.length} plateKey={plates} fits={plates.map((pl) => fitsBed(pl, p.printer.bed))} plateMeshes={plateMeshes} brim={tallness(parts, p.printer.maxZ ?? 250).tall.length > 0} plate3mf={(i) => write3mf(plates[i].items.map((it, k) => ({ name: `${it.part.name} ${k + 1}`, mesh: placedMesh(it, p.printer.bed, plates[i].used) })))} base={base} />
     </div>
   );
 }

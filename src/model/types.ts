@@ -200,7 +200,9 @@ export interface PrinterSettings {
   gcodeEnd?: string;
   // a Bambu Lab printer's own start, end and layer-change code, in Bambu Studio's template language, read from the
   // user's own Bambu Studio or OrcaSlicer (BoardDock doesn't ship it): filled in for every print
-  bambu?: { start: string; end?: string; layer?: string; from: string };
+  // `ok`: the notes from src/slice/startcheck.ts the user read and accepted for this code (ids; blocking ones can't be)
+  // `for`: the printer it was loaded for
+  bambu?: { start: string; end?: string; layer?: string; from: string; for?: string; ok?: string[] };
   plate?: string; // the build plate, as Bambu Studio names it ("Textured PEI Plate", "Cool Plate"...)
 }
 

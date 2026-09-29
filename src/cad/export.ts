@@ -31,7 +31,9 @@ export function writeStl(meshes: MeshData[], offsets: [number, number, number][]
 }
 
 export interface Placed { part: PartOut; copy: number; x: number; y: number; rot90: boolean }
-export interface Plate { items: Placed[]; used: V2 }
+/** `used`: the size the parts cover (no spacing counted); `edge`: how far they are from the nearest bed edge with the
+ * plate centred on the bed, which is how placedMesh puts them (below 0: they hang over it). */
+export interface Plate { items: Placed[]; used: V2; edge: number }
 
 function footprint(p: PartOut): { x0: number; y0: number; w: number; h: number } {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -42,8 +44,24 @@ function footprint(p: PartOut): { x0: number; y0: number; w: number; h: number }
   return { x0, y0, w: x1 - x0, h: y1 - y0 };
 }
 
-/** Room kept clear round the edge of the bed (mm): a part that only fits without it gets a plate to itself. */
+/**
+ * How far past a part's outline Kiri:Moto's rim reaches (mm), measured in its G-code (v4.7.0): the brim's seven 0.45 mm
+ * loops touching the part reach 3.15, the skirt's one loop 3 mm out reaches 3.45.
+ */
+export const BRIM_OUT = 3.15, SKIRT_OUT = 3.45;
+/** Kept between a brim or skirt and the bed's edge (mm). */
+export const EDGE_CLEAR = 0.5;
+/**
+ * Room kept clear round the edge of the bed (mm): the brim or skirt goes there (with EDGE_CLEAR to spare) and nothing is
+ * printed right at the edge. A part that only fits without it gets a plate to itself, centred on the bed.
+ */
 export const EDGE = 4;
+
+/** Does a packed plate fit the bed at all, either way round (a part bigger than the bed gets a "plate" of its own that doesn't)? */
+export function fitsBed(pl: { used: V2 }, bed: V2): boolean {
+  const [w, h] = pl.used, t = 0.05;
+  return (w <= bed[0] + t && h <= bed[1] + t) || (w <= bed[1] + t && h <= bed[0] + t);
+}
 
 /**
  * MaxRects bin packing (best short-side fit, 90 degree rotation allowed). Parts keep their print orientation.
@@ -93,17 +111,24 @@ export function packPlates(parts: PartOut[], bed: V2, spacing: number, copies = 
       if (!place(pl, it)) unplaceable.push(it);
     }
   }
-  const out = plates.map((pl) => {
+  const room = (used: V2) => Math.min(bed[0] - used[0], bed[1] - used[1]) / 2;
+  const out: Plate[] = plates.map((pl) => {
     let ux = 0, uy = 0;
     for (const it of pl.placed) {
       const f = footprint(it.part);
       ux = Math.max(ux, it.x + (it.rot90 ? f.h : f.w));
       uy = Math.max(uy, it.y + (it.rot90 ? f.w : f.h));
     }
-    return { items: pl.placed, used: [ux, uy] as V2 };
+    return { items: pl.placed, used: [ux, uy] as V2, edge: room([ux, uy]) };
   });
-  // parts bigger than the bed still get their own "plate" so nothing is lost
-  for (const it of unplaceable) out.push({ items: [{ part: it.part, copy: it.copy, x: 0, y: 0, rot90: false }], used: [it.w, it.h] });
+  // a part too big for the margin (or the bed) gets a plate of its own, the way round that fits the bed and centred on
+  // its own size, so it sits on the bed when it can; `edge` says how much room that leaves for a brim
+  for (const it of unplaceable) {
+    const f = footprint(it.part), way = (w: number, h: number) => w <= bed[0] + 0.05 && h <= bed[1] + 0.05;
+    const rot90 = !way(f.w, f.h) && way(f.h, f.w);
+    const used: V2 = rot90 ? [f.h, f.w] : [f.w, f.h];
+    out.push({ items: [{ part: it.part, copy: it.copy, x: 0, y: 0, rot90 }], used, edge: room(used) });
+  }
   return out;
 }
 
