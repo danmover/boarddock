@@ -1,5 +1,6 @@
 // KiCad .kicad_pcb importer (KiCad 5 to 9). Reads the Edge.Cuts outline, board thickness, footprints
 // (courtyard -> body size), pads with drills (mounting holes, through-hole leads) and 3D model names.
+import { CONN_REF } from '../model/library';
 import type { Board, Comp, Hole, Loop, Pin, V2 } from '../model/types';
 import { arc3, arcCenter, bezier, chainLoops, outlineFromLoops, rad, uid } from '../geom/poly';
 import { finishBoard } from './common';
@@ -171,7 +172,8 @@ export function importKicad(text: string, fileName = 'board.kicad_pcb'): Board {
     comps.push({
       id: uid('c'), ref: ref || '?', pkg: `${fpName.split(':').pop()} ${models}`.trim(), value,
       side: bottom ? 'bottom' : 'top', x: c[0], y: c[1], rot: frot, w, l, h: 0, kind: 'generic', tht,
-      ...(/header|conn|socket|idc|jst|molex|uart|serial|ftdi/i.test(fpName) && pins.length >= 2 && pins.length <= 40 ? { pins } : {}),
+      // a connector's pins (its name may say nothing: an Allegro board's footprints keep Allegro's names)
+      ...((/header|hdr|conn?\d|conn|socket|idc|jst|molex|uart|serial|ftdi|swd|jtag|debug/i.test(fpName) || CONN_REF.test(ref)) && pins.length >= 2 && pins.length <= 80 ? { pins } : {}),
     });
   }
 

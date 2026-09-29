@@ -153,9 +153,63 @@ export function debugType(pkg: string, ref = '', value = ''): 'swd10' | 'jtag20'
   return null;
 }
 
-/** Fill in kind / connector setup for a component from its names. Keeps sizes that are already known. */
+/** A reference that says connector: J1, P3, CN2, X4, CON1, JP2, HDR1. */
+export const CONN_REF = /^(J|P|CN|X|USB|CON|JP|HDR)\d/i;
+
+/**
+ * A header's pins as a grid, from where they are: one or two rows, all pitches the same (2.54, 2.0 or 1.27 mm), every
+ * place filled. Mounting and shield pads (not numbered) are left out. Null when the pins are not a header's.
+ */
+export function pinGrid(pins: Comp['pins']): { rows: number; cols: number; pitch: number } | null {
+  const ps = (pins ?? []).filter((q) => /^\d+$/.test(q.n));
+  if (ps.length < 2 || ps.length > 80) return null;
+  // along the rows: the pins' main axis (their spread's longest direction)
+  const mx = ps.reduce((t, p) => t + p.x, 0) / ps.length, my = ps.reduce((t, p) => t + p.y, 0) / ps.length;
+  let sxx = 0, syy = 0, sxy = 0;
+  for (const p of ps) { sxx += (p.x - mx) ** 2; syy += (p.y - my) ** 2; sxy += (p.x - mx) * (p.y - my); }
+  const t = 0.5 * Math.atan2(2 * sxy, sxx - syy), a = { x: mx, y: my };
+  const u = [Math.cos(t), Math.sin(t)], v = [-u[1], u[0]];
+  const cluster = (xs: number[], tol: number) => { const out: number[] = []; for (const x of [...xs].sort((m, n) => m - n)) if (!out.length || x - out[out.length - 1] > tol) out.push(x); return out; };
+  let near = Infinity;
+  for (const p of ps) for (const q of ps) if (p !== q) near = Math.min(near, Math.hypot(p.x - q.x, p.y - q.y));
+  const pitch = [2.54, 2.0, 1.27].find((t) => Math.abs(near - t) < 0.08);
+  if (!pitch) return null;
+  const along = cluster(ps.map((p) => (p.x - a.x) * u[0] + (p.y - a.y) * u[1]), pitch / 3);
+  const across = cluster(ps.map((p) => (p.x - a.x) * v[0] + (p.y - a.y) * v[1]), pitch / 3);
+  if (across.length > 2 || along.length * across.length !== ps.length) return null;
+  const even = (xs: number[]) => xs.every((x, i) => i === 0 || Math.abs(x - xs[i - 1] - pitch) < 0.1);
+  return even(along) && even(across) ? { rows: across.length, cols: along.length, pitch } : null;
+}
+
+/** Nets that say debug (SWD or JTAG) or serial, on a header's pins. */
+const DEBUG_NETS = /(^|[^a-z])(swdio|swclk|swdclk|swo|tms|tck|tdi|tdo|n?trst)([^a-z]|$)/i;
+const UART_NETS = /(^|[^a-z])(u?art\d?_?)?(txd?|rxd?)\d?([^a-z]|$)/i;
+
+/**
+ * A connector known by its pins when its name says nothing BoardDock knows (an Allegro footprint's "CON10" or
+ * "HDR2X5"): a 2 x 5 header at 1.27 mm is the 10-pin debug connector, a 2 x 10 at 2.54 mm with JTAG nets the 20-pin
+ * one, and any other one or two-row header a pin header, marked for debug or serial when its nets say so.
+ */
+function byPins(c: Comp, g: PkgGuess): { conn: ConnType; kind: CompKind; role?: string; w: number; l: number } | null {
+  if (!c.pins || (g.conn && g.conn.id !== 'custom' && g.conn.id !== 'header')) return null;
+  if (!g.conn && !CONN_REF.test(c.ref)) return null;
+  const grid = pinGrid(c.pins);
+  if (!grid) return null;
+  const n = grid.rows * grid.cols, nets = c.pins.map((q) => q.net ?? '').join(' ');
+  const dbg = DEBUG_NETS.test(nets), uart = !dbg && UART_NETS.test(nets) && n <= 8;
+  if (grid.rows === 2 && n === 10 && grid.pitch === 1.27) return { conn: connById('swd10'), kind: 'connector', w: 12.7, l: 5.8 };
+  if (dbg && grid.rows === 2 && n === 20 && grid.pitch === 2.54) return { conn: connById('jtag20'), kind: 'connector', w: 33.2, l: 8.9 };
+  return { conn: connById('header'), kind: 'header', ...(dbg ? { role: 'debug' } : uart ? { role: 'uart' } : {}), w: grid.pitch * grid.cols, l: grid.pitch * grid.rows };
+}
+
+/** Fill in kind / connector setup for a component from its names, or its pins where the names say nothing known. Keeps sizes that are already known. */
 export function classify(c: Comp, sizeKnown: boolean, boardEdgeAngle?: number): Comp {
-  const g = guessPackage(c.pkg, c.ref, c.value);
+  let g = guessPackage(c.pkg, c.ref, c.value);
+  const pinned = byPins(c, g);
+  if (pinned) {
+    g = { ...g, w: pinned.w, l: pinned.l, h: pinned.conn.id === 'header' ? 8.5 : pinned.conn.body.h, kind: pinned.kind, tht: true, conn: pinned.conn };
+    if (pinned.role && !c.role) c = { ...c, role: pinned.role };
+  }
   const out: Comp = { ...c, kind: g.kind ?? c.kind ?? 'generic', tht: c.tht || !!g.tht };
   if (!sizeKnown) {
     out.w = g.w || 1;

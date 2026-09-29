@@ -64,7 +64,9 @@ describe('board-viewer files', () => {
     expect(j1.y).toBeCloseTo(500 * 0.0254, 3);
     expect(j1.w).toBeCloseTo(300 * 0.0254 + 0.8, 3); // the spread of its pins and a pad around them
     expect(j1.tht).toBe(true);
-    expect(j1.kind).toBe('connector');
+    expect(j1.kind).toBe('header'); // its pins are a 1 x 4 header at 2.54 mm, and its TX and RX nets make it a UART header
+    expect(j1.conn?.type).toBe('header');
+    expect(j1.role).toBe('uart');
     expect(j1.pins?.map((p) => p.net)).toEqual(['GND', 'TX', 'RX', 'VCC']);
     expect(b.comps.find((c) => c.ref === 'USB1')?.side).toBe('bottom');
     expect(b.comps.find((c) => c.ref === 'R1')?.tht).toBe(false);
