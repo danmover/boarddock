@@ -329,6 +329,7 @@ canvas.heat { width: 100%; max-height: 420px; object-fit: contain; border-radius
 
 /* ------------------------------------------------------------------ 2D editors */
 .editor svg { width: 100%; height: 100%; display: block; user-select: none; touch-action: none; }
+.editor .btn svg { width: 15px; height: 15px; display: inline-block; flex: none; } /* (a button's icon in a panel over the drawing keeps its size) */
 .editor .silk { fill: var(--silk); font-family: var(--mono); font-weight: 600; letter-spacing: 0.3px; }
 .editor .silk.dark { fill: #0b1015; }
 .editor .toolbar { position: absolute; top: 12px; right: 12px; padding: 3px; display: flex; gap: 1px; align-items: center; z-index: 5; flex-wrap: wrap; max-width: 70%; }
