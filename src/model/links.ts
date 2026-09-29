@@ -2,7 +2,7 @@
 // (a Pi's USB-A ports are hosts, its USB-C is its power input, a hub's ports feed devices, a charger's ports give
 // power), and Auto-connect pairs them up. The panel then routes each cable and sizes it.
 import type { Board, Comp, Link, Module, PlugRef, Project } from './types';
-import { hostTotal, isPlugPack, minOf, needOf, portCap, poweredHub, supplyOf, type Need } from './powerdata';
+import { dcRange, hostTotal, isPlugPack, minOf, needOf, portCap, poweredHub, supplyOf, type Need } from './powerdata';
 import { assign } from './assign';
 
 export type PlugRole = 'host' | 'device' | 'power-in' | 'power-in-dc' | 'power-out' | 'dc-out' | 'hub-up' | 'hub-down' | 'net' | 'video' | 'audio' | 'wire' | 'debug' | 'uart' | 'mains-in' | 'mains-out' | 'other';
@@ -24,6 +24,10 @@ export const DEBUG_TYPES = new Set(['swd10', 'cortex20', 'jtag20', 'tagconnect']
 export const DEBUG_HINT = /swd|jtag|cortex[\s_-]?debug|j[\s_-]?link|debug|\bdbg|conn_arm|st[\s_-]?link|tag[\s_-]?connect/i;
 /** A name that says serial: UART, a serial console, TX/RX, an FTDI header. */
 export const UART_HINT = /uart|serial|console|ftdi|\btxd?\b.*\brxd?\b|\brxd?\b.*\btxd?\b|\bttl\b/i;
+/** A socket (female) header by its name: KiCad's PinSocket, "female", Samtec's and Sullins' socket series, Würth's. */
+export const SOCKET_NAME = /socket|female|receptacle|\b(PPTC|PPPC|NPTC|NPPC|LPPB|SSW|SSQ|SSM|SLW|BCS|ESW|ESQ|CES|SFM|FLE|CLP)[-\d]|\b6130\d\d[12]1821\b/i;
+/** A female header (a pin socket, like the Mega's J_IO): a jumper wire into it needs a male end. */
+export const isSocket = (c: Comp) => SOCKET_NAME.test(`${c.pkg} ${c.ref} ${c.value ?? ''}`);
 const pinsOrJst = (t: string) => ['header', 'jst_ph', 'jst_xh', 'jst_gh', 'jst_zh', 'picoblade', 'kk254', 'wtb_side', 'qwiic'].includes(t);
 const names = (c: Comp) => `${c.ref} ${c.pkg} ${c.value ?? ''}`;
 /** A debug port: a debug connector, a box port made for one, or a pin header named for debugging (a 1 x 4 SWD header). */
@@ -121,6 +125,19 @@ export interface PlugInfo { ref: PlugRef; module: Module; comp: Comp; role: Plug
 
 /** A barrel jack on a board that also takes power over USB (an Arduino): a DC input it doesn't need. */
 export const optionalDc = (x: { role: PlugRole; comp: Comp; module: Module }) => x.role === 'other' && x.comp.conn?.type === 'barrel' && x.module.board.kind !== 'box';
+/** What a supply's DC lead puts out, in volts, when its box says. */
+export const voltsOf = (x: PlugInfo): number | undefined => x.module.board.box?.groups.find((g) => g.refs?.includes(baseRef(x.ref.ref)))?.volts;
+/** A board's DC jack with a known input range (an Arduino's barrel: optional beside USB power, but it takes 7 to 12 V). */
+export const isRangedJack = (x: PlugInfo) => optionalDc(x) && !!dcRange(x.module.board);
+/** A supply's DC lead against a board's ranged jack, whichever way round they are: null for any other pair. */
+function dcJackPair(a: PlugInfo, b: PlugInfo): { src: PlugInfo; jack: PlugInfo } | null {
+  return a.role === 'dc-out' && isRangedJack(b) ? { src: a, jack: b } : b.role === 'dc-out' && isRangedJack(a) ? { src: b, jack: a } : null;
+}
+/** Does this supply's voltage fit the jack's range? Null when either is not known. */
+export function fitsJack(src: PlugInfo, jack: PlugInfo): boolean | null {
+  const v = voltsOf(src), r = dcRange(jack.module.board);
+  return v == null || !r ? null : v >= r.min - 1e-6 && v <= r.max + 1e-6;
+}
 
 function modulePlugs(m: Module, out: PlugInfo[] = []): PlugInfo[] {
   for (const c of m.board.comps) {
@@ -197,6 +214,12 @@ function hostOfHub(p: Project, hub: Module, extra: Link[] = []): string | undefi
 export function refusal(p: Project, a: PlugInfo, b: PlugInfo): string | null {
   if (a.module === b.module || a.module.id === b.module.id) return 'Pick a plug on another board.';
   const has = (r: PlugRole) => a.role === r || b.role === r;
+  // a supply's lead into an Arduino's DC jack: only within the range its maker gives
+  const dj = dcJackPair(a, b);
+  if (dj && fitsJack(dj.src, dj.jack) === false) {
+    const r = dcRange(dj.jack.module.board)!, v = voltsOf(dj.src)!;
+    return `The ${shortName(dj.src.module.board.name)} puts out ${v} V, and the ${shortName(dj.jack.module.board.name)}'s DC jack takes ${r.min} to ${r.max} V (${r.usual} V is the usual pack): a ${v > r.max ? 'higher' : 'lower'} voltage would damage it or leave it off.`;
+  }
   if (has('mains-in') && has('mains-out') && hasOutlets(a.module) && hasOutlets(b.module)) return "A powerboard's lead goes to the wall, never into another powerboard: plug each one into the wall.";
   if (has('mains-out') && has('wire')) return "A mains outlet only takes a mains plug. BoardDock doesn't wire mains through screw terminals or relays: that belongs in a proper enclosure, wired by someone qualified to.";
   if ((has('mains-out') || has('mains-in')) && !compatible(a.role, b.role)) return has('mains-out') ? "A mains outlet only takes a mains plug: a charger's lead or a plug pack." : "A mains lead goes into a powerboard's outlet (or the wall), nothing else.";
@@ -219,6 +242,8 @@ export function refusal(p: Project, a: PlugInfo, b: PlugInfo): string | null {
 export const canCable = (p: Project, a: PlugInfo, b: PlugInfo) => refusal(p, a, b) == null;
 /** Something to check yourself after connecting these two, or null. */
 export function connectNote(a: PlugInfo, b: PlugInfo): string | null {
+  const dj = dcJackPair(a, b);
+  if (dj) { const r = dcRange(dj.jack.module.board)!; return `The ${shortName(dj.jack.module.board.name)}'s DC jack takes ${r.min} to ${r.max} V (${r.usual} V is the usual pack). BoardDock can't check voltages or polarity beyond that: make sure the pack's label matches (centre pin positive on most) before you plug it in.`; }
   if ((a.role === 'dc-out' && (b.role === 'power-in-dc' || optionalDc(b))) || (b.role === 'dc-out' && (a.role === 'power-in-dc' || optionalDc(a)))) return "BoardDock can't check voltages or polarity: make sure the supply's label matches what the DC input takes before you plug it in.";
   return null;
 }
@@ -462,9 +487,16 @@ export function autoLinks(p: Project, at?: PlugAt): Link[] {
 
   // 5. a DC supply's lead to a DC input, only where both say the same voltage (BoardDock can't check the rest: those
   // you connect yourself, once you have checked the labels)
-  const volts = (x: PlugInfo) => x.module.board.box?.groups.find((g) => g.refs?.includes(baseRef(x.ref.ref)))?.volts;
+  const volts = voltsOf;
   for (const [s, d] of pairUp(free('dc-out'), free('power-in-dc'), (a, b) => (volts(a) != null && volts(a) === volts(b) ? reach(a, b) : null)))
     take(s, d, `The ${nm(s)}'s ${volts(s)} V lead to the ${nm(d)}'s ${volts(d)} V input (${cm(s, d)}).`);
+  // ...then a board with a DC jack and a known input range (an Arduino: 7 to 12 V), from a pack that is left and whose voltage is
+  // inside it, the one nearest the usual pick first; never a pack that came with a box of its own
+  const jacks = plugs.filter((x) => isRangedJack(x) && !taken.has(keyOf(x)));
+  for (const [s, d] of pairUp(free('dc-out').filter((x) => !x.module.board.box?.pack?.own), jacks, (a, b) => (fitsJack(a, b) ? reach(a, b) + Math.abs(volts(a)! - dcRange(b.module.board)!.usual) * 25 : null))) {
+    const r = dcRange(d.module.board)!;
+    take(s, d, `The ${nm(s)}'s ${volts(s)} V lead to the ${nm(d)}'s DC jack, which takes ${r.min} to ${r.max} V (${cm(s, d)}).`);
+  }
 
   // 6. mains: each charger's (or hub's) lead, and each plug pack, into the nearest free outlet of a powerboard; never
   // a powerboard's own lead into another powerboard (daisy-chained powerboards overload the first)
@@ -564,6 +596,25 @@ export function powerShort(p: Project): { unserved: { plug: PlugInfo; need: Need
   return { unserved, add: big === unserved.length ? { id: 'psu_pi5', count: big } : { id: 'usb_charger6', count: Math.ceil(unserved.length / 6) } };
 }
 
+/**
+ * The hubs that give `k` plugs a port: one 4-port hub for up to 4, else 7-port ones, as many as it takes. (Each hub's own
+ * uplink goes to a free port of the rack or, with none, to your computer: `addLinks` says which.)
+ */
+export function hubOffer(k: number): { id: 'usb_hub' | 'usb_hub7'; count: number; ports: number } {
+  return k <= 4 ? { id: 'usb_hub', count: 1, ports: 4 } : { id: 'usb_hub7', count: Math.ceil(k / 7), ports: 7 };
+}
+
+/**
+ * Which of these new cables leave the rack for your computer, in words for the toast ("2 of them go to your computer:
+ * Uno R3, Powered USB hub"), else '': so nothing is sent off the rack without being said.
+ */
+export function toComputer(p: Project, add: Link[]): string {
+  const to = add.filter((l) => l.a.module === PC || l.b.module === PC).map((l) => p.modules.find((m) => m.id === (l.a.module === PC ? l.b.module : l.a.module))).filter(Boolean) as Module[];
+  if (!to.length) return '';
+  const names = to.map((m) => shortName(m.board.name)), list = names.length > 3 ? `${names.slice(0, 3).join(', ')} and ${names.length - 3} more` : names.join(', ');
+  return `${to.length === 1 ? 'One goes' : `${to.length} of them go`} to your computer, off the rack (a 2 m cable each): ${list}.`;
+}
+
 /** What the rack still needs, with the accessory (a library template id) that would give it. */
 export function wiringAdvice(p: Project): { text: string; add?: string; count?: number }[] {
   const b = portBudget(p), out: { text: string; add?: string; count?: number }[] = [];
@@ -573,29 +624,42 @@ export function wiringAdvice(p: Project): { text: string; add?: string; count?: 
   const best = Math.max(0, ...b.powerOuts.map(capOf));
   if (ps.add) {
     const n = ps.unserved.length, weak = ps.unserved.filter((w) => w.weak).length;
-    const who = [...new Set(ps.unserved.map((w) => shortName(w.plug.module.board.name)))].join(', '), needs = Math.min(...ps.unserved.map((w) => minOf(w.need)));
+    const who = [...new Set(ps.unserved.map((w) => kindName(shortName(w.plug.module.board.name))))].join(', '), needs = Math.min(...ps.unserved.map((w) => minOf(w.need)));
     out.push({ text: `${n} board${n > 1 ? 's need' : ' needs'} power (${who}${weak ? `, ${weak} on a port too weak for ${weak > 1 ? 'them' : 'it'}` : ''}) and no free port gives enough: ${b.powerOuts.length ? `the free ones give ${best} A at most, ${n > 1 ? 'they need' : 'it needs'} ${needs} A or more` : 'every charger port is taken'}.`, add: ps.add.id, count: ps.add.count });
   }
-  // a charger or supply that powers nothing: say why, so it isn't left there without a word
+  // a charger or supply that powers nothing: say why, so it isn't left there without a word (two of a kind, once)
   const idle = [...new Set(b.powerOuts.map((x) => x.module))].filter((m) => !(p.links ?? []).some((l) => l.kind === 'power' && (l.a.module === m.id || l.b.module === m.id)));
-  for (const m of idle) {
-    const cap = Math.max(...b.powerOuts.filter((x) => x.module === m).map(capOf));
-    out.push({ text: `The ${shortName(m.board.name)} powers nothing: ${ps.unserved.length ? `its ports give ${cap} A, less than the boards without power need` : 'every board has its power. Keep it for boards to come, or take it off the rack'}.` });
+  const idleCap = (m: Module) => Math.max(...b.powerOuts.filter((x) => x.module === m).map(capOf));
+  for (const g of groupBy(idle, (m) => `${kindName(m.board.name)}|${idleCap(m)}`)) {
+    const k = g.length, cap = idleCap(g[0]);
+    out.push({ text: `The ${times(shortName(k > 1 ? kindName(g[0].board.name) : g[0].board.name), k)} ${k > 1 ? 'power' : 'powers'} nothing: ${ps.unserved.length ? `${k > 1 ? 'their' : 'its'} ports give ${cap} A, less than the boards without power need` : 'every board has its power. Keep it for boards to come, or take it off the rack'}.` });
   }
   // a Pi 5 on a 3 A port runs, with its USB held back: its own 27 W supply gives it all
   const limited = b.limited.filter((f) => !ps.unserved.some((w) => w.plug === f.take));
-  if (limited.length) out.push({ text: `${limited.map((f) => shortName(f.take.module.board.name)).join(', ')} ${limited.length > 1 ? 'run' : 'runs'} on ${limited.length > 1 ? '3 A ports' : `a ${limited[0].cap} A port`}, with ${limited.length > 1 ? 'their' : 'its'} USB ports held to 0.6 A between them: a 27 W (5 A) USB-C supply gives the full 1.6 A.`, add: 'psu_pi5', count: limited.length });
-  if (b.devices.length > b.usbPorts.length) { const k = b.devices.length - b.usbPorts.length; out.push({ text: `${k} USB plug${k > 1 ? 's have' : ' has'} no free port on the rack: Auto-connect plugs ${k > 1 ? 'them' : 'it'} into your computer, or add a hub.`, add: 'usb_hub7', count: Math.ceil(k / 7) }); }
+  if (limited.length) out.push({ text: `${groupBy(limited, (f) => kindName(f.take.module.board.name)).map((g) => times(shortName(g.length > 1 ? kindName(g[0].take.module.board.name) : g[0].take.module.board.name), g.length)).join(', ')} ${limited.length > 1 ? 'run' : 'runs'} on ${limited.length > 1 ? '3 A ports' : `a ${limited[0].cap} A port`}, with ${limited.length > 1 ? 'their' : 'its'} USB ports held to 0.6 A between them: a 27 W (5 A) USB-C supply gives the full 1.6 A.`, add: 'psu_pi5', count: limited.length });
+  if (b.devices.length > b.usbPorts.length) { const k = b.devices.length - b.usbPorts.length; const h = hubOffer(k); out.push({ text: `${k} USB plug${k > 1 ? 's have' : ' has'} no free port on the rack: Auto-connect plugs ${k > 1 ? 'them' : 'it'} into your computer, or add ${h.count > 1 ? `${h.count} hubs` : 'a hub'} (${h.count * h.ports} ports, ${h.count > 1 ? 'each uplink' : 'its uplink'} to a free port or your computer).`, add: h.id, count: h.count }); }
   const net = plugsOf(p).filter((x) => x.role === 'net' && !isAccessory(x.module.board) && !linkOf(p, x.ref));
   if (net.length >= 2 && !p.modules.some((m) => isSwitch(m.board))) out.push({ text: `${net.length} boards have Ethernet and there is no switch in the rack.`, add: 'net_switch8', count: 1 });
-  for (const u of b.unwired) out.push({ text: `${u.name}: its ${u.refs.join(', ')} ${u.refs.length > 1 ? 'are' : 'is'} for wires you connect yourself (click a pin, then the pin it goes to).` });
-  // a switch or powered hub with nothing on its DC input: the supply it came with goes on the rack (add: own:<box>)
-  for (const m of p.modules) {
-    if (m.board.kind !== 'box' || isPlugPack(m.board)) continue;
+  for (const u of b.unwired) out.push({ text: `${times(u.name, u.count)}: ${u.count > 1 ? `the ${u.refs.join(', ')} on each` : `its ${u.refs.join(', ')}`} ${u.refs.length > 1 ? 'are' : 'is'} for wires you connect yourself (click a pin, then the pin it goes to).` });
+  // an Arduino's DC jack (7 to 12 V) left with only packs that don't fit it: say so, and offer the one that does
+  const spare = plugsOf(p).filter((x) => x.role === 'dc-out' && !linkOf(p, x.ref) && !x.module.board.box?.pack?.own);
+  if (spare.length) {
+    const wrong = plugsOf(p).filter((x) => isRangedJack(x) && !linkOf(p, x.ref) && !spare.some((s) => fitsJack(s, x))), r = wrong.length ? dcRange(wrong[0].module.board)! : null;
+    if (wrong.length && r) {
+      const volts = [...new Set(spare.map((s) => voltsOf(s)).filter((v) => v != null))].sort((x, y) => x! - y!);
+      out.push({ text: `${[...new Set(wrong.map((x) => shortName(kindName(x.module.board.name))))].join(', ')}: the DC jack takes ${r.min} to ${r.max} V, and ${volts.length ? `the plug pack${spare.length > 1 ? 's' : ''} here ${spare.length > 1 ? 'give' : 'gives'} ${volts.join(' and ')} V` : "the plug pack here doesn't say its voltage"}. A ${r.usual} V pack is the usual pick.`, add: `dcpack:${r.usual}`, count: 1 });
+    }
+  }
+  // a switch or powered hub with nothing on its DC input: the supply it came with goes on the rack (add: own:<box>, or
+  // several ids for boxes of one kind)
+  const bare = p.modules.filter((m) => {
+    if (m.board.kind !== 'box' || isPlugPack(m.board)) return false;
     const dc = plugsOf(p).filter((x) => x.module === m && x.role === 'power-in-dc');
-    if (!dc.length || dc.some((x) => linkOf(p, x.ref))) continue;
-    const nm = shortName(m.board.name);
-    out.push({ text: `${nm}: nothing on its DC input. Add the supply it came with: it goes in a free outlet, its lead to the ${nm}.`, add: `own:${m.id}` });
+    return dc.length > 0 && !dc.some((x) => linkOf(p, x.ref));
+  });
+  for (const g of groupBy(bare, (m) => kindName(m.board.name))) {
+    const k = g.length, nm = shortName(k > 1 ? kindName(g[0].board.name) : g[0].board.name);
+    out.push({ text: `${times(nm, k)}: nothing on ${k > 1 ? 'their DC inputs' : 'its DC input'}. Add the ${k > 1 ? 'supplies they' : 'supply it'} came with: ${k > 1 ? 'they go' : 'it goes'} in a free outlet, ${k > 1 ? 'each lead' : 'its lead'} to the ${nm}.`, add: `own:${g.map((m) => m.id).join(',')}` });
   }
   return out;
 }
@@ -623,7 +687,7 @@ export function portBudget(p: Project) {
   const weak = feeds.filter((f) => f.weak), limited = feeds.filter((f) => !f.weak && f.cap + 1e-6 < f.need.peak);
   // boards with wire terminals or jumper headers and not one of them connected (a relay board, a power distribution
   // board): Auto-connect does not guess wiring, so say which are left
-  const unwired = p.modules.flatMap((m) => {
+  const unwired0 = p.modules.flatMap((m) => {
     const mine = plugs.filter((x) => x.module === m);
     // (a box's DC input is for its own supply, not wires: wiringAdvice says to add it)
     const wired = (x: PlugInfo) => x.role === 'wire' || (x.role === 'power-in-dc' && m.board.kind !== 'box');
@@ -633,6 +697,8 @@ export function portBudget(p: Project) {
     const refs = w.map((x) => x.comp.ref);
     return [{ name: m.board.name, refs: refs.length > 4 ? [...refs.slice(0, 3), `${refs.length - 3} more`] : refs }];
   });
+  // two boards of one kind ("Raspberry Pi 4B" and "Raspberry Pi 4B #2", the same pins) are one entry: count 2
+  const unwired = groupBy(unwired0, (u) => `${kindName(u.name)}|${u.refs.join(',')}`).map((g) => ({ name: g.length > 1 ? kindName(g[0].name) : g[0].name, refs: g[0].refs, count: g.length }));
   return { devices, usbPorts, powerIns, powerOuts, weak, limited, unwired, short: Math.max(0, devices.length + Math.max(0, powerIns.length - powerOuts.length) - usbPorts.length) };
 }
 
@@ -667,6 +733,17 @@ export function cableNumbers(links: Link[] = []): Map<string, number> {
 }
 /** The links with their numbers written in (so a printed tag keeps matching its cable after others change). */
 export const numberLinks = (links: Link[] = []): Link[] => { const no = cableNumbers(links); return links.map((l) => (l.no ? l : { ...l, no: no.get(l.id)! })); };
+
+/** A board's name without the "#2" that tells two of a kind apart ("Raspberry Pi 4B #2" -> "Raspberry Pi 4B"). */
+export const kindName = (n: string) => n.replace(/ #\d+$/, '');
+/** A name for `k` boards of one kind: "Raspberry Pi 4B ×2". */
+export const times = (n: string, k: number) => (k > 1 ? `${n} ×${k}` : n);
+/** The items in groups by `key`, each group in the order it first came up. */
+function groupBy<T>(xs: T[], key: (x: T) => string): T[][] {
+  const g = new Map<string, T[]>();
+  for (const x of xs) g.set(key(x), [...(g.get(key(x)) ?? []), x]);
+  return [...g.values()];
+}
 
 /** A board's name without its maker: "Raspberry Pi 4B" -> "Pi 4B", "Arduino Uno R3" -> "Uno R3". */
 export const shortName = (n: string) => n.replace(/^(Raspberry|Arduino|Adafruit|SparkFun|Espressif|Seeed(?: Studio)?)\s+/i, '');
