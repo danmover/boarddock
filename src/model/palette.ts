@@ -4,7 +4,7 @@
 // Each item also makes a small demo board with just itself on it: that is what its picture shows.
 import type { Board, Comp, Hole, V2 } from './types';
 import { CONNECTORS, connById, connSetup } from './library';
-import { deg, extentAlong, nearestEdge, roundedRectLoop, uid } from '../geom/poly';
+import { deg, extentAlong, nearestEdge, rad, roundedRectLoop, uid } from '../geom/poly';
 
 export type PaletteGroup = 'USB and power' | 'Video, network and audio' | 'Headers and wires' | 'Debug and serial' | 'Holes' | 'Parts that stand tall' | 'Other';
 export interface PaletteItem {
@@ -110,6 +110,8 @@ export function paletteFor(c: Comp): PaletteItem | undefined {
   if (t === 'jst_ph' || t === 'jst_xh') return PALETTE.find((x) => x.id === `jst_${t.slice(4)}${Math.max(2, Math.min(4, Math.round((Math.max(c.w, c.l) - 3.9) / (t === 'jst_ph' ? 2 : 2.5)) + 1))}`) ?? PALETTE.find((x) => x.id === `jst_${t.slice(4)}3`);
   if (t === 'header' || c.kind === 'header') {
     const m = /(\d+)x(\d+)/.exec(c.pkg), rows = m ? Math.min(+m[1], +m[2]) : 1, n = m ? Math.max(+m[1], +m[2]) : Math.round(Math.max(c.w, c.l) / 2.54);
+    // a UART header as the toolbox makes one (FTDI's six pins, or four)
+    if (c.role === 'uart' && rows === 1 && (n === 6 || n === 4)) return PALETTE.find((x) => x.id === `uart${n}`);
     return PALETTE.find((x) => x.id === `hdr_${rows}x${n}`) ?? PALETTE.find((x) => x.id === (rows > 1 ? 'hdr_2x10' : 'hdr_1x6'));
   }
   if (/elec|\bCP_/i.test(c.pkg)) return PALETTE.find((x) => x.id === (c.w > 9 ? 'cap10' : c.w > 7 ? 'cap8' : 'cap6'));
@@ -119,21 +121,55 @@ export function paletteFor(c: Comp): PaletteItem | undefined {
   if (c.kind === 'module') return PALETTE.find((x) => x.id === 'esp32');
   if (c.kind === 'led') return PALETTE.find((x) => x.id === 'led5');
   if (c.kind === 'antenna') return PALETTE.find((x) => x.id === 'antenna');
+  // (by the names the 3D model goes by: boardviz.ts partDetail)
+  if (/trimmer|pot\b|potentiometer/i.test(c.pkg)) return PALETTE.find((x) => x.id === 'pot');
+  if (/buzzer|beeper/i.test(c.pkg)) return PALETTE.find((x) => x.id === 'buzzer');
+  if (/coin|cr2032|battery/i.test(c.pkg)) return PALETTE.find((x) => x.id === 'coin');
+  if (/keep-?out/i.test(c.pkg)) return PALETTE.find((x) => x.id === 'keepout');
   return undefined;
 }
 
-/** A small board with just this item on it, the way its picture shows it: a plug on the front edge, facing out. */
+/**
+ * A small board with just this item on it, made by the item itself exactly as it goes on a board (a plug on the
+ * front edge, facing out; anything else upright, the way it lands): its picture is this board's 3D model.
+ */
 export function demoBoard(it: PaletteItem): Board {
   const probe = it.make({ name: '', outline: roundedRectLoop(40, 30, 1, 4).map(([x, y]) => [x + 20, y + 15] as V2), cutouts: [], thickness: 1.6, holes: [], comps: [], source: '', notes: [] }, [20, 0]);
   const c = probe.comp;
-  const W = Math.max(22, (c ? Math.max(c.w, c.l) : 8) + 10), H = Math.max(16, (c ? Math.min(c.w, c.l) : 8) + (it.edge ? 12 : 10));
+  // (a plug lies along the front edge, its width across; a part stands as it is made, w across and l up)
+  const cw = c ? (it.edge ? Math.max(c.w, c.l) : c.w) : 8, cl = c ? (it.edge ? Math.min(c.w, c.l) : c.l) : 8;
+  const W = Math.max(22, cw + 10), H = Math.max(16, cl + (it.edge ? 12 : 10));
   const b: Board = { name: '', outline: roundedRectLoop(W, H, 1.2, 4).map(([x, y]) => [x + W / 2, y + H / 2] as V2), cutouts: [], thickness: 1.6, holes: [], comps: [], source: 'toolbox', notes: [] };
   const made = it.make(b, it.edge ? [W / 2, 0] : [W / 2, H / 2]);
-  if (made.comp) {
-    // a long part lies across the picture
-    if (!it.edge && made.comp.l > made.comp.w * 1.3) { [made.comp.w, made.comp.l] = [made.comp.l, made.comp.w]; }
-    b.comps.push(made.comp);
-  }
+  if (made.comp) b.comps.push(made.comp);
   if (made.hole) b.holes.push(made.hole);
   return b;
+}
+
+/** Whether a board's part is just what this toolbox entry puts down (the same size, pins and look): then its picture is this entry's. */
+export function samePart(c: Comp, it: PaletteItem): boolean {
+  const d = demoBoard(it).comps[0];
+  if (!d || (c.conn?.type ?? '') !== (d.conn?.type ?? '') || c.kind !== d.kind || !!c.conn?.roll) return false;
+  const near = (a: number, b: number) => Math.abs(a - b) < 0.15, look = (x: Comp) => /socket|female/i.test(`${x.pkg} ${x.value ?? ''}`);
+  const pins = (x: Comp) => x.pins?.length ?? (/(\d+)x(\d+)/.exec(x.pkg)?.slice(1).reduce((a, n) => a * +n, 1) ?? 0);
+  return near(c.h, d.h) && (near(c.w, d.w) && near(c.l, d.l) || c.conn?.entry !== 'edge' && near(c.w, d.l) && near(c.l, d.w)) && look(c) === look(d) && pins(c) === pins(d);
+}
+
+/**
+ * A small board with just this part on it as it is (its own size, pins and plug), laid out the way the toolbox shows
+ * its parts: a plug on the front edge facing out, anything else with its long side across. Its picture is this
+ * part's own 3D model, for the board's list of parts when no toolbox entry is quite it.
+ */
+export function partBoard(c0: Comp): Board {
+  const edge = c0.conn?.entry === 'edge', a0 = rad(c0.rot);
+  const across = Math.abs(Math.cos(a0)) * c0.w + Math.abs(Math.sin(a0)) * c0.l, up = Math.abs(Math.sin(a0)) * c0.w + Math.abs(Math.cos(a0)) * c0.l;
+  const turn = edge ? -90 - c0.conn!.angle : up > across * 1.3 ? 90 : 0;
+  const c: Comp = { ...c0, id: 'pic', ref: '', side: 'top', hidden: false, rot: c0.rot + turn, ...(c0.conn ? { conn: { ...c0.conn, angle: edge ? -90 : c0.conn.angle + turn } } : {}) };
+  const ext = (ang: number) => extentAlong(c, ang);
+  const W = Math.max(22, ext(0) + ext(180) + 10), H = Math.max(16, ext(90) + ext(-90) + (edge ? 12 : 10));
+  // (a plug's mouth out past the front edge by its usual overhang, as the toolbox puts one on)
+  c.x = W / 2; c.y = edge ? ext(-90) - connById(c.conn!.type).overhang : H / 2;
+  const ct = Math.cos(rad(turn)), st = Math.sin(rad(turn));
+  if (c0.pins) c.pins = c0.pins.map((q) => { const dx = q.x - c0.x, dy = q.y - c0.y; return { ...q, x: c.x + dx * ct - dy * st, y: c.y + dx * st + dy * ct }; });
+  return { name: '', outline: roundedRectLoop(W, H, 1.2, 4).map(([x, y]) => [x + W / 2, y + H / 2] as V2), cutouts: [], thickness: 1.6, holes: [], comps: [c], source: 'toolbox', notes: [] };
 }

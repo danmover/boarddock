@@ -17,7 +17,12 @@ class Bin {
   meshes = new Map<Mat, MeshData[]>();
   solids = new Map<Mat, MF[]>();
   lights: Light[] = []; // what glows (on the 'led' ghost, for the 3D view)
-  add(mat: Mat, m: MF) { (this.solids.get(mat) ?? this.solids.set(mat, []).get(mat)!).push(m); }
+  add(mat: Mat, m: MF) {
+    // a solid that failed (a box turned inside out on a part too low for it) is left out: composed with the rest of
+    // its material it emptied them all (one Tag-Connect footprint took every black jack, JST and buzzer off its board)
+    if (m.status() !== 'NoError') return;
+    (this.solids.get(mat) ?? this.solids.set(mat, []).get(mat)!).push(m);
+  }
   box(mat: Mat, T: number[], x0: number, y0: number, z0: number, x1: number, y1: number, z1: number) {
     (this.meshes.get(mat) ?? this.meshes.set(mat, []).get(mat)!).push(boxMesh(T, x0, y0, z0, x1, y1, z1));
   }
@@ -139,6 +144,35 @@ function partDetail(bin: Bin, c: Comp, zt: number, zb: number) {
     void ac;
     return;
   }
+  if (type === 'tagconnect') {
+    // no connector, just pads: two rows on 1.27 mm (five each for a TC2050, three for a TC2030) that the cable's
+    // spring pins land on
+    const n = /2030/.test(name) ? 3 : 5;
+    for (let i = 0; i < n; i++) for (const j of [-0.5, 0.5]) {
+      const u = (i - (n - 1) / 2) * 1.27, v = j * 1.27, [px, py] = w >= l ? [u, v] : [v, u];
+      bin.add('gold', tf(cyl(px, py, -0.01, 0.035, 0.39, 0.39, 16), T));
+    }
+    return;
+  }
+  if (type === 'jst_ph' || type === 'jst_xh') {
+    // a top-entry JST: a housing open at the top round its row of pins (the plug goes in from above, as the toolbox
+    // says), a slot in one long wall for the plug's latch; the pins where the board editor draws them
+    const long = w >= l, wall = type === 'jst_ph' ? 0.5 : 0.7, floor = Math.min(1, h * 0.3);
+    const pm = /_P(\d+(?:\.\d+)?)mm/i.exec(c.pkg), pitch = pm ? +pm[1] : type === 'jst_ph' ? 2 : 2.5, n = headerPins(c).length;
+    let shell = box(-hx, -hy, 0, hx, hy, h);
+    if (Math.min(w, l) > 2 * wall + 0.6 && h > floor + 0.5) {
+      const s = Math.min((long ? w : l) * 0.4, 3);
+      shell = shell.subtract(box(-hx + wall, -hy + wall, floor, hx - wall, hy - wall, h + 1))
+        .subtract(long ? box(-s / 2, hy - wall - 0.1, h * 0.5, s / 2, hy + 1, h + 1) : box(hx - wall - 0.1, -s / 2, h * 0.5, hx + 1, s / 2, h + 1));
+    }
+    bin.add('black', tf(shell, T));
+    const r = type === 'jst_ph' ? 0.25 : 0.32;
+    for (let i = 0; i < n; i++) {
+      const u = (i - (n - 1) / 2) * pitch, [px, py] = long ? [u, 0] : [0, u];
+      B('gold', px - r, py - r, floor, px + r, py + r, Math.max(floor + 0.3, h - 1.2));
+    }
+    return;
+  }
   if (c.kind === 'header' || type === 'header' || /pin.?header|pin.?socket|conn_\d+x\d+|idc/i.test(name)) {
     const socket = /socket|female/i.test(name);
     const baseH = socket ? h : Math.min(2.5, h);
@@ -200,7 +234,8 @@ function partDetail(bin: Bin, c: Comp, zt: number, zb: number) {
     } else {
       hole = box(-hx + t, hy - depth, t + (type === 'microsd' ? 0 : 0.2), hx - t, hy + 1, h - t);
     }
-    bin.add(metalShell ? 'metal' : 'black', tf(body.subtract(hole), T));
+    // (a part too low for its opening, whose opening would be a box inside out, is drawn solid)
+    bin.add(metalShell ? 'metal' : 'black', tf(hole.status() === 'NoError' ? body.subtract(hole) : body, T));
     // what you see inside the opening
     if (type === 'usb_a' || type === 'usb_a_dual' || type === 'usb_b') {
       const n = type === 'usb_a_dual' ? 2 : 1;
@@ -552,6 +587,30 @@ export function boardDetail(b: Board, zb: number, zt: number, tag: PickTag, anim
   const spot = findFree(b, list, nw, nameH, taken); // (clear of the plugs' labels too)
   if (spot) silkText(bin, nm, spot, nameH, zt);
   return bin.ghosts('board', tag, anim, bare && b.color ? { mask: b.color } : {});
+}
+
+/**
+ * What a picture of a board shows (a tile on Start, a part in the toolbox): the board's own 3D model, just as the 3D
+ * view draws it, without its see-through bits.
+ */
+export function pictureOf(b: Board): Ghost[] {
+  return boardDetail(b, 0, b.thickness, { kind: 'board' }, { seq: 0, dir: [0, 0, 1] }).filter((g) => g.opacity > 0.5);
+}
+
+/**
+ * A fingerprint of a picture's meshes and colours (to 0.01 mm). The pictures shipped in public/tiles/ keep the one of
+ * the model each was rendered from (src/ui/tiles.json), and tests/toolbox.test.ts fails once a model has moved on.
+ */
+export function pictureSig(parts: { mesh: MeshData; color: string; mat?: string; opacity?: number }[]): string {
+  let h = 2166136261, k = 0x9e3779b9;
+  const add = (v: number) => { h ^= v; h = Math.imul(h, 16777619); k = Math.imul(k ^ v, 2246822519) + 1 | 0; };
+  const str = (s: string) => { for (let i = 0; i < s.length; i++) add(s.charCodeAt(i)); };
+  for (const q of parts) {
+    str(`${q.mat ?? ''}|${q.color}|${q.opacity ?? 1}|${q.mesh.pos.length}|${q.mesh.idx.length}`);
+    for (let i = 0; i < q.mesh.pos.length; i++) add(Math.round(q.mesh.pos[i] * 100));
+    for (let i = 0; i < q.mesh.idx.length; i++) add(q.mesh.idx[i]);
+  }
+  return (h >>> 0).toString(36) + (k >>> 0).toString(36);
 }
 
 type PlugSize = { w: number; h: number; len: number; cable: number };

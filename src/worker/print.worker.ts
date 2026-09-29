@@ -3,7 +3,7 @@
 import wasmUrl from 'manifold-3d/manifold.wasm?url';
 import { initKernel, freeAll } from '../cad/kernel';
 import { layerCheck } from '../cad/printcheck';
-import { boardDetail } from '../cad/boardviz';
+import { pictureOf } from '../cad/boardviz';
 import { generate } from '../cad/assembly';
 import { newProject } from '../model/library';
 import type { Board, HolderSettings, MeshData } from '../model/types';
@@ -22,8 +22,7 @@ self.onmessage = async (e: MessageEvent) => {
       const { mesh } = payload as { mesh: MeshData };
       result = layerCheck(mesh);
     } else if (type === 'board') {
-      const b = payload as Board;
-      result = pics(boardDetail(b, 0, b.thickness, { kind: 'board' }, { seq: 0, dir: [0, 0, 1] }).filter((g) => g.opacity > 0.5));
+      result = pics(pictureOf(payload as Board));
     } else if (type === 'holder') {
       const { board, holder } = payload as { board: Board; holder: HolderSettings };
       const p = newProject(board);

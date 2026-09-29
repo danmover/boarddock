@@ -3,6 +3,15 @@ import { useEffect, useRef, useState } from 'react';
 import type { Board } from '../model/types';
 import type { PicPart } from '../worker/client';
 import { picture } from './snapshot';
+import TILES from './tiles.json';
+
+/**
+ * The pictures shipped in public/tiles/ (scripts/render-tiles.mjs makes them) and, for each, the fingerprint of the 3D
+ * model it shows (boardviz.ts pictureSig). It is asked for by that fingerprint, so a browser never keeps an old one;
+ * tests/toolbox.test.ts fails when a model has moved on from its picture. Nothing here: render it live.
+ */
+export const TILE_SIG: Record<string, string> = TILES;
+export const tileUrl = (id: string): string | null => (TILE_SIG[id] ? new URL(`tiles/${id}.webp?v=${TILE_SIG[id]}`, document.baseURI).href : null);
 
 /**
  * A 3D picture that changes with what it shows: the new one is rendered once `key` has stopped changing for a
@@ -26,7 +35,8 @@ export function boardSig(b: Board): string {
   const add = (v: number | string) => { const s = typeof v === 'number' ? v.toFixed(2) : v; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } };
   add(b.thickness); add(b.color ?? ''); add(b.kind ?? '');
   for (const q of b.outline) { add(q[0]); add(q[1]); }
-  for (const c of b.comps) { if (c.hidden) continue; add(c.x); add(c.y); add(c.w); add(c.l); add(c.h); add(c.rot); add(c.kind); add(c.conn?.type ?? ''); add(c.side); }
+  // (the package and value too: they decide how a part looks, a relay's box from a buzzer's can)
+  for (const c of b.comps) { if (c.hidden) continue; add(c.x); add(c.y); add(c.w); add(c.l); add(c.h); add(c.rot); add(c.kind); add(c.conn?.type ?? ''); add(c.side); add(c.pkg); add(c.value ?? ''); add(c.pins?.length ?? 0); }
   for (const x of b.holes) { add(x.x); add(x.y); add(x.d); }
   return (h >>> 0).toString(36);
 }

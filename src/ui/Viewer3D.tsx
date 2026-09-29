@@ -183,13 +183,22 @@ export function surface(mat: Ghost['mat'] | undefined, color: string, opacity: n
   }
 }
 
+/**
+ * The 3D view's light: exposure, and how strong the room, sky, key and rim lights are (the key's and rim's directions
+ * too, for a picture). Light levels set with the ambient occlusion reading real normals (it used to read none and
+ * darken every part, which the light made up for); the backdrop keeps its brightness. The small pictures of boards,
+ * parts and holders (snapshot.ts) are lit with the same, so they look the way the view shows the same thing.
+ */
+const L = 0.4;
+export const LIGHT = { exposure: 1.3, env: 1.05 * L, hemi: 0.9 * L, key: 2.4 * L, rim: 0.7 * L, keyDir: [0.45, -0.5, 1], rimDir: [-300, 250, 160] } as const;
+
 /** The one 3D view's renderer, scene, lights and post chain (made the first time the view opens, then kept). */
 let kept: any = null;
 function makeContext() {
   const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false, preserveDrawingBuffer: true, powerPreference: 'high-performance' });
   renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.3;
+  renderer.toneMappingExposure = LIGHT.exposure;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   const scene = new THREE.Scene();
@@ -203,21 +212,18 @@ function makeContext() {
   const pmrem = new THREE.PMREMGenerator(renderer);
   scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
   pmrem.dispose();
-  // light levels set with the ambient occlusion reading real normals (it used to read none and darken every part,
-  // which the light made up for); the backdrop keeps its brightness
-  const L = 0.4;
-  scene.environmentIntensity = 1.05 * L;
-  const hemi = new THREE.HemisphereLight(0xf4f7ff, 0x3a4048, 0.9 * L);
+  scene.environmentIntensity = LIGHT.env;
+  const hemi = new THREE.HemisphereLight(0xf4f7ff, 0x3a4048, LIGHT.hemi);
   scene.add(hemi);
-  const key = new THREE.DirectionalLight(0xfff6ec, 2.4 * L);
+  const key = new THREE.DirectionalLight(0xfff6ec, LIGHT.key);
   key.castShadow = true;
   key.shadow.mapSize.set(2048, 2048);
   key.shadow.bias = -0.0004;
   key.shadow.normalBias = 0.6;
   key.shadow.radius = 5;
   scene.add(key, key.target);
-  const rim = new THREE.DirectionalLight(0xa9d4ff, 0.7 * L);
-  rim.position.set(-300, 250, 160);
+  const rim = new THREE.DirectionalLight(0xa9d4ff, LIGHT.rim);
+  rim.position.set(...LIGHT.rimDir);
   scene.add(rim);
   const world = new THREE.Group();
   world.matrixAutoUpdate = false;
@@ -807,7 +813,7 @@ function swapIn(c: any, next: Next, result: GenResult | null, mode: 'assembly' |
   u.uMinor.value = size.length() > 600 ? 50 : 10;
   u.uMajor.value = size.length() > 600 ? 250 : 50;
   const k = c.key as THREE.DirectionalLight;
-  const ldir = wall ? new THREE.Vector3(0.35, -1, 0.75) : new THREE.Vector3(0.45, -0.5, 1);
+  const ldir = wall ? new THREE.Vector3(0.35, -1, 0.75) : new THREE.Vector3(...LIGHT.keyDir);
   k.target.position.copy(ctr);
   k.position.copy(ctr.clone().add(ldir.normalize().multiplyScalar(Math.max(size.length(), 60) * 1.5)));
   const S = size.length() * 0.62 + 20;

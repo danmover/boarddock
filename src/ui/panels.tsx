@@ -31,9 +31,8 @@ import { DockFeaSection } from './DockFea';
 import { mainsBudget, mainsText, powerBudget, powerText } from '../model/power';
 import { saveBoard } from '../model/myboards';
 import { ackNote, summarizeChecks } from '../model/checkSummary';
-import { boardSig, useKeptPicture } from './pics';
-import { paletteFor } from '../model/palette';
-import { PartPic } from './Toolbox';
+import { boardSig, tileUrl, useKeptPicture } from './pics';
+import { CompPic } from './Toolbox';
 import { BoxEditor } from './BoxEditor';
 import { BoardCheck } from './BoardCheck';
 import { needOf } from '../model/powerdata';
@@ -149,14 +148,14 @@ function usePicture(key: string, make: () => Promise<PicPart[]>, w?: number, h?:
   return url;
 }
 
-/** Version of the pictures in public/tiles (scripts/render-tiles.mjs makes them): bump it after re-rendering. */
-const TILE_V = 2;
 const tileFailed = new Set<string>();
 
 export function BoardThumb({ id }: { id: string }) {
-  // the picture shipped with the app, rendered ahead of time; a live render only if it is missing
-  const [live, setLive] = useState(() => tileFailed.has(id));
-  if (!live) return <img className="thumb pic" src={new URL(`tiles/${id}.webp?v=${TILE_V}`, document.baseURI).href} alt="" draggable={false} decoding="async" onError={() => { tileFailed.add(id); setLive(true); }} />;
+  // the picture shipped with the app, rendered ahead of time from the template's 3D model as it is now (tiles.json);
+  // a live render only if there is none
+  const shipped = tileUrl(id);
+  const [live, setLive] = useState(() => !shipped || tileFailed.has(id));
+  if (!live) return <img className="thumb pic" src={shipped!} alt="" draggable={false} decoding="async" onError={() => { tileFailed.add(id); setLive(true); }} />;
   return <LiveThumb id={id} />;
 }
 
@@ -164,7 +163,7 @@ function LiveThumb({ id }: { id: string }) {
   let b = thumbCache.get(id);
   if (!b) { b = TEMPLATES.find((t) => t.id === id)!.make(); thumbCache.set(id, b); }
   const board = b;
-  const pic = usePicture(`board:${id}:v2`, () => boardPicture(board), 280, 180, [0.5, -1, 0.8]);
+  const pic = usePicture(`board:${id}:${boardSig(board)}`, () => boardPicture(board), 280, 180, [0.5, -1, 0.8]);
   if (pic) return <img className="thumb pic" src={pic} alt="" draggable={false} />;
   return <BoardSketch b={b} />;
 }
@@ -370,7 +369,7 @@ function PartsTab() {
         <div key={g} className="pgroup">
           <h5>{g} <small>{cs.length}</small></h5>
           <div className="plist">
-            {cs.slice(0, 200).map((c) => <PartRow key={c.id} c={c} />)}
+            {cs.slice(0, 200).map((c) => <PartRow key={c.id} c={c} box={b.kind === 'box'} />)}
           </div>
         </div>
       ))}
@@ -383,14 +382,13 @@ function PartsTab() {
   );
 }
 
-function PartRow({ c }: { c: Comp }) {
+function PartRow({ c, box }: { c: Comp; box: boolean }) {
   const sel = useApp((s) => s.sel);
-  const it = paletteFor(c);
   const on = isSel(sel, c.id);
   const dir = c.conn?.entry === 'edge' ? ['right', 'top', 'left', 'bottom'][Math.round(((((c.conn.angle % 360) + 360) % 360)) / 90) % 4] : null;
   return (
     <button className={`prow ${on ? 'on' : ''}`} onClick={(e) => { select([{ kind: 'comp', id: c.id }], e.shiftKey || e.metaKey ? 'toggle' : 'set'); if (store.get().view !== 'editor') store.set({ view: 'editor' }); }}>
-      <span className="prow-pic">{it ? <PartPic item={it} /> : <i style={{ background: c.kind === 'module' ? '#3d5872' : c.kind === 'led' ? '#ffd166' : c.kind === 'hot' ? '#b8553a' : '#3d4957' }} />}</span>
+      <span className="prow-pic"><CompPic c={c} box={box} /></span>
       <span className="prow-txt">
         <b>{c.ref}{c.value ? <em> {c.value}</em> : null}</b>
         <small>{c.conn ? plugName(c.conn.type) : c.pkg}{dir ? `, ${dir} edge` : ''}</small>
