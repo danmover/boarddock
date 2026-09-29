@@ -14,7 +14,7 @@ import { toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.j
 import { remaining } from '../cad/motion';
 import type { Anim, Feature, Motion, GenResult, Ghost, MeshData, PickTag, V2 } from '../model/types';
 import { packPlates, placedMesh, printability, type Plate } from '../cad/export';
-import { store, type Layer, type SelItem } from '../state';
+import { store, toast, type Layer, type SelItem } from '../state';
 import { featureItem } from './pickOps';
 import { KIND_COLOR } from '../model/links';
 import { liveFx } from './liveFx';
@@ -22,6 +22,9 @@ import { growTo } from './cableGrow';
 import { badgeText } from '../model/cablebadge';
 import { billOfMaterials } from '../model/bom';
 import { rackName } from '../model/diff';
+import { newSet } from '../model/newparts';
+import { applyView, applyZones, dropVariants } from './viewFx';
+import { leaveFocus, useView3d, view3d, type View3d } from './view3d';
 import { guideHtml, guideSteps, movesOf, NO_TEXT, stepSeqs } from './guide';
 
 interface Props {
@@ -110,6 +113,7 @@ function sweepMaterials(): THREE.Material[] {
     out.push(e.m);
     const h = hoverMats.get(e.m);
     if (h) { out.push(h); hoverMats.delete(e.m); }
+    dropVariants(e.m, out);
     matPool.delete(k);
   }
   return out;
@@ -254,9 +258,11 @@ function makeContext() {
 
   const c: any = { renderer, scene, camera, controls, world, floor, key, composer, gtao, outline, objs: [] as Obj[], features: [] as Feature[], frames: {} as Record<string, number[]>, dirty: true, fitted: '', tween: null, hover: null as THREE.Mesh | null, radius: 100, ranks: 0, highlights: new THREE.Group(), anim: { t: Infinity, explode: 0 }, afterFrame: [] as (() => void)[], result: null as GenResult | null };
   world.add(c.highlights);
+  c.zones = new THREE.Group(); // the mains zones (viewFx.ts)
+  world.add(c.zones);
   // the live glows and pulses stay out of the ambient-occlusion pass's own renders (a glow would darken the board round it)
   const aoRender = gtao.render.bind(gtao);
-  gtao.render = (...a: Parameters<typeof aoRender>) => { c.fx?.hide(true); aoRender(...a); c.fx?.hide(false); };
+  gtao.render = (...a: Parameters<typeof aoRender>) => { const zv = c.zones.visible; c.zones.visible = false; c.fx?.hide(true); c.aoHide?.(true); aoRender(...a); c.aoHide?.(false); c.fx?.hide(false); c.zones.visible = zv; };
   // dev-only handle for scripted checks and screenshots: point the camera, then it renders
   if (import.meta.env.DEV) (window as any).__bdView = { ctx: c, look: (pos: number[], target: number[]) => { c.tween = null; camera.position.set(pos[0], pos[1], pos[2]); controls.target.set(target[0], target[1], target[2]); controls.update(); c.dirty = true; composer.render(); }, pose: (t: number) => { c.anim = { t, explode: 0 }; applyPose(c); composer.render(); } };
   c.invalidate = () => { c.dirty = true; };
@@ -346,8 +352,10 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
       const targets = (c.objs as Obj[]).filter((o) => o.mesh.visible && o.tag && o.tag.kind !== 'link' && o.tag.kind !== 'rivet').map((o) => o.mesh);
       const hits = ray.intersectObjects(targets, false);
       // prefer solid parts over see-through plugs when both are hit
-      const solid = hits.find((h) => !(h.object as THREE.Mesh).userData.ghost || (h.object as any).userData.tag?.kind === 'board');
-      const h = solid ?? hits[0];
+      // (and pieces made see-through by X-ray only when nothing else is under the pointer)
+      const live = hits.filter((x) => !x.object.userData.xray), pool = live.length ? live : hits;
+      const solid = pool.find((h) => !(h.object as THREE.Mesh).userData.ghost || (h.object as any).userData.tag?.kind === 'board');
+      const h = solid ?? pool[0];
       if (!h) return null;
       const o = (c.objs as Obj[]).find((x) => x.mesh === h.object)!;
       return { o, point: h.point };
@@ -454,8 +462,9 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
   // The new scene is made beside the one on screen. Any shader it needs that isn't compiled yet is compiled first
   // (in the background where the browser can), while the old scene stays up; then the two are swapped, and what
   // only the old one used is freed after the new one's first frame, so equal shaders are never compiled twice.
-  const latest = useRef({ layers, sel });
-  latest.current = { layers, sel };
+  const v3 = useView3d((s) => s);
+  const latest = useRef({ layers, sel, v3 });
+  latest.current = { layers, sel, v3 };
   const [built, setBuilt] = useState(0);
   useEffect(() => {
     const c = ctx.current;
@@ -470,6 +479,7 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
       applyPose(c);
       applyLayers(c, latest.current.layers);
       applySel(c, latest.current.sel);
+      if (mode === 'assembly') applyFx(c, latest.current.v3);
       c.invalidate();
       setBuilt((n) => n + 1);
     };
@@ -482,6 +492,36 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
   }, [result, mode, bed[0], bed[1], spacing, theme, installed, overhangs]);
 
   useEffect(() => { const c = ctx.current; if (c) { applyLayers(c, layers); c.invalidate(); } }, [layers]);
+
+  // Isolate, X-ray, What's new and the mains zones (view3d.ts); Esc leaves the first two
+  const lastFocus = useRef<View3d['focus']>(null);
+  useEffect(() => {
+    const c = ctx.current;
+    if (!c || c.mode !== 'assembly') return;
+    applyFx(c, v3); // (a rebuilt scene gets it again as it is swapped in)
+    const f = view3d.get().focus; // (applyFx may have left the mode)
+    if (f && f !== lastFocus.current && f.mode === 'isolate') flyTo(c, contentBox(c), null, 1.4);
+    lastFocus.current = f;
+  }, [v3.focus, v3.news]);
+  useEffect(() => {
+    const c = ctx.current;
+    if (!c) return;
+    const z = (c.result as GenResult | null)?.report.zones ?? [];
+    c.showZones = v3.zones && mode === 'assembly' && z.length > 0;
+    applyZones(c, c.showZones ? z : []);
+    applyPose(c);
+    c.invalidate();
+  }, [v3.zones, built, mode]);
+  useEffect(() => {
+    if (!v3.focus && !v3.news) return;
+    const k = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || /^(INPUT|TEXTAREA|SELECT)$/.test((e.target as HTMLElement | null)?.tagName ?? '')) return;
+      e.stopPropagation(); // (this Esc only leaves the view: the selection stays)
+      if (view3d.get().focus) leaveFocus(); else view3d.set({ news: false });
+    };
+    window.addEventListener('keydown', k, true);
+    return () => window.removeEventListener('keydown', k, true);
+  }, [!!v3.focus, v3.news]);
 
   // ---------------------------------------------------------------- cable numbers: a badge on every cable
   const labelsEl = useRef<HTMLDivElement>(null);
@@ -510,7 +550,7 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
       const w = host.clientWidth, h = host.clientHeight;
       const at = items.map((it) => {
         v.copy(it.p).applyMatrix4(c.world.matrixWorld).project(c.camera);
-        const vis = v.z < 1 && v.z > -1 && Math.abs(v.x) < 1.05 && Math.abs(v.y) < 1.05 && (!it.meshes.length || it.meshes.some((m) => m.visible));
+        const vis = v.z < 1 && v.z > -1 && Math.abs(v.x) < 1.05 && Math.abs(v.y) < 1.05 && (!it.meshes.length || it.meshes.some((m) => m.visible && !m.userData.xray));
         return { it, vis, x: ((v.x + 1) / 2) * w, y: ((1 - v.y) / 2) * h, bw: it.el.offsetWidth || 120, bh: it.el.offsetHeight || 22 };
       });
       // nearest labels first keep their spot; the others step down (or up) until they are clear
@@ -652,6 +692,12 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
       <div ref={host} style={{ position: 'absolute', inset: 0 }} />
       <div ref={labelsEl} className="clabels" />
       <div ref={tip} className="hovertip floating" style={{ display: 'none' }} />
+      {mode === 'assembly' && (v3.focus || v3.news) && (
+        <div className="focuschip floating" role="status">
+          <span>{v3.focus ? (v3.focus.mode === 'isolate' ? 'Showing only what you picked' : 'Everything else is see-through') : "Tinted: new since it was built; the rest is see-through"}</span>
+          <button className="btn small" onClick={() => (v3.focus ? leaveFocus() : view3d.set({ news: false }))} title="Esc">Show everything</button>
+        </div>
+      )}
       {mode === 'assembly' && result && guide && play.n > 0 && (
         <div ref={card} className="guide floating" role="region" aria-label="Build guide">
           <div className="g-head">
@@ -1092,8 +1138,9 @@ function applyPose(c: any) {
     o.mesh.userData.animHidden = !shown;
     o.mesh.matrix.copy(M.makeTranslation(off.x, off.y, off.z).multiply(R).multiply(o.base));
     o.mesh.userData.offset = off.clone();
-    o.mesh.visible = shown && !o.mesh.userData.layerHidden;
+    o.mesh.visible = shown && !o.mesh.userData.layerHidden && !o.mesh.userData.focusHidden;
   }
+  if (c.zones) c.zones.visible = !!c.showZones && !Number.isFinite(t) && !(explode > 0); // (not while the parts are moving)
   c.world.updateMatrixWorld(true);
   placeHighlights(c);
 }
@@ -1102,8 +1149,20 @@ function applyLayers(c: any, layers: Record<Layer, boolean>) {
   for (const o of c.objs as Obj[]) {
     const hidden = o.tag ? layers[LAYER[o.tag.kind]] === false : false;
     o.mesh.userData.layerHidden = hidden;
-    o.mesh.visible = !hidden && !o.mesh.userData.animHidden;
+    o.mesh.visible = !hidden && !o.mesh.userData.animHidden && !o.mesh.userData.focusHidden;
   }
+}
+
+/** Isolate / X-ray / What's new on the scene; a mode with nothing in the scene to show is left. */
+function applyFx(c: any, v: View3d) {
+  setEmissive(c.hover, 0);
+  c.hover = null;
+  const p = store.get().project, res = c.result as GenResult | null;
+  const news = v.news && p && res ? newSet(p, res) : null;
+  const ok = applyView(c, { focus: v.focus, news: news && news.any ? news : null });
+  if (v.news && !(news && news.any)) { view3d.set({ news: false }); toast(news ? 'Nothing is new since the rack was built.' : 'The rack is not marked as built, so nothing is new.'); }
+  else if (!ok && v.focus) leaveFocus();
+  c.invalidate();
 }
 
 /** The feature under a point on a holder (smallest box that contains it). */

@@ -19,6 +19,8 @@ import { Icon, I } from './ui/icons';
 import { WiringView } from './ui/WiringView';
 import { rackCount, rackName } from './model/diff';
 import { summarizeChecks } from './model/checkSummary';
+import { FocusTools } from './ui/ViewTools';
+import { CableKey } from './ui/CableKey';
 
 const STEPS: { id: Step; label: string; title: string; text: string }[] = [
   { id: 'import', label: 'Start', title: 'Bring a board in', text: 'Drop a KiCad, Altium, Eagle or Gerber export, or start from a known board.' },
@@ -241,6 +243,7 @@ export function App() {
                       <button onClick={() => look([-0.5, 0.6, -0.65])} title="From below">Under</button>
                     </div>
                     {view === 'assembly' && <div className="tgroup floating"><button className={showLayers ? 'on' : ''} onClick={() => setShowLayers(!showLayers)} title="Show or hide kinds of parts"><Icon d={I.layers} /> Layers</button></div>}
+                    {view === 'assembly' && <FocusTools />}
                     {view === 'print' && <div className="tgroup floating" title="Red: faces that would need support. Amber: bridges (fine when short)."><button className={overhangs ? 'on' : ''} onClick={() => setOverhangs(!overhangs)}>Overhangs</button></div>}
                   </div>
                   {view === 'assembly' && showLayers && (
@@ -250,6 +253,7 @@ export function App() {
                       ))}
                     </div>
                   )}
+                  {view === 'assembly' && <CableKey />}
                   {view === 'assembly' && picks.length > 0 && <SelPanel items={picks} />}
                   {stats && (
                     <div className="stats floating" style={{ position: 'absolute', right: 12, bottom: 12, zIndex: 6 }}>

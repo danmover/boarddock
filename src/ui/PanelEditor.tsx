@@ -7,6 +7,7 @@ import type { Access, PanelReport, Project, V2 } from '../model/types';
 import { shortName } from '../model/links';
 import { companionLabel, isProbe } from '../model/probes';
 import { isSel, select, store, useApp, type SelItem } from '../state';
+import { MainsZonesSvg, ZonesToggle } from './ViewTools';
 import { addDock, addRail, autoArrange, tidyUp, moveRail, nudge, placeMount, removeMounts, removeRails, seat, swapSlots, turnMounts } from './panelOps';
 
 export const PALETTE = ['#4c8dff', '#46d58b', '#f5c542', '#c084fc', '#2dd4bf', '#fb7185', '#a3e635', '#38bdf8'];
@@ -286,6 +287,7 @@ export function PanelEditor() {
           );
         })}
 
+        <MainsZonesSvg px={px} />
         {(['body', 'hub', 'label'] as const).map((layer) => (rep?.mounts ?? []).map((m) => {
           const r = rep!.rails.find((x) => x.id === m.rail);
           if (!r) return null;
@@ -404,6 +406,7 @@ export function PanelEditor() {
         <button className="tbtn wide" onClick={() => addRail('v')} title="Add a vertical rail">+ Rail ↕</button>
         <button className="tbtn wide" onClick={() => addDock(sel.find((s) => s.kind === 'rail')?.id)} title="Add an empty dock at the end of the selected (or last) rail">+ Dock</button>
         <span className="tsep" />
+        <ZonesToggle />
         <button className="tbtn" onClick={() => setVb(fit(rep))} title="Fit to view">⤢</button>
       </div>
 

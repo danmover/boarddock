@@ -14,6 +14,8 @@ import { fillWires, headerPins } from '../model/probes';
 import { badgeSpots, boundsOf, CARD, cardSize, fitZoom, flowLayout, freeSpot, rackLayout, railRows, type Pos, type Room, type Size } from '../model/wirelayout';
 import { edit, isSel, select, store, toast, useApp } from '../state';
 import { Icon, I } from './icons';
+import { KindSwatch } from './CableKey';
+import { KIND_DASH, KIND_ORDER } from '../model/cablekinds';
 import { addAccessory, addLinks, plugPlaces, removeLinks, rewire } from './linkOps';
 
 const { W, HEAD, ROW, PROW } = CARD;
@@ -409,7 +411,7 @@ export function WiringView() {
                   }) : <>
                     <title>{`${c ? `Cable ${c.no}: ${c.label ?? ''}` : KIND_NAME[l.kind ?? 'usb']}${l.why ? `\n${l.why}` : l.auto ? '' : '\nconnected by you'}\nclick to select · Del removes it · drag either end to another plug`}</title>
                     <path d={main.d} fill="none" stroke="transparent" strokeWidth={12} />
-                    <path d={main.d} fill="none" stroke={col} strokeWidth={on || (near && !dim) ? 4 : 2.6} strokeLinecap="round" opacity={on ? 1 : 0.85} strokeDasharray={l.kind === 'debug' ? '8 3' : undefined} />
+                    <path d={main.d} fill="none" stroke={col} strokeWidth={on || (near && !dim) ? 4 : 2.6} strokeLinecap="round" opacity={on ? 1 : 0.85} strokeDasharray={KIND_DASH[l.kind ?? 'usb']} />
                   </>}
                   {c && pl && pl.at.y !== pl.on.y && <line x1={pl.on.x} y1={pl.on.y} x2={pl.at.x} y2={pl.at.y} stroke={col} strokeWidth={1} strokeDasharray="2 3" />}
                 </g>
@@ -537,7 +539,7 @@ export function WiringView() {
         <span className="xy">{links.length} cable{links.length === 1 ? '' : 's'}{rep?.cables?.length ? ` · ${(rep.cables.reduce((a, c) => a + c.length, 0) / 1000).toFixed(1)} m` : ''}</span>
       </div>
       <div className="legend2 floating" style={{ bottom: 52 }}>
-        {(Object.keys(KIND_COLOR) as (keyof typeof KIND_COLOR)[]).filter((k) => k !== 'uart' || links.some((l) => l.kind === 'uart')).map((k) => <span key={k}><i style={{ background: wire(k) }} />{KIND_NAME[k]}</span>)}
+        {KIND_ORDER.filter((k) => k !== 'uart' || links.some((l) => l.kind === 'uart')).map((k) => <span key={k}><KindSwatch kind={k} color={wire(k)} />{KIND_NAME[k]}</span>)}
       </div>
     </div>
   );
