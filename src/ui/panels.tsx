@@ -19,7 +19,7 @@ import { bbox, compRect, roundedRectLoop, round, uid } from '../geom/poly';
 import { activeModule, closeProject, dropModule, edit, editMod, isSel, rememberPrinter, select, setActive, store, toast, useApp, type SelItem, type Step } from '../state';
 import { kindName, rackCount, rackName, sameKind } from '../model/diff';
 import { Check, Chip, Num, Pick, Section, Seg, Text, download, safeName } from './controls';
-import { BRIM_OUT, EDGE_CLEAR, estimate, fitsBed, packPlates, placedMesh, write3mf, writeStl } from '../cad/export';
+import { BRIM_OUT, EDGE_CLEAR, MIN_SPACING, estimate, fitsBed, packPlates, placedMesh, write3mf, writeStl } from '../cad/export';
 import { buildTestKit, runClipFea } from '../worker/client';
 import type { ClipFeaResult } from '../fea/clipfea';
 import { clipDims } from '../cad/dinclip';
@@ -39,7 +39,7 @@ import { BoardCheck } from './BoardCheck';
 import { needOf } from '../model/powerdata';
 import { picture } from './snapshot';
 import { boardPicture, holderPicture, type PicPart } from '../worker/client';
-import { GcodeSection } from './GcodeSection';
+import { GcodeSection, useGcode } from './GcodeSection';
 import { PrintCheckSection } from './PrintCheck';
 
 // ============================================================================================ IMPORT
@@ -1243,11 +1243,29 @@ export function ExportPanel() {
   const dens = MATERIALS[activeModule(p).holder.material].density;
   const est = useMemo(() => parts.map((x) => ({ part: x, ...estimate(x, dens) })), [parts, dens]);
   const tot = est.reduce((a, e) => ({ g: a.g + e.grams * e.part.qty * copies, m: a.m + e.minutes * e.part.qty * copies }), { g: 0, m: 0 });
-  zipRef.current = null;
-  if (!res) return <div><p className="lede">Building…</p></div>;
   const base = safeName(rackName(p));
   const plateMeshes = (i: number) => plates[i].items.map((it) => placedMesh(it, p.printer.bed, plates[i].used));
-  const zipAll = () => {
+  const brim = tallness(parts, p.printer.maxZ ?? 250).tall.length > 0;
+  // slicing lives here so the buttons below and the G-code section see the same slices
+  const g = useGcode({ plates: plates.length, plateKey: plates, fits: plates.map((pl) => fitsBed(pl, p.printer.bed)), plateMeshes, brim, base });
+  zipRef.current = null;
+  if (!res) return <div><p className="lede">Building…</p></div>;
+  /** The G-code of every plate, sliced here first if it isn't yet (in the background: the page stays usable). */
+  const sliceAll = async () => {
+    if (g.busy) { toast('Slicing is still running: this downloads when it is done.'); return null; }
+    const todo = plates.filter((_, i) => !g.done[i] && g.ok(i)).length;
+    if (todo > 0) toast(`Slicing ${todo} plate${todo > 1 ? 's' : ''} in the background. The download starts when ${todo > 1 ? 'they are' : 'it is'} done: you can keep working.`);
+    const r = await g.sliceAll();
+    if (r.bad.length) toast(`${r.bad.length > 1 ? 'Plates' : 'Plate'} ${r.bad.map((b) => b.i + 1).join(', ')} could not be sliced (${r.bad[0].why}).${Object.keys(r.files).length ? ' The rest are in the download.' : ''}`);
+    return r.files;
+  };
+  const gcodeZip = async () => {
+    const files = await sliceAll();
+    if (files && Object.keys(files).length) download(`${base}_gcode.zip`, zipSync(files, { level: 6 }), 'application/zip');
+  };
+  const zipAll = async () => {
+    const gcode = g.canSlice ? await sliceAll() : null;
+    if (g.canSlice && !gcode) return;
     const files: Record<string, Uint8Array> = {};
     plates.forEach((pl, i) => {
       files[`plate_${i + 1}.stl`] = writeStl(plateMeshes(i));
@@ -1256,6 +1274,7 @@ export function ExportPanel() {
     for (const x of parts) files[`parts/${safeName(x.id)}_${safeName(x.name)}.stl`] = writeStl([x.mesh]);
     files[`${base}.boarddock.json`] = strToU8(JSON.stringify(p, null, 1));
     files['BOM.csv'] = strToU8(bomCsv(billOfMaterials(p, res)));
+    for (const [name, bytes] of Object.entries(gcode ?? {})) files[`gcode/${name}`] = bytes;
     const pr = printerByName(p.printer.name), mat = activeModule(p).holder.material;
     const settings = [`Print settings (${pr?.name ?? p.printer.name}, ${mat}${pr ? `, printer preset "${pr.orca}"` : ''}):`, ...printSettings(pr, mat, tallness(parts, p.printer.maxZ ?? 250).tall).map((r) => `  ${r.name}: ${r.value}  (${r.basis}: ${r.why})`)].join('\n');
     files['README.txt'] = strToU8(printNotes(p, res, plates.length, tot, shopping(p, res, onlyNew ? d : null, tot, scope === 'pick' ? pickSet : undefined)).replace('Print: 0.2 mm layers, 3 walls, 15% infill, NO supports. Parts are already in print orientation.', settings));
@@ -1289,13 +1308,31 @@ export function ExportPanel() {
         <div><b>{tot.g.toFixed(0)} g</b><span>{activeModule(p).holder.material}</span></div>
         <div><b>{fmtMin(tot.m)}</b><span>print time, rough</span></div>
       </div>
-      <button className="btn primary" style={{ width: '100%', justifyContent: 'center', marginBottom: 10 }} onClick={() => zipAll()}><Icon d={I.download} /> {scope === 'all' ? 'Download everything' : scope === 'new' ? "Download what's new" : 'Download these'} (.zip)</button>
+      {(() => {
+        const what = scope === 'all' ? 'Download everything' : scope === 'new' ? "Download what's new" : 'Download these';
+        const wait = g.busy ? `Slicing plate ${Math.min(g.queue ? g.queue.k + 1 : (g.prog?.i ?? 0) + 1, plates.length)} of ${plates.length}…` : null;
+        // once the start code is known the main button slices (the STLs, 3MFs and the rest are in the other one)
+        return g.canSlice ? (
+          <div style={{ marginBottom: 10 }}>
+            <button className="btn primary" style={{ width: '100%', justifyContent: 'center' }} disabled={g.busy} onClick={() => gcodeZip()}><Icon d={I.download} /> {wait ?? 'Slice and download all G-code (.zip)'}</button>
+            <button className="btn soft" style={{ width: '100%', justifyContent: 'center', marginTop: 6 }} disabled={g.busy} onClick={() => zipAll()}><Icon d={I.download} /> {what} with the G-code (.zip)</button>
+            <p className="hint" style={{ margin: '6px 0 0' }}>The G-code is sliced here with the start code below, plate by plate, in the background (a plate takes from several seconds to a minute or two).</p>
+          </div>
+        ) : (
+          <button className="btn primary" style={{ width: '100%', justifyContent: 'center', marginBottom: 10 }} onClick={() => zipAll()}><Icon d={I.download} /> {what} (.zip)</button>
+        );
+      })()}
       <Section title="Printer">
-        <Pick label="Printer" value={p.printer.name} options={[...PRINTERS.map((x) => [x.name, x.name] as [string, string]), ['Custom', 'Custom']]} onChange={(v) => setP((x) => { rememberPrinter(v); const pr = PRINTERS.find((q) => q.name === v); delete x.gcodeStart; delete x.gcodeEnd; if (pr) Object.assign(x, { ...pr, spacing: x.spacing }); else x.name = 'Custom'; })} />
+        <Pick label="Printer" value={p.printer.name} options={[...PRINTERS.map((x) => [x.name, x.name] as [string, string]), ['Custom', 'Custom']]} onChange={(v) => {
+          // code loaded from now on says which printer it was for (the check stops it on another); an older project's doesn't, so it goes
+          const unknown = v !== p.printer.name && !!p.printer.bambu && !p.printer.bambu.for;
+          setP((x) => { rememberPrinter(v); const pr = PRINTERS.find((q) => q.name === v); delete x.gcodeStart; delete x.gcodeEnd; delete x.gcodeOk; if (unknown) delete x.bambu; if (pr) Object.assign(x, { ...pr, spacing: x.spacing }); else x.name = 'Custom'; });
+          if (unknown) toast("The printer's own start code kept in this project didn't say which printer it was for, so it was dropped: load it again for this printer.");
+        }} />
         <div className="row3" style={{ marginTop: 8 }}>
           <Num label="Bed X" value={p.printer.bed[0]} min={50} onChange={(v) => setP((x) => { x.bed = [v, x.bed[1]]; x.name = 'Custom'; })} />
           <Num label="Bed Y" value={p.printer.bed[1]} min={50} onChange={(v) => setP((x) => { x.bed = [x.bed[0], v]; x.name = 'Custom'; })} />
-          <Num label="Spacing" value={p.printer.spacing} min={2} max={20} onChange={(v) => setP((x) => { x.spacing = v; })} />
+          <Num label="Spacing" value={Math.max(p.printer.spacing, MIN_SPACING)} min={MIN_SPACING} max={20} hint={`Room between parts: never less than ${MIN_SPACING.toFixed(1)} mm, so neighbouring brims don't run together`} onChange={(v) => setP((x) => { x.spacing = v; })} />
         </div>
         <div className="row" style={{ marginTop: 8 }}>
           <Num label="Build height" value={p.printer.maxZ ?? 250} min={50} max={1000} step={1} onChange={(v) => setP((x) => { x.maxZ = v; x.name = 'Custom'; })} />
@@ -1338,7 +1375,7 @@ export function ExportPanel() {
         <p className="hint">Rough: 3 walls, 5 top/bottom layers, 15% infill, 0.2 mm layers, {activeModule(p).holder.material}. Your slicer's numbers are the real ones.</p>
       </Section>
       <PrintSettings parts={parts} />
-      <GcodeSection plates={plates.length} plateKey={plates} fits={plates.map((pl) => fitsBed(pl, p.printer.bed))} plateMeshes={plateMeshes} brim={tallness(parts, p.printer.maxZ ?? 250).tall.length > 0} plate3mf={(i) => write3mf(plates[i].items.map((it, k) => ({ name: `${it.part.name} ${k + 1}`, mesh: placedMesh(it, p.printer.bed, plates[i].used) })))} base={base} />
+      <GcodeSection g={g} plates={plates.length} plateKey={plates} fits={plates.map((pl) => fitsBed(pl, p.printer.bed))} plateMeshes={plateMeshes} brim={brim} plate3mf={(i) => write3mf(plates[i].items.map((it, k) => ({ name: `${it.part.name} ${k + 1}`, mesh: placedMesh(it, p.printer.bed, plates[i].used) })))} base={base} />
     </div>
   );
 }

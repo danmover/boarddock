@@ -400,7 +400,7 @@ export const MATERIALS: Record<Material, MaterialProps> = {
   PC: { E: 2300, nu: 0.37, strainAllow: 0.025, yield: 55, density: 1.2, tg: 110 },
 };
 
-export const PRINTERS: PrinterSettings[] = PRINTERS_DB.map((x) => ({ name: x.name, bed: x.bed, spacing: 6, maxZ: x.maxZ }));
+export const PRINTERS: PrinterSettings[] = PRINTERS_DB.map((x) => ({ name: x.name, bed: x.bed, spacing: 7, maxZ: x.maxZ }));
 
 export const DEFAULT_HOLDER: HolderSettings = {
   wall: 1.8, base: 2.0, gap: 0.3, wallAbove: 0.8, standoff: null, minStandoff: 3, leadLen: 1.8,
