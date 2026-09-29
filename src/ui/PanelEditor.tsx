@@ -346,7 +346,7 @@ export function PanelEditor() {
                 const name = labelOf(project, q.id, q.stack);
                 const fsz = 11.5;
                 const vertical = h ? across < Math.max(name.length * fsz * 0.6, 24 * 5.9) + 16 && along > across : false;
-                const sub = `${q.edge} edge in · ◉${cnt.front} ✓${cnt.good - cnt.front}${cnt.side ? ` ⚠${cnt.side}` : ''}${cnt.blocked ? ` ✕${cnt.blocked}` : ''}`;
+                const sub = `${q.lie === 'flat' ? `flat, tab ${q.edge}` : `${q.edge} edge in`} · ◉${cnt.front} ✓${cnt.good - cnt.front}${cnt.side ? ` ⚠${cnt.side}` : ''}${cnt.blocked ? ` ✕${cnt.blocked}` : ''}`;
                 const tw = Math.max(name.length * fsz * 0.6, sub.length * 9.5 * 0.62) + 16;
                 const dirs = ['up', 'down', 'left', 'right'] as const;
                 // slide along the rail if another label is there; with no room, just the name, faint
@@ -354,7 +354,7 @@ export function PanelEditor() {
                 const [lx, ly] = spot ?? [cx, cy];
                 return (
                   <g key={q.id}>
-                    <title>{`${name}: docked by its ${q.edge} edge.\nIts plugs: ◉ faces you, easy to reach · ✓ reachable from the side · ⚠ points at the next dock · ✕ points into the table or wall`}</title>
+                    <title>{`${name}: ${q.lie === 'flat' ? `lies flat, tab on its ${q.edge} edge` : `docked by its ${q.edge} edge`}.\nIts plugs: ◉ faces you, easy to reach · ✓ reachable from the side · ⚠ points at the next dock · ✕ points into the table or wall`}</title>
                     {dirs.map((d) => {
                       const list = q.access.filter((a) => a.dir === d);
                       if (!list.length) return null;

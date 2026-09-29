@@ -578,15 +578,18 @@ export function orderByLinks<T extends Module>(p: Project, mods: T[]): T[] {
   return out;
 }
 
-/** Friendly name of a dock turn on a rail, e.g. "standing, parts face left". */
-export function turnLabel(turn: number, railDir: 'h' | 'v', kind: 'dock' | 'flat' = 'dock', lie?: 'flat'): string {
+/**
+ * Friendly name of a dock turn on a rail, e.g. "standing, parts face left" or "lies flat, tab on its bottom edge".
+ * `slots` are the filled slots (lie, and the board edge in the socket when known); "mixed" when they differ.
+ */
+export function turnLabel(turn: number, railDir: 'h' | 'v', kind: 'dock' | 'flat' = 'dock', slots: { lie?: 'flat'; edge?: string }[] = []): string {
   if (kind === 'flat') return `flat, turned ${turn}°`;
-  if (lie === 'flat') return `lying flat, turned ${turn}°`;
+  const flat = slots.filter((s) => s.lie === 'flat');
+  if (flat.length && flat.length < slots.length) return `mixed: ${slots.map((s, i) => `${slots.length > 1 ? (i ? 'back ' : 'front ') : ''}${s.lie === 'flat' ? 'lies flat' : 'stands'}`).join(', ')}`;
+  if (flat.length) return flat.every((s) => s.edge === flat[0].edge) && flat[0].edge ? `lies flat, tab on its ${flat[0].edge} edge` : 'lies flat, tab on its edge';
   // component side of the front slot: hub +y turned by `turn`
   const v = dir(mul(railMatrix({ x: 0, y: 0, dir: railDir }), rotZ(turn)), [0, 1, 0]);
-  const face = classify(v, railDir).dir;
-  const standing = face === 'left' || face === 'right';
-  return `${standing ? 'standing' : 'shelf'}, parts face ${face}`;
+  return `standing, parts face ${classify(v, railDir).dir}`;
 }
 
 /** Put a board on the panel in a new dock at the end of the last rail (manual layouts). */

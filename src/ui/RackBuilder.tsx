@@ -310,6 +310,11 @@ function RailCard({ r, mts, rep, col, mod, accOf, stackRows }: {
   );
 }
 
+/** The filled slots of a dock: how each sits, and its board edge in the socket. */
+function slotInfo(mt: PanelReport['mounts'][number], rep: PanelReport) {
+  return mt.slots.flatMap((s, i) => (s.module ? [{ lie: s.lie, edge: rep.modules.find((q) => q.mount === mt.id && q.slot === i)?.edge as string | undefined }] : []));
+}
+
 function DockRow({ mt, railDir, rep, col, mod, accOf, stackRows }: {
   mt: PanelReport['mounts'][number]; railDir: 'h' | 'v'; rep: PanelReport; col: (id: string) => string; mod: (id: string | null) => Module | null;
   accOf: (id: string) => Access[] | undefined; stackRows: (m: Module) => ReactNode;
@@ -323,7 +328,7 @@ function DockRow({ mt, railDir, rep, col, mod, accOf, stackRows }: {
     <div className={`dockrow ${isSel(sel, mt.id) ? 'sel' : ''}`}>
       <div className="dh" onClick={(e) => select([{ kind: 'mount', id: mt.id }], e.shiftKey || e.metaKey ? 'toggle' : 'set')}>
         <b>{mt.kind === 'dock' ? 'Dock' : 'Flat clip'} {mountLabels(rep).get(mt.id) ?? mt.id.replace(/^d/, '')}</b>{fresh && <span className="chip acc" title="Holds a board added since the rack was built">new board</span>}
-        <span className="grow">{turnLabel(mt.turn, railDir, mt.kind, mt.slots[0]?.lie ?? mt.slots[1]?.lie)}</span>
+        <span className="grow">{turnLabel(mt.turn, railDir, mt.kind, slotInfo(mt, rep))}</span>
         <button className="btn small ghost icon" title="Turn 90° (R)" onClick={(e) => { e.stopPropagation(); turnMounts([mt.id], 90); }}><Icon d={I.turn} /></button>
         {mt.kind === 'dock' && <button className="btn small ghost icon" title="Swap front and back (F)" onClick={(e) => { e.stopPropagation(); swapSlots([mt.id]); }}><Icon d={I.swap} /></button>}
         <button className="btn small ghost icon" title="Remove the dock (its boards go to the tray)" onClick={(e) => { e.stopPropagation(); removeMounts([mt.id]); }}><Icon d={I.x} /></button>
@@ -467,7 +472,7 @@ function DockInspector({ one, rep }: { one: PanelReport['mounts'][number]; rep: 
           <button key={t} className={`turn ${one.turn === t ? 'on' : ''}`} onClick={() => turnMounts([one.id], t - one.turn)}>
             <svg viewBox="-12 -12 24 24"><rect x="-6" y="-7" width="12" height="14" rx="2" transform={`rotate(${-t - (v ? 90 : 0)})`} /><line x1="0" y1="0" x2="0" y2="-7" transform={`rotate(${-t - (v ? 90 : 0)})`} /></svg>
             <span>{t}°</span>
-            <small>{turnLabel(t, railDir, one.kind, one.slots[0]?.lie ?? one.slots[1]?.lie)}</small>
+            <small>{turnLabel(t, railDir, one.kind, slotInfo(one, rep))}</small>
           </button>
         ))}
       </div>
