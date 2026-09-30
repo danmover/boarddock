@@ -14,5 +14,10 @@ export const KIND_COLOR: Record<CableKind, string> = {
 export const KIND_NAME: Record<CableKind, string> = { usb: 'USB', power: 'power', net: 'Ethernet', video: 'video', audio: 'audio', wire: 'wires', debug: 'debug ribbon', uart: 'USB-serial', jumper: 'jumper wires', mains: 'mains' };
 /** SVG stroke-dasharray for the flat drawings: solid for most, patterns for the kinds whose colours sit close together. */
 export const KIND_DASH: Record<CableKind, string | undefined> = { usb: undefined, power: undefined, net: undefined, video: undefined, audio: undefined, wire: undefined, debug: '8 3', uart: '6 3 1.5 3', jumper: '1.5 3', mains: '11 4' };
+/** The colour of the pulses running along each kind of cable in the live 3D view: its hue, bright enough to glow. */
+export const KIND_GLOW: Record<CableKind, string> = {
+  usb: '#8fd3ff', power: '#ffa040', net: '#66b8ff', video: '#e08cc8', audio: '#4fe0b0',
+  wire: '#ffd45a', debug: '#ffd166', uart: '#8ad4ff', jumper: '#f6ee6a', mains: '#ffb27a',
+};
 /** The order the key lists them in. */
 export const KIND_ORDER: CableKind[] = ['power', 'usb', 'net', 'video', 'audio', 'wire', 'debug', 'uart', 'jumper', 'mains'];

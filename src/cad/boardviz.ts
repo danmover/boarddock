@@ -1089,12 +1089,14 @@ function plugAt(T: number[], p: PlugSize, tag: PickTag, anim: Anim, type: string
  * away, then a dotted line on the way it goes and where to: nothing to route, so no cable hangs about in the air.
  * `clear`: how far out of the plug nothing is in the way.
  */
-export function leadStub(name: string, p: number[], d: number[], cable: number, label: string, tag: PickTag, anim: Anim, clear = Infinity): Ghost {
+/** What runs along a lead that leaves the rack, for its pulses: into the plug (a supply, the mains, your computer), in this glow colour. */
+export interface StubFlow { colour: string; on: boolean; slow: boolean }
+export function leadStub(name: string, p: number[], d: number[], cable: number, label: string, tag: PickTag, anim: Anim, clear = Infinity, flow?: StubFlow): Ghost {
   // (no longer than the way out of the plug is clear, and never under 6 mm, so a plug always shows its lead)
   const r = Math.max(1.1, cable / 2), len = Math.max(6, Math.min(clear, Math.max(30, 10 + 10 * r)));
   return {
     name, mesh: tubeMesh([p, [p[0] + d[0] * len, p[1] + d[1] * len, p[2] + d[2] * len]], r, 16), color: '#2b2e33', opacity: 1, tag, anim, mat: 'cable', smooth: true,
-    fx: { fade: { p, d, len, dash: 34, label, colour: '#8b95a3' } },
+    fx: { fade: { p, d, len, dash: 34, label, colour: '#8b95a3' }, ...(flow ? { flow: { pts: [[p[0] + d[0] * len, p[1] + d[1] * len, p[2] + d[2] * len], p], r: r * 1.4, ...flow } } : {}) },
   };
 }
 

@@ -23,7 +23,8 @@ import { badgeText } from '../model/cablebadge';
 import { billOfMaterials } from '../model/bom';
 import { rackName } from '../model/diff';
 import { newSet } from '../model/newparts';
-import { applyView, applyZones, dropVariants, zoneVisible } from './viewFx';
+import { applyView, applyZones, dropVariants, hoverCable, pickCables, zoneVisible } from './viewFx';
+import { sheathMaterial, sheathOpacity } from './cableLook';
 import { leaveFocus, useView3d, view3d, type View3d } from './view3d';
 import { guideHtml, guideSteps, movesOf, NO_TEXT, stepSeqs } from './guide';
 
@@ -181,7 +182,8 @@ export function surface(mat: Ghost['mat'] | undefined, color: string, opacity: n
     case 'led': return new THREE.MeshStandardMaterial({ ...base, roughness: 0.12, metalness: 0 }); // a clear lens: the live view lights it
     // moulded plugs: satin plastic with a light gloss; cable jackets: matt
     case 'plug': return new THREE.MeshPhysicalMaterial({ ...base, roughness: 0.5, metalness: 0, clearcoat: 0.25, clearcoatRoughness: 0.45 });
-    case 'cable': return new THREE.MeshStandardMaterial({ ...base, roughness: 0.62, metalness: 0 });
+    // cables: a translucent sheath with a rim and a core line (cableLook.ts); opaque when asked to be
+    case 'cable': return opacity < 1 ? sheathMaterial(color, opacity) : new THREE.MeshStandardMaterial({ ...base, roughness: 0.62, metalness: 0 });
     case 'red': return new THREE.MeshStandardMaterial({ ...base, roughness: 0.5, metalness: 0 });
     case 'chip': case 'black': return new THREE.MeshStandardMaterial({ ...base, roughness: 0.5, metalness: 0.05 });
     case 'silk': return new THREE.MeshStandardMaterial({ ...base, roughness: 0.75 });
@@ -401,6 +403,7 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
         setEmissive(c.hover, 0);
         c.hover = m;
         setEmissive(m, 1);
+        hoverCable(c, m);
         invalidate();
       }
       const el2 = tip.current;
@@ -416,7 +419,7 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
       }
       renderer.domElement.style.cursor = it ? 'pointer' : '';
     };
-    const onLeave = () => { if (tip.current) tip.current.style.display = 'none'; setEmissive(c.hover, 0); c.hover = null; invalidate(); };
+    const onLeave = () => { if (tip.current) tip.current.style.display = 'none'; setEmissive(c.hover, 0); c.hover = null; hoverCable(c, null); invalidate(); };
     const onDbl = (e: MouseEvent) => {
       const h = hitAt(e as PointerEvent);
       if (!h) return;
@@ -781,6 +784,7 @@ function prepare(c: any, result: GenResult | null, mode: 'assembly' | 'print', b
     mesh.matrixAutoUpdate = false;
     if (matrix) mesh.matrix.fromArray(matrix);
     mesh.userData = { tag, ghost, cached: true };
+    if (kind === 'cable' && tag?.kind === 'cable' && opacity < 1) { mesh.userData.cableId = tag.refs?.[0]; mesh.userData.cableBase = mat; mesh.renderOrder = 2; }
     if (cg.e && edges && opacity >= 1) {
       const em = pooled(`e|${edgeCol}`, () => new THREE.LineBasicMaterial({ color: edgeCol, transparent: true, opacity: 0.22 }));
       mats.add(em);
@@ -803,7 +807,9 @@ function prepare(c: any, result: GenResult | null, mode: 'assembly' | 'print', b
     }
     next.fx = [];
     for (const gh of result.ghosts) {
-      add(gh.mesh, gh.color, gh.opacity, null, gh.tag, gh.anim, true, false, gh.mat, !!gh.smooth);
+      // (a cable is a sheath you can see into: the one that is grey is a ribbon; the rest of the look is in cableLook.ts)
+      const sheath = gh.mat === 'cable' && gh.tag?.kind === 'cable' && gh.opacity >= 1;
+      add(gh.mesh, gh.color, sheath ? sheathOpacity(gh.name, gh.color === KIND_COLOR.debug) : gh.opacity, null, gh.tag, gh.anim, true, false, gh.mat, !!gh.smooth);
       if (gh.fx) next.fx.push({ gh, mesh: objs[objs.length - 1].mesh });
     }
     // animation ranks: every distinct step (moves and appearances) in order
@@ -969,7 +975,7 @@ function escapeHtml(s: string) {
 
 /** Light up the mesh under the pointer: it wears a lit copy of its (shared) material until the pointer moves on. */
 function setEmissive(m: THREE.Mesh | null, level: number) {
-  if (!m) return;
+  if (!m || m.userData.cableBase) return; // (a cable's hover look is its own: viewFx.ts hoverCable)
   const base = (m.userData.baseMat ?? m.material) as THREE.Material;
   if (!level) { m.material = base; delete m.userData.baseMat; return; }
   if (!(base as THREE.MeshStandardMaterial).isMeshStandardMaterial) return;
@@ -1157,6 +1163,7 @@ function applyLayers(c: any, layers: Record<Layer, boolean>) {
 function applyFx(c: any, v: View3d) {
   setEmissive(c.hover, 0);
   c.hover = null;
+  c.hoverCable = null;
   const p = store.get().project, res = c.result as GenResult | null;
   const news = v.news && p && res ? newSet(p, res) : null;
   const ok = applyView(c, { focus: v.focus, news: news && news.any ? news : null });
@@ -1209,6 +1216,7 @@ function applySel(c: any, sel: SelItem[]) {
     }
   }
   c.outline.selectedObjects = picked;
+  pickCables(c, sel.filter((it) => it.kind === 'link').map((it) => it.id));
   placeHighlights(c);
 }
 

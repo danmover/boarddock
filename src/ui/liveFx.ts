@@ -48,10 +48,21 @@ function labelSprite(text: string): THREE.Sprite {
   sp.renderOrder = 11;
   return sp;
 }
+/**
+ * A streak of light for power or data running along a cable: bright at its head (the end it travels towards) and fading
+ * behind, added to what is behind it so it glows inside the translucent sheath. One material for each colour.
+ */
+function streakMaterial(color: THREE.Color): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: { uColor: { value: color.clone() } }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false,
+    vertexShader: 'varying float vZ; varying vec3 vN; varying vec3 vV; void main(){ vZ = position.z; vec4 mv = modelViewMatrix * vec4(position, 1.0); vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz); gl_Position = projectionMatrix * mv; }',
+    fragmentShader: 'uniform vec3 uColor; varying float vZ; varying vec3 vN; varying vec3 vV; void main(){ float head = smoothstep(-1.0, 0.9, vZ); float body = pow(max(dot(normalize(vN), normalize(vV)), 0.0), 1.4); gl_FragColor = vec4(uColor * (1.2 + 0.8 * head), head * (0.3 + 0.7 * body)); }',
+  });
+}
 const seedOf = (s: string) => { let h = 7; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 9973; return h / 97; };
 
 interface LightObj { sprite: THREE.Sprite; dot: THREE.Mesh; base: THREE.Color; pattern: LightPattern; seed: number; i: number; size: number; level: number; dark: boolean }
-interface FlowObj { beads: THREE.Mesh[]; pts: number[][]; cum: number[]; len: number; speed: number; on: boolean }
+interface FlowObj { beads: THREE.Mesh[]; pts: number[][]; cum: number[]; len: number; speed: number; on: boolean; owner: THREE.Mesh | null }
 
 export interface LiveFx { tick(now: number): boolean; setLive(on: boolean): void; hide(v: boolean): void; declutter(camera: THREE.PerspectiveCamera): void; dispose(): void }
 
@@ -73,7 +84,7 @@ export function keepApart(ls: { x: number; y: number; hw: number; hh: number; d:
 /** Hang the live touches on the meshes of the ghosts that have them. `live` false: lights on steady, no pulses. */
 export function liveFx(items: { gh: Ghost; mesh: THREE.Object3D }[], live: boolean): LiveFx {
   const lights: LightObj[] = [], flows: FlowObj[] = [], extras: THREE.Object3D[] = [], tags: { at: THREE.Vector3; texts: string[]; mesh: THREE.Object3D }[] = [];
-  const made: { dispose(): void }[] = [], labels: THREE.Sprite[] = [];
+  const made: { dispose(): void }[] = [], labels: THREE.Sprite[] = [], streaks = new Map<string, THREE.ShaderMaterial>();
   const dotGeo = new THREE.SphereGeometry(1, 12, 8), beadGeo = new THREE.SphereGeometry(1, 10, 6);
   made.push(dotGeo, beadGeo);
   for (const { gh, mesh } of items) {
@@ -135,22 +146,25 @@ export function liveFx(items: { gh: Ghost; mesh: THREE.Object3D }[], live: boole
       const pts = fx.flow.pts, cum = [0];
       for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1], pts[i][2] - pts[i - 1][2]));
       const len = cum[cum.length - 1];
-      if (len < 20) continue;
-      const bm = new THREE.MeshBasicMaterial({ color: new THREE.Color(fx.flow.colour), toneMapped: false, transparent: true, opacity: 0.9 });
-      made.push(bm);
-      const n = Math.max(1, Math.min(6, Math.round(len / (fx.flow.slow ? 140 : 90))));
+      if (len < 8) continue;
+      // elongated streaks inside the sheath (a third of a cable's radius wide; about four radii long), head first
+      const bm = streaks.get(fx.flow.colour) ?? streaks.set(fx.flow.colour, streakMaterial(new THREE.Color(fx.flow.colour))).get(fx.flow.colour)!;
+      const rad = Math.max(0.3, fx.flow.r * 0.32), half = Math.max(2, fx.flow.r * 1.6);
+      const n = Math.max(1, Math.min(6, Math.round(len / (fx.flow.slow ? 110 : 70))));
       const beads: THREE.Mesh[] = [];
       for (let k = 0; k < n; k++) {
         const b = new THREE.Mesh(beadGeo, bm);
-        b.scale.set(fx.flow.r * 1.1, fx.flow.r * 1.1, fx.flow.r * 1.1);
+        b.scale.set(rad, rad, half);
         b.raycast = noRay;
+        b.renderOrder = 3;
         b.visible = false;
         mesh.add(b);
         beads.push(b);
       }
-      flows.push({ beads, pts, cum, len, speed: fx.flow.slow ? 45 : 110, on: fx.flow.on });
+      flows.push({ beads, pts, cum, len, speed: fx.flow.slow ? 55 : 110, on: fx.flow.on, owner: (mesh as THREE.Mesh).isMesh ? (mesh as THREE.Mesh) : null });
     }
   }
+  made.push(...streaks.values());
   for (const g of tags) {
     const n = new Map<string, number>();
     for (const t of g.texts) n.set(t, (n.get(t) ?? 0) + 1);
@@ -163,13 +177,17 @@ export function liveFx(items: { gh: Ghost; mesh: THREE.Object3D }[], live: boole
   }
   let on = live, last = -1;
   const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const tmp = new THREE.Color();
+  const tmp = new THREE.Color(), dir = new THREE.Vector3(), Z = new THREE.Vector3(0, 0, 1);
   const place = (f: FlowObj, s: number, b: THREE.Mesh) => {
     let i = 1;
     while (i < f.cum.length - 1 && f.cum[i] < s) i++;
     const a = f.pts[i - 1], c = f.pts[i], seg = f.cum[i] - f.cum[i - 1] || 1, k = (s - f.cum[i - 1]) / seg;
     b.position.set(a[0] + (c[0] - a[0]) * k, a[1] + (c[1] - a[1]) * k, a[2] + (c[2] - a[2]) * k);
+    dir.set(c[0] - a[0], c[1] - a[1], c[2] - a[2]);
+    if (dir.lengthSq() > 1e-9) b.quaternion.setFromUnitVectors(Z, dir.normalize());
   };
+  // a cable being drawn out (the assembly steps, a new cable) has no streaks until it is all there
+  const grown = (f: FlowObj) => !f.owner || (f.owner.geometry.drawRange.count === Infinity && !f.owner.userData.tip?.visible);
   const tick = (now: number): boolean => {
     if (!lights.length && !flows.length) return false;
     const moving = on && !reduce;
@@ -192,7 +210,7 @@ export function liveFx(items: { gh: Ghost; mesh: THREE.Object3D }[], live: boole
       L.dot.visible = lv > 0.02;
     }
     for (const f of flows) {
-      const go = moving && f.on;
+      const go = moving && f.on && grown(f);
       f.beads.forEach((b, k) => {
         b.visible = go;
         if (!go) return;

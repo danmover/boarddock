@@ -5,6 +5,7 @@ import type { MainsZone, PickTag } from '../model/types';
 import { isNewPiece, type NewSet } from '../model/newparts';
 import type { SelItem } from '../state';
 import type { View3d } from './view3d';
+import { sheathMaterial } from './cableLook';
 
 interface Piece { mesh: THREE.Mesh; tag?: PickTag; base: THREE.Matrix4 }
 
@@ -23,11 +24,12 @@ export function keeps(t: PickTag | undefined, it: SelItem): boolean {
 }
 
 // see-through and tinted copies of a material, made once per material and freed with it
-const variants = new Map<THREE.Material, { xray?: THREE.Material; tint?: THREE.Material }>();
+const variants = new Map<THREE.Material, { xray?: THREE.Material; tint?: THREE.Material; hot?: THREE.Material; dim?: THREE.Material }>();
 const TINT = new THREE.Color('#ffb020');
-function variant(base: THREE.Material, kind: 'xray' | 'tint'): THREE.Material {
+function variant(base: THREE.Material, kind: 'xray' | 'tint' | 'hot' | 'dim'): THREE.Material {
   const v = variants.get(base) ?? variants.set(base, {}).get(base)!;
-  if (!v[kind]) {
+  if ((kind === 'hot' || kind === 'dim') && !v[kind]) { const sh = base.userData.sheath as { color: string; opacity: number }; v[kind] = sheathMaterial(sh.color, sh.opacity, kind); }
+  else if (!v[kind]) {
     const m = base.clone() as THREE.MeshStandardMaterial;
     if (kind === 'xray') { m.transparent = true; m.opacity = Math.min(base.opacity, 0.12); m.depthWrite = false; if ('emissiveIntensity' in m) m.emissiveIntensity = 0; }
     else if ('emissive' in m) { m.emissive = TINT.clone(); m.emissiveIntensity = 0.5; }
@@ -39,7 +41,7 @@ function variant(base: THREE.Material, kind: 'xray' | 'tint'): THREE.Material {
 export function dropVariants(base: THREE.Material, out: { dispose(): void }[]) {
   const v = variants.get(base);
   if (!v) return;
-  for (const m of [v.xray, v.tint]) if (m) out.push(m);
+  for (const m of [v.xray, v.tint, v.hot, v.dim]) if (m) out.push(m);
   variants.delete(base);
 }
 
@@ -61,25 +63,27 @@ export function applyView(c: any, fx: ViewFx): boolean {
   const xrayed: THREE.Mesh[] = [];
   for (const o of objs) {
     const m = o.mesh, u = m.userData;
-    const plain = (u.plainMat ??= m.material) as THREE.Material;
+    const plain = (u.cableBase ?? (u.plainMat ??= m.material)) as THREE.Material; // (a cable's own sheath: refreshCables keeps its look)
     const inKeep = !keep || keep.has(o);
     const hide = mode === 'isolate' && !inKeep, fade = mode === 'xray' && !inKeep;
     const tint = !!fx.news && isNewPiece(fx.news, o.tag, o.base.elements);
     u.focusHidden = hide;
     u.xray = fade;
-    if (fade) xrayed.push(m);
+    u.tinted = tint;
+    if (fade || u.cableBase) xrayed.push(m);
     const want = fade ? variant(plain, 'xray') : tint ? variant(plain, 'tint') : plain;
     if (m.material !== want) m.material = want;
     if (u.cast0 === undefined) u.cast0 = m.castShadow;
     m.castShadow = fade ? false : u.cast0;
-    for (const ch of m.children) ch.visible = !fade; // (the outline edges)
+    for (const ch of m.children) if ((ch as THREE.LineSegments).isLineSegments) ch.visible = !fade; // (the outline edges)
     m.visible = !hide && !u.animHidden && !u.layerHidden;
   }
-  // see-through pieces stay out of the ambient-occlusion pass, or they would darken what is picked like solid ones
+  // see-through pieces (and the translucent cables) stay out of the ambient-occlusion pass, or they would darken what is near like solid ones
   // the mains zones sit out Isolate, X-ray and What's new: shaded boxes would drown what those are showing
   c.zonesOff = !!(fx.focus || fx.news);
   if (c.zones) c.zones.visible = zoneVisible(c);
   c.aoHide = xrayed.length ? (on: boolean) => { for (const m of xrayed) m.visible = on ? false : !m.userData.animHidden && !m.userData.layerHidden && !m.userData.focusHidden; } : null;
+  refreshCables(c);
   return ok;
 }
 
@@ -102,3 +106,27 @@ export function applyZones(c: any, zones: MainsZone[]) {
   g.updateMatrixWorld(true);
   c.invalidate?.();
 }
+
+// ---------------------------------------------------------------- cables
+
+/**
+ * A picked or hovered cable is more solid and brighter, and the other cables dim a little (nothing dims when none is).
+ * Cables that are see-through (X-ray) or tinted (What's new) keep that look instead.
+ */
+export function refreshCables(c: any) {
+  const emph = new Set<string>([...(c.selCables ?? []), ...(c.hoverCable ? [c.hoverCable] : [])]);
+  for (const o of c.objs as Piece[]) {
+    const m = o.mesh, u = m.userData;
+    if (!u.cableBase || u.xray || u.tinted) continue;
+    const want = !emph.size ? u.cableBase : variant(u.cableBase, emph.has(u.cableId) ? 'hot' : 'dim');
+    if (m.material === want) continue;
+    m.material = want;
+    if (u.tip) (u.tip as THREE.Mesh).material = want; // (the rounded end of a cable being drawn out)
+  }
+  c.invalidate?.();
+}
+
+/** The cables that are picked (link ids). */
+export function pickCables(c: any, ids: string[]) { c.selCables = new Set(ids); refreshCables(c); }
+/** The cable under the pointer (the mesh), or none. */
+export function hoverCable(c: any, m: THREE.Mesh | null) { const id = m?.userData.cableId ?? null; if (id === (c.hoverCable ?? null)) return; c.hoverCable = id; refreshCables(c); }
