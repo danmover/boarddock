@@ -16,6 +16,34 @@ const by = (l: ReturnType<typeof list>, title: string) => l.find((x) => x.title 
 
 beforeEach(() => { closeProject(); view3d.set({ focus: null, news: false }); });
 
+describe('cables off, from the palette', () => {
+  it('switches cables off and on, keeps the links, and greys out what needs cables', () => {
+    const p = newProject(TEMPLATES.find((t) => t.id === 'rpi4')!.make());
+    p.links = [{ id: 'l1', a: { module: 'a', ref: 'USB' }, b: { module: 'b', ref: 'USB' }, kind: 'usb' }];
+    loadProject(p);
+    const links = structuredClone(store.get().project!.links);
+    let l = list();
+    expect(by(l, 'Cables: off (holders and plug covers only)').enabled).toBe(true);
+    expect(by(l, 'Auto-connect the cables').enabled).toBe(true);
+    expect(by(l, 'Show the Wiring view').enabled).toBe(true);
+    by(l, 'Cables: off (holders and plug covers only)').run();
+    expect(store.get().project!.cablesOff).toBe(true);
+    expect(store.get().project!.links).toEqual(links);
+    l = list();
+    expect(l.some((c) => c.title === 'Cables: off (holders and plug covers only)')).toBe(false);
+    expect(by(l, 'Auto-connect the cables').enabled).toBe(false);
+    expect(by(l, 'Auto-connect the cables').why).toBe('Cables are off for this rack');
+    expect(by(l, 'Rewire the auto-connected cables').enabled).toBe(false);
+    expect(l.some((c) => c.title === 'Show the Wiring view')).toBe(false); // (no wiring without cables)
+    by(l, 'Cables: in the app').run();
+    expect(store.get().project!.cablesOff).toBeUndefined();
+    expect(store.get().project!.links).toEqual(links);
+    expect(by(list(), 'Auto-connect the cables').enabled).toBe(true);
+    undo();
+    expect(store.get().project!.cablesOff).toBe(true); // (each is one undo step)
+  });
+});
+
 describe('the command list', () => {
   it('has a unique id for each command, and a title, a group and a run function', () => {
     loadProject(newProject(TEMPLATES.find((t) => t.id === 'rpi4')!.make()));

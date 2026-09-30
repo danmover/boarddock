@@ -244,8 +244,10 @@ The **Rails** view shows the rack from above: rails, table stands, docks, and ev
 - Pairs boards back to back in one dock when that costs nothing in plug access.
 - Packs the docks along the rail using their real 3D size, including plugs, cradles and buttons.
 - Starts a new rail when one gets longer than your limit. Boxes such as hubs and chargers get a rail of their own.
-- Keeps boards that are cabled together next to each other.
+- Orders, turns and rows the docks for their cables: a planner tries layouts and scores each on cable length, crossings, cables under rails, plugs blocked by a neighbour, ribbon length and rail used, then checks the best one or two with the real cable router and keeps the one with least trouble. On 13 test racks it cut cable by 23 %, the longest cable by 24 % and crossings from 87 to 18, against rails about a third longer (the **Compact** goal turns that round). It takes under a second for 16 boards; the first build of a big rack takes longer while it checks, and the pick is remembered.
 - Settings: rail direction, longest rail, gap between docks, space between rails, and pairing on or off.
+
+**Options**, beside the button: probes (J-Links, USB-serial adapters) beside their board and stacked in one column, a goal (balanced, compact, short cables, easy to reach), like boards grouped and turned alike, mains kept at one end, hosts near their devices, room to grow on each rail, back-to-back pairing, cables that fit stock lengths, hot boards spread out, and fewest printed parts. Each is a weight on the same score, not a separate rule. **Pack new boards only** places boards you have just added and leaves every other dock and rail where it is.
 
 Under **Boards in their docks**, a small table compares the choices you have tried on this rack: rails and their length, how far it stands out from the wall, and cable to buy. **Whichever suits each** says which boards it laid flat.
 
@@ -255,7 +257,6 @@ With Auto-arrange on, every change lays the rack out again, a new cable too. Whe
 
 On a built rack, **Auto-arrange** asks first, as it moves built boards.
 
-<!-- routing/dock/auto-arrange: filled in at release -->
 
 **Editing by hand.** The first edit keeps everything where it is and switches to manual. A dock dropped on top of another slides to the nearest gap beside it, and a dock a board leaves empty goes. **Tidy up** takes out empty docks and slides overlapping docks apart along their rail, leaving everything else where it is.
 
@@ -321,6 +322,8 @@ A box longer than your printer's bed (a powerboard usually is) gets its holder i
 ## Table stands
 
 ![Table stands under two rails](docs/images/stands.png)
+
+There is no wall mount: BoardDock prints no screw holes and uses no screws. The rails are ordinary TS35 DIN rails, which come with slots for screws, so to hang a rack on a wall or in a cabinet, screw the rails up yourself and clip the docks on as you would on the stands.
 
 The rails stand on printed sleepers (Rails step, **Table stands**, on by default):
 - A sleeper crosses the rails at each end, and at least every 200 mm between.
@@ -393,7 +396,9 @@ On table stands the streets run under the rails' level. Wherever a street crosse
 
 Every cable's length is measured along its route and rounded up to a standard length to buy (10% slack). Auto-arrange keeps cabled boards next to each other and puts each hub or charger in the middle of the boards it feeds, on the same rail when it fits, so the farthest cable is short too (on a rack of six Pis and two chargers that took the longest cable from 66 to 51 cm, and the cable to buy from 4.3 to 3.5 m).
 
-<!-- routing/dock/auto-arrange: filled in at release -->
+Routing keeps cables out of each other's way and off the rack: cables that cross under the rails are spread a cable width apart, each pinned to its own line; lanes stay between rails and stand blocks; a cable routed later keeps off the ways of earlier ones; and a cable settles beside a rail, stand or plug, never into it. Stands carry a comb for every street they cross. A debug ribbon or jumper never blocks taking a holder off: over another board's dock it rises clear of that holder's lift-off and its release lever, and a narrow one goes round the end of the dock when that costs little. A plug pack in the rack's own powerboard has its lead drawn from the outlet to its board, checked against its 1.2 m. On the 144 test racks the collision check went from 458 to about 35 mm³ in all.
+
+**Cables: off** (on the Plugs step, or the command palette) is for when you only want the holders: no cables, combs, tags, cable steps or cable shopping. Plugs becomes a list of each board's ports, each "plug in it" or "stays empty" with its cradle, cap, guard and tie anchor, and those print as you mark them. Your cables are kept: switch back on and they return.
 
 The Wiring view is a canvas: pinch (or ⌘ + scroll) zooms where the pointer is, scrolling or dragging the background pans, and the percentage button fits everything in. It opens with the cards as the boards stand on the rails, shaped to fit the window: a long rail wraps onto more lines, short rails share a line, and a plug pack, your computer or your router sits beside the rail it is cabled to. Drag a card by its title to move it; it stays where you put it, and cards stay put while you connect cables. **Arrange…** lays every card out again, shaped to the window, either as the cables flow (chargers and hosts on the left, then hubs, then probes and adapters, then the boards they serve, each column ordered so cables cross least) or as the boards stand on the rails. Hover a card, a plug or a pin for details. Type in **Find a board**, or click a board's title, to show just its cables and the boards at their other ends (and zoom to fit them). Cable numbers and lengths sit on their cables, clear of the cards where there is room.
 

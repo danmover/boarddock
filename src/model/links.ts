@@ -325,7 +325,13 @@ export function powerFeeds(p: Project): PowerFeed[] {
  * cheapest pairing in all, not first come first served), by how long the cable would be on the laid-out rack (`at`),
  * else by the boards' order. Every suggestion says why it was made.
  */
+/** Whether the app works with cables (the default), or the project is for holders and plug covers only. */
+export const cablesOn = (p: { cablesOff?: boolean }) => !p.cablesOff;
+/** The project as the cable-free view of it sees it: with cables off, no links (they are kept in the project itself). */
+export const viewOf = (p: Project): Project => (p.cablesOff && p.links?.length ? { ...p, links: [] } : p);
+
 export function autoLinks(p: Project, at?: PlugAt): Link[] {
+  if (!cablesOn(p)) return [];
   const plugs = plugsOf(p);
   const taken = new Set((p.links ?? []).flatMap((l) => [keyR(l.a), keyR(l.b)]));
   const free = (r: PlugRole) => plugs.filter((x) => x.role === r && !taken.has(keyOf(x)));
@@ -630,6 +636,7 @@ export function toComputer(p: Project, add: Link[]): string {
 
 /** What the rack still needs, with the accessory (a library template id) that would give it. */
 export function wiringAdvice(p: Project): { text: string; add?: string; count?: number }[] {
+  if (!cablesOn(p)) return [];
   const b = portBudget(p), out: { text: string; add?: string; count?: number }[] = [];
   const ps = powerShort(p);
   // which boards, what they need, and what the free ports give (so a charger left idle beside them makes sense)

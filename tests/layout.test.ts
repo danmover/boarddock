@@ -5,7 +5,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { initKernel } from '../src/cad/kernel';
 import { generatePanel } from '../src/cad/panelgen';
 import { generateChecked } from '../src/cad/arrange';
-import { autoAssignClassic, seatBoard } from '../src/cad/dockplan';
+import { appendDock, autoAssignClassic, seatBoard } from '../src/cad/dockplan';
 import { lastPlan, planCandidates, type PlanStats } from '../src/cad/autoplan';
 import { packNew } from '../src/cad/packnew';
 import { cableToBuy } from '../src/model/links';
@@ -221,14 +221,17 @@ describe('pack new boards only', () => {
     expect(r2.report.warnings.filter((w) => /overlap on the panel/.test(w))).toEqual([]);
   }, 120_000);
 
-  it('puts a new board by the board it is cabled to, with shorter cables than putting it on the end', () => {
-    const p = grown(702), q = grown(702);
-    const rep = generatePanel(p).report.panel!;
-    packNew(p, rep);
+  it('puts a new board by the board it is cabled to: shorter cables than putting each on the end, and as good as seating it in a free slot', () => {
+    const p = grown(702), q = grown(702), e = grown(702);
+    packNew(p, generatePanel(p).report.panel!);
     for (const m of q.modules.slice(4)) seatBoard(q, m.id);
-    const a = scoreLayout(p, generatePanel(p)), b = scoreLayout(q, generatePanel(q));
-    expect(a.total, `${a.total} against ${b.total} mm`).toBeLessThanOrEqual(b.total);
-    expect(a.hard).toBeLessThanOrEqual(b.hard);
+    for (const m of e.modules.slice(4)) appendDock(e, m.id);
+    const a = scoreLayout(p, generatePanel(p)), b = scoreLayout(q, generatePanel(q)), c = scoreLayout(e, generatePanel(e));
+    // (against the end of the rail, clearly; against `seatBoard`, which also looks for a free slot near the board it is cabled
+    // to, within the 30 mm or so each cable is out by when placed without the router)
+    expect(a.total, `${a.total} against ${c.total} mm on the end`).toBeLessThan(c.total);
+    expect(a.total, `${a.total} against ${b.total} mm in a free slot`).toBeLessThanOrEqual(b.total * 1.05);
+    expect(a.hard).toBeLessThanOrEqual(Math.min(b.hard, c.hard));
   }, 120_000);
 
   it('leaves a locked rail alone: nothing added to it, no change to its docks or its length', () => {

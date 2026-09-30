@@ -5,7 +5,7 @@ import type { Board, Comp, Hole, HoleRole, Module, PartOut, Project, V2 } from '
 import { applyHoleRoles, boltedOn, detectHoleRoles, ROLE_INFO, stackHardware } from '../model/holes';
 import { allPlugs, baseRef, canCable, connectNote, findModule, offRackModule, powerShort, refText, cableNumbers, cablePurpose, shortName, strongerPower, times, hubOffer, KIND_COLOR, linkKind, linkOf, plugName, plugRole, plugsOf, portBudget, sameRef } from '../model/links';
 import { cableLines } from '../model/cablelist';
-import { addAccessory, addDebugGearFor, addJLinks, addLinks, addSerialAdapters, addUartCables, plugPlaces, rebalancePower, removeLinks, setLink } from './linkOps';
+import { addAccessory, addDebugGearFor, addJLinks, addLinks, addSerialAdapters, addUartCables, plugPlaces, rebalancePower, removeLinks, setCables, setLink } from './linkOps';
 import { adapterFor, debugHeaders, isDebugPort, isProbe, isUartPort, markDebug, ribbonOf, uartHeaders, uartPins, type DebugKind } from '../model/probes';
 import { Icon, I } from './icons';
 import { CONNECTORS, DEFAULT_FEATURES, HOLDER_PRESETS, MATERIALS, PRINTERS, connById, connSetup, setLayout } from '../model/library';
@@ -110,7 +110,7 @@ function RackSummary() {
   // where the rack is up to: each row goes to its step
   const rows: { step: Step; label: string; state: string; done: boolean; tone?: 'warn' }[] = [
     { step: 'board', label: 'Boards', state: `${rackCount(p)}, ${s(plugs, 'plug')}`, done: p.modules.length > 0 },
-    { step: 'plugs', label: 'Cables', state: nl ? s(nl, 'cable') : 'none wired yet', done: nl > 0 },
+    p.cablesOff ? { step: 'plugs', label: 'Cables', state: 'off: holders and plug covers only', done: true } : { step: 'plugs', label: 'Cables', state: nl ? s(nl, 'cable') : 'none wired yet', done: nl > 0 },
     { step: 'mount', label: 'Rails', state: p.layout === 'panel' ? (rails ? `on ${s(rails, 'rail')}` : 'laying out…') : 'loose holders', done: p.layout !== 'panel' || rails > 0 },
     { step: 'check', label: 'Check', state: bad ? `${bad} failing${warn ? `, ${warn} to look at` : ''}` : warn ? `${warn} to look at` : 'nothing to look at', done: !bad && !warn, tone: bad || warn ? 'warn' : undefined },
     { step: 'export', label: 'Print', state: p.built ? (d?.any ? `What's new: ${s(d.plan.length, 'step')}, ${s(d.parts.reduce((a, x) => a + x.qty, 0), 'part')} to print` : `built ${when}`) : 'not printed yet', done: !!p.built && !d?.any },
@@ -603,6 +603,50 @@ export function Inspector() {
 }
 
 // ============================================================================================ PLUGS
+/** Cables in the app, or off (holders, cradles and plug covers only). */
+function CablesSwitch() {
+  const p = useApp((s) => s.project)!;
+  return (
+    <div className="field" style={{ marginBottom: 8 }}>
+      <span>Cables</span>
+      <Seg value={p.cablesOff ? 'off' : 'on'} options={[['on', 'In the app'], ['off', 'Off: holders and plug covers only']]} onChange={(v) => setCables(v === 'on')} />
+      {p.cablesOff && <p className="hint" style={{ margin: '4px 0 0' }}>Nothing is routed, drawn, tagged, listed or bought as a cable. Say below which ports get a plug: those get a cradle and cap. The cables you had are kept for when you switch them back on.</p>}
+    </div>
+  );
+}
+
+/** The ports of the boards with cables off: a plug in each, or empty. */
+function PortList({ conns, every }: { conns: Comp[]; every: boolean }) {
+  const p = useApp((s) => s.project)!;
+  const setUse = (ids: Set<string> | null, use: 'yes' | null) => edit((q) => {
+    for (const m of q.modules) for (const c of m.board.comps) if (c.conn && !c.hidden && (!ids || ids.has(c.id))) { if (use) c.conn.use = use; else delete c.conn.use; }
+  });
+  const here = new Set(conns.map((c) => c.id));
+  return (
+    <>
+      <div className="btns" style={{ marginBottom: 6, flexWrap: 'wrap' }}>
+        <button className="btn small soft" onClick={() => setUse(here, 'yes')}>All ports with a plug</button>
+        <button className="btn small ghost" onClick={() => setUse(here, null)}>None</button>
+        {p.modules.length > 1 && every && <><span className="hint" style={{ margin: '0 2px' }}>every board:</span><button className="btn small soft" onClick={() => setUse(null, 'yes')}>All with a plug</button><button className="btn small ghost" onClick={() => setUse(null, null)}>None</button></>}
+      </div>
+      <div className="list">
+        {conns.map((c) => {
+          const yes = c.conn!.use === 'yes';
+          return (
+            <SelRow key={c.id} it={{ kind: 'comp', id: c.id }}>
+              <span className="grow"><b>{c.ref}</b> <small>{connById(c.conn!.type).name}</small></span>
+              <Seg value={yes ? 'yes' : 'no'} options={[['yes', 'plug in it'], ['no', 'stays empty']]} onChange={(v) => edit((q) => { const x = q.modules[q.active].board.comps.find((y) => y.id === c.id); if (!x?.conn) return; if (v === 'yes') x.conn.use = 'yes'; else delete x.conn.use; })} />
+              {!yes ? <Chip>bare</Chip> : c.conn!.entry === 'edge' ? <Chip>{c.conn!.cradle ? (c.conn!.cap ? 'cradle + cap' : 'cradle') : c.conn!.guard ? 'guard' : 'opening'}</Chip> : <Chip>from above</Chip>}
+            </SelRow>
+          );
+        })}
+        {!conns.length && <p className="hint">{say('No connectors found. Add them in the board editor (Connector tool, click an edge), or select a part and choose "Treat as connector".')}</p>}
+      </div>
+      <p className="hint" style={{ marginTop: 8 }}>Pick a port to set its cradle, cap, guard and zip-tie anchor below.</p>
+    </>
+  );
+}
+
 export function PlugsPanel() {
   const p = useApp((s) => s.project)!;
   const sel = useApp((s) => s.sel);
@@ -612,7 +656,9 @@ export function PlugsPanel() {
   return (
     <div>
       <ModulePicker />
+      <CablesSwitch />
       <p className="lede">Every connector gets an opening sized for its plug. The ones with a plug in them get a <b>cradle</b> with a snap-on <b>cap</b> (edge plugs) and a zip-tie anchor on the side the cable is pulled to; the rest are left bare, so nothing is printed that does no good. Tick several to set them together, or click a cradle in the 3D view.</p>
+      {p.cablesOff ? <Section title={`Ports · ${conns.length}`} right={<span className="btns"><AllBox items={conns.map((c) => ({ kind: 'comp' as const, id: c.id }))} /><button className="btn small" onClick={() => store.set({ view: 'editor' })}>+ Add</button></span>}><PortList conns={conns} every /></Section> :
       <Section title={`Connectors · ${conns.length}`} right={<span className="btns"><AllBox items={conns.map((c) => ({ kind: 'comp' as const, id: c.id }))} /><button className="btn small" onClick={() => store.set({ view: 'editor' })}>+ Add</button></span>}>
         <div className="list">
           {conns.map((c) => {
@@ -629,11 +675,11 @@ export function PlugsPanel() {
           {!conns.length && <p className="hint">{say('No connectors found. Add them in the board editor (Connector tool, click an edge), or select a part and choose "Treat as connector".')}</p>}
         </div>
         <p className="hint" style={{ marginTop: 8 }}>Tap a port's <i>empty</i> or <i>cable</i> tag to say whether you'll plug something into it yourself.</p>
-      </Section>
+      </Section>}
       {chosen.length > 0 && <ConnEditor list={chosen} />}
-      <DebugPanel />
+      {!p.cablesOff && <DebugPanel />}
       {p.modules.length > 1 && <div className="copyholder"><span>Copy this board's plug settings to</span><CopyTo start={{ holder: false }} /></div>}
-      <CablesSection />
+      {!p.cablesOff && <CablesSection />}
     </div>
   );
 }
@@ -878,7 +924,7 @@ function ConnEditor({ list }: { list: Comp[] }) {
           <Pick label="Plug enters" value={common(cs, (c) => c.entry) ?? ('' as 'edge')} options={[['edge', 'Through the edge'], ['top', 'From above']]} onChange={(v) => set((x) => { x.conn!.entry = v; })} />
           <Pick label="Mounted on" value={common(list, (c) => c.side) ?? ('' as 'top')} options={[['top', 'Top side'], ['bottom', 'Bottom side']]} onChange={(v) => set((x) => { x.side = v; })} />
         </div>
-        {one && <div style={{ marginTop: 8 }}><CableTo c={list[0]} /></div>}
+        {one && !store.get().project?.cablesOff && <div style={{ marginTop: 8 }}><CableTo c={list[0]} /></div>}
         {one && cs[0].entry === 'edge' && (
           <>
             <div className="row" style={{ marginTop: 8 }}>
@@ -1613,7 +1659,7 @@ function BomSection({ p, res, base }: { p: Project; res: Res; base: string }) {
 
 function ShoppingList({ p, lines }: { p: Project; lines: { head: string; items: string[] }[] }) {
   const rail = lines.some((g) => g.head === 'Rails');
-  const loose = p.layout === 'loose', nLinks = (p.links ?? []).length;
+  const loose = p.layout === 'loose', nLinks = p.cablesOff ? 0 : (p.links ?? []).length;
   return (
     <Section title="Shopping list" right={<ChecklistButton />}>
       {lines.map((g) => (
@@ -1669,7 +1715,7 @@ function printNotes(p: Project, res: Res, nPlates: number, tot: { g: number; m: 
       ...(clip ? ['Hook the clip over the top of the rail and push the bottom in until it clicks.', 'To remove: pull the tab towards you; the holder tilts off.'] : []),
       ...(p.stand.enabled ? ['Slide the holder onto its stand post.'] : []),
       'Plugs: lay the plug in its cradle, slide it home, press the cap on.',
-      ...((p.links ?? []).length ? ['Cables: loose holders\' cables are not routed or sized. Lay the boards out and measure each one before you buy it.'] : []),
+      ...((p.links ?? []).length && !p.cablesOff ? ['Cables: loose holders\' cables are not routed or sized. Lay the boards out and measure each one before you buy it.'] : []),
     ].map((x, i) => `  ${i + 1}. ${x}`),
     '',
     'Checks:',

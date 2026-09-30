@@ -9,7 +9,7 @@ import { stackHardware, baseOf } from './holes';
 import { adapterFor, isDebugPort, isProbe } from './probes';
 import { isPlugPack } from './powerdata';
 import { poeHats } from './poe';
-import { baseRef, findModule, isAccessory, plugName } from './links';
+import { baseRef, findModule, isAccessory, plugName, viewOf } from './links';
 import { strapBoxes } from './built';
 import type { GenResult, Module, Project } from './types';
 
@@ -34,7 +34,8 @@ const kindName = (m: Module) => m.board.name.replace(/ #\d+$/, '');
 export const strapLength = (m: Module) => { const b = m.board.box; return b ? Math.ceil((2 * (b.w + b.h) + 80) / 50) * 5 : 30; };
 
 
-export function billOfMaterials(p: Project, res: GenResult): BomGroup[] {
+export function billOfMaterials(p0: Project, res: GenResult): BomGroup[] {
+  const p = viewOf(p0); // (no cables: none in the list)
   const out: BomGroup[] = [];
   const material = p.modules[0]?.holder.material ?? 'PETG', mat = MATERIALS[material] ?? MATERIALS.PETG;
   const count = <T>(xs: T[], key: (x: T) => string) => { const m = new Map<string, T[]>(); for (const x of xs) m.set(key(x), [...(m.get(key(x)) ?? []), x]); return [...m.entries()]; };

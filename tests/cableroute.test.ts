@@ -2,12 +2,12 @@
 // rail), kept out of the stand blocks, and the cable's column stays where its plug is; the cables settle beside a rail
 // or a plug, not 0.8 mm into it; and a plug pack's own lead is routed from its outlet and checked against its length.
 import { describe, it, expect, beforeAll } from 'vitest';
-import { spreadCrossings, type Obstacle, type Route } from '../src/cad/cableroute';
+import { ribbonRoute, spreadCrossings, type Obstacle, type RibbonEnd, type Route } from '../src/cad/cableroute';
 import { settleCables } from '../src/cad/cablesim';
 import { TEMPLATES } from '../src/model/templates';
 import { newModule, newProject } from '../src/model/library';
 import { autoLinks, numberLinks } from '../src/model/links';
-import { addProbes } from '../src/model/probes';
+import { addAdapters, addProbes, fillWires, stackCompanions } from '../src/model/probes';
 import { generatePanel } from '../src/cad/panelgen';
 import { initKernel } from '../src/cad/kernel';
 
@@ -112,5 +112,74 @@ describe('cable tags', () => {
     expect(ribbons.filter((id) => tagged.has(id))).toEqual([]);
     expect(usb.length).toBeGreaterThan(0);
     expect(usb.every((id) => tagged.has(id))).toBe(true);
+  }, 120_000);
+});
+
+describe('ribbons and jumpers keep clear of what has to move', () => {
+  const end = (u: number, module: string): RibbonEnd => ({ p: [u, 0, 10], d: [0, 0, 1], module, plug: `${module}/J1`, w: [0, 1, 0], span: 5 });
+  const top = (r: Route) => Math.max(...r.pts.map((q) => q[2]));
+
+  it('rises over the way another holder lifts off, and over a release lever with a finger room above it', () => {
+    const free = ribbonRoute(end(0, 'a'), end(80, 'b'), 0.9, 6, [], []);
+    // a holder between them lifts off straight up: 30 mm over its top at 40
+    const keep: Obstacle[] = [{ box: [30, -20, 40, 50, 20, 70], label: "the way the Pico holder lifts off", module: 'c' }];
+    const over = ribbonRoute(end(0, 'a'), end(80, 'b'), 0.9, 6, [], [], null, null, keep);
+    expect(top(free.route)).toBeLessThan(40);
+    expect(top(over.route)).toBeGreaterThan(70);
+    expect(over.hits).toEqual([]);
+    // the ribbon's own boards lift off with it: their way is not kept clear
+    const own: Obstacle[] = [{ box: [30, -20, 40, 50, 20, 70], label: 'the way the a holder lifts off', module: 'a' }];
+    expect(top(ribbonRoute(end(0, 'a'), end(80, 'b'), 0.9, 6, [], [], null, null, own).route)).toBeLessThan(40);
+  });
+
+  it('goes beside the dock where that costs under 40 mm or a quarter more, and over it otherwise', () => {
+    const own = [-5, -20, 0, 85, 20, 12]; // the two boards' envelope: round the end of it along x
+    const tall: Obstacle[] = [{ box: [30, -20, 12, 50, 20, 200], label: 'the way another holder lifts off', module: 'c' }];
+    const narrow = ribbonRoute(end(0, 'a'), end(80, 'b'), 1.6, 4, [], [], own, own, tall);
+    // over the top is 400 mm up and down; round the end of a 90 mm envelope is short: it goes round
+    expect(top(narrow.route)).toBeLessThan(40);
+    // a wide ribbon takes the shortest way that hits nothing, as before
+    expect(top(ribbonRoute(end(0, 'a'), end(80, 'b'), 0.9, 20, [], [], own, own, tall).route)).toBeLessThan(40);
+  });
+});
+
+describe('on a rack with probes and adapters', () => {
+  beforeAll(async () => { await initKernel(); });
+  it('no ribbon or jumper wire lies over a release lever, where a finger presses it', () => {
+    const T = (id: string) => TEMPLATES.find((t) => t.id === id)!.make();
+    const p = newProject(T('example_dual_swd'));
+    for (const id of ['usb_hub7', 'rpi4']) p.modules.push(newModule(T(id)));
+    addProbes(p, p.modules[0].id);
+    addAdapters(p, p.modules[0].id);
+    p.links = numberLinks([...(p.links ?? []), ...autoLinks(p)]).map((l) => fillWires(p, l));
+    stackCompanions(p);
+    const r = generatePanel(p);
+    const near = new Set((p.links ?? []).filter((l) => l.kind === 'debug' || l.kind === 'jumper').map((l) => l.id));
+    const cables = r.ghosts.filter((g) => g.tag?.kind === 'cable' && near.has(g.tag.refs![0]) && !/clash/.test(g.name));
+    const levers = r.display!.filter((x) => x.id === 'dock_lever');
+    // (the two ends of each: the far corners of its mesh)
+    const ends = new Map(cables.map((g) => {
+      const v = Array.from({ length: g.mesh.pos.length / 3 }, (_, i) => [g.mesh.pos[3 * i], g.mesh.pos[3 * i + 1], g.mesh.pos[3 * i + 2]]);
+      let a = v[0], b = v[0];
+      for (const q of v) if (Math.hypot(q[0] - v[0][0], q[1] - v[0][1], q[2] - v[0][2]) > Math.hypot(a[0] - v[0][0], a[1] - v[0][1], a[2] - v[0][2])) a = q;
+      for (const q of v) if (Math.hypot(q[0] - a[0], q[1] - a[1], q[2] - a[2]) > Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2])) b = q;
+      return [g, [a, b]] as const;
+    }));
+    expect(cables.length).toBeGreaterThan(0);
+    expect(levers.length).toBeGreaterThan(0);
+    for (const dl of levers) for (const T of [dl.toAssembly, ...(dl.instances ?? [])]) {
+      const lo = [1e9, 1e9, 1e9], hi = [-1e9, -1e9, -1e9];
+      for (let i = 0; i < dl.mesh.pos.length; i += 3) {
+        const q = [0, 1, 2].map((k) => T[k] * dl.mesh.pos[i] + T[4 + k] * dl.mesh.pos[i + 1] + T[8 + k] * dl.mesh.pos[i + 2] + T[12 + k]);
+        for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], q[k]); hi[k] = Math.max(hi[k], q[k]); }
+      }
+      for (const g of cables) for (let i = 0; i < g.mesh.pos.length; i += 3) {
+        const q = [g.mesh.pos[i], g.mesh.pos[i + 1], g.mesh.pos[i + 2]];
+        // (its own ends, plugged into the header beside the dock, are where they are)
+        if (ends.get(g)!.some((e) => Math.hypot(q[0] - e[0], q[1] - e[1], q[2] - e[2]) < 20)) continue;
+        const inside = q[0] > lo[0] - 1 && q[0] < hi[0] + 1 && q[1] > lo[1] - 1 && q[1] < hi[1] + 1 && q[2] > lo[2] && q[2] < hi[2] + 11;
+        expect(inside, `${g.name} at ${q.map((v) => v.toFixed(0))}`).toBe(false);
+      }
+    }
   }, 120_000);
 });

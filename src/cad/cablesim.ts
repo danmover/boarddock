@@ -30,7 +30,7 @@ const STEP = 2.5; // bead spacing
 const GAP = 0.25; // clearance kept between two cables
 const BRUSH = 0.8; // a cable may brush a box by this much (as the router allows): boxes are the parts' bounds, not their shape
 const BRUSH_SOLID = 0.1; // ... but a plug and its lead, or a rail (the crown under it, the lip beside it), fill their box: a cable settles beside one
-const brush = (o: SimObstacle) => (o.plug || o.solid ? BRUSH_SOLID : BRUSH);
+const brush = (o: SimObstacle) => (o.plug || o.solid || o.module ? BRUSH_SOLID : BRUSH);
 const SLACK = 0.03; // cables are a few per cent longer than the shortest way: they lie, not stretch
 const SAG = 0.8; // how far weight pulls a free bead down each round (mm)
 const BEND = 3; // tightest bend, in cable diameters

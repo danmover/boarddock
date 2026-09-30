@@ -335,6 +335,7 @@ export interface Project {
   ticks?: string[]; // the checklist's ticked lines (their keys; see model/checklist.ts)
   oneNetLength?: boolean; // buy every routed Ethernet lead at one length: the longest route, rounded up to a stock length
   links?: Link[]; // cables between boards
+  cablesOff?: boolean; // no cables in the app: holders, cradles and caps only (the links are kept, so switching cables back on restores them)
   wiring?: { pos?: Record<string, [number, number]> }; // the Wiring view: where each board's card was put (module id -> x, y)
   modules: Module[];
   active: number; // module being edited
