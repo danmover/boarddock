@@ -1,5 +1,5 @@
-// Spring clips are how a holder grips its board (Auto: pins only where the edges leave no room for clips), sized by the
-// board: how long a leaf, how deep a catch, how hard a push, how many. Each design is a beam sum (grip.ts) checked
+// Spring clips are the only way a holder grips its board (snap pins broke in print and are gone), sized by the board: how
+// long a leaf, how deep a catch, how hard a push, how many; where plugs take the edges, a fixed ledge on one side. Each design is a beam sum (grip.ts) checked
 // against the FEA in springfea.test.ts; here the boards themselves: Pico, Nano, ESP32, Uno, Pi Zero, Pi 4, Pi 5, Mega, a
 // 16-port hub board and a big imported board, loose, docked upright and lying flat.
 import { describe, it, expect, beforeAll } from 'vitest';
@@ -8,7 +8,7 @@ import { generate } from '../src/cad/assembly';
 import { layerCheck, verdict } from '../src/cad/printcheck';
 import { boardMass, HOLD_SHARE, holdNeed, pushTarget, spanFor, tipFor, TOTAL_PUSH } from '../src/cad/grip';
 import { TEMPLATES, edgeConn } from '../src/model/templates';
-import { newProject } from '../src/model/library';
+import { migrate, newProject } from '../src/model/library';
 import { measure } from './collide/measure';
 import type { Board, GenResult, Project } from '../src/model/types';
 
@@ -57,7 +57,7 @@ function clipsOf(g: GenResult) {
     press: Number(/about (\d+) N/.exec(g.report.checks.find((x) => x.name === 'Press-in force')!.value)![1]), status: c.status,
   };
 }
-const pinsInstead = (g: GenResult) => g.report.checks.some((c) => /^Snap pins/.test(c.name)) && !clipsOf(g);
+const ledgesOf = (g: GenResult) => { const c = g.report.checks.find((x) => /^Fixed ledges \((\d+)\)/.test(x.name)); return c ? +/\((\d+)\)/.exec(c.name)![1] : 0; };
 
 describe('the sizes follow the board', () => {
   it('a longer leaf, a deeper catch and a harder push for a bigger and heavier board, and never more than 30 N in all', () => {
@@ -76,7 +76,7 @@ describe('the sizes follow the board', () => {
     // between n clips, never more than TOTAL_PUSH: a big board's many clips are softer each
     for (const n of [2, 4, 8, 12]) expect(n * pushTarget(boards[5], true, n)).toBeLessThanOrEqual(TOTAL_PUSH + 1e-9);
     expect(pushTarget(boards[5], true, 12)).toBeLessThan(pushTarget(boards[5], true, 2));
-    // gentle is under half of firm
+    // gentle is under half of firm (asked for: a firm clip is then held to the strain limit)
     expect(pushTarget(boards[2], false, 2)).toBeLessThan(0.5 * pushTarget(boards[2], true, 2));
   });
 
@@ -113,41 +113,49 @@ describe('the sizes follow the board', () => {
   }, 300000);
 });
 
-describe('Auto grips with clips', () => {
-  // (a stretch of edge the board is not going to tip out over: a clip on two facing edges, or three round it)
-  for (const [id] of SET) for (const lay of ['loose', 'flat'] as Layout[]) it(`${id}, ${lay}`, () => {
+describe('spring clips are the only grip', () => {
+  // (a stretch of edge the board is not going to tip out over: a clip on two facing edges, or three round it, or a fixed
+  // ledge on one side and clips on the far one)
+  for (const [id] of SET) for (const lay of ['loose', 'docked', 'flat'] as Layout[]) it(`${id}, ${lay}`, () => {
     const { g } = build(id, lay);
-    const c = clipsOf(g), pins = pinsInstead(g);
+    const c = clipsOf(g), l = ledgesOf(g);
     freeAll();
-    if (id === 'rpi_zero') {
-      // three of its four edges are taken by plugs and a socket, and the fourth alone cannot keep it from tipping out
-      expect(c).toBeNull();
-      expect(pins).toBe(true);
-      expect(g.report.checks.find((x) => x.name === 'Spring clips')?.detail).toMatch(/all on the same sides of the board/);
-      return;
-    }
+    expect(g.report.warnings.filter((w) => /Nothing clips/.test(w)), `${id} ${lay}`).toEqual([]);
     expect(c, `${id} ${lay}`).not.toBeNull();
-    expect(c!.n).toBeGreaterThanOrEqual(2);
-    expect(g.report.warnings.filter((w) => /Nothing clips/.test(w))).toEqual([]);
+    expect(c!.n >= 2 || (c!.n >= 1 && l >= 1), `${id} ${lay}: ${c!.n} clips, ${l} ledges`).toBe(true);
+    expect(c!.fatigue, 'a fatigue margin of 1 at least').toBeGreaterThanOrEqual(0.99);
+    expect(c!.status).toBe('ok');
+    expect(g.report.checks.some((x) => /^Snap pins/.test(x.name))).toBe(false);
   }, 120000);
 
-  it('docked upright: clips where the dock leaves room; snap pins, with the reason, where its spine takes the edges', () => {
-    const inPins: string[] = [];
-    for (const [id] of SET) {
-      const { g } = build(id, 'docked');
-      const c = clipsOf(g);
-      if (!c) { inPins.push(`${id}: ${pinsInstead(g) ? 'pins' : 'nothing'}`); expect(g.report.checks.find((x) => x.name === 'Spring clips')?.detail ?? '', id).toMatch(/snap pins in the mounting holes hold the board instead/); }
-      freeAll();
-    }
-    // (the Pico and the Zero are small enough that the dock takes what they have)
-    expect(inPins).toEqual(['pico: pins', 'rpi_zero: pins']);
-  }, 300000);
+  it('a Pi Zero has three edges of plugs and a socket: a fixed ledge in the gap between two plugs, clips on the far edge', () => {
+    const { g } = build('rpi_zero', 'loose');
+    const c = clipsOf(g)!;
+    expect(ledgesOf(g)).toBe(1);
+    expect(c.n).toBe(2);
+    const springs = g.report.features!.filter((f) => f.kind === 'spring');
+    const ledge = springs.find((f) => f.refs?.includes('ledge'))!;
+    const far = springs.filter((f) => !f.refs?.length);
+    // the ledge on the plug edge (y = 0), the clips on the far one (y = 30)
+    expect(ledge.at![1]).toBeLessThan(1);
+    for (const f of far) expect(f.at![1]).toBeGreaterThan(29);
+    freeAll();
+  }, 60000);
 
-  it('Pins still means pins, and Clips still clips', () => {
-    const p = newProject(T('pico')); LAYOUTS.loose(p); p.modules[0].holder.hold = 'pins';
-    const a = generate(p); expect(clipsOf(a)).toBeNull(); expect(pinsInstead(a)).toBe(true); freeAll();
-    const q = newProject(T('pico')); LAYOUTS.loose(q); q.modules[0].holder.hold = 'clips';
-    const b = generate(q); expect(clipsOf(b)!.n).toBe(2); freeAll();
+  it('the Hold control is gone: a project that chose pins is held by clips, and its snap-pin holes are locating pins', () => {
+    const p0 = newProject(T('uno')); LAYOUTS.loose(p0);
+    (p0.modules[0].holder as any).hold = 'pins'; (p0.modules[0].holder as any).tabs = 'off';
+    for (const h of p0.modules[0].board.holes) h.use = 'snap' as any;
+    p0.modules[0].original = structuredClone(p0.modules[0].board);
+    const p = migrate(JSON.parse(JSON.stringify(p0)));
+    expect((p.modules[0].holder as any).hold).toBeUndefined();
+    expect((p.modules[0].holder as any).tabs).toBeUndefined();
+    expect(p.modules[0].board.holes.every((h) => h.use === 'auto')).toBe(true);
+    expect(p.modules[0].original!.holes.every((h) => h.use === 'auto')).toBe(true);
+    const g = generate(p);
+    expect(clipsOf(g)!.n).toBe(2);
+    expect(g.report.checks.some((x) => /^Snap pins/.test(x.name))).toBe(false);
+    freeAll();
   }, 60000);
 
   it('a small round board gets a pair of hairpins on its opposite sides (its edge curves gently under a 10 mm leaf)', () => {
@@ -158,8 +166,18 @@ describe('Auto grips with clips', () => {
     const g = generate(p);
     const c = clipsOf(g);
     freeAll();
-    expect(c).toMatchObject({ n: 2, longest: 10 });
+    expect(c).toMatchObject({ n: 2 });
     expect(c!.groups.every((x) => x.kind === 'u')).toBe(true);
+  }, 60000);
+
+  it('where a board truly has no room, the Check step says so and why: a 20 mm round board lying flat (its dock ear takes half its rim)', () => {
+    const b = T('blank'); b.comps = []; b.name = 'Tiny round board';
+    b.outline = Array.from({ length: 48 }, (_, i) => [10 + 10 * Math.cos((i / 48) * 2 * Math.PI), 10 + 10 * Math.sin((i / 48) * 2 * Math.PI)] as [number, number]);
+    const p = newProject(b); LAYOUTS.flat(p);
+    const g = generate(p);
+    freeAll();
+    expect(g.report.warnings.some((w) => /Nothing clips this board in: .*(Free an edge|lay it flat)/.test(w))).toBe(true);
+    expect(g.report.checks.find((x) => x.name === 'Spring clips')?.detail).toMatch(/all on the same sides of the board/);
   }, 60000);
 });
 
@@ -181,7 +199,7 @@ describe('hairpin holders print with no supports, standing on the bed, loose and
   }, 120000);
 
   it('no clip touches the board or its plugs: what a hairpin holder overlaps of them is what the anti-rattle springs press, a fraction of a mm3', () => {
-    for (const id of ['pico', 'nano', 'esp32', 'uno', 'rpi4', 'mega']) for (const lay of ['loose', 'flat'] as Layout[]) {
+    for (const id of ['pico', 'nano', 'esp32', 'uno', 'rpi4', 'mega', 'rpi_zero']) for (const lay of ['loose', 'flat'] as Layout[]) {
       const { g, p } = build(id, lay);
       const m = measure(p, g);
       freeAll();

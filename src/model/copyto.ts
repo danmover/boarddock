@@ -9,7 +9,7 @@ export interface CopyWhat { holder: boolean; plugs: boolean; marks: boolean }
 export interface CopyResult { boards: number; ports: number; missed: number } // ports: connector settings copied; missed: ports of the source a board has no match for
 
 /** What a holder copies: the look and the build of it. Not the label, and not the clearances under this board's own parts. */
-const HOLDER_KEYS = ['style', 'wall', 'base', 'gap', 'pattern', 'cell', 'rib', 'wallAbove', 'chamfer', 'material', 'feat', 'tabs', 'tabLip', 'hold', 'grip', 'notches', 'release'] as const;
+const HOLDER_KEYS = ['style', 'wall', 'base', 'gap', 'pattern', 'cell', 'rib', 'wallAbove', 'chamfer', 'material', 'feat', 'tabLip', 'grip', 'notches', 'release'] as const;
 
 /** Give `to` the holder options of `from` (a colour or grip left unset there is unset here too). */
 export function copyHolder(from: HolderSettings, to: HolderSettings) {
