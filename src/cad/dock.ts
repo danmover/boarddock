@@ -9,7 +9,7 @@
 //  socket-local: same axes, Z = 0 at the socket top; tongues plug in along -Z; holder A faces +Y
 import type { V2 } from '../model/types';
 import { box, circle2, ext, extCh, K, poly, rect2, roundCS, unionCS, unionMF, type CS, type MF } from './kernel';
-import { EAR, gripSpan, HD, HOLD, headSpan, HOOK_SLIT, LANDING, LEN_X, NOSE_TIP, PEG, SHOE_GRIP, TONGUE } from './dockdims';
+import { CRUSH, EAR, gripSpan, HD, headSpan, HOOK_SLIT, LANDING, LATCH, latchGeom, LEN_X, PEG, SHOE_GRIP, TONGUE, type LatchDims } from './dockdims';
 import { railGrip } from './dinclip';
 import { peg, pegHole } from './column';
 export { gripSpan, headSpan };
@@ -42,28 +42,35 @@ export function rail(len: number): MF {
 // ---------------- socket ----------------
 const S = {
   hx: 9.0, coreY: 6.2, halfY: 10.4, bottom: -20.5, floor: -14.5, anchorTop: -19.0, bossHalf: 9.0, bossBottom: -25.3, bossCh: 1.0,
-  cavHalf: TONGUE.hx + 0.2, cavFullY: TONGUE.y1 - 1.8, cavFrontY: TONGUE.y1 + 0.2, dividerHalf: 0.35, dividerTop: -1.0, windowZ: [-8.4, -4.8], windowX: [-5.2, 5.2], mouthCh: 0.6, // window: 0.45 / 0.4 mm round the nose, so it prints free of the wall
+  cavHalf: TONGUE.hx + 0.2, cavFullY: TONGUE.y1 - 1.8, cavFrontY: TONGUE.y1 + 0.2, dividerHalf: 0.35, dividerTop: -1.0, windowX: [-5.2, 5.2], mouthCh: 0.6, // window: 0.45 / 0.4 mm round the nose, so it prints free of the wall
 };
 // shoe hook notch on all four boss faces; 10 degree retaining face so a pull draws the hooks in
 const BOSS_NOTCH = [[8.2, -23.11], [9.3, -23.3], [9.3, -21.2], [8.2, -22.3]];
-const LATCH = { hx: 9.0, t: 0.85, rIn: 0.6, rOut: 1.0, zRoot: -20.5 };
-const POST = [[9.1, -19.0], [9.4, -18.7], [9.4, -9.0], [10.4, -9.0], [10.4, -19.0]];
-const NOSE = [[6.65, -7.95], [NOSE_TIP, -7.95], [NOSE_TIP, -6.55], [NOSE_TIP + 1.3, -5.25], [6.65, -5.25]];
-const NOSE_HX = 4.8;
 
-/** (y, z) outline of the +Y latch: plain full-width spring beam with rounded roots, stiff arm, 45 deg push ramp on top. */
-export function latchProfile(): CS {
-  const zr = LATCH.zRoot, tr = LATCH.t;
-  const arm = P([[6.6, zr + 0.5], [6.6 + tr, zr + 0.5], [6.6 + tr, -9.75], [8.2, -9.0], [8.2, -0.8], [6.6, -2.4]]);
-  let g = unionCS([arm, rect2(6.6, zr, 6.6 + tr, zr + 0.6), rect2(5.4, zr - 0.6, 9.2, zr)]);
-  g = g.offset(LATCH.rOut, 'Round').offset(-LATCH.rOut, 'Round');
-  g = g.add(g.offset(LATCH.rIn, 'Round').offset(-LATCH.rIn, 'Round'));
-  g = g.intersect(rect2(5.9, zr, 8.2 + tr, 0));
+/**
+ * (y, z) outline of the +Y latch (the beam and its arm, without the nose): a long beam tapering from `t0` thick at its root
+ * to `t1` under the arm, with rounded roots, a stiffer arm above it, and at the arm's top the 45 degree ramp the release
+ * rod pushes. It is one layer in the socket's print pose (standing on its -X end), so it flexes within the layers.
+ */
+export function latchProfile(p: LatchDims = LATCH): CS {
+  const zr = p.zr, yi = p.yIn, { w, top } = p.ramp;
+  const arm = P([[yi, zr + 0.5], [yi + p.t0, zr + 0.5], [yi + p.tm, p.zm], [yi + p.t1, p.zt], [yi + p.arm, p.zt + (p.arm - p.t1)], [yi + p.arm, top - (w - p.arm)], [yi + w, top], [yi, top - w]].filter((q, i, a) => i === 0 || Math.hypot(q[0] - a[i - 1][0], q[1] - a[i - 1][1]) > 1e-9));
+  let g = unionCS([arm, rect2(yi, zr, yi + p.t0, zr + 0.6), rect2(5.4, zr - 0.6, 9.2, zr)]);
+  g = g.offset(p.rOut, 'Round').offset(-p.rOut, 'Round');
+  g = g.add(g.offset(p.rIn, 'Round').offset(-p.rIn, 'Round'));
+  g = g.intersect(rect2(5.9, zr, 9.05, 0));
   const parts = g.decompose();
   return parts.reduce((a, c) => (c.area() > a.area() ? c : a));
 }
 
-export const noseProfile = () => P(NOSE);
+/** The nose (y, z): its holding face (undercut), tip face and lead-in ramp, with a fillet where it meets the arm; see `latchGeom` in dockdims.ts. */
+export const noseProfile = (p: LatchDims = LATCH) => {
+  const g = latchGeom(p), nose = P([g.tip, g.root, g.topRoot, g.top, g.tip2]), arm = latchProfile(p), r = p.noseFillet;
+  if (r <= 0) return nose;
+  // (the closing rounds every inside corner where the nose meets the arm; only what it adds beside the arm's face is kept)
+  const both = arm.add(nose).offset(r, 'Round').offset(-r, 'Round');
+  return nose.add(both.subtract(arm).intersect(rect2(p.yIn - 0.2, g.root[1] - r - 0.5, p.yIn + 0.2 + 2 * r, g.topRoot[1] + r + 0.5)));
+};
 
 function cavity(off = 0): CS {
   const hf = S.cavHalf + off, ff = S.cavFrontY + off, fy2 = S.cavFullY + off * 0.414;
@@ -71,11 +78,14 @@ function cavity(off = 0): CS {
   return P([[-hf, -fy2], [-k, -ff], [k, -ff], [hf, -fy2], [hf, fy2], [k, ff], [-k, ff], [-hf, fy2]]);
 }
 
-function latchSide(): MF {
-  const lat = unionMF([extYZ(latchProfile(), LATCH.hx), extYZ(P(POST), LATCH.hx)]);
-  // nose; its -X end gets a 45 degree face because the socket prints standing on -X
-  const nose = extYZ(P(NOSE), NOSE_HX).subtract(ext(P([[-20, 7], [-4.8, 7], [2.2, 0], [-20, 0]]), -10, -4));
-  return unionMF([lat, nose]);
+/** The nose as a solid (x -noseHx..noseHx): its -X end gets a 45 degree face because the socket prints standing on -X, so each layer reaches only a step further out from the arm than the one under it. */
+export function noseSolid(p: LatchDims = LATCH): MF {
+  const g = latchGeom(p), c = g.root[0] - p.noseHx, y0 = g.yT - 0.5, y1 = g.root[0] + 0.5;
+  return extYZ(noseProfile(p), p.noseHx).subtract(ext(P([[-30, y1], [c - y1, y1], [c - y0, y0], [-30, y0]]), p.zn - 2, p.zn + 8));
+}
+
+function latchSide(p: LatchDims = LATCH): MF {
+  return unionMF([extYZ(latchProfile(p), p.hx), noseSolid(p)]);
 }
 
 function boss(): MF {
@@ -92,11 +102,11 @@ export function socket(): MF {
   let body = unionMF([box(-hx, -S.coreY, S.bottom, hx, S.coreY, 0), box(-hx, -S.halfY, S.bottom, hx, S.halfY, S.anchorTop), boss()]);
   const cuts: MF[] = [ext(cavity(), S.floor, 1.0), hull([ext(cavity(S.mouthCh), 0.0, 0.02), ext(cavity(0), -S.mouthCh, -S.mouthCh + 0.01)])];
   for (const sg of [1, -1]) {
-    const [w0, w1] = S.windowZ, [x0, x1] = S.windowX;
+    const lg = latchGeom(), [w0, w1] = [lg.tip[1] - 0.45, lg.topRoot[1] + 0.4], [x0, x1] = S.windowX; // (0.4 mm round the nose, so it prints free of the wall)
     const yy = (a: number, b: number) => (sg > 0 ? [a, b] : [-b, -a]);
     const [wy0, wy1] = yy(5.4 - 0.9, 5.4 + 0.9);
     cuts.push(box(x0, wy0, w0, x1, wy1, w1)); // nose window
-    const zr = LATCH.zRoot;
+    const zr = LATCH.zr;
     const [sy0, sy1] = yy(7.3 - 1.7, 7.3 + 1.7);
     cuts.push(box(-hx - 0.5, sy0, zr + 0.3, hx + 0.5, sy1, S.anchorTop + 0.01)); // latch slot in the anchor plate
     const [ry0, ry1] = yy(6.1 - 0.5, 6.1 + 0.5);
@@ -264,74 +274,42 @@ export const END_POSE = { pose: [0, 0, 1, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 0, 1
 // ---------------- holder side (socket-local coordinates, holder A) ----------------
 export { HD, SPINE_TOP, DOCK_MIN_ZB, LANDING, PEG } from './dockdims';
 
+/**
+ * The latch groove across the tongue's front face (y, z): its floor is the nose's holding face, `play` under it and
+ * undercut the same `hook` degrees (so it is highest at the front, and the nose sits in a pocket), a back wall 0.15 mm
+ * past the nose's tip, and a ceiling 0.45 mm over the nose's top.
+ */
+export function latchGroove(p: LatchDims = LATCH): CS {
+  const g = latchGeom(p), yb = g.yT - 0.15, yf = TONGUE.y1 + 1.5, fl = (y: number) => p.zn - p.play + (y - g.yT) * g.tanHook, zc = g.topRoot[1] + 0.45;
+  return P([[yb, fl(yb)], [yf, fl(yf)], [yf, zc], [yb, zc]]);
+}
+
 /** Tongue that plugs into the socket (after matching_tongue.stl, grown to 14 x 4.5 mm), with a lead-in at the tip. */
 export function tongue(into = 0.2, fit = 0): MF {
   // `fit` shrinks the sides and front face (the back face stays on the socket's divider)
   const f = Math.max(0, Math.min(0.4, fit)), { hx, y0, y1 } = TONGUE;
   let t = ext(P([[-hx + f, y0], [hx - f, y0], [hx - f, y1 - 2 - f * 0.4], [hx - 2 - f * 0.6, y1 - f], [-hx + 2 + f * 0.6, y1 - f], [-hx + f, y1 - 2 - f * 0.4]]), -14, into);
-  t = t.subtract(box(-10, NOSE_TIP - 0.15, -8.25, 10, y1 + 1.5, -4.8)); // latch groove
+  t = t.subtract(extYZ(latchGroove(), 10)); // latch groove
   t = t.subtract(extYZ(P([[y1 - 0.6, -14.1], [y1 + 0.1, -14.1], [y1 + 0.1, -13.3]]), 10));
-  // the anti-rattle leaves at its two front corners
-  const { cut, add } = sideLeaves(f);
-  return unionMF([t.subtract(cut), add]);
+  return unionMF([t, crushRibs(f)]);
 }
 
 /**
- * The tongue's side leaves (socket-local, holder A): at each front corner a leaf 0.9 mm thick hangs from z `root` to the
- * tongue's tip, cut free by a 0.6 mm slot (through the tongue, so it is a slot in each print layer), and carries a
- * bump on the corner's 45 degree face. The socket's matching face pushes the bump back and in: the tongue goes back onto
- * the divider and to the middle, and the leaf's slot closes on a hard knock. `cut` goes out of the tongue, `add` on it.
+ * The tongue's crush ribs (socket-local, holder A): on each of its two 45 degree front corner faces, `CRUSH.z.length`
+ * ribs, low and broad (`base` wide where they grow out of the face, so they print as part of the tongue, a `crown`
+ * wide crest `proud` above the face). The socket's chamfered corners are 0.28 mm off the tongue's along the face's
+ * normal (0.39 with the tongue pushed back on its divider), so the ribs are pressed 0.06 to 0.17 mm: the first push in
+ * crushes their crests to the socket's real size, and after that the tongue is snug on its divider and centred. Their ends run out to the face in 45 degree ramps, so they go in without catching.
  */
-function sideLeaves(f: number): { cut: MF; add: MF } {
-  const { bump, bz, face } = HOLD.side, { hx, y0, y1 } = TONGUE, xo = hx - f;
-  const sl = sideSlot(xo);
-  const P1: V2 = [xo, y1 - 2 - f * 0.4], P2: V2 = [hx - 2 - f * 0.6, y1 - f], L = Math.hypot(P2[0] - P1[0], P2[1] - P1[1]);
+export function crushRibs(f = 0): MF {
+  const { proud, base, crown, a0, z, ramp } = CRUSH, { hx, y1 } = TONGUE;
+  const P1: V2 = [hx - f, y1 - 2 - f * 0.4], P2: V2 = [hx - 2 - f * 0.6, y1 - f], L = Math.hypot(P2[0] - P1[0], P2[1] - P1[1]);
   const tv = [(P2[0] - P1[0]) / L, (P2[1] - P1[1]) / L], nv = [tv[1], -tv[0]];
   const at = (a: number, h: number): V2 => [P1[0] + tv[0] * a + nv[0] * h, P1[1] + tv[1] * a + nv[1] * h];
-  const [a0, a1, a2, a3] = face;
-  const crest = P([at(a0, -0.05), at(a1, bump), at(a2, bump), at(a3, -0.05)]), foot = P([at(a0, -0.05), at(a0 + 0.1, 0.05), at(a3 - 0.1, 0.05), at(a3, -0.05)]);
-  // the bump's ends run out to the face in 45 degree ramps, so it goes in and out of the socket without catching
-  const b = hull([ext(crest, bz[1], bz[2]), ext(foot, bz[0], bz[0] + 0.02), ext(foot, bz[3] - 0.02, bz[3])]);
-  const c = extXZ(sl, y0 - 0.2, y1 + 0.2);
-  return { cut: unionMF([c, c.mirror([1, 0, 0])]), add: unionMF([b, b.mirror([1, 0, 0])]) };
-}
-
-/** (x, z) slot behind a side leaf whose outer face is at x = xo: 0.5 mm wide, bent so the leaf is thicker at its root. */
-function sideSlot(xo: number): CS {
-  const { t, t0, taper, slot, root } = HOLD.side;
-  return P([[xo - t0 - slot, root], [xo - t0, root], [xo - t, root - taper], [xo - t, -14.5], [xo - t - slot, -14.5], [xo - t - slot, root - taper]]).add(circle2(xo - t0 - slot / 2, root, slot / 2, 24));
-}
-
-/**
- * The pedestal's lift leaves (socket-local): under each side of the pedestal a leaf (x, z section, y from the back to
- * `y1`; it stands on the bed as it prints) with a slot above it to flex into and a bump under it on the socket top's
- * side margin. The holder's wall runs on past the pedestal, so the leaf is cut free of it at its tip, and above it
- * (y over `y1`) a void with a 45 degree roof, so nothing overhangs but the roof. `cut` goes out of the pedestal and the
- * wall round it, `add` under the pedestal.
- */
-function liftLeaves(): { cut: MF; add: MF } {
-  const { x0, t0, t, slot, y1, bump, bx } = HOLD.lift, hx = HD.base.hx, xt = 8.4, xs = HD.spineHx, xe = hx + 0.6, yt = HD.base.y1 + 0.1, zt = t0 + slot;
-  const bumpCS = P([[bx[0], 0.01], [bx[1], -bump], [bx[2], -bump], [bx[3], 0.01]]);
-  const slotCS = roundCS(P([[x0, t0], [xt, t], [xe, t], [xe, t + slot], [xt, t + slot], [x0, t0 + slot]]), 0.2);
-  const bp = extXZ(bumpCS, HD.backY, y1);
-  // (the void over the leaf: its roof slopes up and out from the spine at 45 degrees, to the pedestal's top)
-  const c = unionMF([extXZ(slotCS, HD.backY - 0.1, y1), box(hx, HD.backY - 0.1, -0.3, xe, y1, zt), ext(P([[xs, y1], [xe, y1], [xe, yt], [xs + (yt - y1), yt]]), -0.3, zt)]);
-  return { cut: unionMF([c, c.mirror([1, 0, 0])]), add: unionMF([bp, bp.mirror([1, 0, 0])]) };
-}
-
-/** The anti-rattle bumps of a holder's dock end alone (for measuring: the dock end without them is the rigid part). */
-export function holdBumps(fit = 0): { lift: MF; side: MF; all: MF } {
-  const lift = liftLeaves().add, side = sideLeaves(Math.max(0, Math.min(0.4, fit))).add;
-  return { lift, side, all: unionMF([lift, side]) };
-}
-
-/** The (x, z) sections the 2D FEA takes of one side leaf and one lift leaf (the +x one; the load goes on the bump). */
-export function holdFeaProfiles(): { side: CS; lift: CS } {
-  const xo = TONGUE.hx;
-  const side = rect2(0, -14, xo, 0).subtract(sideSlot(xo));
-  const { x0, t0, t: tl, slot: sl, bump, bx } = HOLD.lift, hx = HD.base.hx, xt = 8.4;
-  const lift = rect2(0, 0, hx, HD.base.t).subtract(roundCS(P([[x0, t0], [xt, tl], [hx + 1, tl], [hx + 1, tl + sl], [xt, tl + sl], [x0, t0 + sl]]), 0.2)).add(P([[bx[0], 0.01], [bx[1], -bump], [bx[2], -bump], [bx[3], 0.01]]));
-  return { side, lift };
+  const crest = P([at(a0, -0.1), at(a0 + (base - crown) / 2, proud), at(a0 + (base + crown) / 2, proud), at(a0 + base, -0.1)]), foot = P([at(a0, -0.1), at(a0 + 0.1, 0.05), at(a0 + base - 0.1, 0.05), at(a0 + base, -0.1)]);
+  const one = (z0: number, z1: number) => hull([ext(crest, z0 + ramp, z1 - ramp), ext(foot, z0, z0 + 0.02), ext(foot, z1 - 0.02, z1)]);
+  const b = unionMF(z.map(([z0, z1]) => one(z0, z1)));
+  return unionMF([b, b.mirror([1, 0, 0])]);
 }
 
 /**
@@ -345,25 +323,23 @@ export function holderDock(far: number, pedestal: number, side = 0, fit = 0, col
   // in a column of holders, one below the top carries the next on a landing on its far wall instead of a grip bar
   const zg0 = col?.landing ? far + LANDING.gap : far + grip.gap, zg1 = zg0 + (col?.landing ? LANDING.t : grip.t);
   const [g0, g1] = gripSpan(side);
-  const lift = col?.foot ? null : liftLeaves(); // (on pegs, the pedestal stands on a landing, not the socket)
   const add = unionMF([
     // the bottom of a column (or a holder on its own) plugs into the socket; one higher up stands on pegs
     col?.foot ? unionMF(PEG.x.map((x) => peg(x))) : tongue(Math.min(1.0, pedestal), fit),
-    ...(lift ? [lift.add] : []),
     extXZ(rect2(-HD.base.hx, 0, HD.base.hx, Math.max(HD.base.t, pedestal)), HD.backY, HD.base.y1), // pedestal on the socket top (or on the landing below)
     box(-spineHx, HD.backY, 0, spineHx, spineY1, zg1), // spine, dock face to grip bar
+    ...(col?.landing ? [] : [box(-HD.collar.hx, HD.backY, rodPocketBottom(zg1) - 0.8, HD.collar.hx, spineY1, zg1)]), // the collar round the barbs' pocket, up through the grip bar (so a bar that starts at the spine's edge keeps 1.2 mm beside the pocket, and the finger scoop in its underside leaves no thin wall)
     col?.landing
       ? extXZ(roundCS(rect2(-LANDING.hx, zg0 - 0.01, LANDING.hx, zg1), 1.2).intersect(rect2(-LANDING.hx - 1, zg0 - 0.01, LANDING.hx + 1, zg1 + 1)), HD.backY, spineY1)
       // grip bar: rounded, with a shallow finger scoop in the face the fingers pull on (matches the button's dish)
       : extXZ(roundCS(rect2(g0, zg0, g1, zg1), 1.2).subtract(circle2((g0 + g1) / 2, zg0 - ((g1 - g0) ** 2 / 4 + 0.64) / 1.6 + 0.8, ((g1 - g0) ** 2 / 4 + 0.64) / 1.6, 256)), HD.backY, spineY1),
   ]);
   // the rod's tunnel: with its catch at the top of the column; straight through a holder the rod only passes
-  const tunnel = col?.landing ? box(-HD.tunnelHx, HD.tunnelY[0], -0.2, HD.tunnelHx, HD.tunnelY[1], zg1 + 0.2) : rodTunnel(zg1);
+  const tunnel = col?.landing ? rodBore(zg1) : rodTunnel(zg1);
   const cut = unionMF([
     tunnel,
     box(-HD.voidHx, HD.backY - 0.1, Math.max(HD.base.t, pedestal) + 1.5, HD.voidHx, HD.voidY1, zg0 - 1.5), // back channel (saves filament)
     ...(col?.landing ? PEG.x.map((x) => pegHole(x, zg1)) : []),
-    ...(lift ? [lift.cut] : []),
   ]);
   return { add, cut, tunnel, zg0, zg1 };
 }
@@ -383,30 +359,68 @@ export function flatHolderDock(reach: number, fit = 0) {
   const dove = (g: number) => P([[-root - g, EAR.ped - 0.02], [root + g, EAR.ped - 0.02], [dt + g, EAR.ped + dh + g], [-dt - g, EAR.ped + dh + g]]);
   const tunnel = rodTunnel(top);
   const cut = unionMF([extXZ(dove(gap), HD.backY - 1, HD.base.y1 + gap), tunnel]); // (open at the tip, where the key slides in)
-  const lift = liftLeaves();
   const key = unionMF([
     tongue(Math.min(1.0, EAR.ped), fit),
     extXZ(rect2(-HD.base.hx, 0, HD.base.hx, EAR.ped), HD.backY, HD.base.y1), // pedestal on the socket top
     extXZ(dove(0), HD.backY, HD.base.y1),
-    lift.add,
-  ]).subtract(lift.cut).subtract(tunnel);
+  ]).subtract(tunnel);
   return { add: ear, cut, tunnel, key, top };
 }
 
 /**
- * Where the rod's barb sits for a tunnel whose top is at `top` (socket-local z): its catch face (flat, 0.2 mm under
- * the ledge at rest) and its bottom (under a 45 degree lead-in).
+ * Where the rod's barbs sit for a tunnel whose top is at `top` (socket-local z): the catch face (flat, 0.2 mm under the
+ * gate at rest) and the barb's foot (under its lead-in ramp).
  */
 function rodCatch(top: number) {
-  const { ledge, barb } = HD.catch, zcat = top - ledge - 0.2;
-  return { zcat, zb: zcat - 0.4 - barb };
+  const { gate, ramp, flat } = HD.catch, zcat = top - gate - 0.2;
+  return { zcat, zb: zcat - ramp - flat };
 }
 
-/** The release rod's tunnel, open from the socket top to `top`, with the pocket its barb clicks into under the ledge
- * at the top: as long as the barb and the button's whole stroke, 0.3 mm to spare. */
+/** A frustum (hull of two thin boxes, the second bigger) for a chamfer: (x half-widths, y, z) of the small end, then the big end. */
+function frustum(hx0: number, y0: number, y1: number, z0: number, hx1: number, y2: number, y3: number, z1: number): MF {
+  return hull([box(-hx0, y0, z0, hx0, y1, z0 + 0.01), box(-hx1, y2, z1 - 0.01, hx1, y3, z1)]);
+}
+
+/**
+ * The lead-in chamfers of a tunnel from `z0` (the socket end) to `top`: a funnel at the top (the button's neck fillets
+ * and the rod's tip come in there) and a chamfer at the bottom, where the rod leaves. The funnel opens at 45 degrees on
+ * the x sides and the -y side (the floor); on the +y side (the roof, over a thin wall) it is a 45 degree chamfer only
+ * `yPos` deep, since a flatter roof would not print.
+ */
+function tunnelEnds(top: number, z0: number, hxTop: number): MF {
+  const { mouth } = HD, [y0, y1] = HD.tunnelY, zs = top - mouth.depth;
+  const ex = (z: number) => (mouth.x * (z - zs)) / mouth.depth, en = (z: number) => (mouth.yNeg * (z - zs)) / mouth.depth;
+  const at = (z: number, yp: number) => box(-(hxTop + ex(z)), y0 - en(z), z - 0.01, hxTop + ex(z), y1 + yp, z);
+  const zc = top - mouth.yPos, zt = top + 0.2;
+  return unionMF([
+    hull([box(-hxTop, y0, zs, hxTop, y1, zs + 0.01), at(zt, 0)]),
+    hull([at(zc, 0), at(zt, mouth.yPos + 0.2)]),
+    frustum(HD.tunnelHx, y0, y1, z0 + mouth.exit + 0.2, HD.tunnelHx + mouth.exit, y0 - mouth.exit, y1 + mouth.exit * 0.4, z0),
+  ]);
+}
+
+/**
+ * The release rod's tunnel, open from the socket top to `top`: the bore, its lead-in chamfers, the gate in its top 2 mm
+ * (narrower, so the rod's barbs bend past it), and the pocket under the gate the barbs click into: as long as the
+ * barb and the button's whole stroke, 0.3 mm to spare.
+ */
 export function rodTunnel(top: number): MF {
-  const { zb } = rodCatch(top), [y0, y1] = HD.tunnelY;
-  return unionMF([box(-HD.tunnelHx, y0, -0.2, HD.tunnelHx, y1, top + 0.2), box(HD.tunnelHx - 0.1, y0, zb - HD.stroke - 0.3, HD.catch.pocket, y1, top - HD.catch.ledge)]);
+  const { gate, ledge, pocket } = HD.catch, [y0, y1] = HD.tunnelY, hx = HD.tunnelHx;
+  return unionMF([
+    box(-hx, y0, -0.2, hx, y1, top - gate), box(-pocket, y0, rodPocketBottom(top), pocket, y1, top - gate),
+    box(-ledge, y0, top - gate - 0.01, ledge, y1, top + 0.2), tunnelEnds(top, -0.2, ledge),
+  ]);
+}
+
+/** Where the bottom of the barbs' pocket is, for a tunnel whose top is at `top`. */
+export function rodPocketBottom(top: number): number {
+  return rodCatch(top).zb - HD.stroke - 0.3;
+}
+
+/** A straight tunnel (a column's holders under the top one: the rod only passes) from the socket top to `top`, with the same lead-in chamfers. */
+export function rodBore(top: number): MF {
+  const [y0, y1] = HD.tunnelY, hx = HD.tunnelHx;
+  return unionMF([box(-hx, y0, -0.2, hx, y1, top + 0.2), tunnelEnds(top, -0.2, hx)]);
 }
 
 /** Release rod with its button head, socket-local (rest position). `zg1`: the top of its tunnel. `drop`: how far the
@@ -414,13 +428,24 @@ export function rodTunnel(top: number): MF {
 export function rod(zg1: number, side = 0, drop = 0): { m: MF; len: number } {
   const zh = zg1 + HD.stroke, zf = HD.rodRest - drop, [y0, y1] = HD.rodY, h = HD.head;
   const [x0, x1] = headSpan(side);
-  // the shaft, and on its +x side a finger hanging from the head, cut free by a 0.5 mm slot, with the barb at its
-  // foot: pushed down the tunnel, the ledge bends the finger 0.3 mm aside and the barb clicks out under it, so the rod
-  // (and a flat holder's dock key, which it locks) can't slide back out; the barb then rides the stroke in its pocket
-  const { zcat, zb } = rodCatch(zg1), bb = HD.catch.barb, xs = HD.rodHx;
-  const shaft = extYZ(P([[y0, zf], [y0 + 0.6, zf], [y1, zf + 1.6], [y1, zh + 0.01], [y0, zh + 0.01]]), HD.rodHx)
-    .subtract(extXZ(unionCS([rect2(0.2, zb - 0.5, 0.7, zh), rect2(0.2, zb - 0.5, xs + 0.1, zb)]), y0 - 0.1, y1 + 0.1))
-    .add(extXZ(P([[xs - 0.05, zb], [xs + bb, zb + bb], [xs + bb, zcat], [xs - 0.05, zcat]]), y0, y1));
+  // the shaft, and two fingers standing from it, free at the top and cut free by a slot beside each (an L: up beside the
+  // finger and across over its top, with rounded corners), and a barb on each: pushed down the tunnel, the gate bends
+  // them aside and the barbs click out under it, so the rod (and a flat holder's dock key, which it locks) can't
+  // slide back out; the barbs then ride the stroke in their pocket. The slots are all under the tunnel's mouth, so
+  // the neck between the button and the mouth, where an off-centre push bends the rod, is the whole rod's width.
+  const { zcat, zb } = rodCatch(zg1), { barb, ramp, slot, finger, root } = HD.catch, xs = HD.rodHx, xi = xs - finger, fr = HD.neckFillet;
+  const cut = (sg: number) => (c: CS) => (sg > 0 ? c : c.mirror([1, 0]));
+  const slots = unionCS([1, -1].map((sg) => cut(sg)(roundCS(unionCS([rect2(xi - slot, zb - root, xi, zcat + slot), rect2(xi - slot, zcat, xs + 0.1, zcat + slot)]), 0.2))));
+  // (the tip: a slope in y, and 45 degree corners in x, so it finds the tunnel and the next holder's)
+  const tipCut = unionCS([1, -1].map((sg) => cut(sg)(P([[xs + 0.1, zf - 0.1], [xs - 0.9, zf - 0.1], [xs + 0.1, zf + 1.0]]))));
+  let shaft = extYZ(P([[y0, zf], [y0 + 0.6, zf], [y1, zf + 1.6], [y1, zh + 0.01], [y0, zh + 0.01]]), xs)
+    .subtract(extXZ(slots, y0 - 0.1, y1 + 0.1)).subtract(extXZ(tipCut, y0 - 0.1, y1 + 0.1));
+  const barbs = unionCS([1, -1].map((sg) => cut(sg)(P([[xs - 0.05, zb], [xs + barb, zb + ramp], [xs + barb, zcat], [xs - 0.05, zcat]]))));
+  shaft = shaft.add(extXZ(barbs, y0, y1));
+  // fillets where the shaft meets the head: in x (in the print's layers, so the layers' lines curve into the head) and above the shaft in y
+  const fx = unionCS([1, -1].map((sg) => cut(sg)(rect2(xs - 0.01, zh - fr.x, xs + fr.x, zh + 0.01).subtract(circle2(xs + fr.x, zh - fr.x, fr.x, 48)))));
+  const fy = rect2(y1 - 0.01, zh - fr.y, y1 + fr.y, zh + 0.01).subtract(circle2(y1 + fr.y, zh - fr.y, fr.y, 48));
+  shaft = unionMF([shaft, extXZ(fx, y0, y1), extYZ(fy, xs)]);
   // a keycap: softly rounded, a shallow dish in the face the thumb presses, a chamfered rim on the face you see, and
   // three chevrons engraved in it pointing the way it moves. All of it takes plastic away rather than adding it.
   const xc = (x0 + x1) / 2, hw = (x1 - x0) / 2, dish = 0.7, R = (hw * hw + dish * dish) / (2 * dish);
@@ -430,4 +455,3 @@ export function rod(zg1: number, side = 0, drop = 0): { m: MF; len: number } {
   const head = toXZ(extCh(face, 0, h.y1 - y0, 0.2, 0.6), h.y1).subtract(extXZ(chev, h.y1 - 0.45, h.y1 + 1));
   return { m: unionMF([shaft, head]), len: zh + h.t - zf };
 }
-

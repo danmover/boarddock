@@ -3,7 +3,7 @@ import wasmUrl from 'manifold-3d/manifold.wasm?url';
 import { initKernel, csLoops, freeAll } from '../cad/kernel';
 import { generate } from '../cad/assembly';
 import { clipProfile, clipDims } from '../cad/dinclip';
-import { holdFeaProfiles, latchProfile, noseProfile, shoeFeaProfiles } from '../cad/dock';
+import { latchProfile, noseProfile, shoeFeaProfiles } from '../cad/dock';
 import { testKit } from '../cad/testkit';
 import type { Project } from '../model/types';
 import { listenProgress } from '../cad/progress';
@@ -30,9 +30,9 @@ self.onmessage = async (e: MessageEvent) => {
       (self as any).postMessage({ id, ok: true, result: parts }, parts.flatMap((p) => [p.mesh.pos.buffer as ArrayBuffer, p.mesh.idx.buffer as ArrayBuffer]));
     } else if (type === 'dockProfiles') {
       const latch = csLoops(latchProfile().add(noseProfile()));
-      const sp = shoeFeaProfiles(), shoe = csLoops(sp.jaw), grip = csLoops(sp.grip), hp = holdFeaProfiles(), hold = { side: csLoops(hp.side), lift: csLoops(hp.lift) };
+      const sp = shoeFeaProfiles(), shoe = csLoops(sp.jaw), grip = csLoops(sp.grip);
       freeAll();
-      (self as any).postMessage({ id, ok: true, result: { latch, shoe, grip, hold } });
+      (self as any).postMessage({ id, ok: true, result: { latch, shoe, grip } });
     }
   } catch (err: any) {
     freeAll();

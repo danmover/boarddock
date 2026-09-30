@@ -11,6 +11,8 @@
 //  - 'once' (deforms on assembly, by design: a crush rib, a barb that clicks in): at most 1.5% strain at full
 //    deflection, and no rest limit (it is unloaded, or has already given, after that one use). It must say so:
 //    `note` says what deforms and when.
+//  - `also`: a load case beside those two that the part has to hold or ride out (a 20 N pull on a latched holder, a
+//    knock): at most 1.25% (62% of PETG's limit; PLA 0.94%).
 // Strains are the FEA's 3 x 3 pixel averaged peaks (`peak`), the way the dock FEA reports them; `p99` (the 99th
 // percentile of the part) is kept beside it because a pixel corner on a fillet can read high.
 import type { DockFeaCase } from './dockfea';
@@ -23,6 +25,8 @@ export const FLEX_RULE = {
   spring: 0.01,
   /** most a 'once' feature may strain at full deflection */
   once: 0.015,
+  /** most a spring may strain under a load case beside the two, a design overload it has to hold or ride out (a 20 N pull on a latched holder, a knock): 62% of PETG's 2% */
+  overload: 0.0125,
 } as const;
 
 export type FlexKind = 'spring' | 'once';
@@ -67,7 +71,7 @@ export function flexureIssues(f: Flexure): string[] {
     if (!f.note) out.push(`${f.id}: a 'once' feature has to say what deforms and when (note)`);
   }
   for (const a of f.also ?? []) {
-    const lim = f.E >= 3000 ? FLEX_RULE.spring * 0.75 : FLEX_RULE.spring;
+    const lim = f.E >= 3000 ? FLEX_RULE.overload * 0.75 : FLEX_RULE.overload;
     if (a.strain > lim) out.push(`${f.id}: ${pct(a.strain)} under ${a.label}, over ${pct(lim)}`);
   }
   return out;

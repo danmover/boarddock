@@ -15,9 +15,10 @@ describe('the rule', () => {
     expect(flexureIssues(row({ E: 3500, full: 0.008 }))).toHaveLength(1);
     expect(flexureIssues(row({ E: 3500, full: 0.007 }))).toEqual([]);
   });
-  it('a load case beside the two (a pull on a latch) is held to the spring limit too', () => {
-    expect(flexureIssues(row({ also: [{ label: '20 N pull', strain: 0.004 }] }))).toEqual([]);
-    expect(flexureIssues(row({ also: [{ label: '20 N pull', strain: 0.012 }] }))[0]).toMatch(/20 N pull/);
+  it('a load case beside the two (a pull on a latch) is held to 1.25%', () => {
+    expect(flexureIssues(row({ also: [{ label: '20 N pull', strain: 0.012 }] }))).toEqual([]);
+    expect(flexureIssues(row({ also: [{ label: '20 N pull', strain: 0.013 }] }))[0]).toMatch(/20 N pull/);
+    expect(flexureIssues(row({ E: 3500, full: 0.006, also: [{ label: '20 N pull', strain: 0.0095 }] }))[0]).toMatch(/20 N pull/);
   });
   it('a one-time feature (a barb, a crush rib) may strain more, and has to say what deforms and when', () => {
     expect(flexureIssues(row({ kind: 'once', full: 0.012, rest: 0.005 }))[0]).toMatch(/say what deforms/);
