@@ -47,9 +47,9 @@ export async function runClipFea(W: number, tf: number, tabExt: number, HA: numb
 }
 
 export async function runDockFea(E: number, nu: number, h: number, onProgress?: (s: string) => void): Promise<DockFeaResult & { latch: [number, number][][]; shoe: [number, number][][] }> {
-  const { latch, shoe, grip, hold } = await cad.call<any>('dockProfiles', {});
+  const { latch, shoe, grip } = await cad.call<any>('dockProfiles', {});
   fea ??= makeWorker(new Worker(new URL('./fea.worker.ts', import.meta.url), { type: 'module' }));
-  const res = await fea.call<DockFeaResult>('dock', { latch, shoe, grip, hold, E, nu, h }, onProgress);
+  const res = await fea.call<DockFeaResult>('dock', { latch, shoe, grip, E, nu, h }, onProgress);
   return { ...res, latch, shoe };
 }
 
