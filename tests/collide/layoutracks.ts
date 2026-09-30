@@ -35,4 +35,4 @@ export const LAYOUT_RACKS: Rack[] = [
   named('Pi cluster'), named('boxes'), named('busy mixed rack'), named('probes and adapters'), named('rails along (columns)'), named('rows of rails'),
   extra[0], named('pairs by Auto-arrange'), named('stacks'), named('whichever suits each'),
 ];
-export const EXTRA_RACKS = extra;
+export const EXTRA_RACKS = extra.filter((r) => !LAYOUT_RACKS.includes(r));
