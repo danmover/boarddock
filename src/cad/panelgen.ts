@@ -31,6 +31,7 @@ import { capStress, pieceMesh, planStands, railI, standBoxes, STAND, type StandL
 import { assemble, bendRadius, bestRoute, escapes, hits, lead, ribbonRoute, segInBox, slope, type Box, type CableEnd, type Choice, type Hit, type Obstacle, type RibbonEnd, type Route } from './cableroute';
 import { settleCables } from './cablesim';
 import { isDebugPort, isProbe, isSmall, isUartPort, jumperToBuy, jumperWiring, ribbonOf, uartWiring } from '../model/probes';
+import { progress } from './progress';
 
 const SHOE_BOX = { x: [-LEN_X / 2, LEN_X / 2], y: [-29, 29], z: [0, 42.8] };
 
@@ -349,6 +350,7 @@ export function generatePanel(p: Project): GenResult {
   if (failed.length) warnings.push(...failed);
 
   // ---- positions along the rails ----
+  progress('Laying the rails out');
   const margin = 8, gap = P.gap;
   if (P.auto) {
     let row: Placed[] = [];
@@ -699,6 +701,7 @@ export function generatePanel(p: Project): GenResult {
     freeAll();
   }
 
+  progress('Routing the cables');
   // ---- cables: out of each plug, down to a street between (or beside) the rails, along it, and up to the other
   // plug. On table stands the streets run under the rails' level, through a comb slot in every sleeper they cross;
   // each cable gets its own lane in its street.
@@ -1169,6 +1172,7 @@ export function generatePanel(p: Project): GenResult {
     }
   }
 
+  progress('Checking it');
   // ---- checks ----
   const eR = mat.E / MATERIALS.PETG.E;
   const allow = mat.strainAllow;

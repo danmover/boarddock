@@ -12,7 +12,7 @@ import { OutlinePass } from 'three/examples/jsm/postprocessing/OutlinePass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { remaining } from '../cad/motion';
-import type { Anim, Feature, Motion, GenResult, Ghost, MeshData, PickTag, V2 } from '../model/types';
+import type { Anim, Feature, Motion, GenResult, Ghost, MeshData, PickTag, V2, PartOut } from '../model/types';
 import { packPlates, placedMesh, printability, type Plate } from '../cad/export';
 import { store, type Layer, type SelItem } from '../state';
 import { featureItem } from './pickOps';
@@ -34,11 +34,15 @@ interface Props {
   camera?: { dir: [number, number, number]; n: number };
   installed?: 'h' | 'v' | null; // show the assembly against the wall it hangs on
   overhangs?: boolean; // print view: paint faces that need support (red) and bridges (amber)
+  only?: OnlyNew | null; // a built rack with things added since: what is new (the Steps' "Only what's new")
   layers: Record<Layer, boolean>;
   sel: SelItem[];
   onPick: (it: SelItem | null, additive: boolean) => void;
   label: (it: SelItem) => { title: string; sub: string };
 }
+
+/** What is new on a built rack: the new parts (as the build gave them), the new cables' ids and the new boards' ids. */
+export interface OnlyNew { parts: PartOut[]; cables: Set<string>; boards: Set<string> }
 
 const LAYER: Record<PickTag['kind'], Layer> = {
   holder: 'holders', rod: 'holders', clip: 'holders', link: 'holders', rivet: 'holders', stand: 'boards',
@@ -265,13 +269,18 @@ function makeContext() {
   return c;
 }
 
-export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, installed, overhangs, layers, sel, onPick, label }: Props) {
+export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, installed, overhangs, only, layers, sel, onPick, label }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const tip = useRef<HTMLDivElement>(null);
   const ctx = useRef<any>(null);
   // t: animation time in steps (Infinity = assembled); on: playing; until: pause when t reaches it (one step at a time)
   const [play, setPlay] = useState<{ on: boolean; t: number; n: number; until?: number }>({ on: false, t: Infinity, n: 0 });
   const [explode, setExplode] = useState(0);
+  // Steps and Guide for only what is new since the rack was built: the rest of the rack is there, already put together
+  const [newOnly, setNewOnly] = useState(false);
+  const onlyNew = newOnly && !!only && mode === 'assembly' ? only : null;
+  const onlyRef = useRef(onlyNew);
+  onlyRef.current = onlyNew;
   // the build guide: the steps one at a time on a big card (Back, Next, Print), for a phone at the bench
   const [guide, setGuide] = useState(false);
   const [printing, setPrinting] = useState(''); // while the guide's pictures are taken: how far along
@@ -463,7 +472,7 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
     if (!c) return;
     let live = true;
     buildNo++;
-    const next = prepare(c, result, mode, bed, spacing, theme, installed, !!overhangs);
+    const next = prepare(c, result, mode, bed, spacing, theme, installed, !!overhangs, onlyRef.current);
     const commit = () => {
       // a newer scene took over (it clears the flag when drawn), or the view closed while this one compiled
       if (!live) { next.drop(); if (!ctx.current) store.set({ rendering: false }); return; }
@@ -480,7 +489,9 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
     store.set({ rendering: true });
     c.renderer.compileAsync(next.group, c.camera, c.scene).then(commit, commit);
     return () => { live = false; };
-  }, [result, mode, bed[0], bed[1], spacing, theme, installed, overhangs]);
+  }, [result, mode, bed[0], bed[1], spacing, theme, installed, overhangs, !!onlyNew]);
+  // (switching it on or off starts the steps over)
+  useEffect(() => { setPlay({ on: false, t: Infinity, n: 0 }); setGuide(false); }, [!!onlyNew]);
 
   useEffect(() => { const c = ctx.current; if (c) { applyLayers(c, layers); c.invalidate(); } }, [layers]);
 
@@ -686,6 +697,7 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
             <>
               <button className="stepbtn wide" title="Step through the assembly one step at a time" onClick={nextStep}>Steps</button>
               <button className="stepbtn wide" title="The build guide: each step on a big card, with Back, Next and Print (the steps with their pictures, and the bill of materials)" onClick={openGuide}>Guide</button>
+              {only && <button className={`stepbtn wide${newOnly ? ' on' : ''}`} aria-pressed={newOnly} title={newOnly ? "Steps and Guide play only what is new since the rack was built, on the rack as it stands. Click for every step." : "Play only what is new since the rack was built: the rest of the rack is already there"} onClick={() => setNewOnly(!newOnly)}>Only what's new</button>}
               <button className={`stepbtn wide live${liveOn ? ' on' : ''}`} aria-pressed={liveOn} title={liveOn ? 'Switched on: lights blink and pulses run along the cables. Click to hold still.' : 'Switch it on: LEDs blink the way they do, boards without power stay dark, pulses run along the cables'} onClick={() => setLiveOn(!liveOn)}><i />Live</button>
               <label title="Pull the parts apart along the way they go together">Explode<input type="range" min={0} max={1} step={0.01} value={explode} onChange={(e) => setExplode(+e.target.value)} /></label>
             </>
@@ -715,7 +727,7 @@ interface Next {
   drop(): void;
 }
 
-function prepare(c: any, result: GenResult | null, mode: 'assembly' | 'print', bed: V2, spacing: number, theme: 'dark' | 'light', installed: 'h' | 'v' | null | undefined, overhangs: boolean): Next {
+function prepare(c: any, result: GenResult | null, mode: 'assembly' | 'print', bed: V2, spacing: number, theme: 'dark' | 'light', installed: 'h' | 'v' | null | undefined, overhangs: boolean, only: OnlyNew | null = null): Next {
   const group = new THREE.Group();
   group.matrixAutoUpdate = false;
   const objs: Obj[] = [], floor: THREE.Object3D[] = [], own: { dispose(): void }[] = [];
@@ -750,15 +762,21 @@ function prepare(c: any, result: GenResult | null, mode: 'assembly' | 'print', b
   const addFloor = (o: THREE.Mesh | THREE.LineSegments, m: THREE.Material) => { mats.add(m); own.push(o.geometry); floor.push(o); };
 
   if (mode === 'assembly') {
+    // what is new since the rack was built (with `only`): parts by their mesh and place, boards and cables by id
+    const fresh = new Set<Obj>();
+    const near = (a: number[], b: number[]) => Math.hypot(a[12] - b[12], a[13] - b[13], a[14] - b[14]) < 1;
+    const newPart = (p: PartOut, T: number[], tag?: PickTag) => !!only && ((!!tag?.module && only.boards.has(tag.module)) || only.parts.some((d) => d.mesh === p.mesh && [d.toAssembly, ...(d.instances ?? [])].slice(0, Math.max(1, d.qty)).some((D) => near(D, T))));
     for (const p of [...result.parts, ...(result.display ?? [])]) {
       if (p.toAssembly[14] <= -300) continue;
       const m = p.displayMesh ?? p.mesh;
       add(m, p.color, 1, p.toAssembly, p.tag, p.anim, false);
-      (p.instances ?? []).forEach((T, k) => add(m, p.color, 1, T, p.tags?.[k] ?? p.tag, p.anims?.[k] ?? p.anim, false));
+      if (newPart(p, p.toAssembly, p.tag)) fresh.add(objs[objs.length - 1]);
+      (p.instances ?? []).forEach((T, k) => { add(m, p.color, 1, T, p.tags?.[k] ?? p.tag, p.anims?.[k] ?? p.anim, false); if (newPart(p, T, p.tags?.[k] ?? p.tag)) fresh.add(objs[objs.length - 1]); });
     }
     next.fx = [];
     for (const gh of result.ghosts) {
       add(gh.mesh, gh.color, gh.opacity, null, gh.tag, gh.anim, true, false, gh.mat, !!gh.smooth);
+      if (only && ((gh.tag?.module && only.boards.has(gh.tag.module)) || (gh.tag?.kind === 'cable' && only.cables.has(gh.tag.refs?.[0] ?? '')))) fresh.add(objs[objs.length - 1]);
       if (gh.fx) next.fx.push({ gh, mesh: objs[objs.length - 1].mesh });
     }
     // animation ranks: every distinct step (moves and appearances) in order
@@ -776,6 +794,19 @@ function prepare(c: any, result: GenResult | null, mode: 'assembly' | 'print', b
     for (const o of objs) if (o.anim?.grow) { const l = byRank.get(o.rank)!, k = o.tag?.refs?.[0] ?? o.mesh.uuid; o.lag = l.length > 1 ? (0.35 * l.indexOf(k)) / (l.length - 1) : 0; }
     next.ranks = seqs.length;
     next.phases = seqs;
+    if (only) {
+      // only the steps in which something new moves or appears; the rest of the rack sits there put together
+      const keep = new Set<number>();
+      for (const o of objs) if (fresh.has(o)) { for (const r of [o.rank, o.show, ...o.moves.map((m) => m.rank)]) if (r >= 0) keep.add(r); }
+      const order = [...keep].sort((a, b) => a - b), to = (r: number) => order.indexOf(r);
+      for (const o of objs) {
+        if (fresh.has(o)) { o.rank = to(o.rank); o.show = to(o.show); for (const m of o.moves) m.rank = to(m.rank); continue; }
+        o.moves = []; o.show = -1; o.rank = -1; o.lag = 0;
+        if (o.anim?.grow) o.anim = { ...o.anim, grow: false };
+      }
+      next.ranks = order.length;
+      next.phases = order.map((r) => seqs[r]);
+    }
     const cf = result.report.clipFrame;
     if (installed && cf) {
       const W = installed === 'h' ? [0, -1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0, 0, 0, 1] : [0, -1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];

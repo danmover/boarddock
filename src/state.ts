@@ -34,6 +34,7 @@ export interface State {
   sel: Sel;
   result: GenResult | null;
   building: boolean;
+  buildNote: string | null; // what the build is doing now (the holder it is on), while it works
   rendering: boolean; // the 3D view is compiling shaders for a new scene (the old one stays up meanwhile)
   error: string | null;
   showGhosts: boolean;
@@ -76,6 +77,7 @@ let state: State = {
   sel: [],
   result: null,
   building: false,
+  buildNote: null,
   rendering: false,
   error: null,
   showGhosts: true,

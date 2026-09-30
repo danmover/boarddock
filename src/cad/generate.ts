@@ -22,6 +22,7 @@ import { dockFrame, dockSite, earSite, flatFrame, type DockSite, type EarSite } 
 import { dir as dirM, inv, mul, type M4 } from '../geom/mat';
 import { rectSection, roundSection, solveFrame, type FElem, type FNode } from '../fea/frame3d';
 import { designBow, designClip, FACE, holdOf, leafT, MU, onLayer, RAMP, SLIT, type BowDesign, type ClipDesign, type Leaf } from './grip';
+import { progress } from './progress';
 
 const ID = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
@@ -169,6 +170,7 @@ const CACHE_MAX = 48;
 
 export function buildModule(job: Job): ModuleOut {
   const { p } = job;
+  progress(`Building the ${job.name} holder`);
   const mod = p.modules[job.mi];
   if (mod && mod.board === job.b) job = { ...job, used: usedRefs(p, mod) };
   // which pins have a jumper's housing pushed on, and in what colour: a header is in use (for a probe or adapter)

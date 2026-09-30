@@ -30,9 +30,9 @@ const cad = makeWorker(new Worker(new URL('./cad.worker.ts', import.meta.url), {
 let fea: ReturnType<typeof makeWorker> | null = null;
 let latest = 0;
 
-export async function generateProject(p: Project): Promise<GenResult | null> {
+export async function generateProject(p: Project, onProgress?: (s: string) => void): Promise<GenResult | null> {
   const ticket = ++latest;
-  const res = await cad.call<GenResult>('generate', p);
+  const res = await cad.call<GenResult>('generate', p, onProgress);
   return ticket === latest ? res : null;
 }
 
