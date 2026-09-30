@@ -165,7 +165,11 @@ describe('J-Links for a board', () => {
 
   it('needs an adapter only where the pin counts differ', () => {
     const p = rack();
-    const [pr] = addProbes(p, p.modules[0].id);
+    // (the J-Link with the 10-pin Cortex-M connector is what a 10-pin header is offered: no adapter)
+    const [own] = addProbes(p, p.modules[0].id, ['J_SWD2']);
+    expect(own.board.comps.find(isDebugPort)!.conn!.type).toBe('swd10');
+    expect(adapterFor(own.board.comps.find(isDebugPort)!, debugHeaders(p.modules[0].board)[0])).toBeNull();
+    const [pr] = addProbes(p, p.modules[0].id, ['J_SWD1'], 'jlink');
     const port = pr.board.comps.find(isDebugPort)!, head = debugHeaders(p.modules[0].board)[0];
     // the J-Link's 20-pin 1.27 mm connector: a 10-pin header takes an adapter, a 20-pin 1.27 mm one a straight ribbon
     expect(port.conn!.type).toBe('cortex20');
@@ -197,7 +201,7 @@ describe('probe rack', () => {
     for (const c of ribbons) { expect(c.buy).toBe(0); expect(c.ribbon).toBe(200); expect(c.clash).toBeUndefined(); }
     // short from behind their boards; the dual-MCU board's second J-Link, in the dock beside it, needs a longer ribbon
     // than the usual 200 mm, and says so
-    expect(ribbons.filter((c) => c.length < 175).length).toBe(2);
+    expect(ribbons.filter((c) => c.length < 190).length).toBe(2); // (the JTAG box header's ribbon is 25 mm wide: a little longer)
     expect(Math.max(...ribbons.map((c) => c.length))).toBeLessThan(260);
     expect(w.split('\n').filter((x) => /ribbon is 200 mm but has to run/.test(x)).map((x) => /J_SWD2/.test(x))).toEqual([true]);
     expect(r.report.cables!.every((c) => !c.clash)).toBe(true);

@@ -3,6 +3,8 @@ import { autoLinks, numberLinks, portBudget, powerShort, sameRef, strongerPower,
 import { TEMPLATES } from '../model/templates';
 import { ownSupply } from '../model/boxes';
 import { addAdapters, addProbes, addUartLinks, fillWires, stackCompanions } from '../model/probes';
+import { addDebugGear } from '../model/debuggear';
+import type { CompanionKey } from '../model/boxes';
 import { seatCompanion, seatCompanions, type Seated } from '../cad/dockplan';
 import type { Module, PlugRef, Project } from '../model/types';
 import { edit, putBoards, select, store, toast } from '../state';
@@ -149,12 +151,12 @@ function railNote(fresh: Seated | undefined, name: string) {
  * one column with the board's adapters, beside it (on a laid-out rack, in the back slot of its dock when that is free).
  * Their USB cables are left to Auto-connect.
  */
-export function addJLinks(moduleId: string, refs?: string[]) {
+export function addJLinks(moduleId: string, refs?: string[], as?: CompanionKey) {
   let n = 0, name = '', note = { text: '', fresh: undefined as Seated | undefined }, first = '';
   edit((q) => {
     const m = q.modules.find((x) => x.id === moduleId);
     name = m?.board.name ?? '';
-    const added = addProbes(q, moduleId, refs);
+    const added = addProbes(q, moduleId, refs, as);
     n = added.length;
     first = added[0]?.board.name ?? '';
     note = seatNote(q, name, seatNew(q, added), n, 'J-Link');
@@ -181,6 +183,28 @@ export function addSerialAdapters(moduleId: string, refs?: string[]) {
   if (!n) { toast(refs ? 'That header already has something on it.' : 'Every UART header on this board already has something on it.'); return; }
   toast(`Added ${n > 1 ? `${n} USB-serial adapters` : 'a USB-serial adapter'} for the ${name}${note.text}, with jumper wires on GND, TX and RX (crossed over). Press Auto-connect to plug ${n > 1 ? 'their' : 'its'} USB into a hub. ⌘Z undoes it.`);
   railNote(note.fresh, first);
+}
+
+/**
+ * One press: a J-Link for every free debug header and a USB-serial adapter for every free UART header, on every board
+ * (or only `ids`), each cabled to its header, their USB cables to a hub, standing in a column beside its board. One
+ * undo step. Says what to buy and to check the UART pin names.
+ */
+export function addDebugGearFor(ids?: string[]) {
+  let g: ReturnType<typeof addDebugGear> | null = null, fresh = 0;
+  watchRelayout();
+  edit((q) => {
+    g = addDebugGear(q, ids, plugPlaces());
+    fresh = seatNew(q, [...g.probes, ...g.adapters]).filter((x) => x.where === 'new').length;
+  });
+  const r = g as ReturnType<typeof addDebugGear> | null;
+  if (!r || !(r.probes.length + r.adapters.length)) { toast('Every debug and UART header already has a J-Link, an adapter or a cable on it.'); return; }
+  const pl = (n: number, w: string) => `${n} ${w}${n > 1 ? 's' : ''}`;
+  const what = [r.probes.length ? pl(r.probes.length, 'J-Link') : '', r.adapters.length ? pl(r.adapters.length, 'USB-serial adapter') : ''].filter(Boolean).join(' and ');
+  const kinds = [...new Set(r.probes.map((x) => x.board.name.replace(/\s*\(.*\)$/, '')))].join(', ');
+  const q = store.get().project!;
+  const where = q.layout === 'panel' && q.panel.auto ? 'each standing on its long edge in a column beside its board' : fresh ? `${fresh} in a new dock (their ribbons may not reach: see Plugs › Debug and serial)` : 'in the docks of their boards';
+  toast(`Added ${what} for ${[...new Set(r.boards)].join(', ')}${kinds && r.probes.length > 1 ? ` (${kinds})` : ''}, ${where}. ${r.usb ? `Their USB cables are connected.` : 'Add a hub for their USB (Start › accessories), then Auto-connect.'}${r.guess.length ? ' The UART pin names are a guess: check yours on the board before you power it.' : ''} What to buy: Plugs › Debug and serial. ⌘Z undoes it.`);
 }
 
 /** A USB-serial cable from each free UART header of a board to the nearest free USB port. */
