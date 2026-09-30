@@ -2,7 +2,8 @@
 // board. Click one to pick it up (it follows the pointer over the board, snapping to an edge if it goes on one), then
 // click where it goes; or drag it onto the board. Search, or narrow to one kind.
 import { useEffect, useMemo, useState } from 'react';
-import { PALETTE, PALETTE_GROUPS, demoBoard, partBoard, paletteFor, samePart, type PaletteItem } from '../model/palette';
+import { PALETTE, PALETTE_GROUPS, contribOf, demoBoard, partBoard, paletteFor, samePart, type PaletteItem } from '../model/palette';
+import { PartIcon } from './PartIcon';
 import type { Board, Comp } from '../model/types';
 import { boardPicture } from '../worker/client';
 import { picture } from './snapshot';
@@ -17,10 +18,11 @@ export const PART_DRAG = 'application/x-boarddock-part';
  * still the model (tiles.json), else rendered here.
  */
 export function PartPic({ item }: { item: PaletteItem }) {
-  const shipped = tileUrl(`pal/${item.id}`);
-  const [live, setLive] = useState(() => !shipped || failed.has(item.id));
-  const b = useMemo(() => (live ? demoBoard(item) : null), [live, item.id]);
-  if (!b) return <img className="pic" src={shipped!} alt="" draggable={false} decoding="async" loading="lazy" onError={() => { failed.add(item.id); setLive(true); }} />;
+  const shipped = tileUrl(`pal/${item.id}`), def = contribOf(item);
+  // (a contributed type nobody has rendered a picture of yet gets a plain drawing made from its look, not a render of its own)
+  const [live, setLive] = useState(() => (!shipped && !def) || failed.has(item.id));
+  const b = useMemo(() => (live && !def ? demoBoard(item) : null), [live, item.id]);
+  if (!b) return shipped && !failed.has(item.id) ? <img className="pic" src={shipped} alt="" draggable={false} decoding="async" loading="lazy" onError={() => { failed.add(item.id); setLive(true); }} /> : <PartIcon def={def!} />;
   return <ScrapPic b={b} />;
 }
 
