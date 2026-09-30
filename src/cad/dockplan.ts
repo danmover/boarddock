@@ -8,7 +8,6 @@ import { DOCK_MIN_ZB, EAR, gripSpan, HD, headSpan, SOCKET_Z, SPINE_TOP, TONGUE }
 import { MATERIALS } from '../model/library';
 import { holderParts } from '../model/cards';
 import { computeLevels } from './levels';
-import { holdOf } from './grip';
 import { baseOf, columnOf, isSmall, ridersOf } from '../model/holes';
 import { isProbe, probesOf, targetOf } from '../model/probes';
 import { baseRef, findModule, isAccessory, isBox, plugRole } from '../model/links';
@@ -178,7 +177,7 @@ export function dockSite(b: Board, H: HolderSettings, edge: EdgeName, shift = 0)
   const zbLow = computeLevels(b, H).zb;
   const spineW = HD.spineHx + 0.4;
   // a board without snap-capable holes needs its side edges for the spring clips: a spine beside it takes one
-  const fingerHeld = b.holes.filter((h) => (h.use === 'auto' || h.use === 'snap') && h.d >= 1.8).length < 2 && holdOf(H) !== 'pins';
+  const fingerHeld = b.holes.filter((h) => h.use === 'auto' && h.d >= 1.8).length < 2;
   let best = { pen: Infinity, tc: tMid, conflicts: [] as string[], under: true, side: 0 };
   let bestWanted = { pen: Infinity, conflicts: [] as string[] };
   const wanted = H.release ?? 'centre';

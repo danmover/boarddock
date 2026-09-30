@@ -66,7 +66,7 @@ const jst = (kind: 'ph' | 'xh', n: number): PaletteItem => {
   };
 };
 const hole = (name: string, d: number): PaletteItem => ({
-  id: `hole_${name}`, group: 'Holes', label: `${name} hole`, hint: 'a mounting hole: the holder snaps a pin into it (or you set it to be left clear)', size: `Ø${d}`,
+  id: `hole_${name}`, group: 'Holes', label: `${name} hole`, hint: 'a mounting hole: the holder puts a locating pin through it (or you set it to be left clear)', size: `Ø${d}`,
   make: (_b, at) => ({ hole: { id: uid('h'), x: snap(at[0]), y: snap(at[1]), d, plated: true, use: 'auto', role: 'mount', why: 'added by hand' } }),
 });
 const tall = (id: string, label: string, pre: string, pkg: string, w: number, l: number, h: number, kind: Comp['kind'] = 'generic', hint = 'the holder keeps clear of it'): PaletteItem => ({

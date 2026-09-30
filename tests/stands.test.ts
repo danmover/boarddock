@@ -5,7 +5,7 @@ import { generate } from '../src/cad/assembly';
 import { TEMPLATES } from '../src/model/templates';
 import { newModule, newProject } from '../src/model/library';
 import { autoLinks } from '../src/model/links';
-import { endBlock, planStands, railI, saddle, spacer, STAND } from '../src/cad/railstand';
+import { endBlock, planStands, railI, saddle, spacer, standBoxes, STAND } from '../src/cad/railstand';
 
 const T = (id: string) => TEMPLATES.find((t) => t.id === id)!.make();
 
@@ -21,6 +21,17 @@ describe('table stands', () => {
       }
       // the rail's section fits the end block pocket: rail at x in the pocket must not intersect the block
       expect(Math.round(railI())).toBeGreaterThan(300);
+    } finally { freeAll(); }
+  });
+
+  it('the box a cable is routed round covers the whole printed bar (its top too: a cable at that height touched it)', async () => {
+    await initKernel();
+    try {
+      const plan = planStands([{ id: 'r1', u0: 0, u1: 100, v: 0 }, { id: 'r2', u0: 0, u1: 100, v: -110 }], [], []);
+      const at = plan.pieces.findIndex((q) => q.kind === 'spacer');
+      expect(at).toBeGreaterThanOrEqual(0);
+      const bar = spacer(plan.pieces[at].to, [], 0).boundingBox();
+      expect(standBoxes(plan)[at].box[5]).toBeGreaterThanOrEqual(bar.max[1] - 0.01);
     } finally { freeAll(); }
   });
 

@@ -226,7 +226,7 @@ function generateLoose(p0: Project): GenResult {
     }
     steps.push({ seq: b0 + 2, text: mode === 'stack' && inStack.indexOf(i) > 0 ? `Press the ${nm} holder onto the corner towers of the one below.` : `Set out the ${nm} holder.` });
     if (o.parts.some((x) => x.tag?.kind === 'clip')) steps.push({ seq: b0 + 3, text: 'Press the DIN clip into the holder until both hooks click (any of four ways round).' });
-    steps.push({ seq: b0 + 4, text: mods[i].board.kind === 'box' ? `Set the ${nm} into its holder and strap it down with a hook-and-loop strap through the loops.` : `Snap the ${nm} into its holder: it clicks under the spring clips or onto the pins.` });
+    steps.push({ seq: b0 + 4, text: mods[i].board.kind === 'box' ? `Set the ${nm} into its holder and strap it down with a hook-and-loop strap through the loops.` : `${o.features.some((f) => f.kind === 'spring' && f.refs?.includes('ledge')) ? `Slide the ${nm}'s edge in under the fixed ledge, tilted, then press the far side down: ` : `Snap the ${nm} into its holder: `}it clicks under the spring clips.` });
     if (o.ghosts.some((g) => g.tag?.kind === 'board' && g.tag.module !== mods[i].id)) steps.push({ seq: b0 + 5, text: `Bolt the board that sits on the ${nm} onto its standoffs.` });
     features.push(...o.features);
     frames[mods[i].id] = T[i];

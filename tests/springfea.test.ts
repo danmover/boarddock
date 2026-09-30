@@ -4,9 +4,11 @@ import { appendFileSync } from 'fs';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { csLoops, freeAll, initKernel } from '../src/cad/kernel';
 import { leafPlan } from '../src/cad/leafplan';
-import { bestClip, leafMech, sizeClip, uLeaf, U_ARMS, type Leaf } from '../src/cad/grip';
+import { bestClip, hairpinLip, pushTarget, spanFor, tipFor, leafMech, sizeClip, uLeaf, U_ARMS, type Leaf } from '../src/cad/grip';
 import { leafFea } from '../src/fea/springfea';
 import { MATERIALS } from '../src/model/library';
+import { SIZED_FOR } from '../src/fea/boardflex';
+import { FLEX_RULE } from '../src/fea/flexures';
 
 beforeAll(async () => { await initKernel(); });
 
@@ -26,7 +28,7 @@ const straight = (L: number, t0: number, h = 9): Leaf => ({ L, t0, tMin: Math.mi
 describe('the beam sums follow the FEA', () => {
   it('a hairpin: stiffness within 5%, peak strain within 15% (the fold\'s round is in the sum), the slot stays open', () => {
     for (const L of [8, 10, 12, 14]) for (const t0 of [0.7, 0.8, 0.9]) {
-      const f = uLeaf(L, t0, 9, Math.min(4, Math.max(3, 0.3 * L)));
+      const f = uLeaf(L, t0, 9, hairpinLip(L));
       const m = leafMech(f, PETG.E, 0.9), r = fea(f, 0.6, 0.9);
       expect(Math.abs(r.k / m.k - 1), `L${L} t${t0}: stiffness`).toBeLessThan(0.05);
       expect(Math.abs(r.peak / m.eps - 1), `L${L} t${t0}: peak strain`).toBeLessThan(0.15);
@@ -52,7 +54,7 @@ describe('the hairpin against the straight clip, at the same catch depth', () =>
   const TIP = 0.6;
   for (const L of [8, 10, 12]) it(`${L} mm of edge: a lower peak strain and a better fatigue margin for the same push and release`, () => {
     const straightOpts = [0.6, 0.7, 0.8, 0.9, 1.0, 1.15, 1.3].map((t0) => ({ f: straight(L, t0), r: fea(straight(L, t0), TIP, TIP + PLAY) }));
-    const hairpinOpts = [0.7, 0.75, 0.8, 0.85, 0.9].map((t0) => { const f = uLeaf(L, t0, 9, Math.min(4, Math.max(3, 0.3 * L))); return { f, r: fea(f, TIP, TIP + PLAY) }; });
+    const hairpinOpts = [0.7, 0.75, 0.8, 0.85, 0.9].map((t0) => { const f = uLeaf(L, t0, 9, hairpinLip(L)); return { f, r: fea(f, TIP, TIP + PLAY) }; });
     // the pair of thicknesses whose pushes are nearest each other (the straight one has to be within the strain limit of 2%)
     let best: { s: (typeof straightOpts)[number]; u: (typeof hairpinOpts)[number]; d: number } | null = null;
     for (const s of straightOpts) for (const u of hairpinOpts) {
@@ -99,4 +101,24 @@ describe('the hairpin against the straight clip, at the same catch depth', () =>
       expect(c.fatigue, `${name} L${L}`).toBeGreaterThanOrEqual(0.5 / share - 1e-9);
     }
   });
+});
+
+describe('every clip the holder sizes, in the FEA', () => {
+  // the beam sums the sizing keeps to 1% (PETG) at full deflection, checked against the FEA of the outline that prints
+  it('the peak strain at full deflection is 1% or less in PETG (2% over the sum), for every length of hairpin and leaf and every board', () => {
+    const seen = new Set<string>();
+    const rows: string[] = [];
+    for (const { name, load } of SIZED_FOR) for (let L = spanFor(load); L >= 8; L -= L > 12 ? 2 : 1) {
+      const c = bestClip({ L, h: 9, mat: PETG, gap: GAP, play: PLAY, tip: tipFor(load), want: pushTarget(load, true, 4) });
+      const key = `${c.kind}${L}${c.leaf.t0}${c.tip}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const r = fea(c.leaf, c.tip, c.tip + PLAY);
+      rows.push(`${name.split(' ')[0]} ${c.kind} L${L} t${c.leaf.t0} catch ${c.tip}: beam ${(c.eps * 100).toFixed(2)}% FEA ${(r.peak * 100).toFixed(2)}%, push ${c.push.toFixed(1)} N, release ${((r.F * (c.tip + 0.2)) / (c.tip + PLAY)).toFixed(1)} N, hold ${r.hold.toFixed(1)} N`);
+      expect(r.peak, `${name} ${c.kind} L${L}`).toBeLessThanOrEqual(FLEX_RULE.spring * 1.02);
+      expect(r.peak / c.eps, `${name} ${c.kind} L${L}: the sum is not far under the FEA`).toBeLessThan(1.04);
+      expect(r.peak / c.eps, `${name} ${c.kind} L${L}: nor far over`).toBeGreaterThan(0.8);
+    }
+    if (process.env.CLIPTABLE) appendFileSync(process.env.CLIPTABLE, `${rows.join('\n')}\n`);
+  }, 120000);
 });

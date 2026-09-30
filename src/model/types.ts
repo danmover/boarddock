@@ -4,7 +4,7 @@
 export type V2 = [number, number];
 export type Loop = V2[];
 export type Side = 'top' | 'bottom';
-export type HoleUse = 'auto' | 'snap' | 'pin' | 'none'; // auto: locating pin, or snap pin when the wall fingers can't hold the board
+export type HoleUse = 'auto' | 'pin' | 'none'; // auto and pin: a locating pin through the hole (it grips nothing: spring clips hold the board); none: left clear
 /**
  * What a hole is for (hole wizard). Only mounting holes get holder pins; the others are kept clear underneath:
  * plug = a connector's pegs or shell tabs, lead = a part's pins, standoff = hardware for a board stacked on top.
@@ -147,10 +147,8 @@ export interface HolderSettings {
   pattern: 'hex' | 'slots' | 'circles' | 'none';
   cell: number; // pattern pitch
   rib: number; // pattern rib width
-  tabs: 'auto' | 'on' | 'off'; // older projects: wall fingers (auto / always / off); read through holdOf() when hold is unset
   tabLip: number; // (older projects; the spring clips size their own lip)
-  hold?: 'auto' | 'clips' | 'pins' | 'both'; // what holds the board in: spring clips at its edges, snap pins in its holes, or both; auto picks what fits
-  grip?: 'gentle' | 'firm'; // spring clip strength (unset: firm): gentle is a thinner leaf, under half the force
+  grip?: 'gentle' | 'firm'; // spring clip strength (unset: firm): gentle presses the board in with less force
   notches: boolean; // finger notches to lift the board out
   label: string;
   chamfer: boolean;
@@ -420,6 +418,8 @@ export interface Feature {
   kind: 'cradle' | 'cap' | 'guard' | 'tie' | 'spring' | 'label' | 'pin' | 'seat' | 'dock' | 'tower' | 'stand' | 'notch' | 'rim';
   module: string;
   refs?: string[]; // connector refs or hole ids
+  at?: V2; // a spring clip or fixed ledge: where its lip grips the board's edge,
+  n?: V2; // and the way in from the edge there (into the board)
   box: [number, number, number, number, number, number];
 }
 

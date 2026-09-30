@@ -598,7 +598,6 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
             <g key={h.id} data-id={h.id} data-kind="hole" style={{ cursor: 'move' }}>
               <circle cx={h.x} cy={-h.y} r={h.d / 2 + 1.1} fill={col} fillOpacity={role === 'free' ? 0.5 : 0.92} stroke={on ? 'var(--accent)' : 'none'} strokeWidth={fs(2.5)} filter={on ? 'url(#glow)' : undefined} />
               <circle cx={h.x} cy={-h.y} r={h.d / 2} fill="var(--viewer)" />
-              {role === 'mount' && h.use === 'snap' && <path d={`M${h.x - h.d / 2},${-h.y}H${h.x + h.d / 2}`} stroke={col} strokeWidth={fs(1.5)} />}
             </g>
           );
         })}
@@ -820,7 +819,7 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
             </>}
             {h && <>
               <b>Hole · Ø{h.d.toFixed(2)}</b>
-              <span>{ROLE_INFO[h.role ?? 'mount'].name}{h.use === 'snap' ? ' · a snap pin' : h.use === 'none' ? ' · left free' : ''}</span>
+              <span>{ROLE_INFO[h.role ?? 'mount'].name}{h.use === 'none' ? ' · left free' : ''}</span>
               <span className="mono">{(h.x - bb.x0).toFixed(2)} from the left, {(h.y - bb.y0).toFixed(2)} from the bottom</span>
               {h.why && <span>{h.why}</span>}
             </>}

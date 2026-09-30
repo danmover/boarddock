@@ -9,7 +9,6 @@ import { addAccessory, addDebugGearFor, addJLinks, addLinks, addSerialAdapters, 
 import { adapterFor, debugHeaders, isDebugPort, isProbe, isUartPort, markDebug, ribbonOf, uartHeaders, uartPins, type DebugKind } from '../model/probes';
 import { Icon, I } from './icons';
 import { CONNECTORS, DEFAULT_FEATURES, HOLDER_PRESETS, MATERIALS, PRINTERS, connById, connSetup, setLayout } from '../model/library';
-import { holdOf } from '../cad/grip';
 import { inUse, portUses, USE_TEXT } from '../model/portuse';
 import { printerByName, printSettings } from '../model/printers';
 import { TEMPLATES } from '../model/templates';
@@ -564,7 +563,7 @@ export function Inspector() {
         <>
           {one && <div className="row3"><Num label="X" value={holes[0].x} onChange={(v) => setH((h) => { h.x = v; h.why = 'moved by hand'; })} /><Num label="Y" value={holes[0].y} onChange={(v) => setH((h) => { h.y = v; h.why = 'moved by hand'; })} /><Num label="Ø" value={holes[0].d} min={0.5} onChange={(v) => setH((h) => { h.d = v; h.why = 'size set by hand'; })} /></div>}
           {!one && <div className="row"><Num label={`Ø for ${holes.length} holes`} value={mixed(common(holes, (h) => h.d))} min={0.5} onChange={(v) => setH((h) => { h.d = v; })} /></div>}
-          <div style={{ marginTop: 8 }}><Seg value={common(holes, (h) => h.use) ?? ('' as Hole['use'])} options={[['auto', 'Auto'], ['snap', 'Snap pin'], ['pin', 'Locating pin'], ['none', 'Ignore']]} onChange={(v) => setH((h) => { h.use = v; })} /></div>
+          <div style={{ marginTop: 8 }}><Seg value={common(holes, (h) => h.use) ?? ('' as Hole['use'])} options={[['auto', 'Locating pin'], ['none', 'Ignore']]} onChange={(v) => setH((h) => { h.use = v; })} /></div>
         </>
       )}
       {comps.length > 0 && (
@@ -1042,10 +1041,9 @@ function HolderFeatures() {
   const caps = (res?.parts ?? []).filter((x) => x.tag?.module === m.id && x.tag?.kind === 'cap').reduce((a, x) => a + x.qty, 0);
   const conns = m.board.comps.filter((c) => c.conn && !c.hidden).length;
   const st = (on: boolean, n: number, what: string, none: string) => (!res || building ? '…' : !on ? 'off' : n ? `${n} ${what}${n > 1 ? 's' : ''}` : none);
-  const clipsC = check(/^Spring clips/), pins = check(/^Snap pins/), lab = check(/^Label$/);
-  const hold = holdOf(H);
-  const nClips = clipsC ? +(/\((\d+)\)/.exec(clipsC.name)?.[1] ?? 0) : 0, nPins = pins ? +(/\((\d+),/.exec(pins.name)?.[1] ?? 0) : 0;
-  const heldBy = [nClips ? `${nClips} spring clips` : '', nPins ? `${nPins} snap pins` : ''].filter(Boolean).join(' + ') || 'nothing yet';
+  const clipsC = check(/^Spring clips/), lab = check(/^Label$/);
+  const nClips = clipsC ? +(/\((\d+)\)/.exec(clipsC.name)?.[1] ?? 0) : 0;
+  const heldBy = nClips ? `${nClips} spring clips${check(/^Fixed ledges/) ? ` and ${+(/\((\d+)\)/.exec(check(/^Fixed ledges/)!.name)?.[1] ?? 0)} fixed ledges` : ''}` : 'nothing yet';
   const Row = ({ title, status, why, children }: { title: string; status: string; why?: string; children: ReactNode }) => (
     <div className="featrow">
       <div className="featrow-l"><b>{title}</b><small title={why}>{status}{why ? <em> · {why}</em> : null}</small></div>
@@ -1061,12 +1059,11 @@ function HolderFeatures() {
           <Row title="Snap-on plug caps" status={F.cradles ? st(F.caps, caps, 'cap', 'none needed') : 'need the cradles'} why={!F.cradles ? 'caps clip onto the cradles' : undefined}>{toggle(F.caps && F.cradles, (v) => setF('caps', v), !F.cradles)}</Row>
           <Row title="Receptacle guards" status={st(F.guards, count('guard'), 'guard', 'none needed')}>{toggle(F.guards, (v) => setF('guards', v))}</Row>
           <Row title="Cable-tie anchors" status={st(F.ties, count('tie'), 'anchor', 'none needed')}>{toggle(F.ties, (v) => setF('ties', v))}</Row>
-          <Row title="Hold the board with" status={!res || building ? '…' : heldBy} why={clipsC && !nClips ? clipsC.detail : undefined}>
-            <Seg value={hold} options={[['auto', 'Auto'], ['clips', 'Clips'], ['pins', 'Pins'], ['both', 'Both']]} onChange={(v) => set((h) => { h.hold = v; })} />
+          <Row title="Spring clips hold the board" status={!res || building ? '…' : heldBy} why={clipsC && !nClips ? clipsC.detail : undefined}>
+            <Seg value={H.grip ?? 'firm'} options={[['firm', 'Firm'], ['gentle', 'Gentle']]} onChange={(v) => set((h) => { h.grip = v; })} />
           </Row>
           <div className="featsub">
-            {hold !== 'pins' && <div className="featrow"><div className="featrow-l"><b>Clip strength</b><small>{clipsC && nClips ? `${clipsC.value}; ${check(/^Press-in force$/)?.value ?? ''} to press in` : '…'}</small></div><div className="featrow-r"><Seg value={H.grip ?? 'firm'} options={[['firm', 'Firm'], ['gentle', 'Gentle']]} onChange={(v) => set((h) => { h.grip = v; })} /></div></div>}
-            <p className="hint">Spring clips stand up round the board's edges and bend sideways, within the print layers; once the board is in they carry no load. Snap pins grip it by its mounting holes. Auto puts clips on the board's edges, as many and as long as its size and weight ask (a hairpin where a stretch of edge is short), and uses snap pins only where the edges leave no room for clips that keep it from tipping out.</p>
+            <p className="hint">{clipsC && nClips ? `${clipsC.value}; ${check(/^Press-in force$/)?.value ?? ''} to press the board in. ` : ''}Spring clips stand up round the board's edges and bend sideways, within the print layers; once the board is in they carry no load. As many and as long as its size and weight ask, a hairpin where a stretch of edge is short, and where plugs take the edges a fixed ledge on one side (the board slides under it) with clips on the other, so the board can never tip out. Firm or gentle sets how hard the board presses in.</p>
           </div>
           {!frame && <Row title="Finger notches" status={st(H.notches, count('notch'), 'notch', 'no free wall')}>{toggle(H.notches, (v) => set((h) => { h.notches = v; }))}</Row>}
           <Row title="Engraved label" status={!res || building ? '…' : !H.label.trim() ? 'off' : lab ? lab.value : '…'} why={lab && lab.value === 'left off' ? lab.detail : lab?.detail?.includes('did not fit') ? 'the full name did not fit' : undefined}>
@@ -1710,7 +1707,7 @@ function printNotes(p: Project, res: Res, nPlates: number, tot: { g: number; m: 
     'Assembly:',
     ...[
       ...(clip ? ['Press the DIN clip into the holder until both hooks click (any of 4 orientations).'] : []),
-      'Press the board in: it clicks under the spring clips (or onto the snap pins).',
+      'Press the board in: it clicks under the spring clips.',
       ...(p.modules.length > 1 ? [p.arrange.mode === 'stack' ? 'Stack: press each layer onto the corner pegs of the layer below.' : p.arrange.mode === 'side' ? 'Side by side: drop a link bar into each pair of facing slots.' : 'Back to back: push the snap rivets through both bases.'] : []),
       ...(clip ? ['Hook the clip over the top of the rail and push the bottom in until it clicks.', 'To remove: pull the tab towards you; the holder tilts off.'] : []),
       ...(p.stand.enabled ? ['Slide the holder onto its stand post.'] : []),
@@ -1919,7 +1916,7 @@ function HoleWizard() {
           {mountHoles.length > 0 && (
             <div style={{ marginTop: 10 }}>
               <div className="field"><span>Pins in the mounting holes</span></div>
-              <div style={{ marginTop: 5 }}><Seg value={useAll ?? ('' as Hole['use'])} options={[['auto', 'Auto'], ['snap', 'Snap pins'], ['pin', 'Locating pins']]} onChange={(v) => editMod((q) => { for (const h of q.board.holes) if ((h.role ?? 'mount') === 'mount') h.use = v; })} /></div>
+              <div style={{ marginTop: 5 }}><Seg value={useAll ?? ('' as Hole['use'])} options={[['auto', 'Locating pins'], ['none', 'Ignore']]} onChange={(v) => editMod((q) => { for (const h of q.board.holes) if ((h.role ?? 'mount') === 'mount') h.use = v; })} /></div>
             </div>
           )}
           <p className="hint">{ROLE_INFO.plug.name}s, {ROLE_INFO.lead.name.toLowerCase()}s and {ROLE_INFO.standoff.name.toLowerCase()}s never get a pin: pegs, pins and screw heads stick out under the board, so the holder leaves room there. Pick several holes (Shift-click) and change one to change them all.</p>

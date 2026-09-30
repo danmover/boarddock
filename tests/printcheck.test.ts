@@ -70,16 +70,17 @@ describe('holder features', () => {
     const on = vol(() => {}), off = vol((p) => { p.modules[0].holder.label = ''; });
     expect(on.v).not.toBe(off.v);
     expect(on.checks.find((c) => c.name === 'Label')?.value).toMatch(/^"/);
-    // a short label of your own survives on a board held by pins
+    // a short label of your own survives
     expect(vol((p) => { p.modules[0].holder.label = 'NAS'; }).checks.find((c) => c.name === 'Label')?.value).toBe('"NAS"');
-    // what holds the board: clips (auto, where they fit), snap pins only, or both
-    const auto = vol(() => {}, 'uno', 'loose'), pins = vol((p) => { p.modules[0].holder.hold = 'pins'; }, 'uno', 'loose'), both = vol((p) => { p.modules[0].holder.hold = 'both'; }, 'uno', 'loose');
-    expect(new Set([auto.v, pins.v, both.v]).size).toBe(3);
-    expect(auto.checks.some((c) => /^Spring clips \(2\)/.test(c.name))).toBe(true);
-    expect(pins.checks.some((c) => /^Spring clips/.test(c.name))).toBe(false);
-    expect(both.checks.some((c) => /^Snap pins/.test(c.name)) && both.checks.some((c) => /^Spring clips \(/.test(c.name))).toBe(true);
-    // an older project's "fingers off" still means pins
-    expect(vol((p) => { p.modules[0].holder.tabs = 'off'; }, 'uno', 'loose').v).toBe(pins.v);
+    // what holds the board: spring clips, firm or gentle (the gentle ones press in with less force: a firm clip is held to the strain limit, so not by much on a small board), and never snap pins
+    const firm = vol(() => {}, 'uno', 'loose'), gentle = vol((p) => { p.modules[0].holder.grip = 'gentle'; }, 'uno', 'loose');
+    expect(firm.v).not.toBe(gentle.v);
+    for (const x of [firm, gentle]) {
+      expect(x.checks.some((c) => /^Spring clips \(2\)/.test(c.name))).toBe(true);
+      expect(x.checks.some((c) => /^Snap pins/.test(c.name))).toBe(false);
+    }
+    const force = (x: typeof firm) => Number(/about (\d+) N/.exec(x.checks.find((c) => c.name === 'Press-in force')!.value)![1]);
+    expect(force(gentle)).toBeLessThan(force(firm));
     // the release button says where it went and why
     const side = vol((p) => { p.modules[0].holder.release = 'side'; }, 'rpi4');
     const rel = side.checks.find((c) => c.name === 'Release button')!;
@@ -87,10 +88,11 @@ describe('holder features', () => {
     expect(rel.detail).toMatch(/would block/);
   }, 120000);
 
-  it('a docked board with no pin holes is still clipped in (a Nano gets another dock edge)', async () => {
+  it('a docked board with no pin holes is still held (a Nano: a clip and a fixed ledge)', async () => {
     await initKernel();
     const r = generate(newProject(T('nano')));
     expect(r.report.warnings.some((w) => /Nothing clips/.test(w))).toBe(false);
-    expect(r.report.checks.find((c) => /^Spring clips \(/.test(c.name))?.name).toMatch(/\((2|3|4)\)/);
+    expect(r.report.checks.find((c) => /^Spring clips \(/.test(c.name))?.name).toMatch(/\((1|2|3|4)\)/);
+    expect(r.report.checks.some((c) => /^Fixed ledges \(/.test(c.name))).toBe(true);
   }, 120000);
 });

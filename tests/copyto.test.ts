@@ -25,12 +25,12 @@ describe('copy to', () => {
   it('copies holder options, keeps the label and the clearances under the board', () => {
     const p = rack();
     const H = p.modules[0].holder;
-    Object.assign(H, { style: 'tray', wall: 2.4, material: 'ASA', hold: 'clips', grip: 'gentle', color: '#ff0000', feat: { cradles: false, caps: false, ties: true, guards: true }, leadLen: 4 });
+    Object.assign(H, { style: 'tray', wall: 2.4, material: 'ASA', grip: 'gentle', color: '#ff0000', feat: { cradles: false, caps: false, ties: true, guards: true }, leadLen: 4 });
     const r = copySettings(p, p.modules[0].id, [p.modules[1].id, p.modules[2].id], { holder: true, plugs: false, marks: false });
     expect(r).toEqual({ boards: 2, ports: 0, missed: 0 });
     for (const i of [1, 2]) {
       const h = p.modules[i].holder;
-      expect([h.style, h.wall, h.material, h.hold, h.grip, h.color]).toEqual(['tray', 2.4, 'ASA', 'clips', 'gentle', '#ff0000']);
+      expect([h.style, h.wall, h.material, h.grip, h.color]).toEqual(['tray', 2.4, 'ASA', 'gentle', '#ff0000']);
       expect(h.feat).toEqual(H.feat);
       expect(h.feat).not.toBe(H.feat); // a copy, not the same object
       expect(h.label).toBe(p.modules[i].board.name.slice(0, 24));

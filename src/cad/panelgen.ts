@@ -662,12 +662,12 @@ export function generatePanel(p: Project): GenResult {
         if (hasRod) steps.push({ seq: b0 + 1, text: `Push the release rod into the spine of the ${nm} holder until it clicks.` });
         if (col) {
           const names = layers.map((L) => L.mod.board.name);
-          steps.push({ seq: b0 + 2, text: `Snap each board into its holder: it clicks under the spring clips or onto the pins (${names.join(', ')}).` });
+          steps.push({ seq: b0 + 2, text: `Snap each board into its holder: it clicks under the spring clips (${names.join(', ')}; a board with a fixed ledge goes in tilted, its edge under the ledge first).` });
           steps.push({ seq: b0 + 3, text: layers.slice(1).map((L, k) => `Stand the ${L.mod.board.name} holder on its long edge on the ${names[k]} holder, its pegs in the holes on top.`).join(' ') });
           steps.push({ seq: b0 + 3.5, text: `Push the release rod down through the column from the top, through every holder, until it clicks.` });
           steps.push({ seq: b0 + 4, text: `Push the column straight into its dock by the ${nm} holder until the latch clicks. To take it out, press the button on top and lift the whole column; each holder then lifts off the one below.` });
         } else {
-          steps.push({ seq: b0 + 2, text: box ? `Set the ${nm} into its holder and strap it down with a hook-and-loop strap through the loops.` : `Snap the ${nm} into its holder: it clicks under the spring clips or onto the pins.` });
+          steps.push({ seq: b0 + 2, text: box ? `Set the ${nm} into its holder and strap it down with a hook-and-loop strap through the loops.` : `Snap the ${nm} into its holder: it clicks under the spring clips.` });
           if (stacked) steps.push({ seq: b0 + 3, text: [...s.riders].map((x) => (layers.some((L) => L.mod === x) ? `Press the ${x.board.name} holder onto the corner towers.` : `Bolt the ${x.board.name} onto the ${nm} on its standoffs.`)).join(' ') });
           steps.push({ seq: b0 + 4, text: q.mt.kind === 'dock' ? `Push the ${nm} holder straight into its dock until the latch clicks.` : layers[0].out.parts.some((pt) => pt.id.endsWith('_clip2')) ? `Press both halves of the ${nm} holder onto their rail clips, end to end.` : `Press the ${nm} holder onto its rail clip.` });
         }
