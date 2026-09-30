@@ -322,6 +322,8 @@ A box longer than your printer's bed (a powerboard usually is) gets its holder i
 
 ![Table stands under two rails](docs/images/stands.png)
 
+There is no wall mount: BoardDock prints no screw holes and uses no screws. The rails are ordinary TS35 DIN rails, which come with slots for screws, so to hang a rack on a wall or in a cabinet, screw the rails up yourself and clip the docks on as you would on the stands.
+
 The rails stand on printed sleepers (Rails step, **Table stands**, on by default):
 - A sleeper crosses the rails at each end, and at least every 200 mm between.
 - Each **rail end pushes 7 mm into an end block** with a TS35-shaped pocket. It caps the rail's lips, and crush ribs make it a light press fit.
