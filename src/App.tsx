@@ -75,7 +75,7 @@ export function App() {
 
   // rebuild whenever the project changes (debounced, latest wins; unchanged holders come from the worker's cache), but
   // not for what the build never reads: the rack's name, where the Wiring view's cards sit, marking it built
-  const buildKey = useMemo(() => (project ? JSON.stringify({ ...project, name: undefined, wiring: undefined, built: undefined, ticks: undefined, oneNetLength: undefined }) : ''), [project]);
+  const buildKey = useMemo(() => (project ? JSON.stringify({ ...project, name: undefined, wiring: undefined, built: undefined, ticks: undefined, oneNetLength: undefined, locks: undefined, receipts: undefined }) : ''), [project]);
   const latestProject = useRef(project);
   latestProject.current = project;
   useEffect(() => {

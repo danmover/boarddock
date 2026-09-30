@@ -298,10 +298,17 @@ export interface Built {
   mounts?: Record<string, { rail: string; at: number }>; // dock id -> the rail it was clipped on and where (mm from its start)
 }
 
+/** What is locked in the layout: all of it, or some docks and rails by id. Automatic changes leave these alone. */
+export interface Locks { all?: boolean; docks?: string[]; rails?: string[] }
+/** What an automatic change did, in a line: "Auto-arrange moved Pi 4 #2 from rail 1 to rail 2". */
+export interface Receipt { at: string; what: string; text: string }
+
 export interface Project {
   version: 3;
   name?: string; // what the user calls this rack (file names, the header); unset: made from the boards
   built?: Built;
+  locks?: Locks; // layout lock: docks and rails that Auto-arrange and other automatic changes leave alone (model/locks.ts)
+  receipts?: Receipt[]; // a line for each automatic change to the rack, newest last
   ticks?: string[]; // the checklist's ticked lines (their keys; see model/checklist.ts)
   oneNetLength?: boolean; // buy every routed Ethernet lead at one length: the longest route, rounded up to a stock length
   links?: Link[]; // cables between boards

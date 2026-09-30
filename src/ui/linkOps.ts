@@ -1,13 +1,21 @@
 // Cable edits (undoable).
-import { autoLinks, numberLinks, portBudget, powerShort, sameRef, strongerPower, type PlugAt } from '../model/links';
+import { autoLinks, KIND_NAME, numberLinks, portBudget, powerShort, sameRef, strongerPower, type PlugAt } from '../model/links';
 import { TEMPLATES } from '../model/templates';
 import { ownSupply } from '../model/boxes';
 import { addAdapters, addProbes, addUartLinks, fillWires, stackCompanions } from '../model/probes';
 import { seatCompanion, seatCompanions, type Seated } from '../cad/dockplan';
 import type { Module, PlugRef, Project } from '../model/types';
 import { edit, putBoards, select, store, toast } from '../state';
+import { autoEdit } from './autoEdit';
 import { afterBuild, watchRelayout } from './panelOps';
 import { mountLabels } from '../model/built';
+
+/** "9 cables (4 power, 4 Ethernet, 1 mains)". */
+const cablesText = (ls: { kind?: keyof typeof KIND_NAME }[]) => {
+  const n = new Map<string, number>();
+  for (const l of ls) n.set(KIND_NAME[l.kind ?? 'usb'], (n.get(KIND_NAME[l.kind ?? 'usb']) ?? 0) + 1);
+  return `${ls.length} cable${ls.length === 1 ? '' : 's'}${n.size > 1 ? ` (${[...n].map(([k, c]) => `${c} ${k}`).join(', ')})` : n.size ? ` (${[...n.keys()][0]})` : ''}`;
+};
 
 /** Where each plug is on the rack as laid out now (for measuring cables), if it has been laid out. */
 export const plugPlaces = (): PlugAt | undefined => { const m = store.get().result?.report.panel?.plugs; return m ? (k: string) => m[k] : undefined; };
@@ -27,7 +35,7 @@ export function addLinks(only?: NonNullable<import('../model/types').Link['kind'
     const r = strongerPower(q0, plugPlaces());
     if (r || add.length) {
       let stacked = false;
-      edit((q) => { q.links = (r ? r.links : q0.links).map((l) => fillWires(q, l)); stacked = stackCompanions(q); moved = r?.moved ?? 0; });
+      autoEdit('Auto-connect', (q) => { q.links = (r ? r.links : q0.links).map((l) => fillWires(q, l)); stacked = stackCompanions(q); moved = r?.moved ?? 0; }, { texts: () => [add.length ? `Auto-connect added ${cablesText(add)}` : '', moved ? `Auto-connect moved ${moved} board${moved > 1 ? 's' : ''} to stronger ports` : ''].filter(Boolean) });
       toast(`Connected ${add.length} cable${add.length === 1 ? '' : 's'}${moved ? ` and moved ${moved} board${moved > 1 ? 's' : ''} to stronger ports` : ''}.${stacked ? ' The probes and adapters for one board stack up behind it.' : ''} ⌘Z undoes it.`);
       return;
     }
@@ -39,7 +47,7 @@ export function addLinks(only?: NonNullable<import('../model/types').Link['kind'
   if (!add.length) { toast(`Every plug that has a partner is already connected. ${left() || 'Add hubs or chargers (Start › accessories) for more.'}`); return; }
   let stacked = false;
   watchRelayout();
-  edit((q) => { q.links = numberLinks([...(q.links ?? []), ...add]).map((l) => fillWires(q, l)); stacked = stackCompanions(q); seatCompanions(q); });
+  autoEdit('Auto-connect', (q) => { q.links = numberLinks([...(q.links ?? []), ...add]).map((l) => fillWires(q, l)); stacked = stackCompanions(q); seatCompanions(q); }, { texts: () => [`Auto-connect added ${cablesText(add)}`] });
   toast(`Connected ${add.length} cable${add.length > 1 ? 's' : ''}.${stacked ? ' The probes and adapters for one board stack up behind it.' : ''} ${left()} ⌘Z undoes it.`);
 }
 
@@ -65,13 +73,13 @@ export function rewire() {
   const autoOnes = (p.links ?? []).filter((l) => l.auto);
   if (p.built && autoOnes.length && !confirm('The rack is built: rewiring can change cables you have already bought and tagged. Rewire anyway?')) return;
   let n = 0;
-  edit((q) => {
+  autoEdit('Rewire', (q) => {
     q.links = (q.links ?? []).filter((l) => !l.auto);
     const add = autoLinks(q, plugPlaces());
     n = add.length;
     q.links = numberLinks([...q.links, ...add]).map((l) => fillWires(q, l));
     stackCompanions(q);
-  });
+  }, { texts: () => [`Rewire chose ${n} cable${n === 1 ? '' : 's'} again for the rack as it is laid out now`] });
   toast(`Rewired: ${n} cable${n === 1 ? '' : 's'} chosen again for the rack as it stands now; the ones you connected yourself stayed. ⌘Z undoes it.`);
 }
 
@@ -200,6 +208,6 @@ export function rebalancePower() {
   if (!p) return;
   const r = strongerPower(p, plugPlaces());
   if (!r) { toast('No free port gives those boards more: add a charger or a supply (Start › Hubs and chargers).'); return; }
-  edit((q) => { q.links = r.links.map((l) => fillWires(q, l)); });
+  autoEdit('Auto-connect', (q) => { q.links = r.links.map((l) => fillWires(q, l)); }, { texts: () => [`Auto-connect moved ${r.moved} board${r.moved > 1 ? 's' : ''} to stronger ports`] });
   toast(`Moved ${r.moved} board${r.moved > 1 ? 's' : ''} to stronger ports. ⌘Z undoes it.`);
 }
