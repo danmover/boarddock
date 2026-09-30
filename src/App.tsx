@@ -179,7 +179,7 @@ export function App() {
   const S = STEPS[si];
   // Start shows the library, Board the board editor; the other steps the rack (in 3D, unless you picked another view)
   const goStep = (id: Step) => store.set({ step: id, ...(id === 'import' ? { view: 'library' as const } : id === 'board' ? { view: 'editor' as const } : ['library', 'editor'].includes(store.get().view) ? { view: 'assembly' as const } : {}) });
-  const views: [typeof view, string][] = project ? [...(step === 'import' ? [['library', 'Add boards'] as [typeof view, string]] : []), ['assembly', '3D'], ...(project.layout === 'panel' ? [['panel', 'Rails'] as [typeof view, string]] : []), ['wiring', 'Wiring'], ['print', 'Plates'], ['editor', 'Board']] : [];
+  const views: [typeof view, string][] = project ? [...(step === 'import' ? [['library', 'Add boards'] as [typeof view, string]] : []), ['assembly', '3D'], ...(project.layout === 'panel' ? [['panel', 'Rails'] as [typeof view, string]] : []), ...(project.cablesOff ? [] : [['wiring', 'Wiring'] as [typeof view, string]]), ['print', 'Plates'], ['editor', 'Board']] : [];
 
   return (
     <div className={`app${project ? '' : ' empty'}`} onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDragging(true); } }} onDragLeave={(e) => { if (!e.relatedTarget) setDragging(false); }} onDrop={onDrop}>

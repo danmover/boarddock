@@ -24,6 +24,27 @@ const cablesText = (ls: { kind?: keyof typeof KIND_NAME }[]) => {
 /** Where each plug is on the rack as laid out now (for measuring cables), if it has been laid out. */
 export const plugPlaces = (): PlugAt | undefined => { const m = store.get().result?.report.panel?.plugs; return m ? (k: string) => m[k] : undefined; };
 
+/** Cables off: nothing here does anything (say so once, so a button that seems to do nothing isn't a mystery). */
+const cablesAreOff = (): boolean => {
+  if (!store.get().project?.cablesOff) return false;
+  toast('Cables are off for this rack (Plugs step, or ⌘K › Cables): switch them back on to connect boards.');
+  return true;
+};
+
+/**
+ * Cables in the app (the default), or off: holders, cradles and plug caps only, with nothing routed, cabled, tagged or
+ * bought. The rack's cables are kept, so switching them back on gives them back (one undo step either way).
+ */
+export function setCables(on: boolean) {
+  const p = store.get().project;
+  if (!p || !!p.cablesOff === !on) return;
+  watchRelayout();
+  edit((q) => { if (on) delete q.cablesOff; else q.cablesOff = true; });
+  if (!on && store.get().view === 'wiring') store.set({ view: 'assembly' });
+  const n = (p.links ?? []).length;
+  toast(on ? `Cables are back on${n ? `: the ${n} cable${n > 1 ? 's' : ''} you had` : ''}.` : `Cables are off: holders, cradles and plug caps only.${n ? ` The ${n} cable${n > 1 ? 's' : ''} you had are kept for when you switch them back on.` : ''}`);
+}
+
 /**
  * Add Auto-connect's suggestions for every plug still free (or only cables of one kind: "the same for the others").
  * `stronger`: then move boards on ports too weak for them to stronger free ones (a charger or supply just added), in
@@ -32,6 +53,7 @@ export const plugPlaces = (): PlugAt | undefined => { const m = store.get().resu
 export function addLinks(only?: NonNullable<import('../model/types').Link['kind']>, stronger = false) {
   const p = store.get().project;
   if (!p) return;
+  if (cablesAreOff()) return;
   const add = autoLinks(p, plugPlaces()).filter((l) => !only || l.kind === only);
   if (stronger) {
     let moved = 0;
@@ -65,6 +87,7 @@ export function addLinks(only?: NonNullable<import('../model/types').Link['kind'
 export function completeThisRack() {
   const p = store.get().project;
   if (!p) return;
+  if (cablesAreOff()) return;
   const gaps = completeRack(p);
   const boards = gaps.flatMap((g) => g.add.filter((id) => !id.startsWith('own:')).map((id) => ({ id, own: !!g.own }))).flatMap((x) => { const t = TEMPLATES.find((y) => y.id === x.id); return t ? [{ board: t.make(), own: x.own }] : []; });
   const owns = gaps.flatMap((g) => g.add.filter((id) => id.startsWith('own:')).map((id) => id.slice(4)));
@@ -99,7 +122,7 @@ export function completeThisRack() {
  */
 export function connectIfNone(): boolean {
   const p = store.get().project;
-  if (!p || (p.links ?? []).length || !autoLinks(p, plugPlaces()).length) return false;
+  if (!p || p.cablesOff || (p.links ?? []).length || !autoLinks(p, plugPlaces()).length) return false;
   addLinks();
   return true;
 }
@@ -111,6 +134,7 @@ export function connectIfNone(): boolean {
 export function rewire() {
   const p = store.get().project;
   if (!p) return;
+  if (cablesAreOff()) return;
   const autoOnes = (p.links ?? []).filter((l) => l.auto);
   if (p.built && autoOnes.length && !confirm('The rack is built: rewiring can change cables you have already bought and tagged. Rewire anyway?')) return;
   let n = 0;
@@ -205,6 +229,7 @@ function railNote(fresh: Seated | undefined, name: string) {
  * Their USB cables are left to Auto-connect.
  */
 export function addJLinks(moduleId: string, refs?: string[], as?: CompanionKey) {
+  if (cablesAreOff()) return;
   let n = 0, name = '', note = { text: '', fresh: undefined as Seated | undefined }, first = '';
   edit((q) => {
     const m = q.modules.find((x) => x.id === moduleId);
@@ -224,6 +249,7 @@ export function addJLinks(moduleId: string, refs?: string[], as?: CompanionKey) 
  * from its pins to the header, stacked with the board's probes behind it. Their USB cables are left to Auto-connect.
  */
 export function addSerialAdapters(moduleId: string, refs?: string[]) {
+  if (cablesAreOff()) return;
   let n = 0, name = '', note = { text: '', fresh: undefined as Seated | undefined }, first = '';
   edit((q) => {
     const m = q.modules.find((x) => x.id === moduleId);
@@ -244,6 +270,7 @@ export function addSerialAdapters(moduleId: string, refs?: string[]) {
  * undo step. Says what to buy and to check the UART pin names.
  */
 export function addDebugGearFor(ids?: string[]) {
+  if (cablesAreOff()) return;
   let g: ReturnType<typeof addDebugGear> | null = null, fresh = 0;
   watchRelayout();
   edit((q) => {
@@ -262,6 +289,7 @@ export function addDebugGearFor(ids?: string[]) {
 
 /** A USB-serial cable from each free UART header of a board to the nearest free USB port. */
 export function addUartCables(moduleId: string) {
+  if (cablesAreOff()) return;
   let r = { added: 0, left: 0 };
   edit((q) => { r = addUartLinks(q, moduleId); });
   if (!r.added && !r.left) { toast('Every UART header on this board already has a cable.'); return; }
@@ -275,6 +303,7 @@ export function addUartCables(moduleId: string) {
 export function rebalancePower() {
   const p = store.get().project;
   if (!p) return;
+  if (cablesAreOff()) return;
   const r = strongerPower(p, plugPlaces());
   if (!r) { toast('No free port gives those boards more: add a charger or a supply (Start › Hubs and chargers).'); return; }
   autoEdit('Auto-connect', (q) => { q.links = r.links.map((l) => fillWires(q, l)); }, { texts: () => [`Auto-connect moved ${r.moved} board${r.moved > 1 ? 's' : ''} to stronger ports`] });
