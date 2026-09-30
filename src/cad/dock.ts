@@ -9,7 +9,7 @@
 //  socket-local: same axes, Z = 0 at the socket top; tongues plug in along -Z; holder A faces +Y
 import type { V2 } from '../model/types';
 import { box, circle2, ext, extCh, K, poly, rect2, roundCS, unionCS, unionMF, type CS, type MF } from './kernel';
-import { EAR, gripSpan, HD, HOLD, headSpan, LANDING, LEN_X, NOSE_TIP, PEG, SHOE_GRIP, TONGUE } from './dockdims';
+import { EAR, gripSpan, HD, HOLD, headSpan, HOOK_SLIT, LANDING, LEN_X, NOSE_TIP, PEG, SHOE_GRIP, TONGUE } from './dockdims';
 import { railGrip } from './dinclip';
 import { peg, pegHole } from './column';
 export { gripSpan, headSpan };
@@ -188,11 +188,29 @@ export function shoeProfile(): CS {
   // the rail grip on the fixed hook's side: it presses the rail's -y wall from inside the channel, so the shoe sits
   // against the fixed hook (0.4 mm from it as drawn) with a preload, instead of only locating on the rail
   const grip = railGrip(SHOE_GRIP.gap, 7.5, (s, h) => [SHOE_GRIP.wall + s, h]);
-  return c.subtract(unionCS(shoeCuts())).add(unionCS([P(HOOK_TIP), P(mir(HOOK_TIP)), grip]));
+  // (a fillet where each hook's tab meets its beam, under the face the socket bears on)
+  const R = HOOK_SLIT.tab, fil = R > 0 ? [rect2(9.15 - R, 20.33 - R, 9.15, 20.36).subtract(circle2(9.15 - R, 20.33 - R, R, 48))] : [];
+  return c.subtract(unionCS(shoeCuts())).add(unionCS([P(HOOK_TIP), P(mir(HOOK_TIP)), ...fil, ...fil.map((f) => f.mirror([1, 0])), grip]));
+}
+
+/**
+ * A hook slit (y, z) between y0 and y1, up from z0 to z1, with its bottom filleted where the hook beam joins the floor.
+ * The beam is on the y1 side (or on the y0 side with `beamLow`); its side of the bottom is a fillet of radius R, which
+ * is a quarter round across the slit, and past it toward the other wall when R is more than the slit's width (a
+ * step under that wall, out of the way). R up to half the width is the plain round bottom. Everything else in the
+ * bottom is rounded 0.25.
+ */
+function hookSlit(y0: number, y1: number, z0: number, z1: number, R: number, beamLow = false): CS {
+  if (R <= (y1 - y0) / 2 + 1e-9) return slot(y0, y1, z0, z1);
+  const yf = Math.min(y0, y1 - R);
+  // (run on past z1 while it is rounded, so its top corners don't leave a sliver where it opens into the channel)
+  const c = rect2(y0, z0 + R, y1, z1 + 1).add(rect2(yf, z0, y1 - R, z0 + R)).add(rect2(y1 - R, z0, y1, z0 + R).intersect(circle2(y1 - R, z0 + R, R, 64)));
+  const r = roundCS(c, 0.25).intersect(rect2(yf - 1, z0 - 1, y1 + 1, z1 + 0.05)), yc = (y0 + y1) / 2;
+  return beamLow ? r.translate([-yc, 0]).mirror([1, 0]).translate([yc, 0]) : r;
 }
 
 function shoeCuts(): CS[] {
-  const inner = slot(8.55, 9.15, 10.0, 18.05), outer = slot(10.0, 10.6, 10.0, 23.1);
+  const inner = hookSlit(8.55, 9.15, 10.0, 18.05, HOOK_SLIT.inner), outer = hookSlit(10.0, 10.6, 10.0, 23.1, HOOK_SLIT.outer, true);
   const flip = (c: CS) => c.mirror([1, 0]);
   return [
     P([[-9.15, 18], [9.15, 18], [9.15, 23.1], [-9.15, 23.1]]), // socket channel

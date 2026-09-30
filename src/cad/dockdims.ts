@@ -93,3 +93,12 @@ export const HOLD = {
   lift: { x0: 1.6, t0: 1.6, t: 0.9, slot: 0.5, y1: 4.0, bump: 0.4, bx: [7.65, 8.1, 8.7, 9.15] },
   side: { t: 0.9, t0: 1.1, taper: 3.5, slot: 0.5, root: -6.0, bump: 0.53, bz: [-13.9, -13.3, -11.5, -10.9], face: [0.08, 0.28, 0.9, 1.18] },
 };
+
+/**
+ * Fillets on the shoe's snap-hook beams, which carry a pull on the holder: `inner`, `outer`: the radius where a beam
+ * meets the floor at the bottom of its slit, in the slit under the socket channel and in the one beside the wall (0.3
+ * was the slit's own round; 0.6 is a quarter round across the whole 0.6 mm slit, as big as it allows; wider fillets
+ * leave a step in the wall beside it, which took more strain than they saved); `tab`: where each hook's tab meets
+ * its beam, under the face the socket bears on (0.3 fits under the boss's notch, which is 0.1 mm clear of it).
+ */
+export const HOOK_SLIT = { inner: 0.6, outer: 0.6, tab: 0.3 };

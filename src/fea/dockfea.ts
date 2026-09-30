@@ -48,6 +48,61 @@ function stats(m: Mesh2D, u: Float64Array, R: Float64Array, k: number) {
 
 const field = (name: string, m: Mesh2D, h: number, eps: Float64Array): DockField => ({ name, x0: m.x0, y0: m.y0, h, nx: m.nx, ny: m.ny, elems: m.elems, strain: Float32Array.from(eps) });
 
+/**
+ * The shoe pulled up off the rail as a whole (see below): a pull on the socket's two hooks, and on each hook alone (a
+ * holder pulled off-centre), held where the rail holds it. Its own function so a change to the shoe's hook slits can be
+ * measured without the other cases.
+ */
+export function shoePullOff(shoeLoops: Loop[], E: number, nu: number, hs: number, phase?: [number, number], onProgress?: (s: string) => void): { cases: DockFeaCase[]; field: DockField; elements: number } {
+  // The socket's hooks lift the shoe, and the rail's flanges hold it under the fixed hook's finger and the jaw's lip
+  // (held up and down; the lip also sideways, friction holding). Nothing else is clamped, so the fixed hook's floor and
+  // wall, the socket's hook beams and the 1 mm walls beside their slits carry the pull as they would, and the hinge only
+  // its share. (The body used to be held from x < 14.6, y > 7.0 up, which left only the jaw side to look at.) The body
+  // is the shoe's whole 21 mm, the hinge two 7 mm leaves; the socket's bosses bear on 18 mm of the hooks.
+  onProgress?.('Solving: shoe pulled off the rail');
+  const Po = model(shoeLoops, hs, E, nu, 21, () => false, (x, y) => (x > 15.75 && x < 17.75 && y > 9.85 && y < 20.35 ? 14 / 21 : 1), phase);
+  const onTop = (x0: number, x1: number) => (x: number, y: number) => x > x0 && x < x1 && Math.abs(y - 6.2) < hs * 0.6;
+  const finger = onTop(-17.45, -15.95), lipP = onTop(16.05, 17.45);
+  const fixP = new Uint8Array(Po.S.n);
+  for (let i = 0; i < Po.m.nNodes; i++) {
+    const x = Po.m.nodeXY[2 * i], y = Po.m.nodeXY[2 * i + 1];
+    if (finger(x, y) || lipP(x, y)) fixP[2 * i + 1] = 1;
+    if (lipP(x, y)) fixP[2 * i] = 1;
+  }
+  const P2 = { ...Po, fixed: fixP };
+  // the underside of a hook's tab (the boss notch's 10 degree face bears on it)
+  const tab = (sg: number) => (x: number, y: number) => x * sg > 8.35 && x * sg < 9.15 && y > 20.2 && y < 20.33 + (9.15 - Math.abs(x)) * 0.175 + hs * 0.9;
+  const fSock = (100 * 21) / 18;
+  const reaction = (uu: Float64Array, on: (x: number, y: number) => boolean) => {
+    let r = 0;
+    for (let i = 0; i < Po.m.nNodes; i++) if (on(Po.m.nodeXY[2 * i], Po.m.nodeXY[2 * i + 1])) { const d = 2 * i + 1; for (let q = Po.S.rowPtr[d]; q < Po.S.rowPtr[d + 1]; q++) r += Po.S.val[q] * uu[Po.S.col[q]]; }
+    return Math.abs(r);
+  };
+  const region = (x: number, y: number) => x > 15.75 && x < 17.75 && y > 9.85 && y < 20.35 ? 'hinge leaf' : x > 15.75 ? 'jaw' : x < -15.3 && y < 7.5 ? 'fixed hook finger' : x < -16 ? 'wall of the fixed hook' : y < 9.5 ? 'floor' : Math.abs(x) > 8.4 && Math.abs(x) < 11.7 ? 'hook beams and slit walls' : 'body';
+  let shown: DockField | null = null;
+  const cases: DockFeaCase[] = [];
+  const pull = (name: string, up: Float64Array, target: string, show: boolean) => {
+    const st = stats(Po.m, up, Po.R, fSock);
+    const worst = new Map<string, number>();
+    Po.m.elems.forEach((g, e) => { const r = region(Po.m.x0 + ((g % Po.m.nx) + 0.5) * Po.m.h, Po.m.y0 + (Math.floor(g / Po.m.nx) + 0.5) * Po.m.h); worst.set(r, Math.max(worst.get(r) ?? 0, st.eps[e])); });
+    const regs = [...worst].sort((p, q) => q[1] - p[1]).slice(0, 4).map(([r, v]) => `${r} ${(v * 100).toFixed(2)}%`).join(', ');
+    const [Rf, Rl] = [reaction(up, finger), reaction(up, lipP)];
+    const c: DockFeaCase = { part: 'shoe', name, force: 100, target, peakStrain: st.peak, p99Strain: st.p99, notes: [`fixed hook takes ${((Rf / (Rf + Rl)) * 100).toFixed(0)}% of the pull, the jaw ${((Rl / (Rf + Rl)) * 100).toFixed(0)}%`, `strain by part: ${regs}`, `the worst part reaches the strain limit at about ${((allowFor(E) / st.peak) * 100).toFixed(0)} N`, st.where] };
+    if (show) shown = field('Rail shoe, pulled off the rail', Po.m, hs, st.eps);
+    return c;
+  };
+  // each hook's tab alone (1 N on it); both together is half of each
+  const uJ = solve(P2, tab(1), [0, 1]), uF = solve(P2, tab(-1), [0, 1]);
+  const both = uJ.map((v, i) => 0.5 * (v + uF[i]));
+  cases.push(pull('Rail shoe: 100 N pull on the socket', both, 'the pull goes through both hooks, held by the flanges at the fixed hook and the jaw (no friction at the fixed hook)', true));
+  // a holder pulled off-centre loads one hook, so the far flange bears more: the worse side
+  const one = [pull('Rail shoe: 100 N pull on one hook (jaw side)', uJ, '', false), pull('Rail shoe: 100 N pull on one hook (fixed hook side)', uF, '', false)];
+  const w1 = one[0].peakStrain >= one[1].peakStrain ? one[0] : one[1];
+  w1.target = 'a holder pulled off-centre loads one hook: the worse side';
+  cases.push(w1);
+  return { cases, field: shown!, elements: Po.m.elems.length };
+}
+
 /** latchLoops: latch + nose + stop post, (y, z) socket-local. shoeLoops: shoe profile, (y, z) hub. */
 /** gripLoops: the shoe's rail grip with a strip of the floor it hangs from (shoeFeaProfiles in dock.ts). holdLoops: the
  * holder's anti-rattle leaves, (x, z) sections of a side leaf on the tongue and a lift leaf under the pedestal
@@ -127,51 +182,10 @@ export function dockFea(latchLoops: Loop[], shoeLoops: Loop[], E: number, nu: nu
   cases.push({ part: 'shoe', name: 'Rail shoe: 100 N pull away from the wall (jaw alone)', force: 100, target: letGo > 1000 ? `holds without relying on friction (jaw opens ${Math.abs(dn).toFixed(3)} mm per 100 N)` : muCrit <= MU ? `holds while friction on the flange exceeds ${muCrit.toFixed(2)} (PETG on steel: about 0.3 to 0.5)` : `the jaw opens: needs friction above ${muCrit.toFixed(2)} to hold`, peakStrain: s.peak, p99Strain: s.p99, notes: [`hinge reaches the strain limit at about ${((allowFor(E) / s.peak) * 100).toFixed(0)} N with the jaw carrying all of it, the body held`, letGo > 1000 ? 'the pull runs straight down the hinge leaf: it cannot pry the jaw open, friction or not' : `without friction the jaw would let go at about ${letGo.toFixed(0)} N`] });
 
   // ---- the whole shoe pulled up off the rail ----
-  // The socket's hooks lift the shoe, and the rail's flanges hold it under the fixed hook's finger and the jaw's lip
-  // (held up and down; the lip also sideways, friction holding). Nothing else is clamped, so the fixed hook's floor and
-  // wall, the socket's hook beams and the 1 mm walls beside their slits carry the pull as they would, and the hinge only
-  // its share. (The body used to be held from x < 14.6, y > 7.0 up, which left only the jaw side to look at.) The body
-  // is the shoe's whole 21 mm, the hinge two 7 mm leaves; the socket's bosses bear on 18 mm of the hooks.
-  onProgress?.('Solving: shoe pulled off the rail');
-  const Po = model(shoeLoops, hs, E, nu, 21, () => false, (x, y) => (x > 15.75 && x < 17.75 && y > 9.85 && y < 20.35 ? 14 / 21 : 1), phase);
-  elements += Po.m.elems.length;
-  const onTop = (x0: number, x1: number) => (x: number, y: number) => x > x0 && x < x1 && Math.abs(y - 6.2) < hs * 0.6;
-  const finger = onTop(-17.45, -15.95), lipP = onTop(16.05, 17.45);
-  const fixP = new Uint8Array(Po.S.n);
-  for (let i = 0; i < Po.m.nNodes; i++) {
-    const x = Po.m.nodeXY[2 * i], y = Po.m.nodeXY[2 * i + 1];
-    if (finger(x, y) || lipP(x, y)) fixP[2 * i + 1] = 1;
-    if (lipP(x, y)) fixP[2 * i] = 1;
-  }
-  const P2 = { ...Po, fixed: fixP };
-  // the underside of a hook's tab (the boss notch's 10 degree face bears on it)
-  const tab = (sg: number) => (x: number, y: number) => x * sg > 8.35 && x * sg < 9.15 && y > 20.2 && y < 20.33 + (9.15 - Math.abs(x)) * 0.175 + hs * 0.9;
-  const fSock = (100 * 21) / 18;
-  const reaction = (uu: Float64Array, on: (x: number, y: number) => boolean) => {
-    let r = 0;
-    for (let i = 0; i < Po.m.nNodes; i++) if (on(Po.m.nodeXY[2 * i], Po.m.nodeXY[2 * i + 1])) { const d = 2 * i + 1; for (let q = Po.S.rowPtr[d]; q < Po.S.rowPtr[d + 1]; q++) r += Po.S.val[q] * uu[Po.S.col[q]]; }
-    return Math.abs(r);
-  };
-  const region = (x: number, y: number) => x > 15.75 && x < 17.75 && y > 9.85 && y < 20.35 ? 'hinge leaf' : x > 15.75 ? 'jaw' : x < -15.3 && y < 7.5 ? 'fixed hook finger' : x < -16 ? 'wall of the fixed hook' : y < 9.5 ? 'floor' : Math.abs(x) > 8.4 && Math.abs(x) < 11.7 ? 'hook beams and slit walls' : 'body';
-  const pull = (name: string, up: Float64Array, target: string, show: boolean) => {
-    const st = stats(Po.m, up, Po.R, fSock);
-    const worst = new Map<string, number>();
-    Po.m.elems.forEach((g, e) => { const r = region(Po.m.x0 + ((g % Po.m.nx) + 0.5) * Po.m.h, Po.m.y0 + (Math.floor(g / Po.m.nx) + 0.5) * Po.m.h); worst.set(r, Math.max(worst.get(r) ?? 0, st.eps[e])); });
-    const regs = [...worst].sort((p, q) => q[1] - p[1]).slice(0, 4).map(([r, v]) => `${r} ${(v * 100).toFixed(2)}%`).join(', ');
-    const [Rf, Rl] = [reaction(up, finger), reaction(up, lipP)];
-    const c: DockFeaCase = { part: 'shoe', name, force: 100, target, peakStrain: st.peak, p99Strain: st.p99, notes: [`fixed hook takes ${((Rf / (Rf + Rl)) * 100).toFixed(0)}% of the pull, the jaw ${((Rl / (Rf + Rl)) * 100).toFixed(0)}%`, `strain by part: ${regs}`, `the worst part reaches the strain limit at about ${((allowFor(E) / st.peak) * 100).toFixed(0)} N`, st.where] };
-    if (show) fields.push(field('Rail shoe, pulled off the rail', Po.m, hs, st.eps));
-    return c;
-  };
-  // each hook's tab alone (1 N on it); both together is half of each
-  const uJ = solve(P2, tab(1), [0, 1]), uF = solve(P2, tab(-1), [0, 1]);
-  const both = uJ.map((v, i) => 0.5 * (v + uF[i]));
-  cases.push(pull('Rail shoe: 100 N pull on the socket', both, 'the pull goes through both hooks, held by the flanges at the fixed hook and the jaw (no friction at the fixed hook)', true));
-  // a holder pulled off-centre loads one hook, so the far flange bears more: the worse side
-  const one = [pull('Rail shoe: 100 N pull on one hook (jaw side)', uJ, '', false), pull('Rail shoe: 100 N pull on one hook (fixed hook side)', uF, '', false)];
-  const w1 = one[0].peakStrain >= one[1].peakStrain ? one[0] : one[1];
-  w1.target = 'a holder pulled off-centre loads one hook: the worse side';
-  cases.push(w1);
+  const po = shoePullOff(shoeLoops, E, nu, hs, phase, onProgress);
+  cases.push(...po.cases);
+  fields.push(po.field);
+  elements += po.elements;
   // ---- rail grip: the fork in the channel, its pad pressed back by the rail's wall ----
   // (a model of its own, the floor it hangs from held: it runs the shoe's whole 21 mm)
   if (gripLoops) {

@@ -37,8 +37,9 @@ it('dock parts are single solids and the 2D FEA runs', async () => {
     expect(ll.peakStrain).toBeLessThan(0.0155);
     expect(Number(/knock that closes the slot \(0\.5 mm\): ([\d.]+)% peak/.exec(sl.notes[1])![1])).toBeLessThan(2);
     // the whole shoe pulled off the rail, not only its jaw: the fixed hook's finger, the floor and the hook beams with
-    // the slit walls carry it too. PETG reaches its limit at about 80 N pulling on one hook (120 N on both): the socket's
-    // hook beams first, then the fixed hook's finger; the hinge is not the weakest part
+    // the slit walls carry it too. PETG reaches its limit at about 87 N pulling on one hook (130 N on both, with the slits'
+    // and tabs' fillets, tests/hookfillet.test.ts): the fixed hook's finger and the hook beams' roots; the hinge is not
+    // the weakest part
     const both = r.cases.find((c) => /pull on the socket/.test(c.name))!, one = r.cases.find((c) => /pull on one hook/.test(c.name))!;
     expect(both.notes[0]).toMatch(/fixed hook takes (4\d|5\d|6\d)%/);
     expect(both.notes[1]).toMatch(/fixed hook finger/);
@@ -51,7 +52,8 @@ it('dock parts are single solids and the 2D FEA runs', async () => {
     const a = petg!.cases[i];
     console.log(c.name, 'force', (c.force / a.force).toFixed(3), 'peak', (c.peakStrain / a.peakStrain).toFixed(3), 'p99', (c.p99Strain / a.p99Strain).toFixed(3));
     expect(Math.abs(c.force / a.force - 1), `${c.name}: force`).toBeLessThan(0.05);
-    expect(Math.abs(c.peakStrain / a.peakStrain - 1), `${c.name}: peak`).toBeLessThan(0.12);
+    // (a pull on one hook peaks in the slit's 0.6 mm round, six pixels round: up to 15% with the grid half a pixel over)
+    expect(Math.abs(c.peakStrain / a.peakStrain - 1), `${c.name}: peak`).toBeLessThan(/pull on one hook/.test(c.name) ? 0.15 : 0.12);
     expect(Math.abs(c.p99Strain / a.p99Strain - 1), `${c.name}: 99%`).toBeLessThan(0.12);
   });
 }, 900000);
