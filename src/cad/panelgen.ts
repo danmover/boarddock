@@ -21,6 +21,7 @@ import { baseRef, cableFlow, cableNumbers, cablePurpose, cableToBuy, findModule,
 import { isPlugPack } from '../model/powerdata';
 import { cableTag, TAG } from './cabletag';
 import { mainsBudget, mainsText, powerBudget, powerText } from '../model/power';
+import { poeBudget, poeText } from '../model/poe';
 import { buildModule, builtLevels, transformMesh, type ArrangeHooks, type ModuleOut } from './generate';
 import { baseOf, columnOf, ridersOf, stackLayers, type StackLayer } from '../model/holes';
 import { box, freeAll, fromMesh, toMesh, unionMF, type MF } from './kernel';
@@ -1077,6 +1078,7 @@ export function generatePanel(p: Project): GenResult {
     const ms = [l.a, l.b].map((r) => mods.get(r.module)?.m);
     if (ms.every((m) => m?.board.comps.some((c) => c.conn?.type.startsWith('ac_')))) checks.push({ group: 'Power', name: 'Powerboard into powerboard', value: `${shortName(ms[0]!.board.name)} and ${shortName(ms[1]!.board.name)}`, status: 'bad', module: ms[0]!.id, detail: `${ms[0]!.board.name} and ${ms[1]!.board.name} are plugged one into the other: never daisy-chain powerboards (the first one carries both loads through one outlet). Remove that cable and plug each powerboard into its own wall socket.` });
   }
+  for (const pb of poeBudget(p)) { const t = poeText(pb); checks.push({ group: 'Power', name: t.name, value: t.value, status: pb.status, detail: t.detail, module: pb.module.id }); }
   for (const mb of mainsBudget(p)) { const t = mainsText(mb); checks.push({ group: 'Power', name: t.name, value: t.value, status: mb.status, detail: t.detail, module: mb.module.id }); }
   // a board whose only supply is a DC input with nothing on it: a supply off the rack, or none at all
   const dcFree = plugsOf(p).filter((x) => (x.role === 'power-in-dc' || (x.role === 'wire' && /^(v?in|pwr|power|dc ?in)\d*$/i.test(x.comp.ref))) && !(p.links ?? []).some((l) => [l.a, l.b].some((r) => r.module === x.ref.module && r.ref === x.ref.ref)));

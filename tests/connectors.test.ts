@@ -256,7 +256,18 @@ describe('the connector families left over: mezzanines, card sockets, round conn
     for (const [n, id] of [['SIM_CARD', 'sim'], ['NANO_SIM', 'sim'], ['M.2_KEY_M', 'm2'], ['M2_KEY_E', 'm2'], ['NGFF', 'm2'], ['MINI_PCIE', 'm2'], ['PCIE_X1', 'pcie'], ['PCI_EXPRESS_X16', 'pcie'], ['SODIMM_DDR4', 'dimm'], ['DDR4_DIMM', 'dimm'], ['POGO_PIN', 'pogo']]) expect(type(n), n).toBe(id);
     const w = (n: string) => guessPackage(n, 'J1').w;
     expect([w('PCIE_X1'), w('PCIE_X4'), w('PCIE_X8'), w('PCI_EXPRESS_X16')]).toEqual([25, 39, 56, 89]);
-    expect([w('SODIMM_DDR4'), w('DDR4_DIMM'), w('MINI_PCIE')]).toEqual([70, 137, 30]);
+    expect([w('SODIMM_DDR4'), w('DDR4_DIMM'), w('MINI_PCIE')]).toEqual([73, 137, 30]);
+    const l = (n: string) => guessPackage(n, 'J1').l;
+    expect([l('SODIMM_DDR4'), l('MINI_PCIE')]).toEqual([14.2, 9]); // KiCad's SO-DIMM socket and mini PCIe outlines
+    // sizes checked against KiCad's footprints (see the comments in library.ts)
+    const body = (id: string) => CONNECTORS.find((c) => c.id === id)!.body;
+    expect(body('sata').w).toBe(16.9);
+    expect(body('xlr')).toEqual({ w: 25.3, l: 22.2, h: 25 });
+    expect(body('banana')).toEqual({ w: 12, l: 33, h: 12.3 });
+    expect(body('bnc')).toEqual({ w: 14.7, l: 35.5, h: 19.4 });
+    expect(body('sma')).toEqual({ w: 10.16, l: 15.88, h: 10.16 });
+    expect(body('sfp').l).toBe(48.7);
+    expect(body('idc_ra').l).toBe(13.6);
     expect(type('SIM800L', 'U1')).toBeUndefined(); // a modem chip, not a slot
   });
 

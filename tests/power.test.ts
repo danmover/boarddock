@@ -5,12 +5,13 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { TEMPLATES } from '../src/model/templates';
 import { newModule, newProject, setLayout } from '../src/model/library';
-import { allPlugs, autoLinks, compatible, connectNote, numberLinks, PC, plugsOf, portBudget, powerFeeds, powerShort, refusal, ROUTER, strongerPower, wiringAdvice } from '../src/model/links';
+import { allPlugs, autoLinks, compatible, connectNote, findModule, numberLinks, PC, plugsOf, portBudget, powerFeeds, powerShort, refusal, ROUTER, strongerPower, wiringAdvice } from '../src/model/links';
 import { mainsBudget, powerBudget } from '../src/model/power';
 import { portUses } from '../src/model/portuse';
 import { poweredBoards } from '../src/model/lights';
 import { hostTotal, needOf } from '../src/model/powerdata';
 import { cableLines } from '../src/model/cablelist';
+import { addAdapters, companionLabel, fillWires, markDebug, probesOf } from '../src/model/probes';
 import { autoAssign } from '../src/cad/dockplan';
 import { delta, snapshot, strapBoxes } from '../src/model/built';
 import { ownSupply } from '../src/model/boxes';
@@ -171,6 +172,35 @@ describe('the cable list', () => {
     const cl = cableLines(p, [{ id: 'a', a: 'A', b: 'B', kind: 'jumper', length: 120, buy: 0.2, no: 1 }, { id: 'b', a: 'A', b: 'B', kind: 'debug', length: 90, buy: 0.1, no: 2, ribbon: 200 }]);
     expect(cl.buy).toEqual(['3 × female–female jumper wire (Dupont), 20 cm (number 1)']);
     expect(cl.comes).toEqual(['#2 debug ribbon: comes with the probe (20 cm)']);
+  });
+
+  it('says the same in Plugs › Cables to buy and on the shopping list, plug for plug', async () => {
+    await initKernel();
+    // a rack with every kind: USB, power, mains, a serial adapter's jumper wires to a pin socket, a cable to your computer
+    const p = rack(['mega', 'uno', 'usb_hub7', 'usb_charger6', 'pb4']);
+    markDebug(p.modules[0].board.comps.find((c) => c.ref === 'J_IO')!, 'uart');
+    addAdapters(p, p.modules[0].id);
+    p.links = numberLinks([...(p.links ?? []), ...autoLinks(p)]).map((l) => fillWires(p, l));
+    const r = generatePanel(p);
+    const plugs = cableLines(p, r.report.cables ?? []).buy;
+    const shop = billOfMaterials(p, r).find((g) => g.head === 'Cables')!.rows.map((x) => `${x.qty} × ${x.item}`);
+    expect(shop).toEqual(plugs);
+    expect(plugs.some((x) => /^3 × male–female jumper wire \(Dupont\), \d+ cm/.test(x))).toBe(true);
+    expect(plugs.some((x) => /mains lead, figure-8 \(C7\) to AU plug, [\d.]+ m or longer \(your charger may have come with one: check the box\)/.test(x))).toBe(true);
+    expect(plugs.some((x) => / m USB-.* to USB-.* cable/.test(x))).toBe(true);
+    expect(plugs.some((x) => /to your computer/.test(x))).toBe(true);
+  }, 120_000);
+
+  it('sees your computer as a board when a link ends there: a serial cable to it is the serial cable, and the header shows it is cabled', () => {
+    const p = newProject(T('example_jtag'));
+    const m = p.modules[0], hdr = plugsOf(p).find((x) => x.role === 'uart')!;
+    p.links = numberLinks([link({ module: m.id, ref: hdr.comp.ref }, { module: PC, ref: 'USB1' }, 'uart')]);
+    expect(findModule(p, PC)?.board.comps.some((c) => c.ref === 'USB1')).toBe(true);
+    expect(cableLines(p, []).buy).toEqual([expect.stringMatching(/^1 × USB to TTL serial cable, 3\.3 V, with loose jumper ends .*, 2 m or longer \(number 1\)$/)]);
+    expect(probesOf(p, m)).toEqual([]);
+    expect(companionLabel(p, m)).toBe(m.board.name);
+    // and the lights' lookup doesn't trip over it
+    expect(poweredBoards(p).has(m.id)).toBe(false);
   });
 });
 

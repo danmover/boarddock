@@ -77,4 +77,31 @@ describe('layer check on test shapes', () => {
     expect(verdict(r).status).toBe('bad');
     expect(verdict(r).value).toMatch(/foot|support/);
   });
+
+  it('sees a narrow slot by its width, however little of it there is in a layer', () => {
+    // a slab with a slot cut through it, `gap` wide and `len` long
+    const slab = (gap: number, len: number) => check(box(0, 0, 0, 20, 20, 4).subtract(box(5, 10, -1, 5 + len, 10 + gap, 5)));
+    // 0.09 x 1.2 mm is 0.11 mm² a layer: under the 0.15 mm² the check used to need
+    const thin = slab(0.09, 1.2);
+    expect(thin.gaps!.width).toBeGreaterThan(0.08);
+    expect(thin.gaps!.width).toBeLessThan(0.1);
+    expect(verdict(thin, true).status).toBe('warn');
+    expect(verdict(thin, true).detail).toMatch(/a slot 0\.09 mm wide/);
+    expect(verdict(thin, false).status).toBe('ok'); // where nothing moves it only fills in
+    // long and thin, or short and a little wider: seen as before
+    expect(slab(0.09, 6).gaps).not.toBeNull();
+    expect(slab(0.25, 1.5).gaps!.width).toBeCloseTo(0.25, 1);
+    // a hairline a few mm long is not a slot, and a clearance of 0.3 mm or more stays open
+    expect(slab(0.09, 0.4).gaps).toBeNull();
+    expect(slab(0.35, 6).gaps).toBeNull();
+  });
+
+  it('does not take the tip of a sharp inside corner for a slot', () => {
+    // a wedge cut into a slab: closing fills its last 0.5 to 0.8 mm, which tapers to nothing
+    for (const deg of [30, 45, 60, 90, 120]) {
+      const half = (deg / 2) * Math.PI / 180, d = 8;
+      const wedge = poly([[10, 10], [10 + d, 10 + d * Math.tan(half)], [10 + d, 10 - d * Math.tan(half)]], 'NonZero').extrude(5).translate([0, 0, -0.5]) as MF;
+      expect(check(box(0, 0, 0, 30, 20, 4).subtract(wedge)).gaps, `${deg} degree notch`).toBeNull();
+    }
+  });
 });

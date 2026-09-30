@@ -1,0 +1,354 @@
+# Footprint / part names as boards carry them, and the connector type each is. Columns: type, name, then a reference (J1 when left out)
+# and a value. "?" marks a name nothing identifies yet (a connector that stays Custom); "-" a part that is no connector at all.
+b2b	SAMTEC_QSH-030-01-L-D-A
+b2b	QSH-060-01-L-D-A-K-TR
+b2b	SAMTEC_QTH-030-01-L-D-A
+b2b	QSE-040-01-F-D-A
+b2b	QTE040
+b2b	SEAM-50-02.0-S-08-2-A-K-TR
+b2b	SEAF-50-05.0-S-08-2-A-K-TR
+b2b	ERM8-013-05.0-S-DV-L-TR
+b2b	ERF8-025-05.0-S-DV-L
+b2b	BSH-030-01-L-D-A
+b2b	LSHM-120-02.5-L-DV-A-S-TR
+b2b	Samtec_FMC_ASP-134486-01_10x40_P1.27mm_Vertical
+b2b	Samtec_MECF-20-01-L-DV_2x20_P1.27mm_Polarized_Socket_Horizontal
+b2b	HIROSE_DF12(3.0)-40DP-0.5V(81)
+b2b	DF12E3.0-80DP-0.5V
+b2b	DF40C-60DP-0.4V(51)
+b2b	DF40HC(3.5)-60DS-0.4V(51)
+b2b	BM23FR0.6-16DP-0.35V
+b2b	Hirose_BM24_BM24-40DP-2-0.35V_2x20_P0.35mm_PowerPin2_Vertical
+b2b	FX8-100P-SV
+b2b	Molex_SlimStack_52991-0408_2x20_P0.50mm_Vertical
+b2b	MOLEX_501920-4001
+b2b	SLIMSTACK_502426-4010
+b2b	MEZZANINE_2X30
+header	SAMTEC_TSW-110-07-L-S
+header	TSW-105-07-G-D
+header	SSW-105-02-G-D
+header	SAMTEC_HLE-110-02-G-DV-A
+header	TSM-106-01-L-DV
+header	SULLINS_PBC03SAAN
+header	PPTC062LFBN-RC
+header	PRPC040SAAN-RC
+header	HARWIN_M20-9990345
+header	M50-3600542
+header	WURTH_61300411121
+header	WR-PHD_613006216921
+header	MILL-MAX_310-93-110-41-001000
+header	801-87-002-10-001101
+header	ADAM_TECH_PH1-06-UA
+header	PH2-10-UA
+header	3M_929834-01-05-RB
+header	PINHEADER_2X05_P2.54MM_VERTICAL
+header	PinHeader_1x04_P2.54mm_Vertical
+header	PinSocket_2x08_P2.54mm_Vertical
+header	HDRV10W64P254_1X10_2540X254X850B
+header	HDRRA10W64P254_1X10_2540X254X850B
+header	CONN_2X5_2.54
+header	CON_1X4_2.54MM
+header	HDR_1X10_2.54
+header	PINHD-1X4
+header	SIP4
+header	Harwin_LTek-Male_02_P2.00mm_Vertical
+header	Harwin_Gecko-G125-FVX0605L0X_2x03_P1.25mm_Vertical
+header	JAE_LY20-10P-DT1_2x05_P2.00mm_Vertical
+header	Molex_Picoflex_90325-0004_2x02_P1.27mm_Vertical
+swd10	SAMTEC_FTSH-105-01-L-DV-K
+swd10	Connector_PinHeader_1.27mm:PinHeader_2x05_P1.27mm_Vertical
+cortex20	FTSH-110-01-L-DV-K
+tagconnect	TC2030-IDC-NL
+microfit	MOLEX_43045-0400
+microfit	43650-0600
+microfit	Molex_Micro-Fit_3.0_43045-0800_2x04_P3.00mm_Vertical
+minifit	MOLEX_39-28-1043
+minifit	5566-12A
+minifit	Molex_Mini-Fit_Jr_5566-06A_2x03_P4.20mm_Vertical
+minifit	TE_MATE-N-LOK_1-770182-x_3x03_P4.14mm_Vertical
+minifit	ATX_24PIN
+kk254	MOLEX_22-27-2041
+kk254	22-23-2041
+kk254	KK254_1X04
+kk254	TE_640456-2
+kk254	TE_826576-2_1x02_P3.96mm_Vertical
+kk254	JST_B4P-VH
+kk254	JST_VH_B2P3-VH_1x02_P7.92mm_Vertical
+kk254	Molex_KK-396_A-41791-0004_1x04_P3.96mm_Vertical
+kk254	FAN_HEADER_4P
+picoblade	MOLEX_53047-0410
+picoblade	Molex_PicoBlade_53398-0271_1x02-1MP_P1.25mm_Vertical
+picoblade	Hirose_DF13-04P-1.25DSA
+picoblade	DF13C_CL535-0402-2-51
+wtb_side	MOLEX_53048-0410
+wtb_side	JST_SM04B-GHS-TB
+wtb_side	S4B-PH-K-S
+wtb_side	S12B-PH-SM4-TB
+wtb_side	S02B-XASK-1
+wtb_side	JST_S6B-EH
+wtb_side	Molex_Pico-Clasp_501331-0407_1x04-1MP_P1.00mm_Horizontal
+wtb_side	Stocko_MKS_1651-6-0-202_1x2_P2.50mm_Horizontal
+jst_xh	JST_B2B-XH-A
+jst_xh	B4B-XH-A(LF)(SN)
+jst_xh	B12B-XH-A
+jst_xh	B6B-EH-A
+jst_xh	B02B-XASK-1
+jst_xh	Hirose_DF1B-3P-2.5DSA
+jst_xh	Stocko_MKS_1651-6-0-202_1x2_P2.50mm_Vertical
+jst_xh	Molex_SPOX_5267-02A_1x02_P2.50mm_Vertical
+jst_ph	B3B-PH-K-S
+jst_ph	B12B-PH-K-S
+jst_ph	B4B-PH-SM4-TB
+jst_ph	JST_PH_B2B-PH-K_1x02_P2.00mm_Vertical
+jst_ph	B08B-PUDSS
+jst_ph	Hirose_DF3-2P-2DSA
+jst_ph	Molex_MicroClasp_55932-0210_1x02_P2.00mm_Vertical
+jst_ph	NS-Tech_Grove_1x04_P2mm_Vertical
+jst_gh	BM04B-GHS-TBT
+jst_gh	JST_GH_BM06B-GHS-TBT_1x06-1MP_P1.25mm_Vertical
+jst_gh	BM02B-SURS-TF
+jst_gh	JST_ACH_BM01B-ACHSS-A-GAN-ETF_1x01-1MP_P1.20mm_Vertical
+jst_zh	B4B-ZR
+jst_zh	JST_ZE_B02B-ZESK-1D_1x02_P1.50mm_Vertical
+jst_zh	Wuerth_WR-WTB_64800211622_1x02_P1.50mm_Vertical
+jst_zh	WR-WTB_64800411622
+qwiic	SM04B-SRSS-TB
+qwiic	SM12B-SRSS-TB
+qwiic	BM04B-SRSS-TB
+qwiic	STEMMA_QT
+usb_c	USB_C_Receptacle_HRO_TYPE-C-31-M-12
+usb_c	GCT_USB4105-GF-A
+usb_c	USB4085-GF-A
+usb_c	AMPHENOL_12401610E4#2A
+usb_c	MOLEX_105450-0101
+usb_c	USB-C_16P
+usb_c	TYPE-C-31-M-17
+usb_micro_b	MOLEX_105017-0001
+usb_micro_b	47346-0001
+usb_micro_b	USB_Micro-B_Amphenol_10118194-0001LF_Horizontal
+usb_micro_b	FCI_10103594-0001LF
+usb_micro_b	WURTH_629105150521
+usb_micro_b	ZX62-B-5PA
+usb_micro_b	MICRO_USB_B
+usb_mini_b	USB_Mini-B_Lumberg_2486_01_Horizontal
+usb_mini_b	WURTH_65100516121
+usb_mini_b	UX60-MB-5ST
+usb_mini_b	MINI_USB_B
+usb_a	MOLEX_67643-0910
+usb_a	48037-2200
+usb_a	TE_292303-7
+usb_a	WURTH_614004134726
+usb_a	KYCON_KUSBX-AS1N-B
+usb_a	USB_A_HORIZONTAL
+usb_a	USB3_A_RECEPTACLE
+usb_a_dual	USB_A_STACKED_X2
+usb_a_dual	CUI_UJ2-A2
+usb_b	TE_5787834-1
+usb_b	USB_B_Lumberg_2411_02_Horizontal
+usb_b	USB-B_VERTICAL
+usb_b	USB_B_OST_USB-B1HSxx_Horizontal
+hdmi_a	AMPHENOL_10029449-111LF
+hdmi_a	MOLEX_47151-0001
+hdmi_a	HDMI_A_Molex_208658-1001_Horizontal
+hdmi_a	HDMI_TYPE_A
+hdmi_micro	MOLEX_46765-0001
+hdmi_micro	HDMI_MICRO_D
+hdmi_mini	HDMI_MINI_C
+dp	MOLEX_47272-0001
+dp	DISPLAYPORT_CONN
+rj45	HR911105A
+rj45	BEL_A829-1A1T-91B
+rj45	RJ45_Bel_SI-60062-F
+rj45	RJMG1BD3B8K1ANR
+rj45	AMPHENOL_RJHSE-5380
+rj45	MAGJACK_8P8C
+rj45	ETHERNET_RJ45
+rj11	RJ12_Amphenol_54601-x06_Horizontal
+rj11	RJ11_6P4C
+dsub	DSUB-9_Female_Horizontal_P2.77x2.84mm_EdgePinOffset4.94mm_Housed_MountingHolesOffset4.94mm
+dsub	DE9S
+dsub	DB25_MALE_RA
+dsub	D-SUB_15_HD
+dsub	SUB-D_9P
+barrel	CUI_PJ-102AH
+barrel	PJ-002A
+barrel	PJ-063AH
+barrel	CUI_CP-002A
+barrel	WURTH_694106106102
+barrel	KYCON_KLDX-0202-XC
+barrel	SWITCHCRAFT_RAPC722X
+barrel	GCT_DCJ200-10-A
+barrel	DC_JACK_2.1MM
+barrel	BarrelJack_Horizontal
+audio35	PJ-320A
+audio35	CUI_SJ1-3523N
+audio35	SJ-3524-SMT
+audio35	KYCON_STX-3120-3N
+audio35	KYCON_KPJX-4S-S
+audio35	CUI_MJ-3523-SMT
+audio35	35RAPC4BH3
+audio35	Jack_3.5mm_PJ31060-I_Horizontal
+audio35	AUDIO_JACK_3.5MM
+rca	RCJ-014
+rca	RCA_JACK_HORIZONTAL
+rca	PHONO_JACK
+microsd	DM3AT-SF-PEJM5
+microsd	DM3D-SF
+microsd	MOLEX_104031-0811
+microsd	MOLEX_47219-2001
+microsd	WURTH_693072010801
+microsd	GCT_MEM2075-00-140-01-A
+microsd	MICROSD_SLOT
+microsd	TF-01A
+sd	SD_TE_2041021
+sd	SD_Kyocera_145638009511859+
+sd	HIROSE_DM1AA-SF-PEJ21
+sd	SD_CARD_SLOT
+sim	NANO_SIM
+sim	GCT_SIM8060-6-0-14-00
+sim	microSIM_JAE_SF53S006VCBR2000
+sim	SIM_CARD_HOLDER
+bnc	BNC_Amphenol_031-6575_Horizontal
+bnc	BNC_RA_PCB
+sma	SMA_Amphenol_132289_EdgeMount
+sma	AMPHENOL_132134
+sma	MOLEX_73251-1153
+sma	SAMTEC_SMA-J-P-H-ST-EM1
+sma	RP-SMA_JACK
+ufl	U.FL-R-SMT-1
+ufl	IPEX_MHF4
+rf_mini	MMCX_Molex_73415-0961_Horizontal_0.8mm-PCB
+rf_mini	MMCX_JACK
+xt60	XT60-M
+xt60	AMASS_XT60PW-M
+xt30	XT30PW-M
+xt30	AMASS_XT30U-F_1x02_P5.0mm_Vertical
+terminal	PHOENIX_1757242
+terminal	PhoenixContact_MSTBA_2,5_4-G-5,08_1x04_P5.08mm_Horizontal
+terminal	MKDS_1,5_2-5,08
+terminal	PHOENIX_1729128
+terminal	PhoenixContact_MC_1,5_3-GF-3.81_1x03_P3.81mm_Horizontal
+terminal	WAGO_2601-3102
+terminal	Wago_734-132_1x02_P3.50mm_Vertical
+terminal	WURTH_691137710002
+terminal	TE_282834-2
+terminal	TERMINALBLOCK_5.08MM_2P
+terminal	TB_2P_5.08
+terminal	Molex_Sabre_43160-0102_1x02_P7.49mm_Vertical
+fpc	FH12-24S-0.5SH(55)
+fpc	Hirose_FH12-30S-0.5SH_1x30-1MP_P0.50mm_Horizontal
+fpc	MOLEX_52559-2052
+fpc	MOLEX_54132-5033
+fpc	MOLEX_502231-1500
+fpc	TE_1-1734839-5
+fpc	JAE_FF0825SA1_2Rows-25Pins_P0.40mm_Horizontal
+fpc	FFC_30P_0.5MM
+fpc	FPC-24P-0.5
+fpc	ZIF_40P
+fpc	CSI_CAMERA_CONN
+idc	3M_N2510-6002
+idc	IDC-Header_2x05_P2.54mm_Vertical
+idc	BOX_HEADER_2X8
+idc	SHROUDED_HEADER_2X5
+idc	CNC_3020-10-0100-00
+idc_ra	CNC_3020-10-0200-00
+idc_ra	IDC-Header_2x05_P2.54mm_Horizontal
+sata	SATA_7P
+sata	MOLEX_67800-8001
+sata	FCI_10029364-001LF
+sfp	SFP_CAGE
+sfp	SFP+
+minidin	MINIDIN_6
+minidin	PS2_MINI_DIN
+minidin	CUI_MD-60S
+minidin	KYCON_KMDGX-6S-B4
+xlr	NEUTRIK_NC3FAH
+xlr	NC3MAH-0
+xlr	NC5FBH
+xlr	XLR_3P
+xlr	MiniXLR-5_Switchcraft_TRAPC_Horizontal
+banana	BANANA_JACK
+banana	Banana_Cliff_FCR7350B_S16N-PC_Horizontal
+banana	CalTest_CT3151
+banana	BINDING_POST
+m12	M12_4P
+m12	AMPHENOL_M12A-04PFFP-SF8001
+m12	Amphenol_M8S-03PMMR-SF8001
+toslink	TOSLINK_RX
+toslink	Toshiba_TORX173
+pcie	PCIE_X1
+pcie	BUS_PCIexpress_x16
+m2	M.2_KEY_M
+m2	NGFF_KEY_E
+m2	BUS_PCI_Express_Mini_Half
+m2	JAE_MM60-EZH039-B1
+dimm	SODIMM_DDR4
+dimm	DDR3_DIMM
+pogo	POGO_PIN
+pogo	MILL-MAX_0906-2-15-20-75-14-11-0
+pogo	SpringContact_Harwin_S1941-46R
+?	DIN41612_C_2x32_Male_Horizontal_THT
+?	DIN41612_B_2x16_Female_Vertical_THT
+?	DTF13-12Px
+?	CF-Card_3M_N7E50-7516PK-20-WF
+?	BUS_AT
+?	Pin_D1.0mm_L10.0mm
+?	SolderWire-0.25sqmm_1x02_P4.2mm_D0.65mm_OD2mm
+?	CUI_PD-30
+?	IHI_B6A-PCB-45_Vertical
+?	CoaxialSwitch_Hirose_MS-156C3_Horizontal
+?	GB042-34S-H10
+?	CUSTOM_CONN_XYZ
+-	SOIC-8_3.9x4.9mm_P1.27mm	U1
+-	TSSOP-20_4.4x6.5mm_P0.65mm	U2
+-	QFN-32-1EP_5x5mm_P0.5mm	U3
+-	LQFP-48_7x7mm_P0.5mm	U4
+-	SOT-23-5	U5
+-	SOT-223-3_TabPin2	U6
+-	TO-252-2	Q1
+-	R_0402_1005Metric	R1
+-	C_0603_1608Metric	C1
+-	C_1206_3216Metric	C2
+-	L_0805_2012Metric	L1
+-	LED_0603_1608Metric	D1
+-	D_SOD-123	D2
+-	D_SMA	D3
+-	DO-214AC_SMA	D4
+-	D_SMB	D5
+-	SMBJ5.0A	D6
+-	CRYSTAL_SMD_3225-4P	Y1
+-	SW_PUSH_6mm	SW1
+-	ESP32-WROOM-32	U7
+-	HDMI_ESD_TPD12S016	U8
+-	TRS3232	U9
+-	USB2514B	U10
+-	USB3300-EZK	U11
+-	USBLC6-2SC6	U12
+-	CP2102N-A02-GQFN28	U13
+-	FT232RL	U14
+-	STUSB4500	U15
+-	CH340G	U16
+-	MAX3232	U17
+-	TPS62130	U18
+-	QSE15x	U19
+-	MD-3030	L2
+-	DINRailAdapter_3xM3_PhoenixContact_1201578	MH1
+-	Symbol_Barrel_Polarity	U20
+-	Fuse_1812_4532Metric	F1
+-	Crystal_HC49-4H_Vertical	Y2
+-	Buzzer_12x9.5RM7.6	BZ1
+-	Relay_THT_Omron_G5LE	K1
+-	Battery_CR2032	BT1
+-	Transformer_THT_Pulse	T1
+-	RF_Shielding_Laird_BMI-S-101	SH1
+-	Potentiometer_THT_Bourns_3296W	RV1
+-	SIM800L	U21
+-	SIM7600E	U22
+-	RFM95W	U23
+-	SMA	D7
+-	DO-201AD	D8
+-	PLCC-44	U24
+-	VSSOP-8_3.0x3.0mm_P0.65mm	U25
+-	BGA-256_17x17mm	U26
+-	DFN-8-1EP_3x3mm	U27
+-	PWR_LED	D10

@@ -98,7 +98,8 @@ describe('docked, cabled, and said plainly', () => {
     expect(dbg.where).toMatch(/^dock \d\.\d( front| back)?$/);
     expect(dbg.pin1).toMatch(/Red stripe \(pin 1\) on the (bottom|top)-(left|right) pin of J_JTAG/);
     expect(dbg.usb).toMatch(/Powered USB hub P\d/);
-    expect(uart.buy[0]).toMatch(/^3 × \d+ cm jumper wires \(Dupont\), female at the adapter's pins and female at J_UART$/);
+    // (worded as the shopping list words it)
+    expect(uart.buy[0]).toMatch(/^3 × female–female jumper wire \(Dupont\), \d+ cm$/);
     expect(uart.port).toMatch(/COM/);
   }, 240_000);
 

@@ -3,9 +3,9 @@
 // and which way round each plugs in (pin 1). The one-page bench sheet is made from the same rows.
 import type { Comp, Link, Module, PanelReport, Project } from './types';
 import type { CableOut } from './cablelist';
-import { SOCKET_NAME } from './library';
-import { autoLinks, baseRef, isAccessory, numberLinks, plugName, shortName, type PlugAt } from './links';
-import { addAdapters, addProbes, adapterFor, debugHeaders, headerPins, isDebugPort, isProbe, jumperToBuy, probeKeyFor, ribbonOf, stackCompanions, uartHeaders, uartPins, uartWiring } from './probes';
+import { buyText, SOCKET } from './cablebuy';
+import { autoLinks, baseRef, isAccessory, isSocket, numberLinks, plugName, shortName, type PlugAt } from './links';
+import { addAdapters, addProbes, adapterFor, debugHeaders, headerPins, isDebugPort, isProbe, probeKeyFor, ribbonOf, stackCompanions, uartHeaders, uartPins, uartWiring } from './probes';
 import { COMPANIONS, type CompanionKey } from './boxes';
 import { seatLabels } from './built';
 
@@ -171,9 +171,10 @@ export function sheetRow(p: Project, r: HeaderRow, cables: CableOut[] = [], pane
       if (need != null && need > have) row.buy.push(`1 × ${ribbonToBuy(need)} cm ${IDC[pc?.conn?.type ?? type] ?? 'IDC ribbon'}, and set its length to ${ribbonToBuy(need) * 10} mm here`);
       if (adapter) row.buy.push(`1 × ${adapter}`);
     } else {
-      const n = r.link?.wires?.length || 3, cm = cab ? Math.round(jumperToBuy(cab.length) / 10) : 20;
       row.pins = uartWiring(c).replace(/^black/, 'Black');
-      row.buy.push(`${n} × ${cm} cm jumper wires (Dupont), female at the adapter's pins and ${SOCKET_NAME.test(`${c.pkg} ${c.value ?? ''}`) ? 'male' : 'female'} at ${c.ref}`);
+      // (worded as the shopping list words it: buyText)
+      const n = r.link?.wires?.length || 3, ad = pm.board.comps.find((x) => x.conn?.type === 'pins_ra' || x.role === 'uart');
+      row.buy.push(`${n} × ${buyText('jumper', cab?.buy ?? 0.2, ad?.conn ? plugName(ad.conn.type) : 'pins', isSocket(c) ? SOCKET : plugName(type))}`);
     }
     const usb = (p.links ?? []).find((l) => l.kind === 'usb' && (l.a.module === pm.id || l.b.module === pm.id));
     if (usb) { const o = usb.a.module === pm.id ? usb.b : usb.a, om = p.modules.find((x) => x.id === o.module); row.usb = `${shortName(om?.board.name ?? 'your computer')} ${baseRef(o.ref)}`; } else row.usb = 'not connected yet (Auto-connect)';

@@ -919,6 +919,7 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 .ltile-qty { position: absolute; top: 8px; right: 8px; display: flex; align-items: center; gap: 4px; background: var(--glass); border: 1px solid var(--line); border-radius: 999px; padding: 2px; box-shadow: var(--shadow-sm); opacity: 0; transition: opacity 0.12s; }
 .ltile:hover .ltile-qty, .ltile.on .ltile-qty, .ltile-qty:focus-within { opacity: 1; }
 .ltile-qty b { font-family: var(--mono); font-size: 12px; min-width: 14px; text-align: center; }
+.ltile-com { position: absolute; top: 8px; left: 8px; pointer-events: none; font-size: 9.5px; font-weight: 650; letter-spacing: 0.05em; text-transform: uppercase; padding: 1px 7px; border-radius: 99px; border: 1px solid var(--line); background: var(--glass); color: var(--muted); }
 .ltile-x { position: absolute; top: 8px; left: 8px; width: 22px; height: 22px; border-radius: 99px; border: 1px solid var(--line); background: var(--glass); color: var(--muted); cursor: pointer; opacity: 0; transition: opacity 0.12s; }
 .ltile:hover .ltile-x { opacity: 1; }
 .lib-foot { position: sticky; bottom: 12px; z-index: 4; display: flex; align-items: center; gap: 8px; margin-top: 14px; padding: 10px 12px; border: 1px solid var(--accent-line); border-radius: 14px; background: var(--glass); backdrop-filter: blur(14px); box-shadow: var(--shadow); }
@@ -1226,3 +1227,28 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 .start-printer span { font-weight: 600; }
 .start-printer select { height: 30px; max-width: 100%; }
 .start-printer small { flex-basis: 100%; color: var(--muted); font-size: 12px; }
+
+/* Copy to… */
+.copyto { flex: 1 1 100%; }
+.copyto-body { margin-top: 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); display: flex; flex-direction: column; gap: 3px; }
+.copyto-body details { margin-top: 4px; }
+.copyto-body summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+
+/* Checklist */
+.cl-section h4 span { color: var(--muted); font-weight: 400; margin-left: 6px; }
+.cl-group { margin: 0 0 8px; }
+.cl-head { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 600; margin: 8px 0 3px; cursor: pointer; }
+.cl-line { display: flex; align-items: baseline; gap: 8px; padding: 3px 0 3px 2px; font-size: 12.8px; cursor: pointer; }
+.cl-line input, .cl-head input { flex: none; align-self: center; }
+.cl-qty { flex: none; min-width: 28px; text-align: right; color: var(--muted); font-family: var(--mono); font-size: 12px; }
+.cl-item small { color: var(--subtle); }
+.cl-line.done .cl-item { text-decoration: line-through; color: var(--subtle); }
+
+/* Start: the cluster preset */
+.start-cluster { margin: 0 0 14px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.start-cluster-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+.start-cluster-head b { display: block; font-size: 14px; }
+.start-cluster-head small { color: var(--subtle); font-size: 11.5px; }
+.start-cluster-set { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.start-cluster-set .field { display: flex; align-items: center; gap: 8px; margin: 0; }
+.start-cluster-set input[type=number] { width: 56px; }

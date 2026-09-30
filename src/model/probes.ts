@@ -6,7 +6,7 @@
 import type { Board, Comp, HolderSettings, Link, Module, Pin, Project, Wire } from './types';
 import { connById, connSetup, MATERIALS, newModule } from './library';
 import { COMPANIONS, makeCompanion, type CompanionKey } from './boxes';
-import { baseRef, DEBUG_TYPES, isAccessory, isDebugPort, isUartPort, numberLinks, plugsOf, shortName } from './links';
+import { baseRef, DEBUG_TYPES, findModule, isAccessory, isDebugPort, isUartPort, numberLinks, plugsOf, shortName } from './links';
 import { baseOf, isSmall, ridersOf, stackMode } from './holes';
 
 export { isSmall, SMALL } from './holes';
@@ -128,7 +128,7 @@ export function probesOf(p: Project, m: Module): Module[] {
   for (const c of [...debugHeaders(m.board), ...uartHeaders(m.board)]) {
     for (const l of p.links ?? []) {
       const mine = l.a.module === m.id && baseRef(l.a.ref) === c.ref ? l.b : l.b.module === m.id && baseRef(l.b.ref) === c.ref ? l.a : null;
-      const pm = mine && p.modules.find((x) => x.id === mine.module);
+      const pm = mine && findModule(p, mine.module);
       if (pm && isProbe(pm) && !out.includes(pm)) out.push(pm);
     }
   }
@@ -139,7 +139,7 @@ export function probesOf(p: Project, m: Module): Module[] {
 export function targetOf(p: Project, probe: Module): Module | null {
   for (const l of p.links ?? []) {
     const other = l.a.module === probe.id ? l.b : l.b.module === probe.id ? l.a : null;
-    const m = other && p.modules.find((x) => x.id === other.module);
+    const m = other && findModule(p, other.module);
     const c = m?.board.comps.find((x) => x.ref === baseRef(other!.ref));
     if (m && c && !isAccessory(m.board) && (isDebugPort(c) || isUartPort(c))) return m;
   }
@@ -215,7 +215,7 @@ export function companionLabel(p: Project, m: Module): string {
   if (!isProbe(m)) return m.board.name;
   for (const l of p.links ?? []) {
     const other = l.a.module === m.id ? l.b : l.b.module === m.id ? l.a : null;
-    const t = other && p.modules.find((x) => x.id === other.module);
+    const t = other && findModule(p, other.module);
     if (t && !isAccessory(t.board)) return `${kind} → ${baseRef(other!.ref)}`;
   }
   return kind;
@@ -272,7 +272,7 @@ export function autoWires(a: Comp, b: Comp): Wire[] {
 /** A jumper link with its wires filled in when it has none (two UART headers: the crossover). Mutates the link. */
 export function fillWires(p: Project, l: Link): Link {
   if (l.kind !== 'jumper' || l.wires?.length) return l;
-  const comp = (r: { module: string; ref: string }) => p.modules.find((m) => m.id === r.module)?.board.comps.find((c) => c.ref === baseRef(r.ref));
+  const comp = (r: { module: string; ref: string }) => findModule(p, r.module)?.board.comps.find((c) => c.ref === baseRef(r.ref));
   const a = comp(l.a), b = comp(l.b);
   if (a && b) l.wires = autoWires(a, b);
   return l;
@@ -310,10 +310,13 @@ const COLOUR_NAME: Record<string, string> = { '#1f2124': 'black', '#2f9e44': 'gr
 
 /** Which pin each jumper wire of a link goes between, in words. */
 export function jumperWiring(p: Project, l: Link): string {
-  const end = (r: { module: string; ref: string }) => { const m = p.modules.find((x) => x.id === r.module); const c = m?.board.comps.find((x) => x.ref === baseRef(r.ref)); return { m, pins: c ? headerPins(c) : [] }; };
+  const end = (r: { module: string; ref: string }) => { const m = findModule(p, r.module); const c = m?.board.comps.find((x) => x.ref === baseRef(r.ref)); return { m, c, pins: c ? headerPins(c) : [] }; };
   const A = end(l.a), B = end(l.b);
   const pin = (e: typeof A, n: string) => { const q = e.pins.find((x) => x.n === n); return `pin ${n}${q?.net ? ` (${q.net.replace(/^\//, '')})` : ''}`; };
-  return (l.wires ?? []).map((w) => `${COLOUR_NAME[w.colour ?? ''] ?? 'a'} wire from ${A.m && isAccessory(A.m.board) ? '' : `${l.a.ref} `}${pin(A, w.a)} to ${B.m && isAccessory(B.m.board) ? '' : `${l.b.ref} `}${pin(B, w.b)}`).join(', ');
+  const text = (l.wires ?? []).map((w) => `${COLOUR_NAME[w.colour ?? ''] ?? 'a'} wire from ${A.m && isAccessory(A.m.board) ? '' : `${l.a.ref} `}${pin(A, w.a)} to ${B.m && isAccessory(B.m.board) ? '' : `${l.b.ref} `}${pin(B, w.b)}`).join(', ');
+  // a UART header's pins that were only guessed from its size (a 4-pin one): say to check them
+  const guessed = [A, B].some((e) => e.c && !(e.m && isAccessory(e.m.board)) && isUartPort(e.c) && uartPins(e.c)?.from === 'guess');
+  return guessed ? `${text} (the header's pinout is a guess: check your board's markings)` : text;
 }
 
 /** Jumper wires to buy: the shortest standard length that reaches. */

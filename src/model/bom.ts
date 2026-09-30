@@ -8,7 +8,8 @@ import { cableLines } from './cablelist';
 import { stackHardware, baseOf } from './holes';
 import { adapterFor, isDebugPort, isProbe } from './probes';
 import { isPlugPack } from './powerdata';
-import { baseRef, isAccessory, plugName } from './links';
+import { poeHats } from './poe';
+import { baseRef, findModule, isAccessory, plugName } from './links';
 import { strapBoxes } from './built';
 import type { GenResult, Module, Project } from './types';
 
@@ -93,7 +94,7 @@ export function billOfMaterials(p: Project, res: GenResult): BomGroup[] {
   const adapters = new Map<string, string[]>();
   for (const l of p.links ?? []) {
     if (l.kind !== 'debug') continue;
-    const end = (r: typeof l.a) => { const m = p.modules.find((x) => x.id === r.module); return m && { m, c: m.board.comps.find((x) => x.ref === baseRef(r.ref)) }; };
+    const end = (r: typeof l.a) => { const m = findModule(p, r.module); return m && { m, c: m.board.comps.find((x) => x.ref === baseRef(r.ref)) }; };
     const A = end(l.a), B = end(l.b);
     if (!A?.c || !B?.c) continue;
     const [pr, bd] = isProbe(A.m) ? [A, B] : [B, A];
@@ -101,6 +102,7 @@ export function billOfMaterials(p: Project, res: GenResult): BomGroup[] {
     if (need) adapters.set(need, [...(adapters.get(need) ?? []), pr.m.board.name]);
   }
   for (const [item, who] of adapters) hw.push({ qty: who.length, item, note: who.join(', ') });
+  hw.push(...poeHats(p));
   if (hw.length) out.push({ head: 'Hardware', rows: hw, buy: true });
 
   // ---- filament and tools ----
