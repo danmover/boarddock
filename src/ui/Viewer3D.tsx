@@ -727,7 +727,7 @@ interface Next {
   drop(): void;
 }
 
-function prepare(c: any, result: GenResult | null, mode: 'assembly' | 'print', bed: V2, spacing: number, theme: 'dark' | 'light', installed: 'h' | 'v' | null | undefined, overhangs: boolean, only: OnlyNew | null = null): Next {
+export function prepare(c: any, result: GenResult | null, mode: 'assembly' | 'print', bed: V2, spacing: number, theme: 'dark' | 'light', installed: 'h' | 'v' | null | undefined, overhangs: boolean, only: OnlyNew | null = null): Next {
   const group = new THREE.Group();
   group.matrixAutoUpdate = false;
   const objs: Obj[] = [], floor: THREE.Object3D[] = [], own: { dispose(): void }[] = [];
