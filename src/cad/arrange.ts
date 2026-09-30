@@ -53,17 +53,20 @@ export function generateChecked(p: Project, deep = false): GenResult {
   };
   if (known && !deep) return build(known).result;
   const trials: Trial[] = [];
+  const add = (how: Choice) => { const t = build(how); trials.push(t); return t; };
+  // the planner's best; when that has trouble its next best; then the best again with the boards whose cable ran into
+  // something kept apart (twice over); and last the classic order
   let avoid: string[] = [];
-  for (let round = 0; round < 3; round++) {
-    const t = build({ pick: 0, avoid });
-    trials.push(t);
-    if (t.trouble === 0) break;
-    const more = clashing(t.result).filter((x) => !avoid.includes(x));
-    if (!more.length) break;
-    avoid = [...avoid, ...more];
+  const first = add({ pick: 0, avoid });
+  let clear = first.trouble === 0;
+  if (!clear) clear = add({ pick: 1, avoid }).trouble === 0;
+  for (let round = 0; !clear && round < 2; round++) {
+    avoid = [...new Set([...avoid, ...trials.flatMap((t) => clashing(t.result))])];
+    if (!avoid.length) break;
+    clear = add({ pick: 0, avoid }).trouble === 0;
   }
-  if (deep && trials[trials.length - 1].trouble === 0) trials.push(build({ pick: 1, avoid: (trials[trials.length - 1].how as { avoid: string[] }).avoid }));
-  if (trials[0].trouble > 0 || deep) trials.push(build({ plan: 'classic' }));
+  if (deep && clear && trials.length === 1) add({ pick: 1, avoid });
+  if (!clear || deep) add({ plan: 'classic' });
   // (least trouble; then, when asked, the real cost; then the planner's own order)
   const best = trials.map((t, i) => ({ t, i })).sort((a, b) => a.t.trouble - b.t.trouble || (deep ? a.t.cost - b.t.cost : 0) || a.i - b.i)[0].t;
   chosen.set(sig, best.how);
