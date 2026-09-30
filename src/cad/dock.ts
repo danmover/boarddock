@@ -11,6 +11,7 @@ import type { V2 } from '../model/types';
 import { box, circle2, ext, extCh, K, poly, rect2, roundCS, unionCS, unionMF, type CS, type MF } from './kernel';
 import { EAR, gripSpan, HD, HOLD, headSpan, LANDING, LEN_X, NOSE_TIP, PEG, SHOE_GRIP, TONGUE } from './dockdims';
 import { railGrip } from './dinclip';
+import { peg, pegHole } from './column';
 export { gripSpan, headSpan };
 
 const P = (pts: number[][]): CS => poly(pts as V2[], 'NonZero');
@@ -347,18 +348,6 @@ export function holderDock(far: number, pedestal: number, side = 0, fit = 0, col
     ...(lift ? [lift.cut] : []),
   ]);
   return { add, cut, tunnel, zg0, zg1 };
-}
-
-/** A column holder's peg, standing down from its pedestal (socket-local, z = 0 its underside). */
-function peg(x: number): MF {
-  return unionMF([ext(circle2(x, PEG.y, PEG.r, 48), -PEG.len, 0.01), K().Manifold.cylinder(PEG.tip, PEG.r - PEG.tip, PEG.r, 48).translate([x, PEG.y, -PEG.len - PEG.tip])]);
-}
-
-/** The press-fit hole for a peg in a landing whose top is at `top`: a lead-in, and three crush ribs that grip the peg. */
-function pegHole(x: number, top: number): MF {
-  let hole = unionMF([ext(circle2(x, PEG.y, 2.12, 48), top - 4.6, top + 1), K().Manifold.cylinder(2.1, 0.02, 2.12, 48).translate([x, PEG.y, top - 6.7])]);
-  for (const a of [90, 210, 330]) hole = hole.subtract(box(-0.35, 1.85, top - 5, 0.35, 2.3, top + 1).rotate([0, 0, a - 90]).translate([x, PEG.y, 0]));
-  return hole;
 }
 
 /**

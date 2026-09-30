@@ -5,7 +5,7 @@
 // a hub like any device's.
 import type { Board, Comp, HolderSettings, Link, Module, Pin, Project, Wire } from './types';
 import { connById, connSetup, MATERIALS, newModule } from './library';
-import { COMPANIONS, makeCompanion } from './boxes';
+import { COMPANIONS, makeCompanion, type CompanionKey } from './boxes';
 import { baseRef, DEBUG_TYPES, findModule, isAccessory, isDebugPort, isUartPort, numberLinks, plugsOf, shortName } from './links';
 import { baseOf, isSmall, ridersOf, stackMode } from './holes';
 
@@ -221,14 +221,18 @@ export function companionLabel(p: Project, m: Module): string {
   return kind;
 }
 
-/** A J-Link: a small board with its 20-pin 1.27 mm ribbon connector and its USB on one end. */
-export const makeProbe = (name: string): Board => makeCompanion('jlink', name);
+/** A J-Link: a small board with its debug connector (20-pin Cortex unless another is asked for) and its USB on one end. */
+export const makeProbe = (name: string, key: CompanionKey = 'jlink'): Board => makeCompanion(key, name);
+
+/** The J-Link whose connector takes a header's ribbon as it is: 10-pin Cortex-M, 20-pin JTAG box header, else the 20-pin Cortex one. */
+export const probeKeyFor = (header: Comp): CompanionKey => (header.conn?.type === 'swd10' ? 'jlink10' : header.conn?.type === 'jtag20' ? 'jlinkjtag' : 'jlink');
 
 /**
  * A J-Link for every debug header of a board that has none yet (or only for the headers in `refs`): cabled to its
- * header, its USB left for Auto-connect, in the board's column. Mutates the project; returns the new probes.
+ * header, its USB left for Auto-connect, in the board's column. `as`: a J-Link other than the one the header's connector
+ * takes. Mutates the project; returns the new probes.
  */
-export function addProbes(p: Project, boardId: string, refs?: string[]): Module[] {
+export function addProbes(p: Project, boardId: string, refs?: string[], as?: CompanionKey): Module[] {
   const m = p.modules.find((x) => x.id === boardId);
   if (!m) return [];
   const taken = new Set((p.links ?? []).flatMap((l) => [`${l.a.module}/${baseRef(l.a.ref)}`, `${l.b.module}/${baseRef(l.b.ref)}`]));
@@ -236,9 +240,9 @@ export function addProbes(p: Project, boardId: string, refs?: string[]): Module[
   const names = new Set(p.modules.map((x) => x.board.name));
   const out: Module[] = [];
   for (const c of free) {
-    const name = companionName(names, COMPANIONS.jlink.name, m.board.name, c.ref);
+    const key = as ?? probeKeyFor(c), name = companionName(names, COMPANIONS[key].name, m.board.name, c.ref);
     names.add(name);
-    const pb = makeProbe(name);
+    const pb = makeProbe(name, key);
     const port = pb.comps.find(isDebugPort)!;
     const mod = newModule(pb, m.holder);
     const at = p.modules.indexOf(m) + 1 + out.length;

@@ -5,7 +5,7 @@ import type { Board, Comp, Hole, HoleRole, Module, PartOut, Project, V2 } from '
 import { applyHoleRoles, boltedOn, detectHoleRoles, ROLE_INFO, stackHardware } from '../model/holes';
 import { allPlugs, baseRef, canCable, connectNote, findModule, offRackModule, powerShort, refText, cableNumbers, cablePurpose, shortName, strongerPower, times, hubOffer, KIND_COLOR, linkKind, linkOf, plugName, plugRole, plugsOf, portBudget, sameRef } from '../model/links';
 import { cableLines } from '../model/cablelist';
-import { addAccessory, addJLinks, addLinks, addSerialAdapters, addUartCables, plugPlaces, rebalancePower, removeLinks, setLink } from './linkOps';
+import { addAccessory, addDebugGearFor, addJLinks, addLinks, addSerialAdapters, addUartCables, plugPlaces, rebalancePower, removeLinks, setLink } from './linkOps';
 import { adapterFor, debugHeaders, isDebugPort, isProbe, isUartPort, markDebug, ribbonOf, uartHeaders, uartPins, type DebugKind } from '../model/probes';
 import { Icon, I } from './icons';
 import { CONNECTORS, DEFAULT_FEATURES, HOLDER_PRESETS, MATERIALS, PRINTERS, connById, connSetup, setLayout } from '../model/library';
@@ -24,6 +24,7 @@ import { buildTestKit, runClipFea } from '../worker/client';
 import type { ClipFeaResult } from '../fea/clipfea';
 import { clipDims } from '../cad/dinclip';
 import { RackBuilder } from './RackBuilder';
+import { DebugPanel } from './DebugPanel';
 import { dockShorterAll, duplicateModule, leverFix, markBuilt, unmarkBuilt } from './panelOps';
 import { removeItems } from './pickOps';
 import { delta, partsFor, strapBoxes, type Delta } from '../model/built';
@@ -491,6 +492,7 @@ function DebugProbes() {
       {uarts.map((c) => <UartPins key={c.id} c={c} many={uarts.length > 1} />)}
       {(freeDbg.length > 1 || freeUart.length > 0) && (
         <div className="btns" style={{ marginTop: 8, flexWrap: 'wrap' }}>
+          {freeDbg.length > 0 && freeUart.length > 0 && <button className="btn small soft" onClick={() => addDebugGearFor([m.id])} title="A J-Link on each debug header and an adapter on each UART header, with their USB cables: one undo step (Plugs › Debug and serial does it for every board)">Add {freeDbg.length} J-Link{freeDbg.length > 1 ? 's' : ''} + {freeUart.length} adapter{freeUart.length > 1 ? 's' : ''}</button>}
           {freeDbg.length > 1 && <button className="btn small soft" onClick={() => addJLinks(m.id)}>Add {freeDbg.length} J-Links</button>}
           {freeUart.length > 1 && <button className="btn small soft" onClick={() => addSerialAdapters(m.id)} title="The FT232RL board: jumper wires from its pins to the header">Add {freeUart.length} USB-serial adapters</button>}
           {freeUart.length > 0 && <button className="btn small ghost" onClick={() => addUartCables(m.id)} title="A USB to TTL cable with loose jumper ends, straight to a hub">or {freeUart.length > 1 ? 'serial cables' : 'a serial cable'}</button>}
@@ -629,6 +631,7 @@ export function PlugsPanel() {
         <p className="hint" style={{ marginTop: 8 }}>Tap a port's <i>empty</i> or <i>cable</i> tag to say whether you'll plug something into it yourself.</p>
       </Section>
       {chosen.length > 0 && <ConnEditor list={chosen} />}
+      <DebugPanel />
       {p.modules.length > 1 && <div className="copyholder"><span>Copy this board's plug settings to</span><CopyTo start={{ holder: false }} /></div>}
       <CablesSection />
     </div>

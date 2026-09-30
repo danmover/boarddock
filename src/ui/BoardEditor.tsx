@@ -16,7 +16,8 @@ import { PALETTE } from '../model/palette';
 import { axisOf, featAt, layoutDims, lineMates, measure, pickFeat, setDim, type DimBox, type DimMove } from '../model/dims';
 import { boardCopper } from '../model/copper';
 import { boardLights } from '../model/lights';
-import { headerPins } from '../model/probes';
+import { headerPins, probeKeyFor } from '../model/probes';
+import { pinoutText, probeLabel } from '../model/debuggear';
 import { cardOf } from '../model/cards';
 import { plugName } from '../model/links';
 import { alignPhoto, dimPopupAt, edgeGaps, fitPhoto, itemsBox, scalePhoto, snapBox, snapLines, type Box2 } from '../model/editorgeo';
@@ -159,6 +160,8 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
     const made = it.make(b, w);
     editMod((m) => { if (made.comp) m.board.comps.push(made.comp); if (made.hole) m.board.holes.push(made.hole); if (made.comp?.conn) boxFromEdits(m.board); });
     if (made.comp) select([{ kind: 'comp', id: made.comp.id }]); else if (made.hole) select([{ kind: 'hole', id: made.hole.id }]);
+    // a debug or UART header: say what plugs into it, and where the pinout is
+    if (made.comp && it.group === 'Debug and serial') toast(made.comp.role === 'uart' ? `${made.comp.ref}: a USB-serial adapter's jumper wires go on it. Its pin names are a guess: check yours (Board › Debug & UART headers).` : `${made.comp.ref}: a J-Link plugs into it (${probeLabel(probeKeyFor(made.comp))}); Plugs › Debug and serial adds one. Pins, 1 first: ${pinoutText(made.comp) ?? 'set them in the board'}.`);
   };
   const arm = (id: string | null) => { setItem(id); setTool(id ? 'place' : 'select'); if (id && phone()) setTbx(false); };
 
