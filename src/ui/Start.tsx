@@ -16,6 +16,8 @@ import { rackName } from '../model/diff';
 import { countKinds } from './panels';
 import { HeroArt } from './art';
 import { CompleteRack } from './CompleteRack';
+import { ChecklistButton } from './Checklist';
+import { ClusterPreset } from './ClusterPreset';
 
 export function StartStage() {
   const p = useApp((s) => s.project);
@@ -52,6 +54,7 @@ export function StartStage() {
             <div className="start-head-acts">
               <button className="btn small" onClick={() => store.set({ view: 'assembly' })}><Icon d={I.cube} /> See it in 3D</button>
               <button className="btn small" onClick={() => store.set({ step: 'board', view: 'editor' })}><Icon d={I.board} /> {p.modules.length > 1 ? 'Check the boards' : 'Its board'}</button>
+              <ChecklistButton />
               {bad + warn > 0 && <button className="btn small ghost" onClick={() => store.set({ step: 'check' })}>{bad ? `${bad} failing` : `${warn} to look at`}</button>}
             </div>
           </header>
@@ -89,6 +92,8 @@ export function StartStage() {
         {busy && <div className="progress" style={{ margin: '4px 0 10px' }}><div /></div>}
         {err && <div className="err" style={{ margin: '0 0 10px' }}>{err}</div>}
         {draw && <div className="start-draw"><div className="start-draw-head"><b>Draw your own board or box</b><button className="btn small ghost icon" onClick={() => setDraw(false)} aria-label="Close">×</button></div><DrawBoard put={(b) => add([b])} /></div>}
+
+        <ClusterPreset />
 
         <Library onAdd={add} />
 

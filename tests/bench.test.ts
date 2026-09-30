@@ -12,7 +12,7 @@ import { initKernel } from '../src/cad/kernel';
 import { delta, snapshot } from '../src/model/built';
 import { rackCount } from '../src/model/diff';
 import { PALETTE } from '../src/model/palette';
-import { uartPins } from '../src/model/probes';
+import { jumperWiring, uartPins, uartWiring } from '../src/model/probes';
 import type { PanelReport, Project } from '../src/model/types';
 
 const T = (id: string) => TEMPLATES.find((t) => t.id === id)!.make();
@@ -63,6 +63,24 @@ describe('probe names and counts', () => {
     const u = uartPins(c)!;
     expect(u.from).toBe('set');
     expect([u.gnd.n, u.rx.n, u.tx.n]).toEqual(['1', '4', '5']);
+  });
+
+  it('says to check a 4-pin UART header\'s pins, wherever they are shown: the toolbox, the wire list, the serial cable\'s pins', () => {
+    const item = PALETTE.find((x) => x.id === 'uart4')!;
+    expect(item.hint).toMatch(/is a guess: check yours/);
+    const p = newProject(T('blank'));
+    const c = item.make(p.modules[0].board, [10, 10]).comp!;
+    p.modules[0].board.comps.push(c);
+    expect(uartPins(c)!.from).toBe('guess');
+    expect(uartWiring(c)).toMatch(/a guess at its pinout: check the board's markings/);
+    // the adapter's jumper wires name the same pins: say the same
+    const [ad] = addAdapters(p, p.modules[0].id);
+    const l = fillWires(p, p.links!.find((x) => x.kind === 'jumper')!);
+    expect(ad).toBeTruthy();
+    expect(jumperWiring(p, l)).toMatch(/black wire from pin 6 \(GND\) to .* pin 1, .*\(the header's pinout is a guess: check your board's markings\)$/);
+    // a 6-pin FTDI header from the toolbox has its pins set: nothing to check
+    const six = PALETTE.find((x) => x.id === 'uart6')!.make(T('blank'), [10, 10]).comp!;
+    expect(uartWiring(six)).not.toMatch(/guess/);
   });
 });
 

@@ -42,6 +42,14 @@ export const poweredHub = (b: Board) => isHub(b) && (/powered/i.test(b.name) || 
 /** A plug pack: a supply that plugs straight into an outlet (or the wall), its own lead ending in its output plug. */
 export const isPlugPack = (b: Board) => isBox(b) && !!b.box?.pack;
 
+/**
+ * The DC input range of a board whose barrel jack is known: the volts its maker recommends, and the usual pick (an
+ * Arduino Uno, Mega, Leonardo or Due takes 7 to 12 V; 9 V is the usual pack). Null for a board with no known range.
+ */
+export function dcRange(b: Board): { min: number; max: number; usual: number } | null {
+  return /\b(uno|mega|leonardo|due)\b/i.test(b.name) ? { min: 7, max: 12, usual: 9 } : null;
+}
+
 /** What one port can give, in A at 5 V. */
 export function portCap(b: Board, c: Comp, role: string): number {
   const t = c.conn?.type ?? '';

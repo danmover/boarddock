@@ -13,6 +13,7 @@ import { baseOf, columnOf, isSmall, ridersOf } from '../model/holes';
 import { isProbe, probesOf, targetOf } from '../model/probes';
 import { baseRef, findModule, isAccessory, isBox, plugRole } from '../model/links';
 import { isPlugPack } from '../model/powerdata';
+import { freshRail, isDockLocked, isRailLocked } from '../model/locks';
 
 /** A module plus the plugs of every board stacked on it: what orientation scoring should look at. */
 export function withRiders(p: Project, m: Module): Module {
@@ -642,8 +643,9 @@ export function appendDock(p: Project, moduleId: string) {
   const m0 = p.modules.find((x) => x.id === moduleId);
   if (!m0 || isPlugPack(m0.board)) return; // a plug pack lives in an outlet, off the rails
   const m = withRiders(p, m0);
-  let rail = P.rails[P.rails.length - 1];
-  if (!rail) { rail = { id: 'r1', x: 0, y: 0, dir: P.rowDir, length: null }; P.rails.push(rail); }
+  // (the last rail that is not locked; a locked rail keeps the docks it has)
+  let rail = [...P.rails].reverse().find((r) => !isRailLocked(p, r.id));
+  if (!rail) { rail = P.rails.length ? freshRail(p) : { id: 'r1', x: 0, y: 0, dir: P.rowDir, length: null }; P.rails.push(rail); }
   const o = bestDock(m, rail.dir, 0);
   P.mounts.push({ id: uid('d'), rail: rail.id, at: null, place: 'free', kind: 'dock', turn: o.turn, slots: [{ module: moduleId, edge: o.edge }, { module: null, edge: 'auto' }] });
 }
@@ -662,7 +664,7 @@ export function seatBoard(p: Project, moduleId: string): { where: 'slot' | 'new'
   const cabled = new Set((p.links ?? []).flatMap((l) => (l.a.module === moduleId ? [l.b.module] : l.b.module === moduleId ? [l.a.module] : [])));
   let best: { mt: RailMount; k: number; score: number } | null = null;
   for (const mt of P.mounts) {
-    if (mt.kind !== 'dock' || mt.slots.some((s) => s.lie === 'flat')) continue;
+    if (mt.kind !== 'dock' || mt.slots.some((s) => s.lie === 'flat') || isDockLocked(p, mt.id)) continue;
     const k = mt.slots.findIndex((s) => !s.module);
     const rail = P.rails.find((r) => r.id === mt.rail);
     if (k < 0 || !rail) continue;
@@ -691,7 +693,7 @@ export function seatCompanion(p: Project, moduleId: string): Seated {
   const P = p.panel, m = p.modules.find((x) => x.id === moduleId);
   const t = m && targetOf(p, m), tb = t && baseOf(p, t);
   const home = tb && P.mounts.find((mt) => mt.kind === 'dock' && mt.slots.some((s) => s.module === tb.id));
-  const put = (mt: RailMount) => { const k = mt.slots.findIndex((s) => !s.module); if (k < 0) return false; for (const x of P.mounts) for (const sl of x.slots) if (sl.module === moduleId) sl.module = null; mt.slots[k] = { module: moduleId, edge: 'auto' }; return true; };
+  const put = (mt: RailMount) => { const k = mt.slots.findIndex((s) => !s.module); if (k < 0 || isDockLocked(p, mt.id)) return false; for (const x of P.mounts) for (const sl of x.slots) if (sl.module === moduleId) sl.module = null; mt.slots[k] = { module: moduleId, edge: 'auto' }; return true; };
   if (home && put(home)) return { where: 'home', mount: home.id, rail: home.rail };
   if (home) {
     const near = P.mounts.filter((mt) => mt !== home && mt.kind === 'dock' && mt.rail === home.rail && mt.slots.some((s) => !s.module)).sort((a, b) => Math.abs((a.at ?? 0) - (home.at ?? 0)) - Math.abs((b.at ?? 0) - (home.at ?? 0)));
@@ -803,7 +805,7 @@ export function spreadOut(p: Project, rep: PanelReport, clear = 2, rails?: strin
     let cursor = -Infinity;
     for (const m of on) {
       const [lo, hi] = alongExtent(rep, m.id)!;
-      if (m.at! + lo < cursor - 0.05) { m.at = Math.round((cursor - lo) * 10) / 10; moved.push(m.id); }
+      if (m.at! + lo < cursor - 0.05 && !isDockLocked(p, m.id)) { m.at = Math.round((cursor - lo) * 10) / 10; moved.push(m.id); }
       cursor = Math.max(cursor, m.at! + hi + clear);
     }
   }
@@ -845,7 +847,7 @@ export function spreadRails(p: Project, rep: PanelReport, clear = 2): string[] {
   const moved: string[] = [];
   for (const r of p.panel.rails) {
     const s = shift.get(r.id);
-    if (!s) continue;
+    if (!s || isRailLocked(p, r.id)) continue;
     if (ax) r.y = Math.round((r.y + s) * 10) / 10; else r.x = Math.round((r.x + s) * 10) / 10;
     moved.push(r.id);
   }

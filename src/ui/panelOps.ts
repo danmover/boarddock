@@ -8,6 +8,9 @@ import { amend, edit, select, store, toast, uniqueName } from '../state';
 import { mountLabels, snapshot } from '../model/built';
 import { isProbe } from '../model/probes';
 import { isPlugPack } from '../model/powerdata';
+import { describeMoves, hasLocks, isDockLocked, placesOf } from '../model/locks';
+import { arrangeAround } from '../cad/arrangelock';
+import { autoEdit, noteReceipts } from './autoEdit';
 
 const rep = () => store.get().result?.report.panel ?? null;
 
@@ -229,8 +232,13 @@ export function settleOverlaps(rails?: (pr: PanelReport) => (string | undefined)
     const across = pr.collisions.some((pair) => { const [a, b] = railsOf(pair); return !!a && !!b && a !== b && (on.includes(a) || on.includes(b)); });
     if (!along && !across) return;
     let moved: string[] = [], slid: string[] = [], own: string[] = [];
+    const lab = mountLabels(pr), nameOf = (id: string) => store.get().project?.modules.find((m) => m.id === id)?.board.name ?? 'a board';
     // (on a built rack, a board new since that pushes a built dock along goes into a dock of its own instead)
-    amend((q) => { if (q.panel.auto) return; if (along) own = ownDocks(q, pr); if (own.length) return; if (along) moved = spreadOut(q, pr, 2, on); if (across) slid = spreadRails(q, pr, 2); });
+    autoEdit('Spacing', (q) => { if (q.panel.auto) return; if (along) own = ownDocks(q, pr); if (own.length) return; if (along) moved = spreadOut(q, pr, 2, on); if (across) slid = spreadRails(q, pr, 2); }, { amend: true, texts: () => [
+      ...own.map((id) => `Spacing put ${nameOf(id)} in a dock of its own: in a built dock's free slot it would push the docks along`),
+      ...moved.map((id) => `Spacing slid dock ${lab.get(id) ?? id} along its rail to make room`),
+      ...slid.map((id) => `Spacing slid rail ${pr.rails.findIndex((x) => x.id === id) + 1} across to make room`),
+    ] });
     if (own.length) {
       const names = own.map((id) => store.get().project?.modules.find((m) => m.id === id)?.board.name ?? 'The board');
       toast(`${names.join(' and ')} ${own.length > 1 ? 'went into docks of their own' : 'went into a dock of its own'}: in the free slot of a built dock ${own.length > 1 ? 'they' : 'it'} would push the docks you built along the rail. ⌘Z undoes it.`);
@@ -333,8 +341,30 @@ export function leverFix(p: Project, pr: PanelReport, moduleId: string, limit = 
 export function autoArrange() {
   const p = store.get().project;
   if (p?.built && !confirm('This rack is built. Auto-arrange lays every board out again: built boards move, and you may need new rails and docks. ⌘Z undoes it. Lay it all out again?')) return;
+  // with locks, the docks and rails locked stay and the other boards are seated again; without, the whole rack is laid out again
+  if (p && hasLocks(p)) { arrangeLocked(p); return; }
   edit((q) => { q.panel.auto = true; });
   select([]);
+  if (p) receiptAfterBuild('Auto-arrange', p);
+}
+
+/** After a change that made the layout automatic: once it is built, a receipt for each board that went to another rail. */
+export function receiptAfterBuild(what: string, before: Project) {
+  const rep0 = rep();
+  afterBuild((r) => {
+    const p = store.get().project, now = r.report.panel;
+    if (!p?.panel.auto || !now) return;
+    noteReceipts(what, describeMoves(what, placesOf(before, rep0), placesOf(p, now), (id) => p.modules.find((m) => m.id === id)?.board.name ?? 'a board'));
+  });
+}
+
+/** Auto-arrange with locks: what is locked stays exactly where it is; every other board is seated again beside it. */
+function arrangeLocked(p: Project) {
+  if (p.locks?.all) { toast('The whole layout is locked, so Auto-arrange leaves it alone. Unlock it (Lock, in the Rails step) to lay it all out again.'); return; }
+  let seated: string[] = [];
+  const texts = autoEdit('Auto-arrange', (q) => { materialise(q); seated = arrangeAround(q); }, { layout: true });
+  select([]);
+  toast(`Auto-arrange left the locked docks and rails as they were and seated ${seated.length} other board${seated.length === 1 ? '' : 's'} again${texts.length ? `: ${texts.slice(0, 2).map((t) => t.replace(/^Auto-arrange /, '')).join('; ')}` : ''}. ⌘Z undoes it.`);
 }
 
 /**
@@ -346,7 +376,7 @@ export function tidyUp() {
   if (!r || !p0 || p0.layout !== 'panel') return;
   const tidy = (p: Project) => {
     const n = p.panel.mounts.length;
-    p.panel.mounts = p.panel.mounts.filter((mt) => mt.slots.some((sl) => sl.module));
+    p.panel.mounts = p.panel.mounts.filter((mt) => mt.slots.some((sl) => sl.module) || isDockLocked(p, mt.id));
     return { gone: n - p.panel.mounts.length, moved: spreadOut(p, r, 2) };
   };
   // try it on a copy first: nothing to do is not an undo step
@@ -354,7 +384,8 @@ export function tidyUp() {
   materialise(trial);
   const { gone, moved } = tidy(trial);
   if (!gone && !moved.length) { toast('Nothing to tidy: no empty docks, and nothing overlaps along a rail.'); return; }
-  panelEdit((p) => { tidy(p); });
+  const lab = mountLabels(r);
+  autoEdit('Tidy up', (p) => { materialise(p); tidy(p); }, { texts: () => [gone ? `Tidy up took out ${gone} empty dock${gone > 1 ? 's' : ''}` : '', ...moved.map((id) => `Tidy up slid dock ${lab.get(id) ?? id} along its rail`)].filter(Boolean) });
   toast(`Tidied up: ${[gone ? `${gone} empty dock${gone > 1 ? 's' : ''} taken out` : '', moved.length ? `${moved.length} dock${moved.length > 1 ? 's' : ''} slid along to clear the one before` : ''].filter(Boolean).join(', ')}. Everything else stayed where it was.${p0.built && moved.length ? " Export lists the docks that moved under What's new." : ''} ⌘Z undoes it.`);
 }
 
@@ -453,12 +484,15 @@ export function stackOn(moduleId: string, baseId: string | null) {
 
 /** Quick automatic layouts. */
 export function quickLayout(kind: 'row' | 'rows' | 'cols') {
+  const before = store.get().project;
+  if (before && hasLocks(before)) { toast('Part of the layout is locked: unlock it to lay it out automatically again, or press Auto-arrange to seat the boards that are not locked.'); return; }
   edit((p) => {
     p.panel.auto = true;
     p.panel.rowDir = kind === 'cols' ? 'v' : 'h';
     p.panel.maxRail = kind === 'row' ? 2000 : p.panel.maxRail >= 2000 ? 400 : p.panel.maxRail;
   });
   select([]);
+  if (before) receiptAfterBuild('Quick layout', before);
 }
 
 /** How a stacked board is held, and its standoff length (null: BoardDock picks it again). */

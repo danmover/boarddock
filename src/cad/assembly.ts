@@ -9,7 +9,8 @@ import { generatePanel, moveAnim } from './panelgen';
 import { leadStub, moveFx, powerFx } from './boardviz';
 import { poweredBoards } from '../model/lights';
 import { inUse, portUses } from '../model/portuse';
-import { offRackTo, plugRole, shortName } from '../model/links';
+import { offRackTo, packGoes, plugRole, shortName } from '../model/links';
+import { isPlugPack } from '../model/powerdata';
 import { dir as dirM, pt as ptM } from '../geom/mat';
 import { printability } from './export';
 
@@ -73,10 +74,20 @@ export function looseOrder(p: Project): Project {
   return { ...p, modules: out, active: Math.max(0, out.findIndex((m) => m.id === active)) };
 }
 
+/** Plug packs go last: a pack lives in an outlet and gets no holder, so the holders come first, in their own order. */
+function packsLast(p: Project): Project {
+  const out = [...p.modules.filter((m) => !isPlugPack(m.board)), ...p.modules.filter((m) => isPlugPack(m.board))];
+  if (out.every((m, i) => m === p.modules[i])) return p;
+  const active = p.modules[p.active]?.id;
+  return { ...p, modules: out, active: Math.max(0, out.findIndex((m) => m.id === active)) };
+}
+
 function generateLoose(p0: Project): GenResult {
-  const p = p0.modules.length > 1 && p0.arrange.mode === 'side' ? looseOrder(p0) : p0;
+  const p = packsLast(p0.modules.length > 1 && p0.arrange.mode === 'side' ? looseOrder(p0) : p0);
   const t0 = Date.now();
-  const mods = p.modules;
+  // the boards and boxes that get a holder (packsLast: the first n of p.modules); a plug pack is left out
+  const mods = p.modules.filter((m) => !isPlugPack(m.board));
+  const packs = p.modules.filter((m) => isPlugPack(m.board) && (p.links ?? []).some((l) => l.a.module === m.id || l.b.module === m.id));
   const n = mods.length;
   const multi = n > 1;
   const mode = multi ? p.arrange.mode : 'single';
@@ -224,7 +235,7 @@ function generateLoose(p0: Project): GenResult {
   for (const h of hanging) {
     const ref = h.ref.replace(/:2$/, ''), m = mods.find((x) => x.id === h.module), c = m?.board.comps.find((x) => x.ref === ref);
     const l = (p.links ?? []).find((q) => [q.a, q.b].some((e) => e.module === h.module && e.ref === h.ref));
-    const other = l ? (l.a.module === h.module && l.a.ref === h.ref ? l.b : l.a) : null, om = other && mods.find((x) => x.id === other.module);
+    const other = l ? (l.a.module === h.module && l.a.ref === h.ref ? l.b : l.a) : null, om = other && mods.find((x) => x.id === other.module); // (not findModule: your computer or a plug pack has no holder here, so the lead says where it goes)
     // a label only for a real lead: a cable in the app (the other holder, or off the rack), a lead you said goes there, a
     // box's own supply or mains lead. A port that is only assumed to be in use (a lone board's USB) gets a stub, no words.
     const why = m ? portUses(p, m).get(h.ref.replace(/:2$/, '')) : undefined;
@@ -238,7 +249,9 @@ function generateLoose(p0: Project): GenResult {
   if (nLinks) checks.push({ group: 'Layout', name: 'Cables', value: `${nLinks} not routed`, status: 'info', detail: 'loose holders have no rails to route cables along, so BoardDock doesn\'t route or size them, and the shopping list has no lengths: lay the boards out on your bench and measure each one. On DIN rails every cable is routed and sized.' });
   if (ghosts.some((g) => g.tag?.kind === 'rail')) steps.push({ seq: 0, text: 'Your DIN rail: each holder hooks over its top edge and clicks in at the bottom; pull the tab to take it off.' });
   if (ghosts.some((g) => g.tag?.kind === 'stand')) steps.push({ seq: 1e6 + 50, text: 'Slide the holder onto its stand post.' });
-  if (ghosts.some((g) => g.tag?.kind === 'plug')) steps.push({ seq: 1e6 + 90, text: nLinks ? 'Plug in the cables (loose holders\' cables aren\'t sized: measure each one on your bench before you buy it).' : 'Plug in the cables.' });
+  // (a plug pack has no holder: it goes straight into its outlet, its lead is its own)
+  const packText = packs.length ? `Push each plug pack into its outlet and its lead into its board: ${packs.map((m) => packGoes(p, m)).join('; ')}. Nothing goes into the wall yet.` : '';
+  if (ghosts.some((g) => g.tag?.kind === 'plug') || packText) steps.push({ seq: 1e6 + 90, text: [ghosts.some((g) => g.tag?.kind === 'plug') ? (nLinks ? 'Plug in the cables (loose holders\' cables aren\'t sized: measure each one on your bench before you buy it).' : 'Plug in the cables.') : '', packText].filter(Boolean).join(' ') });
   if (parts.some((x) => x.tag?.kind === 'cap')) steps.push({ seq: 1e6 + 100, text: 'Snap the caps over the plugs to lock them in.' });
   const ai = Math.min(p.active, outs.length - 1);
   const act = outs[ai] ?? outs.find(Boolean);
