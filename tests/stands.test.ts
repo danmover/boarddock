@@ -5,7 +5,8 @@ import { generate } from '../src/cad/assembly';
 import { TEMPLATES } from '../src/model/templates';
 import { newModule, newProject } from '../src/model/library';
 import { autoLinks } from '../src/model/links';
-import { endBlock, planStands, railI, saddle, spacer, standBoxes, STAND } from '../src/cad/railstand';
+import { endBlock, planStands, railI, railSection, saddle, spacer, standBoxes, STAND } from '../src/cad/railstand';
+import { ext } from '../src/cad/kernel';
 
 const T = (id: string) => TEMPLATES.find((t) => t.id === id)!.make();
 
@@ -21,6 +22,17 @@ describe('table stands', () => {
       }
       // the rail's section fits the end block pocket: rail at x in the pocket must not intersect the block
       expect(Math.round(railI())).toBeGreaterThan(300);
+    } finally { freeAll(); }
+  });
+
+  it('the rail slides into the end block with 0.3 mm to spare all round: a slip fit, no crush ribs that would go slack (700 N to press 0.1 mm)', async () => {
+    await initKernel();
+    try {
+      const b = endBlock();
+      // the rail's section, as it stands in the pocket, from the back wall out
+      expect(b.intersect(ext(railSection(), STAND.back, STAND.len + 2)).volume()).toBeLessThan(1e-6);
+      // and the section grown by 0.15 still clears it (the pocket's corners are rounded 0.3, which takes 0.12 of the clearance there): nothing is proud of the walls
+      expect(b.intersect(ext(railSection().offset(STAND.clr - 0.15, 'Miter'), STAND.back, STAND.len + 2)).volume()).toBeLessThan(1e-3);
     } finally { freeAll(); }
   });
 

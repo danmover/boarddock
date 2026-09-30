@@ -35,7 +35,11 @@ describe('bill of materials', () => {
     // straps: two for each box in a holder; a zip tie through each cable-tie anchor
     const hw = group(bom, 'Hardware')!.rows;
     expect(hw.filter((x) => /strap/.test(x.item)).reduce((s, x) => s + x.qty, 0)).toBe(2 * strapBoxes(p, r.report.panel).length);
-    expect(hw.find((x) => /zip tie/.test(x.item))?.qty ?? 0).toBe((r.report.features ?? []).filter((f) => f.kind === 'tie' && !f.refs?.includes('strap')).length);
+    expect(hw.find((x) => /zip tie/.test(x.item) && /anchor/.test(x.note ?? ''))?.qty ?? 0).toBe((r.report.features ?? []).filter((f) => f.kind === 'tie' && !f.refs?.includes('strap')).length);
+    // and a 2.5 mm one round each cable tag: the saddle is held on by it (nothing on the tag springs)
+    const tags = r.parts.filter((x) => x.tag?.kind === 'cabletag').reduce((s, x) => s + x.qty, 0);
+    expect(tags).toBeGreaterThan(0);
+    expect(hw.find((x) => /zip tie/.test(x.item) && /cable tag/.test(x.note ?? ''))).toMatchObject({ qty: tags, item: 'zip tie, 2.5 mm wide, 100 mm or longer' });
     expect(group(bom, 'Filament')!.rows[0].item).toMatch(/^PETG, about \d+ g$/);
     expect(group(bom, 'Tools')!.rows.map((x) => x.item)).toContain('a hacksaw and a file');
     // as a spreadsheet: a header and a row a line

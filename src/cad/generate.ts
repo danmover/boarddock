@@ -12,7 +12,7 @@ import { usedRefs } from '../model/portuse';
 import { area, bbox, centroid, compRect, extentAlong, inside, rad, rayExit, round, segDist } from '../geom/poly';
 import type { CS, MF } from './kernel';
 import { box, circle2, csLoops, cyl, ext, extCh, freeAll, K, orientedBox, poly, rect2, roundCS, sweepTZ, toMesh, unionCS, unionMF } from './kernel';
-import { buildClip, clipDims, clipSlots, hookOffset4, RAIL, railProfile } from './dinclip';
+import { buildClip, clipDims, clipSlots, HOOK, HOOK_FEA, hookMove, hookOffset4, JAW_FEA, JAW_STOP_FEA, RAIL, railProfile } from './dinclip';
 import { textCS, textWidth } from './font';
 import { computeLevels } from './levels';
 import { boardDetail, moveFx, plugDetail, plugUp } from './boardviz';
@@ -24,7 +24,7 @@ import { rectSection, roundSection, solveFrame, type FElem, type FNode } from '.
 import { bestClip, boardMass, designBow, FACE, HOLD_SHARE, holdNeed, MU, onLayer, pushTarget, RAMP, sizeClip, SLIT, spanFor, tipCover, tipFor, tipFrame, TIP_FULL, U_ARMS, U_FREE, foldOf, type BoardLoad, type BowDesign, type ClipSpec, type Leaf } from './grip';
 import { leafPlan } from './leafplan';
 import { progress } from './progress';
-import { taper } from '../fea/beamfea';
+import { CAP, capLeg, capProfile } from './plugcap';
 
 const ID = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
@@ -505,24 +505,6 @@ const CW = 1.8; // cradle side wall
 const GUARD_FLAT = 6; // widest flat roof over a guard collar's opening; wider ones get a gable
 const CC = 0.3; // plug clearance in the cradle
 /**
- * A plug cap's legs: tapered beams (`root` thick where they leave the plate, `tip` at the hook), bending in the cap's
- * profile, which prints flat: within the layers. The hook's tip stands `wall` off the cradle wall and reaches `e` mm
- * under a ledge on it (an overhang of `ledge` = wall + e), so the catch is the hook's flat top and, at rest, nothing
- * presses. Snapping on moves each leg out `e` + 0.05 mm, past the ledge's tip; the ledge is the widest of `ledges`
- * that keeps the strain (the beam's, times `kt` for the fillet at the root and the hook: 2D FEA, 1.4) under `target`.
- */
-export const CAP = { root: 1.5, tip: 0.9, wall: 0.1, gap: 0.15, ledges: [0.45, 0.4, 0.35, 0.3, 0.25], kt: 1.4, target: 0.0095, fillet: 1.2 };
-export function capLeg(L: number) {
-  let out = { ledge: 0, e: 0, move: 0, strain: 0 };
-  for (const ledge of CAP.ledges) {
-    const e = ledge - CAP.wall, move = e + 0.05;
-    out = { ledge, e, move, strain: taper(CAP.root, CAP.tip, L, move).peak * CAP.kt };
-    if (out.strain <= CAP.target) break;
-  }
-  return out;
-}
-
-/**
  * U-cradles outside the wall that carry the plug bodies. Neighbouring connectors on the same edge share walls and
  * one snap-on cap, so tightly packed plugs (like a Raspberry Pi's front edge) still get full protection.
  */
@@ -612,18 +594,7 @@ function cradleGroup(C: Ctx, g: CradleSpec[], H: HolderSettings) {
   if (!withCap) return;
   // one cap over the whole group: top plate, a pad pressing on each plug, legs with hooks at the two outer ends
   // the legs stand `gap` clear of the ledges' tips; each hook reaches in under its ledge to `wall` short of the cradle's wall
-  const { root, tip, top } = { ...CAP, top: 1.6 };
-  const hook = leg.ledge + CAP.gap - CAP.wall;
-  const gp = leg.ledge + CAP.gap;
-  const xl = tL - gp, xr = tR + gp;
-  let prof = poly([
-    [xl - tip, zHook - 1.4], [xl + hook, zHook - 0.6], [xl + hook, zHook], [xl, zHook], [xl, zPlate], [xr, zPlate], [xr, zHook], [xr - hook, zHook], [xr - hook, zHook - 0.6], [xr + tip, zHook - 1.4],
-    [xr + root, zPlate + top - 0.6], [xr + root - 0.6, zPlate + top], [xl - root + 0.6, zPlate + top], [xl - root, zPlate + top - 0.6],
-  ], 'NonZero');
-  // (fillets where each leg meets the plate: the strain would pile up in a square corner)
-  const closed = prof.offset(CAP.fillet, 'Round').offset(-CAP.fillet, 'Round');
-  prof = unionCS([prof, closed.intersect(rect2(xl - 0.1, zPlate - 2.5, xl + 2.5, zPlate)), closed.intersect(rect2(xr - 2.5, zPlate - 2.5, xr + 0.1, zPlate))]);
-  m.forEach((k, i) => { if (zPlate - plugTops[i] > 0.4) prof = prof.add(rect2(k.ti - k.halfIn + 0.4, plugTops[i] + 0.2, k.ti + k.halfIn - 0.4, zPlate + 0.01)); });
+  const prof = capProfile(tL, tR, zHook, zPlate, leg, m.flatMap((k, i) => (zPlate - plugTops[i] > 0.4 ? [[k.ti - k.halfIn + 0.4, k.ti + k.halfIn - 0.4, plugTops[i] + 0.2] as [number, number, number]] : [])));
   const mesh = prof.extrude(capL);
   const at: V2 = add(o, d, sc0 + 0.3);
   const Tm = matFromBasis([t[0], t[1], 0], [0, 0, 1], [d[0], d[1], 0], [at[0], at[1], 0]);
@@ -1668,10 +1639,10 @@ function clipEnvelope(clip: MF, d: ReturnType<typeof clipDims>, W: number): Mesh
 
 function clipChecks(C: Ctx, d: ReturnType<typeof clipDims>, tabExt: number) {
   if (C.job.dock) return;
-  const L = d.uF + d.plateT + 0.1 + 0.35 - 10.0;
-  const eps = (3 * 1.0 * 0.65) / (2 * L * L);
-  C.checks.push({ group: 'DIN clip', name: 'Holder snap hooks', value: `${(eps * 100).toFixed(2)}% strain`, status: strainStatus(C, eps), detail: `${round(L, 1)} mm hooks, 0.55 mm catch; click the holder on in any of 4 orientations` });
-  C.checks.push({ group: 'DIN clip', name: 'Release', value: 'pull the tab toward you', status: 'info', detail: `lip engagement ${d.eL} mm, travel stop after ~1.9 mm. Run the clip FEA in the Check tab for forces and strain.${tabExt > 0 ? ` Tab lengthened by ${round(tabExt, 1)} mm so it reaches past the holder edge.` : ''}` });
+  // the holder's hooks and the jaw's leaf, from the 2D FEA on the profile (tests/clip.test.ts, tests/flexures.test.ts hold these numbers)
+  const hk = hookMove();
+  C.checks.push({ group: 'DIN clip', name: 'Holder snap hooks', value: `${(HOOK_FEA * 100).toFixed(2)}% strain`, status: strainStatus(C, HOOK_FEA), detail: `four beams ${round(d.uF + d.plateT + 0.1 - HOOK.root, 1)} mm long, ${HOOK.tRoot} mm thick at their root inside the back plate and ${HOOK.tTip} mm at the barb, slits ending in full rounds; each moves ${round(hk.move, 2)} mm to click through the plate's slot and stands ${round(hk.catch, 2)} mm behind its edge once it is on, pressing on nothing; click the holder on in any of 4 orientations` });
+  C.checks.push({ group: 'DIN clip', name: 'Release', value: 'pull the tab toward you', status: 'info', detail: `lip engagement ${d.eL} mm, the lip drops ${d.travel} mm to let go, on a ${round(d.leafV[1] - d.leafV[0], 0)} mm leaf (${(JAW_FEA * 100).toFixed(1)}% strain releasing, ${(JAW_STOP_FEA * 100).toFixed(2)}% at the travel stop after ${round(d.legU - d.barEnd, 1)} mm of bar travel). Run the clip FEA in the Check tab for forces and strain.${tabExt > 0 ? ` Tab lengthened by ${round(tabExt, 1)} mm so it reaches past the holder edge.` : ''}` });
   // the rail grip: a 2D FEA of the fork gives about 0.46 N per mm of clip width in PETG, 1.1% peak (0.6% for 99%)
   const eR = MATERIALS[C.H.material].E / MATERIALS.PETG.E, Fg = 0.46 * (C.job.mount ?? C.p.mount).clipWidth * eR;
   C.checks.push({ group: 'DIN clip', name: 'Rail grip', value: `${round(Fg, 1)} N preload`, status: strainStatus(C, 0.011), detail: `a sprung pad in the rail's channel presses the rail's top wall and holds the clip down on the top flange, so it doesn't slide along the rail by itself: pushing it along takes about ${round(0.6 * Fg, 1)} N (friction 0.3). Before, it only sat on the rail, with 0.65 mm of play up and down and nothing pressing. A screw head in the rail that reaches under the grip (4.5 mm or more from the rail's middle) must be under 4.8 mm tall.` });

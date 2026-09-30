@@ -1129,8 +1129,8 @@ export function generatePanel(p: Project): GenResult {
       if (probe && ribbon != null && len > ribbon) warnings.push(`The ${probe.board.name} ribbon is ${ribbon} mm but has to run about ${Math.round(len)} mm to ${purpose.to === probe.board.name ? purpose.from : purpose.to}. Use a longer ribbon (set its length in Plugs, by the header), or put its column closer: in the back slot of that board's dock (Rails).`);
       // jumper wires past the usual 30 cm ones: the adapter is too far from its header
       if (kind === 'jumper' && len > 300) warnings.push(`The jumper wires from ${purpose.from} to ${purpose.to} have to run about ${Math.round(len)} mm, longer than the usual 30 cm ones. Put the adapter closer: in the back slot of that board's dock (drag it there in the Rails step).`);
-      // numbered tags, a hand-width from each plug: ring round the cable, flag standing up (a flat ribbon is too wide to
-      // snap a ring round: it has none)
+      // numbered tags, a hand-width from each plug: a saddle on the cable held by a zip tie, the flag standing up (a flat
+      // ribbon is too wide for a saddle: it has none)
       if (P.cableTags !== false && !flat(l)) {
         // (round the whole bundle of jumper wires, side by side 1.5 mm apart: one wire's size put the ring through the
         // outer two)
@@ -1154,7 +1154,7 @@ export function generatePanel(p: Project): GenResult {
         };
         // a hand-width from its plug, where the cable runs straight and the tag touches nothing: no holder, rail,
         // stand, board or other cable or tag. The ring and the whole flag are checked, every 2 mm, at both faces
-        const r0 = td / 2 + 0.2 + TAG.wall, sh = TAG.flagW / 2 - 0.5;
+        const r0 = td / 2 + TAG.clear + TAG.wall, sh = TAG.flagW / 2 - 0.5;
         const nk = Math.ceil((TAG.flagL - 0.6) / 2); // (the flag from its root to its tip, every 2 mm)
         const tagShape = (o: number[], t: number[], x: number[], y: number[]) => {
           const pts: number[][] = [];
@@ -1315,7 +1315,7 @@ export function generatePanel(p: Project): GenResult {
     standOut = plan.stations.map((_, i) => ({ station: i + 1, foot: [foot.get(i)?.[0] ?? 0, foot.get(i)?.[1] ?? 0, foot.get(i)?.[3] ?? 0, foot.get(i)?.[4] ?? 0] as [number, number, number, number], pieces: plan.pieces.filter((q) => q.station === i).length, combs: plan.pieces.filter((q) => q.station === i && q.lanes.length).length })).filter((s) => s.pieces);
     const combs = plan.pieces.filter((q) => q.lanes.length).length;
     if (plan.pieces.length) {
-      checks.push({ group: 'Panel', name: 'Table stands', value: `${plan.stations.length} sleepers, ${plan.pieces.length} pieces`, status: 'info', detail: `the rails stand ${STAND.H} mm off the table. Each rail end pushes ${STAND.len - STAND.back} mm into an end block (crush ribs make it a light press fit); saddles carry the rails between; spacer bars slide into the blocks' dovetails along the rail.${combs ? ` ${combs} spacer${combs > 1 ? 's carry' : ' carries'} a cable comb where a cable street crosses the sleeper: press each cable into its slot.` : ''} Every piece prints on its end, no supports. Lifting a rail end with 20 N puts about ${capStress(20).toFixed(0)} MPa in the caps over its lips (hand calculation; PETG yields near 50). Not print-tested yet.` });
+      checks.push({ group: 'Panel', name: 'Table stands', value: `${plan.stations.length} sleepers, ${plan.pieces.length} pieces`, status: 'info', detail: `the rails stand ${STAND.H} mm off the table. Each rail end pushes ${STAND.len - STAND.back} mm into an end block (a slip fit, 0.3 mm clear all round: nothing presses or wears); saddles carry the rails between; spacer bars slide into the blocks' dovetails along the rail.${combs ? ` ${combs} spacer${combs > 1 ? 's carry' : ' carries'} a cable comb where a cable street crosses the sleeper: press each cable into its slot.` : ''} Every piece prints on its end, no supports. Lifting a rail end with 20 N puts about ${capStress(20).toFixed(0)} MPa in the caps over its lips (hand calculation; PETG yields near 50). Not print-tested yet.` });
       // sag of the longest unsupported span under a 20 N press at mid-span (steel rail; aluminium sags ~2.9x more)
       const I = railI(), F = 20, L = plan.span, E = 200e3;
       const sag = (F * L ** 3) / (48 * E * I);
@@ -1398,7 +1398,7 @@ export function generatePanel(p: Project): GenResult {
   const packs = p.modules.filter((m) => isPlugPack(m.board) && !packsRouted.has(m.id) && (p.links ?? []).some((l) => l.a.module === m.id || l.b.module === m.id)).map((m) => packGoes(p, m));
   if (ghosts.some((g) => g.tag?.kind === 'plug' && g.anim?.seq === PLUG_SEQ)) steps.push({ seq: PLUG_SEQ, text: `Plug in the cables that leave the rack (supplies, screens, your computer).${packs.length ? ` Push each plug pack into its outlet and its lead into its board: ${packs.join('; ')}.` : ''} Nothing goes into the wall yet.` });
   if (parts.some((x) => x.tag?.kind === 'cap')) steps.push({ seq: CAP_SEQ, text: 'Snap the caps over the plugs to lock them in.' });
-  if (parts.some((x) => x.tag?.kind === 'cabletag')) steps.push({ seq: TAG_SEQ, text: 'Snap a numbered tag round each end of every round cable, a hand-width from the plug (a flat ribbon takes none): the numbers match the Wiring view and the shopping list.' });
+  if (parts.some((x) => x.tag?.kind === 'cabletag')) steps.push({ seq: TAG_SEQ, text: 'Set a numbered tag on each end of every round cable, a hand-width from the plug (a flat ribbon takes none), and pull a 2.5 mm zip tie tight round the cable and the tag in its groove: the numbers match the Wiring view and the shopping list.' });
   // the wall, last of all: every terminal checked and every switch off first
   const wall = ghosts.filter((g) => g.tag?.kind === 'plug' && g.anim?.seq === WALL_SEQ).map((g) => mods.get(g.tag!.module!)?.m).filter((m, i, a) => m && a.indexOf(m) === i) as Module[];
   if (wall.length || cables.some((c) => c.kind === 'mains')) {

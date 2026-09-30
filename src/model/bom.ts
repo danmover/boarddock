@@ -85,6 +85,9 @@ export function billOfMaterials(p0: Project, res: GenResult): BomGroup[] {
   // a zip tie through each cable-tie anchor (the loops of a box that takes ties instead of a strap count as anchors too)
   const ties = (res.report.features ?? []).filter((f) => f.kind === 'tie' && !f.refs?.includes('strap')).length;
   if (ties) hw.push({ qty: ties, item: 'zip tie, 2.5 to 3.6 mm wide, 100 mm or longer', note: 'one through each cable-tie anchor' });
+  // a 2.5 mm zip tie round each cable tag, in the groove of its saddle
+  const tagTies = res.parts.filter((x) => x.tag?.kind === 'cabletag').reduce((n, x) => n + x.qty, 0);
+  if (tagTies) hw.push({ qty: tagTies, item: 'zip tie, 2.5 mm wide, 100 mm or longer', note: 'one round each cable tag' });
   for (const m of p.modules) {
     const h = m.on && baseOf(p, m) !== m ? stackHardware(p, m) : null;
     if (!h) continue;
@@ -110,7 +113,7 @@ export function billOfMaterials(p0: Project, res: GenResult): BomGroup[] {
   out.push({ head: 'Filament', buy: true, rows: [{ qty: 1, item: `${material}, about ${Math.round(grams)} g`, note: grams > 900 ? `${Math.ceil(grams / 1000)} spools of 1 kg` : 'a 1 kg spool is plenty' }] });
   const tools: BomRow[] = [{ qty: 1, item: 'a 3D printer', note: 'every part prints without supports' }];
   if (rails.length || (p.layout === 'loose' && p.mount.kind === 'din')) tools.push({ qty: 1, item: 'a hacksaw and a file', note: 'to cut the rail and take the burr off' });
-  if (ties) tools.push({ qty: 1, item: 'side cutters', note: 'to trim the zip ties' });
+  if (ties || tagTies) tools.push({ qty: 1, item: 'side cutters', note: 'to trim the zip ties' });
   if (hw.some((r) => / screw$/.test(r.item))) tools.push({ qty: 1, item: 'a small screwdriver', note: 'for the standoff screws of a board bolted on another (no printed part is screwed)' });
   out.push({ head: 'Tools', rows: tools });
   return out;

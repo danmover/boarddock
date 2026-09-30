@@ -2,12 +2,15 @@
 //
 // Profile in the (u, v) plane, extruded W along the rail:  u = away from the panel, v = up along the rail face.
 //   - fixed top hook over the upper flange (3.2 mm deep, so the clip can't be lifted off by pushing it upwards)
-//   - rigid jaw with the lower lip, hung from a 0.8 mm leaf spring at the front: the jaw swings about a point level
-//     with the lip, so the lip slides straight down off the flange
+//   - rigid jaw with the lower lip, hung from a 17 mm, 0.8 mm leaf at the front (it read 2.0% at 10 mm): the lip has a
+//     long shallow ramp and holds the flange 0.9 mm by its flat face, so the flange pushes the jaw the way the leaf
+//     bends easily (the lip drops and moves back) and the release drops it 1.2 mm: 0.8% at the release, 0.7% clipping on
 //   - pull tab under the rail: pull it down OR towards you and the lip lets go; keep pulling and the device tilts off
 //   - pull-off load goes lip -> tongue -> back plate by direct contact, never through the leaf
-//   - a front leg stops the jaw after ~2 mm of lip travel so the leaf can't be over-bent
-//   - two snap hooks on the front face lock into the holder in any of 4 orientations (90 degree steps)
+//   - a front leg with a gusset up to the front block stops the jaw after 2.3 mm of bar travel (0.96% in the leaf); a
+//     plain leg that long is a spring too
+//   - four snap hooks on the front face lock into the holder in any of 4 orientations (90 degree steps): tapered beams
+//     cut into the back plate (HOOK below), 0.94% while the holder is pressed on, nothing pressing once it is
 //   - a rail grip (railGrip below) in the rail's channel presses the top wall, so the clip is preloaded against the
 //     top flange and doesn't slide along the rail on its own (it only located on the rail before: 0.2 mm of play
 //     out of the wall, 0.65 mm up and down, nothing pressing)
@@ -72,7 +75,10 @@ export interface ClipParams {
  * beam's outer face; `off`: that face's offset from the hook's middle (the plate's slot is 0.925 either side of it, so
  * the catch behind the slot's edge is `off + barb - 0.925` and the beam moves that much and 0.05 more to get through it).
  */
-export const HOOK = { root: 9.0, tRoot: 1.6, tTip: 0.7, slotIn: 1.2, slotOut: 0.6, barb: 0.45, off: 0.85 };
+export const HOOK = { root: 9.0, tRoot: 1.6, tTip: 0.7, slotIn: 1.2, slotOut: 0.6, barb: 0.4, off: 0.85 };
+/** What the 2D FEA reads (tests/clip.test.ts and tests/flexures.test.ts hold these): the hooks' peak strain as the holder is pressed on, and the jaw leaf's in a release and at its travel stop. */
+export const HOOK_FEA = 0.0095, JAW_FEA = 0.0088, JAW_STOP_FEA = 0.0098;
+
 /** How far a holder hook's beam moves to click through the plate's slot (mm), and the catch it leaves behind the edge. */
 export const hookMove = (h: typeof HOOK = HOOK) => ({ catch: h.off + h.barb - 0.925, move: h.off + h.barb - 0.925 + 0.05 });
 
@@ -90,7 +96,8 @@ export function clipDims(p: ClipParams) {
   const plateT = 2.0; // holder plate the hooks grip
   const vTop = 20.2;
   const lb = p.leafBottom ?? -29.0;
-  const tabEnd = Math.min(-32, lb - 6) - Math.max(0, p.tabExt);
+  // (the pull tab is the grip pad under the bar: the clip is no longer than it was, or the cables' routes round it change)
+  const tabEnd = -32 - Math.max(0, p.tabExt);
   const leafT = p.leafT ?? 0.8;
   const leafTop = p.leafTop ?? leafT;
   const barEnd = 12.4 + leafT; // (the bar ends at the leaf's thin end; the leaf is thicker up at its root)
@@ -123,7 +130,7 @@ export function clipProfile(p: ClipParams): { cs: CS; parts: Record<string, Loop
     topLip: [[uL0, 17.75], [uL0, 14.9], [uL0 + 0.6, 14.3], [uL - 0.5, 14.3], [uL, 17.0], [uL, 17.75]],
     leaf: [[d.leafU, d.leafV[0]], [d.leafU + leafT, d.leafV[0]], [d.leafU + d.leafTop, d.leafV[1]], [d.leafU, d.leafV[1]]],
     // the travel stop: a front leg with a gusset up to the front block (a plain 1.4 mm leg 19 mm long is a spring too)
-    leg: [[d.legU, d.legB], [uF, d.legB], [uF, -11.95], [d.legU - 0.8, -11.95]],
+    leg: [[d.legU, d.legB], [uF, d.legB], [uF, -11.95], [d.legU - 0.8, -11.95], [d.legU, -22.0]],
     // jaw: head with the lip and the pull-off tongue, a web down to the bar that hangs on the leaf
     jaw: [[d.uLL, -20.3], [12.05, -20.3], [12.05, -16.2], [d.tongueU, -16.2], [d.tongueU, -17.95], [d.uLL, -17.95]],
     web: [[5.6, d.barV[0]], [8.2, d.barV[0]], [8.2, -20.25], [5.6, -20.25]],

@@ -4,7 +4,8 @@ import type { Anim, Check, Comp, Feature, GenResult, Ghost, Module, PartOut, Pic
 import { isProbe, targetOf } from '../model/probes';
 import { bbox, round } from '../geom/poly';
 import { buildModule, computeLevels, transformMesh, type ArrangeHooks, type Job } from './generate';
-import { box, cyl, freeAll, poly, rect2, toMesh, unionMF } from './kernel';
+import { freeAll, rect2, toMesh, unionMF } from './kernel';
+import { rivetClipMesh, rivetPin, rivetStrain } from './rivet';
 import { moveAnim } from './panelgen';
 import { generateChecked } from './arrange';
 import { leadStub, moveFx, powerFx } from './boardviz';
@@ -159,9 +160,9 @@ function generateLoose(p0: Project): GenResult {
     hooks[0].rivets = pts.map(([x, y]) => [x + a.c[0], y + a.c[1]] as V2);
     hooks[1].rivets = pts.map(([x, y]) => [x + b.c[0], -y + b.c[1]] as V2);
     const grip = mods[0].holder.base + mods[1].holder.base;
-    extra.push(rivetPart(grip, pts.length));
+    extra.push(...rivetPart(grip, pts.length));
     if (p.mount.kind === 'din' && p.mount.mode === 'flat') notes.push('Back to back needs the DIN clip on an edge: switch the mount to "Standing off the rail".');
-    checks.push({ group: 'Layout', name: 'Back to back', value: `${pts.length} snap rivets`, status: 'info', detail: `bases held together by printed rivets through ${grip.toFixed(1)} mm` });
+    checks.push({ group: 'Layout', name: 'Back to back', value: `${pts.length} pin-and-clip rivets`, status: 'info', detail: `bases held together by printed rivets through ${grip.toFixed(1)} mm: a rigid pin through both, a U clip with two 11 mm arms clicked onto its neck (the arms bend within the layers, ${(rivetStrain() * 100).toFixed(2)}% strain), no snapping legs to break` });
   }
 
   const warnings0: string[] = [];
@@ -335,19 +336,16 @@ function linkPart(hb: number, wallGap: number, qty: number): PartOut {
   }
 }
 
-/** Snap rivet: head, shank through both bases, split barbed tip. Printed lying down, flat underside. */
-function rivetPart(grip: number, qty: number): PartOut {
+/** The rivet for two bases back to back: a pin (head, shank through both bases, a neck just beyond) and a U clip that clicks on the neck (rivet.ts). Both print lying down. */
+function rivetPart(grip: number, qty: number): PartOut[] {
   try {
-    const shank = grip + 0.3;
-    const along = (r0: number, r1: number, x0: number, x1: number) => cyl(0, 0, x0, x1, r0, r1, 32).rotate([0, 90, 0]);
-    let m = unionMF([along(3.2, 3.2, -1.3, 0), along(1.6, 1.6, -0.01, shank), along(1.95, 1.1, shank - 0.01, shank + 2.0)]);
-    m = m.subtract(box(shank - 2.2, -0.42, -5, shank + 2.5, 0.42, 5)); // split tip, flexes sideways in the print plane
-    m = m.subtract(box(-5, -5, -5, shank + 5, 5, -1.3)); // flat underside so it prints lying down
-    m = m.translate([0, 0, 1.3]); // ...on the bed, like every other part
-    const mesh = toMesh(m);
-    const bb = m.boundingBox();
-    void poly;
-    return { id: 'rivet', name: 'Snap rivet (back to back)', qty, mesh, toAssembly: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -400 - 1.3, 1], volume: m.volume(), size: [bb.max[0] - bb.min[0], bb.max[1] - bb.min[1], bb.max[2] - bb.min[2]], color: '#9d8cff', tag: { kind: 'rivet' } };
+    const pin = rivetPin(grip), clip = rivetClipMesh();
+    const pb = pin.boundingBox(), cb = clip.boundingBox();
+    const at = (x: number) => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, 0, -400 - 1.3, 1];
+    return [
+      { id: 'rivet', name: 'Rivet pin (back to back)', qty, mesh: toMesh(pin), toAssembly: at(0), volume: pin.volume(), size: [pb.max[0] - pb.min[0], pb.max[1] - pb.min[1], pb.max[2] - pb.min[2]], color: '#9d8cff', tag: { kind: 'rivet' } },
+      { id: 'rivet_clip', name: 'Rivet clip (back to back)', qty, mesh: toMesh(clip), toAssembly: at(40), volume: clip.volume(), size: [cb.max[0] - cb.min[0], cb.max[1] - cb.min[1], cb.max[2] - cb.min[2]], color: '#b7a9ff', tag: { kind: 'rivet' } },
+    ];
   } finally {
     freeAll();
   }

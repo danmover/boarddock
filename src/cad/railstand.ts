@@ -65,13 +65,14 @@ function blockOutline(top: number, rTop: number): CS {
   return roundCS(rect2(-w, -H, w, top), 0.8).intersect(roundCS(rect2(-w, -H - 5, w, top), rTop));
 }
 
-/** End block: the rail end slides 6 mm into a TS35-shaped pocket; crush ribs above the lips and under the crown
- * make it a light press fit. Print pose: the back wall on the bed, pocket mouth up (the top chamfer is its lead-in). */
+/** End block: the rail end slides 6 mm into a TS35-shaped pocket, `clr` clear all round and capped over the lips: a slip
+ * fit, nothing pressing and nothing to wear. (It had four crush ribs, 0.1 mm proud of the rail: a rib that takes 700 N to
+ * press 0.1 mm crushes, so the fit went slack on the second time the rail was slid in. The rail is held by the pocket and
+ * the frame the blocks make.) Print pose: the back wall on the bed, pocket mouth up (the top chamfer is its lead-in). */
 export function endBlock(): MF {
   const base = blockOutline(TOP, 2.4).subtract(windows(-2.3)).subtract(socketCut(1)).subtract(socketCut(-1));
   const c = STAND.clr;
-  const ribs = unionCS([circle2(-7, -c - 0.05, 0.45, 20), circle2(7, -c - 0.05, 0.45, 20), circle2(-15.5, 7.5 + c + 0.35, 0.45, 20), circle2(15.5, 7.5 + c + 0.35, 0.45, 20)]);
-  const pocket = unionCS([railSection().offset(c, 'Miter'), rect2(-12.5 + c, 1 + c, 12.5 - c, TOP + 1), P([[-12.5 + c, TOP - 1.2], [12.5 - c, TOP - 1.2], [13.7, TOP + 0.01], [-13.7, TOP + 0.01]])]).subtract(ribs);
+  const pocket = unionCS([railSection().offset(c, 'Miter'), rect2(-12.5 + c, 1 + c, 12.5 - c, TOP + 1), P([[-12.5 + c, TOP - 1.2], [12.5 - c, TOP - 1.2], [13.7, TOP + 0.01], [-13.7, TOP + 0.01]])]);
   const walled = roundCS(base.subtract(pocket), 0.3);
   const hat = rect2(-12.5 + c, 1 + c, 12.5 - c, TOP + 1).add(P([[-12.5 + c, TOP - 1.2], [12.5 - c, TOP - 1.2], [13.7, TOP + 0.01], [-13.7, TOP + 0.01]]));
   return unionCMF([extCh(roundCS(base.subtract(hat), 0.3), 0, STAND.back, 0, 0.4), extCh(walled, STAND.back, STAND.len, 0.6, 0)]);
@@ -107,6 +108,11 @@ function ladder(a: number, b: number, zb: number, zt: number): CS {
  * (to = null) that ends in a rounded foot at `reach`. Cable comb over the lanes if any.
  */
 export function spacer(to: number | null, lanes: { y: number; d: number }[], reach = 40): MF {
+  return extCh(spacerProfile(to, lanes, reach), 0, STAND.spacerT, 0.4, 0.4);
+}
+
+/** The spacer's profile (y across, z up), before it is extruded: what the FEA of the comb's teeth solves. */
+export function spacerProfile(to: number | null, lanes: { y: number; d: number }[], reach = 40): CS {
   const w = STAND.half, y0 = w + 0.1, y1 = to != null ? to - w - 0.1 : reach;
   const ct = combTop(lanes), zTop = -2.5;
   const cy0 = lanes.length ? Math.max(y0, Math.min(...lanes.map((l) => l.y - l.d / 2)) - 3.2) : 0, cy1 = lanes.length ? Math.min(y1, Math.max(...lanes.map((l) => l.y + l.d / 2)) + 3.2) : 0;
@@ -123,7 +129,7 @@ export function spacer(to: number | null, lanes: { y: number; d: number }[], rea
   let c = unionCS([body.subtract(win), comb ?? rect2(0, 0, 0, 0), tail(w, 1)]);
   if (to != null) c = c.add(tail(to - w, -1));
   if (comb) c = c.subtract(combCut(lanes, ct));
-  return extCh(roundCS(c, 0.25), 0, STAND.spacerT, 0.4, 0.4);
+  return roundCS(c, 0.25);
 }
 
 const unionCMF = (l: MF[]) => (l.length === 1 ? l[0] : l[0].add(l[1]));
