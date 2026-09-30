@@ -1,0 +1,3 @@
+{"version":1,"boards":[
+  {"id":"example-sensor-jtag","name":"Sensor board with JTAG (worked example)","maker":"BoardDock contributors","url":"https://github.com/danmover/boarddock/tree/main/examples","license":"MIT","size":[70,45],"plugs":3,"custom":0,"holes":4,"file":"example-sensor-jtag.json","rev":"9a4d33f598","sketch":{"outline":[[70,0],[70,45],[0,45],[0,0]],"holes":[[3.5,41.5,3.2],[66.5,41.5,3.2],[3.5,3.5,3.2],[66.5,3.5,3.2]],"parts":[[2.4,22,8.1,4.7,90,1],[48,15,7.7,7.7,0,0],[35,33,32.7,8.4,0,1],[58,40,10.3,2.1,0,1]]}}
+]}

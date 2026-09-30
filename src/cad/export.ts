@@ -51,6 +51,8 @@ function footprint(p: PartOut): { x0: number; y0: number; w: number; h: number }
 export const BRIM_OUT = 3.15, SKIRT_OUT = 3.45;
 /** Kept between a brim or skirt and the bed's edge (mm). */
 export const EDGE_CLEAR = 0.5;
+/** Least space between two parts on a plate (mm): a brim each, with EDGE_CLEAR left between them, so brims never run together. */
+export const MIN_SPACING = 2 * BRIM_OUT + EDGE_CLEAR;
 /**
  * Room kept clear round the edge of the bed (mm): the brim or skirt goes there (with EDGE_CLEAR to spare) and nothing is
  * printed right at the edge. A part that only fits without it gets a plate to itself, centred on the bed.
@@ -65,9 +67,11 @@ export function fitsBed(pl: { used: V2 }, bed: V2): boolean {
 
 /**
  * MaxRects bin packing (best short-side fit, 90 degree rotation allowed). Parts keep their print orientation.
- * Fewest plates wins; each plate becomes one STL/3MF.
+ * Fewest plates wins; each plate becomes one STL/3MF. `spacing` is never less than MIN_SPACING (projects saved with
+ * less get that much).
  */
 export function packPlates(parts: PartOut[], bed: V2, spacing: number, copies = 1, margin = EDGE): Plate[] {
+  spacing = Math.max(spacing, MIN_SPACING);
   type R = { x: number; y: number; w: number; h: number };
   const items: { part: PartOut; copy: number; w: number; h: number }[] = [];
   for (const p of parts) for (let c = 0; c < p.qty * copies; c++) { const f = footprint(p); items.push({ part: p, copy: c, w: f.w + spacing, h: f.h + spacing }); }

@@ -202,6 +202,7 @@ export interface PrinterSettings {
   maxZ?: number; // build height
   gcodeStart?: string; // start/end G-code typed in for in-app slicing; empty uses the printer's profile
   gcodeEnd?: string;
+  gcodeOk?: string[]; // the notes from src/slice/startcheck.ts (checkPlainCode) the user read and accepted for that code (ids; blocking ones can't be)
   // a Bambu Lab printer's own start, end and layer-change code, in Bambu Studio's template language, read from the
   // user's own Bambu Studio or OrcaSlicer (BoardDock doesn't ship it): filled in for every print
   // `ok`: the notes from src/slice/startcheck.ts the user read and accepted for this code (ids; blocking ones can't be)

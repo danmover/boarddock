@@ -1,7 +1,7 @@
 // Cable edits (undoable).
-import { autoLinks, KIND_NAME, numberLinks, portBudget, powerShort, sameRef, strongerPower, type PlugAt } from '../model/links';
+import { autoLinks, KIND_NAME, numberLinks, portBudget, powerShort, sameRef, strongerPower, toComputer, type PlugAt } from '../model/links';
 import { TEMPLATES } from '../model/templates';
-import { ownSupply } from '../model/boxes';
+import { dcPack, ownSupply } from '../model/boxes';
 import { addAdapters, addProbes, addUartLinks, fillWires, stackCompanions } from '../model/probes';
 import { seatCompanion, seatCompanions, type Seated } from '../cad/dockplan';
 import type { Module, PlugRef, Project } from '../model/types';
@@ -36,7 +36,8 @@ export function addLinks(only?: NonNullable<import('../model/types').Link['kind'
     if (r || add.length) {
       let stacked = false;
       autoEdit('Auto-connect', (q) => { q.links = (r ? r.links : q0.links).map((l) => fillWires(q, l)); stacked = stackCompanions(q); moved = r?.moved ?? 0; }, { texts: () => [add.length ? `Auto-connect added ${cablesText(add)}` : '', moved ? `Auto-connect moved ${moved} board${moved > 1 ? 's' : ''} to stronger ports` : ''].filter(Boolean) });
-      toast(`Connected ${add.length} cable${add.length === 1 ? '' : 's'}${moved ? ` and moved ${moved} board${moved > 1 ? 's' : ''} to stronger ports` : ''}.${stacked ? ' The probes and adapters for one board stack up behind it.' : ''} ⌘Z undoes it.`);
+      const pc = toComputer(p, add);
+      toast(`Connected ${add.length} cable${add.length === 1 ? '' : 's'}${moved ? ` and moved ${moved} board${moved > 1 ? 's' : ''} to stronger ports` : ''}.${stacked ? ' The probes and adapters for one board stack up behind it.' : ''}${pc ? ` ${pc}` : ''} ⌘Z undoes it.`);
       return;
     }
   }
@@ -48,7 +49,8 @@ export function addLinks(only?: NonNullable<import('../model/types').Link['kind'
   let stacked = false;
   watchRelayout();
   autoEdit('Auto-connect', (q) => { q.links = numberLinks([...(q.links ?? []), ...add]).map((l) => fillWires(q, l)); stacked = stackCompanions(q); seatCompanions(q); }, { texts: () => [`Auto-connect added ${cablesText(add)}`] });
-  toast(`Connected ${add.length} cable${add.length > 1 ? 's' : ''}.${stacked ? ' The probes and adapters for one board stack up behind it.' : ''} ${left()} ⌘Z undoes it.`);
+  const pc = toComputer(p, add);
+  toast(`Connected ${add.length} cable${add.length > 1 ? 's' : ''}.${stacked ? ' The probes and adapters for one board stack up behind it.' : ''}${pc ? ` ${pc}` : ''} ${left()} ⌘Z undoes it.`);
 }
 
 /**
@@ -85,11 +87,17 @@ export function rewire() {
 
 /** Add an accessory from the library (a charger, a hub, a switch) and connect what it was added for. */
 export function addAccessory(id: string, count = 1) {
-  // own:<box>: the plug pack a switch or powered hub came with, for its DC input
+  // own:<box>: the plug pack a switch or powered hub came with, for its DC input (own:<box>,<box>: for several)
   if (id.startsWith('own:')) {
-    const box = store.get().project?.modules.find((m) => m.id === id.slice(4)), b = box && ownSupply(box);
-    if (!b) return;
-    putBoards([b], false, { stay: true });
+    const bs = id.slice(4).split(',').flatMap((x) => { const box = store.get().project?.modules.find((m) => m.id === x), b = box && ownSupply(box); return b ? [b] : []; });
+    if (!bs.length) return;
+    putBoards(bs, false, { stay: true });
+    addLinks(undefined, true);
+    return;
+  }
+  // dcpack:<volts>: a plug pack at that voltage, for a board whose DC jack takes less than 12 V
+  if (id.startsWith('dcpack:')) {
+    putBoards(Array.from({ length: count }, () => dcPack(Number(id.slice(7)))), false, { stay: true });
     addLinks(undefined, true);
     return;
   }
