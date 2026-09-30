@@ -20,6 +20,8 @@ import { WiringView } from './ui/WiringView';
 import { rackCount, rackName } from './model/diff';
 import { summarizeChecks } from './model/checkSummary';
 import { FocusTools } from './ui/ViewTools';
+import { CommandPalette, PaletteButton } from './ui/CommandPalette';
+import { VIEW_DIRS } from './ui/commands';
 import { CableKey } from './ui/CableKey';
 
 const STEPS: { id: Step; label: string; title: string; text: string }[] = [
@@ -129,6 +131,9 @@ export function App() {
     toast(`Saved ${file}.${p.name?.trim() ? '' : ' Name the rack on Start to save it under its own name.'}`);
   };
 
+  const toggleTheme = () => { const t = theme === 'dark' ? 'light' : 'dark'; store.set({ theme: t }); try { localStorage.setItem('boarddock.theme', t); } catch { /* private mode */ } };
+  const newRack = () => { if (confirm('Start a new rack? This one stays only in the project file you saved (⌘S saves it now).')) closeProject(); };
+
   const stats = useMemo(() => {
     if (!result || !project) return null;
     const dens = MATERIALS[activeModule(project).holder.material].density;
@@ -167,6 +172,7 @@ export function App() {
       )}
       {keys && <Shortcuts onClose={() => setKeys(false)} />}
       <AddBoardSheet />
+      <CommandPalette ctx={{ steps: STEPS, goStep, saveProject, newRack, look, toggleTheme, showKeys: () => setKeys(true) }} />
       <header className="topbar">
         <div className="brand"><Mark className="mark" /><span className="word">Board<b>Dock</b></span></div>
         {project && <span className="projname" title={project.name ? rackCount(project) : 'Name this rack on the Start step'}>{project.name?.trim() || (project.modules.length > 1 ? rackCount(project) : activeModule(project).board.name)}</span>}
@@ -189,7 +195,7 @@ export function App() {
               <button className="iconbtn" disabled={!canUndo} onClick={undo} title="Undo (⌘Z)"><Icon d={I.undo} /></button>
               <button className="iconbtn" disabled={!canRedo} onClick={redo} title="Redo (⇧⌘Z)"><Icon d={I.redo} /></button>
               <button className="iconbtn" onClick={saveProject} title="Save project (⌘S)"><Icon d={I.save} /></button>
-              <button className="iconbtn" onClick={() => { if (confirm('Start a new rack? This one stays only in the project file you saved (⌘S saves it now).')) closeProject(); }} title="New rack"><Icon d={I.newdoc} /></button>
+              <button className="iconbtn" onClick={newRack} title="New rack"><Icon d={I.newdoc} /></button>
               {/* on a phone Redo, Save and New rack have no room in the bar: they live in this menu */}
               <details className="phonemenu" onClick={(e) => { if ((e.target as HTMLElement).tagName === 'BUTTON') (e.currentTarget as HTMLDetailsElement).open = false; }}>
                 <summary className="iconbtn" title="More" aria-label="More">⋯</summary>
@@ -202,7 +208,8 @@ export function App() {
               </details>
             </>
           )}
-          <button className="iconbtn" onClick={() => { const t = theme === 'dark' ? 'light' : 'dark'; store.set({ theme: t }); try { localStorage.setItem('boarddock.theme', t); } catch { /* private mode */ } }} title="Light / dark"><Icon d={theme === 'dark' ? I.sun : I.moon} /></button>
+          <PaletteButton />
+          <button className="iconbtn" onClick={toggleTheme} title="Light / dark"><Icon d={theme === 'dark' ? I.sun : I.moon} /></button>
         </div>
       </header>
       <div className="main">
@@ -236,11 +243,11 @@ export function App() {
                     layers={layers} sel={sel} onPick={(it, add) => (it ? select([it], add ? 'toggle' : 'set') : !add && select([]))} label={(it) => describe(store.get().project!, it)} />
                   <div className="tools">
                     <div className="tgroup floating">
-                      <button onClick={() => look([0.6, -0.8, 0.62])} title="Isometric"><Icon d={I.cube} /></button>
-                      <button onClick={() => look([0, -0.02, 1])} title="From above">Top</button>
-                      <button onClick={() => look([0, -1, 0.22])} title="From the front">Front</button>
-                      <button onClick={() => look([1, 0, 0.22])} title="From the side">Side</button>
-                      <button onClick={() => look([-0.5, 0.6, -0.65])} title="From below">Under</button>
+                      <button onClick={() => look([...VIEW_DIRS.iso])} title="Isometric"><Icon d={I.cube} /></button>
+                      <button onClick={() => look([...VIEW_DIRS.top])} title="From above">Top</button>
+                      <button onClick={() => look([...VIEW_DIRS.front])} title="From the front">Front</button>
+                      <button onClick={() => look([...VIEW_DIRS.side])} title="From the side">Side</button>
+                      <button onClick={() => look([...VIEW_DIRS.under])} title="From below">Under</button>
                     </div>
                     {view === 'assembly' && <div className="tgroup floating"><button className={showLayers ? 'on' : ''} onClick={() => setShowLayers(!showLayers)} title="Show or hide kinds of parts"><Icon d={I.layers} /> Layers</button></div>}
                     {view === 'assembly' && <FocusTools />}
@@ -330,7 +337,7 @@ const KEYS: [string, string][] = [
   ['⌘Z / ⇧⌘Z', 'undo / redo'], ['⌘S', 'save the project file'], ['Click, Shift-click', 'select in 3D, add to the selection'],
   ['Delete', 'remove the selection'], ['Esc', 'clear the selection'], ['Double-click', 'fly to a part'],
   ['R / ⇧R', 'turn the selected docks (Rails view)'], ['F', 'swap front and back boards (Rails view)'], ['Arrows, ⇧Arrows', 'move docks 1 / 10 mm (Rails view)'],
-  ['A', 'add a board, from any step'], ['⌘A', 'select every dock (Rails view)'], ['1 – 7', 'go to that step'], ['?', 'show or hide this list'],
+  ['A', 'add a board, from any step'], ['⌘A', 'select every dock (Rails view)'], ['1 – 7', 'go to that step'], ['⌘K', 'the command palette: every main action, searchable'], ['?', 'show or hide this list'],
 ];
 // the board editor's own keys (they work while nothing is selected there)
 const EDITOR_KEYS: [string, string][] = [
