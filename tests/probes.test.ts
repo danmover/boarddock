@@ -197,7 +197,7 @@ describe('probe rack', () => {
     expect(w.split('\n').filter((x) => /Nothing clips|runs into/.test(x))).toEqual([]);
     // J-Links are boards in holders of their own now: clipped in, no slots, no towers
     expect(r.report.checks.filter((c) => c.name === 'Slot' || c.name === 'Stacking towers')).toEqual([]);
-    expect(r.report.checks.filter((c) => c.name === 'Spring clips (2)' && /^J-Link/.test(c.group)).length).toBe(3);
+    expect(r.report.checks.filter((c) => /^Spring clips \([2-9]\)$/.test(c.name) && /^J-Link/.test(c.group)).length).toBe(3); // (as many as each needs: 3 on a J-Link now)
     const ribbons = r.report.cables!.filter((c) => c.kind === 'debug');
     expect(ribbons.length).toBe(3);
     for (const c of ribbons) { expect(c.buy).toBe(0); expect(c.ribbon).toBe(200); expect(c.clash).toBeUndefined(); }

@@ -25,6 +25,7 @@ export function lockSets(p: Project): { docks: Set<string>; rails: Set<string> }
 export interface Packed { module: string; where: 'slot' | 'gap' | 'end' | 'rail' | 'beside'; mount: string; rail: string | null }
 
 const MARGIN = 8, PAD = 10, PAD_SLOT = 0, GROW = 8; // (PAD: room kept round a new dock beyond what is worked out for it: the real holders are a little bulkier)
+const CLIPS = 1.5; // (and across: the spring clips and hairpins stand up to 0.8 mm out past the holder's wall, which the worked-out room leaves out)
 
 /**
  * Place every board that is on no rail. `rep`: the last build's layout, to know where everything is (without it a board
@@ -136,7 +137,7 @@ export function packNew(p: Project, rep: PanelReport | null): Packed[] {
         const origin: [number, number] = [alongOf(r) + rm.at, acrossOf(r)];
         const ext = seatGeo(p, m, k, w.edge as 'top', w.t, undefined, railDir(r), undefined, false).ext;
         // (it may stand out past the dock's own footprint: not into a neighbour)
-        const me: [number, number, number, number] = [origin[0] + ext[0] - PAD_SLOT, origin[1] + ext[2], origin[0] + ext[1] + PAD_SLOT, origin[1] + ext[3]];
+        const me: [number, number, number, number] = [origin[0] + ext[0] - PAD_SLOT - CLIPS, origin[1] + ext[2] - CLIPS, origin[0] + ext[1] + PAD_SLOT + CLIPS, origin[1] + ext[3] + CLIPS];
         if (!free(me, mt.id, 6)) continue;
         offer(cost(m, w.g, origin, w.loss, 0, mt.id) - 40, () => {
           const was = { slot: mt.slots[k], box: boxes.get(mt.id), info: { ...rm } };
@@ -163,7 +164,7 @@ export function packNew(p: Project, rep: PanelReport | null): Packed[] {
           const atPos = s - u0 - alongOf(r);
           const origin: [number, number] = [alongOf(r) + atPos, acrossOf(r)];
           if (atPos + u0 < end0 - 0.01) continue;
-          const me: [number, number, number, number] = [origin[0] + u0, origin[1] + w.g.ext[2], origin[0] + u1, origin[1] + w.g.ext[3]];
+          const me: [number, number, number, number] = [origin[0] + u0, origin[1] + w.g.ext[2] - CLIPS, origin[0] + u1, origin[1] + w.g.ext[3] + CLIPS];
           if (!free(me)) continue;
           const need = atPos + u1 + end0;
           const extra = Math.max(0, need - len);
