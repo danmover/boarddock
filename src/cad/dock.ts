@@ -129,17 +129,26 @@ const SHOE_JAW = [[17.7, 3.9], [20.6, 3.9], [21.9, 5.2], [21.9, 33.4], [21.5, 34
 // (Measured in the DIN clip review: the hub's open edge was 0.09 mm from the neck, which prints as one piece, and
 // nothing held the lever on along the pin. The neck was 1.0 mm with a notch at its root, where about 13 N on the pad,
 // once the jaw is at its stop, reached the strain limit; now it tapers from 1.8 mm, filleted into a wider tower: 28 N.)
-// `open`: the hub's opening, degrees; `bead`: how far the bead stands off the pin.
-export const SHOE_LEVER = { pivot: [13.4, 39.2] as V2, pad: [24.6, 28.8] as V2, top: 41.0, hook: 22.3, stopGap: 2.0, open: [-118, -39] as V2, bead: 0.6 };
+// The hub's open edge on the neck's side is the lift stop: it meets the neck's left face after about 6 degrees (the pad
+// 1.5 mm up), where it used to have 13.5 degrees (3 mm) before it did. Its gap to the neck can't be less than the
+// print gap, so the edge slants: 0.35 mm off the neck at the pin, and closer out at the ring's rim.
+// `open`: the hub's opening, degrees, its edge on the neck's side at the pin's clearance (r 2.05) and the other edge;
+// `stop`: where that first edge is at the ring's rim (r 3.55); `bead`: how far the bead stands off the pin.
+export const SHOE_LEVER = { pivot: [13.4, 39.2] as V2, pad: [24.6, 28.8] as V2, top: 41.0, hook: 22.3, stopGap: 2.0, open: [-116, -39] as V2, stop: -110.5, bead: 0.6 };
 const TOWER = [[11.2, 22.9], [13.9, 22.9], [13.9, 34.5], [11.8, 34.5], [11.2, 33.9]];
 const NECK = [[12.1, 34.2], [13.9, 34.2], [13.9, 38.2], [12.9, 38.2], [12.9, 37.3]];
 
 /** The rail release lever (y, z), a separate island printed in place round the tower's pin. */
 export function leverProfile(): CS {
-  const [py, pz] = SHOE_LEVER.pivot, [a0, a1] = SHOE_LEVER.open;
+  const [py, pz] = SHOE_LEVER.pivot, [a0, a1] = SHOE_LEVER.open, at = (r: number, deg: number): V2 => [py + r * Math.cos((deg * Math.PI) / 180), pz + r * Math.sin((deg * Math.PI) / 180)];
   const ring = circle2(py, pz, 3.55, 64).subtract(circle2(py, pz, 2.05, 48));
-  const sec: V2[] = [[py, pz]];
-  for (let i = 0; i <= 20; i++) { const a = ((a0 + ((a1 - a0) * i) / 20) * Math.PI) / 180; sec.push([py + 7 * Math.cos(a), pz + 7 * Math.sin(a)]); }
+  // the opening: its neck-side edge is the line from the pin's clearance to the ring's rim, run on past both
+  const A = at(2.05, a0), B = at(3.55, SHOE_LEVER.stop), L = Math.hypot(B[0] - A[0], B[1] - A[1]);
+  const e0: V2 = [A[0] - ((B[0] - A[0]) / L) * 1.5, A[1] - ((B[1] - A[1]) / L) * 1.5], e1: V2 = [B[0] + ((B[0] - A[0]) / L) * 3, B[1] + ((B[1] - A[1]) / L) * 3];
+  const ae = (Math.atan2(e1[1] - pz, e1[0] - py) * 180) / Math.PI;
+  const sec: V2[] = [e0, e1];
+  for (let i = 1; i <= 20; i++) sec.push(at(7, ae + ((a1 - ae) * i) / 20));
+  sec.push(at(1.5, a1));
   const hub = ring.subtract(poly(sec, 'NonZero'));
   const arm = roundCS(rect2(15.6, 37.8, 28.8, 40.4), 0.9);
   const hook = roundCS(rect2(22.3, 30.6, 24.3, 38.8), 0.7);

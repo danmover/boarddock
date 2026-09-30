@@ -13,6 +13,7 @@ export interface Mesh2D {
   nNodes: number;
   nodeXY: Float64Array;
   en: Int32Array; // 4 node ids per element (CCW from bottom-left)
+  w?: Float32Array; // per element: the fraction of it the outline covers (stiffness scale)
 }
 
 function pointInLoops(x: number, y: number, loops: Loop[]): boolean {
@@ -26,14 +27,34 @@ function pointInLoops(x: number, y: number, loops: Loop[]): boolean {
   return c;
 }
 
-/** Rasterise polygons (even-odd) into square elements of size h; an element is solid if its centre is inside. */
-export function meshPolygons(loops: Loop[], h: number): Mesh2D {
+/**
+ * Rasterise polygons (even-odd) into square elements of size h. The grid sits on multiples of h, so it does not move
+ * when the outline's bounds do (adding geometry elsewhere used to shift the origin and the peaks by about 7%).
+ * An element the outline only cuts through is kept with the share of it the outline covers (4 x 4 samples) as its
+ * stiffness weight, so a thin wall is as thick as it is drawn, whichever way the grid falls on it (a 0.85 mm beam on a
+ * 0.1 mm grid was 8 or 9 pixels thick, and its stiffness moved by a third with the grid's phase). `phase`: shifts the
+ * grid by that fraction of h (for testing).
+ */
+export function meshPolygons(loops: Loop[], h: number, phase: [number, number] = [0, 0]): Mesh2D {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const l of loops) for (const [x, y] of l) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
-  x0 -= h; y0 -= h;
+  x0 = (Math.floor(x0 / h + 1e-9) - 1 + phase[0]) * h; y0 = (Math.floor(y0 / h + 1e-9) - 1 + phase[1]) * h;
   const nx = Math.ceil((x1 - x0) / h) + 1, ny = Math.ceil((y1 - y0) / h) + 1;
-  const act: number[] = [];
-  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) if (pointInLoops(x0 + (i + 0.5) * h, y0 + (j + 0.5) * h, loops)) act.push(i + j * nx);
+  const act: number[] = [], wts: number[] = [], NS = 4, W = nx + 1;
+  const inn = new Uint8Array(W * (ny + 1));
+  for (let j = 0; j <= ny; j++) for (let i = 0; i <= nx; i++) inn[i + j * W] = pointInLoops(x0 + i * h, y0 + j * h, loops) ? 1 : 0;
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+    const g = i + j * W;
+    let f = 1;
+    if (inn[g] + inn[g + 1] + inn[g + W] + inn[g + W + 1] < 4) {
+      let c = 0;
+      for (let b = 0; b < NS; b++) for (let a = 0; a < NS; a++) if (pointInLoops(x0 + (i + (a + 0.5) / NS) * h, y0 + (j + (b + 0.5) / NS) * h, loops)) c++;
+      f = c / (NS * NS);
+      if (f < 0.05) continue;
+      if (f > 0.97) f = 1;
+    }
+    act.push(i + j * nx); wts.push(f);
+  }
   const node = new Int32Array((nx + 1) * (ny + 1)).fill(-1);
   const elems = Int32Array.from(act);
   const en = new Int32Array(elems.length * 4);
@@ -45,7 +66,28 @@ export function meshPolygons(loops: Loop[], h: number): Mesh2D {
   });
   const nodeXY = new Float64Array(nNodes * 2);
   for (let g = 0; g < node.length; g++) if (node[g] >= 0) { nodeXY[node[g] * 2] = x0 + (g % (nx + 1)) * h; nodeXY[node[g] * 2 + 1] = y0 + Math.floor(g / (nx + 1)) * h; }
-  return { h, x0, y0, nx, ny, elems, node, nNodes, nodeXY, en };
+  return { h, x0, y0, nx, ny, elems, node, nNodes, nodeXY, en, w: Float32Array.from(wts) };
+}
+
+/**
+ * Strain per element averaged over its 3 x 3 neighbourhood (weighted by how much of each the outline covers): a pixel
+ * corner on a fillet or a notch reads up to twice the true strain and jumps with the grid, the average does not.
+ */
+export function smoothStrain(m: Mesh2D, eps: ArrayLike<number>): Float64Array {
+  const cell = new Int32Array(m.nx * m.ny).fill(-1), out = new Float64Array(m.elems.length);
+  m.elems.forEach((g, k) => { cell[g] = k; });
+  for (let k = 0; k < m.elems.length; k++) {
+    const i = m.elems[k] % m.nx, j = (m.elems[k] / m.nx) | 0;
+    let s = 0, ws = 0;
+    for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+      const a = i + di, b = j + dj;
+      if (a < 0 || b < 0 || a >= m.nx || b >= m.ny) continue;
+      const q = cell[a + b * m.nx];
+      if (q >= 0) { const w = m.w ? m.w[q] : 1; s += w * eps[q]; ws += w; }
+    }
+    out[k] = s / ws;
+  }
+  return out;
 }
 
 const GP = [-1 / Math.sqrt(3), 1 / Math.sqrt(3)];
@@ -151,28 +193,73 @@ export function assemble2D(m: Mesh2D, Ke: Float64Array): System2D {
     }
   }
   for (let e = 0; e < m.elems.length; e++) {
-    const ids = [m.en[e * 4], m.en[e * 4 + 1], m.en[e * 4 + 2], m.en[e * 4 + 3]];
+    const ids = [m.en[e * 4], m.en[e * 4 + 1], m.en[e * 4 + 2], m.en[e * 4 + 3]], we = m.w ? m.w[e] : 1;
     for (let p = 0; p < 4; p++) {
       const a = ids[p], ga = gridOf[a];
       for (let q = 0; q < 4; q++) {
         const b = ids[q], gb = gridOf[b];
         const di = (gb % W) - (ga % W), dj = ((gb / W) | 0) - ((ga / W) | 0);
         const s = slot[a * 9 + (dj + 1) * 3 + (di + 1)];
-        for (let r = 0; r < 2; r++) for (let c = 0; c < 2; c++) val[rowPtr[2 * a + r] + 2 * s + c] += Ke[(2 * p + r) * 8 + 2 * q + c];
+        for (let r = 0; r < 2; r++) for (let c = 0; c < 2; c++) val[rowPtr[2 * a + r] + 2 * s + c] += we * Ke[(2 * p + r) * 8 + 2 * q + c];
       }
     }
   }
   return { rowPtr, col, val, n };
 }
 
-/** Preconditioned CG on the free DOFs (fixed = 1 means clamped). Jacobi preconditioner. */
+/**
+ * Incomplete Cholesky (no fill-in) of the free DOFs, for the conjugate gradient below: A is about L Lt on A's own
+ * pattern. It takes a third of the iterations Jacobi does on a shoe that is held only at its rail contacts, and it
+ * keeps going where the diagonal alone crawls. `shift` adds to the diagonal until the factorisation holds up.
+ */
+function ic0(S: System2D, fixed: Uint8Array): ((r: Float64Array, z: Float64Array) => void) | null {
+  const n = S.n, rp = new Int32Array(n + 1);
+  for (let i = 0; i < n; i++) {
+    let c = 0;
+    if (!fixed[i]) for (let k = S.rowPtr[i]; k < S.rowPtr[i + 1]; k++) { const j = S.col[k]; if (j < i && !fixed[j]) c++; }
+    rp[i + 1] = rp[i] + c;
+  }
+  const lc = new Int32Array(rp[n]), lv = new Float64Array(rp[n]), a = new Float64Array(rp[n]), diag = new Float64Array(n), ad = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    if (fixed[i]) { ad[i] = 1; continue; }
+    const row: [number, number][] = [];
+    for (let k = S.rowPtr[i]; k < S.rowPtr[i + 1]; k++) { const j = S.col[k]; if (j === i) ad[i] = S.val[k]; else if (j < i && !fixed[j]) row.push([j, S.val[k]]); }
+    row.sort((u, v) => u[0] - v[0]);
+    row.forEach(([j, v], q) => { lc[rp[i] + q] = j; a[rp[i] + q] = v; });
+  }
+  for (const shift of [0, 0.02, 0.1, 0.3, 1]) {
+    let ok = true;
+    for (let i = 0; i < n && ok; i++) {
+      if (fixed[i]) { diag[i] = 1; continue; }
+      let dsum = 0;
+      for (let k = rp[i]; k < rp[i + 1]; k++) {
+        const j = lc[k];
+        let sum = a[k], p = rp[i], q = rp[j];
+        while (p < k && q < rp[j + 1]) { const cp = lc[p], cq = lc[q]; if (cp === cq) { sum -= lv[p] * lv[q]; p++; q++; } else if (cp < cq) p++; else q++; }
+        lv[k] = sum / diag[j];
+        dsum += lv[k] * lv[k];
+      }
+      const d = ad[i] * (1 + shift) - dsum;
+      if (!(d > 1e-10 * ad[i])) ok = false; else diag[i] = Math.sqrt(d);
+    }
+    if (!ok) continue;
+    return (r, z) => {
+      for (let i = 0; i < n; i++) { let s = r[i]; for (let k = rp[i]; k < rp[i + 1]; k++) s -= lv[k] * z[lc[k]]; z[i] = s / diag[i]; }
+      for (let i = n - 1; i >= 0; i--) { z[i] /= diag[i]; const zi = z[i]; for (let k = rp[i]; k < rp[i + 1]; k++) z[lc[k]] -= lv[k] * zi; }
+    };
+  }
+  return null;
+}
+
+/** Preconditioned CG on the free DOFs (fixed = 1 means clamped). Incomplete Cholesky, or Jacobi if that breaks down. */
 export function pcg(S: System2D, f: Float64Array, fixed: Uint8Array, tol = 1e-7, maxIt = 40000, onProgress?: (it: number, res: number) => void) {
   const n = S.n, x = new Float64Array(n), r = new Float64Array(n), z = new Float64Array(n), p = new Float64Array(n), q = new Float64Array(n);
-  const dinv = new Float64Array(n);
+  const dinv = new Float64Array(n), ic = ic0(S, fixed);
   for (let i = 0; i < n; i++) {
     for (let k = S.rowPtr[i]; k < S.rowPtr[i + 1]; k++) if (S.col[k] === i) dinv[i] = 1 / S.val[k];
     r[i] = fixed[i] ? 0 : f[i];
   }
+  const prec = () => { if (ic) ic(r, z); else for (let i = 0; i < n; i++) z[i] = r[i] * dinv[i]; };
   const mv = (v: Float64Array, out: Float64Array) => {
     for (let i = 0; i < n; i++) {
       if (fixed[i]) { out[i] = 0; continue; }
@@ -182,7 +269,8 @@ export function pcg(S: System2D, f: Float64Array, fixed: Uint8Array, tol = 1e-7,
     }
   };
   let rz = 0, bn = 0;
-  for (let i = 0; i < n; i++) { z[i] = r[i] * dinv[i]; p[i] = z[i]; rz += r[i] * z[i]; bn += r[i] * r[i]; }
+  prec();
+  for (let i = 0; i < n; i++) { p[i] = z[i]; rz += r[i] * z[i]; bn += r[i] * r[i]; }
   bn = Math.sqrt(bn) || 1;
   let it = 0, res = 1;
   for (; it < maxIt; it++) {
@@ -195,7 +283,8 @@ export function pcg(S: System2D, f: Float64Array, fixed: Uint8Array, tol = 1e-7,
     res = Math.sqrt(rr) / bn;
     if (res < tol) break;
     let rz2 = 0;
-    for (let i = 0; i < n; i++) { z[i] = r[i] * dinv[i]; rz2 += r[i] * z[i]; }
+    prec();
+    for (let i = 0; i < n; i++) rz2 += r[i] * z[i];
     const b = rz2 / rz;
     rz = rz2;
     for (let i = 0; i < n; i++) p[i] = z[i] + b * p[i];
