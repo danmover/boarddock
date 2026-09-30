@@ -356,8 +356,11 @@ export function generatePanel(p: Project): GenResult {
     let cursor = margin;
     // each box (hub, charger) comes right after the boards it feeds (dockplan orders them so), on the same rail when
     // it fits: their cables stay short
+    // (the planner's rows: a new row where its hint changes, as well as where the rail is full)
+    let hint: number | undefined;
     for (const pl of placed) {
-      if (row.length && cursor + (pl.hi - pl.lo) > P.maxRail - margin) { rows.push(row); row = []; cursor = margin; }
+      if (row.length && (cursor + (pl.hi - pl.lo) > P.maxRail - margin || (pl.mt.row != null && hint != null && pl.mt.row !== hint))) { rows.push(row); row = []; cursor = margin; }
+      hint = pl.mt.row;
       pl.mt.at = cursor - pl.lo;
       cursor = pl.mt.at + pl.hi + gap;
       row.push(pl);

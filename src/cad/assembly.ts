@@ -5,7 +5,8 @@ import { isProbe, targetOf } from '../model/probes';
 import { bbox, round } from '../geom/poly';
 import { buildModule, computeLevels, transformMesh, type ArrangeHooks, type Job } from './generate';
 import { box, cyl, freeAll, poly, rect2, toMesh, unionMF } from './kernel';
-import { generatePanel, moveAnim } from './panelgen';
+import { moveAnim } from './panelgen';
+import { generateChecked } from './arrange';
 import { leadStub, moveFx, powerFx } from './boardviz';
 import { poweredBoards } from '../model/lights';
 import { inUse, portUses } from '../model/portuse';
@@ -45,7 +46,7 @@ export function mergeNotes(warnings: string[], names: string[]): string[] {
 }
 
 export function generate(p: Project): GenResult {
-  const r = p.layout === 'panel' ? generatePanel(p) : generateLoose(p);
+  const r = p.layout === 'panel' ? generateChecked(p) : generateLoose(p);
   r.report.warnings = mergeNotes(r.report.warnings, p.modules.map((m) => m.board.name));
   // printability of every distinct part, in its print pose (cached with the mesh)
   const seen = new Set<string>();
