@@ -285,15 +285,19 @@ export function spreadCrossings(items: { route: Route; d: number; zc: number }[]
   if (runs.length < 2) return;
   const lo = (q: Run) => Math.min(q.vc, q.vl), hi = (q: Run) => Math.max(q.vc, q.vl);
   const pitch = (p: Run, q: Run) => p.r + q.r + gap;
-  // clusters: runs that share some of v and are closer in u than the two are wide
-  const parent = runs.map((_, k) => k);
-  const find = (k: number): number => (parent[k] === k ? k : (parent[k] = find(parent[k])));
-  for (let p = 0; p < runs.length; p++) for (let q = p + 1; q < runs.length; q++) {
-    if (runs[p].n === runs[q].n) continue;
-    if (Math.min(hi(runs[p]), hi(runs[q])) - Math.max(lo(runs[p]), lo(runs[q])) > 3 && Math.abs(runs[p].u - runs[q].u) < pitch(runs[p], runs[q])) parent[find(p)] = find(q);
-  }
-  const groups = new Map<number, number[]>();
-  runs.forEach((_, k) => { const g = find(k); (groups.get(g) ?? groups.set(g, []).get(g)!).push(k); });
+  // clusters: runs that share some of v and are closer in u than the two are wide (and a little more, so that a run
+  // moved over does not land on one that was clear before): regrouped from where they lie now, a few times
+  const clusters = () => {
+    const parent = runs.map((_, k) => k);
+    const find = (k: number): number => (parent[k] === k ? k : (parent[k] = find(parent[k])));
+    for (let p = 0; p < runs.length; p++) for (let q = p + 1; q < runs.length; q++) {
+      if (runs[p].n === runs[q].n) continue;
+      if (Math.min(hi(runs[p]), hi(runs[q])) - Math.max(lo(runs[p]), lo(runs[q])) > 3 && Math.abs(runs[p].x - runs[q].x) < pitch(runs[p], runs[q]) + 8) parent[find(p)] = find(q);
+    }
+    const groups = new Map<number, number[]>();
+    runs.forEach((_, k) => { const g = find(k); (groups.get(g) ?? groups.set(g, []).get(g)!).push(k); });
+    return groups;
+  };
   // the slant that eases a run over to x: the column stays, the run starts a little way along
   const slant = (q: Run, x: number) => [x, q.vc + Math.sign(q.vl - q.vc) * Math.min(Math.abs(q.vl - q.vc) * 0.6, 1.2 * Math.abs(x - q.u) + 6), items[q.n].zc];
   // where a run may lie: at its height, clear of everything standing there along its stretch of v and along its slant
@@ -302,12 +306,12 @@ export function spreadCrossings(items: { route: Route; d: number; zc: number }[]
     return !obs.some((o) => o.box[2] < zc + q.r - 0.2 && o.box[5] > zc - q.r && ((o.box[1] < hi(q) - 1 && o.box[4] > lo(q) + 1 && o.box[0] < x + q.r + 0.3 && o.box[3] > x - q.r - 0.3) || (x !== q.u && segInBox(from, s, o.box, q.r + 0.3))));
   };
   const STEP = 0.5, REACH = 60;
-  for (const g of groups.values()) {
+  let moved = true;
+  for (let pass = 0; pass < 3 && moved; pass++) for (const g of (moved = false, clusters()).values()) {
     if (g.length < 2) continue;
-    const rs = g.map((k) => runs[k]).sort((p, q) => p.u - q.u || lo(p) - lo(q));
+    const rs = g.map((k) => runs[k]).sort((p, q) => p.x - q.x || lo(p) - lo(q));
     // least total move with every neighbour a pitch apart, over the positions where the cable can lie
     const cand = rs.map((q) => { const c: number[] = []; for (let s = -REACH; s <= REACH; s += STEP) if (free(q, q.u + s)) c.push(q.u + s); return c; });
-    if ((globalThis as any).__dbgOn) ((globalThis as any).__dbgLog ??= []).push(`group ${rs.map((q) => `n${q.n}${q.head ? 'H' : 'T'} u=${q.u.toFixed(1)} v=${lo(q).toFixed(0)}..${hi(q).toFixed(0)} cand=${cand[rs.indexOf(q)].length}`).join(' | ')}`);
     if (cand.some((c) => !c.length)) continue;
     const cost = cand.map((c) => c.map(() => Infinity)), from = cand.map((c) => c.map(() => -1));
     cand[0].forEach((x, a) => { cost[0][a] = Math.abs(x - rs[0].u); });
@@ -322,9 +326,8 @@ export function spreadCrossings(items: { route: Route; d: number; zc: number }[]
     let a = -1;
     const last = rs.length - 1;
     cost[last].forEach((c, k) => { if (c < Infinity && (a < 0 || c < cost[last][a])) a = k; });
-    if (a < 0) { if ((globalThis as any).__dbgOn) (globalThis as any).__dbgLog.push('  infeasible'); continue; }
-    for (let k = last; k >= 0; k--) { rs[k].x = cand[k][a]; a = from[k][a]; }
-    if ((globalThis as any).__dbgOn) (globalThis as any).__dbgLog.push('  -> ' + rs.map((q) => q.x.toFixed(1)).join(' '));
+    if (a < 0) continue;
+    for (let k = last; k >= 0; k--) { if (Math.abs(rs[k].x - cand[k][a]) > 0.05) moved = true; rs[k].x = cand[k][a]; a = from[k][a]; }
   }
   // the moved runs: the column stays, a slant eases over to the new line, the run goes along it
   const edits = new Map<number, Map<number, Run>>();
