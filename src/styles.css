@@ -1230,3 +1230,8 @@ body.dragging-board { cursor: grabbing; user-select: none; -webkit-user-select: 
 .start-printer span { font-weight: 600; }
 .start-printer select { height: 30px; max-width: 100%; }
 .start-printer small { flex-basis: 100%; color: var(--muted); font-size: 12px; }
+
+/* Complete this rack: what the rack lacks, and one button for all of it */
+.completecard { border: 1px solid var(--accent-line); background: var(--accent-soft); border-radius: var(--r-card); padding: 10px 12px; margin: 0 0 14px; }
+.completecard .cc-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.completecard ul { margin: 6px 0 0; padding-left: 18px; font-size: 12.3px; line-height: 1.5; }

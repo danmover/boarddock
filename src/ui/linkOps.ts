@@ -2,8 +2,10 @@
 import { autoLinks, numberLinks, portBudget, powerShort, sameRef, strongerPower, type PlugAt } from '../model/links';
 import { TEMPLATES } from '../model/templates';
 import { ownSupply } from '../model/boxes';
+import { completeRack } from '../model/complete';
+import { newModule } from '../model/library';
 import { addAdapters, addProbes, addUartLinks, fillWires, stackCompanions } from '../model/probes';
-import { seatCompanion, seatCompanions, type Seated } from '../cad/dockplan';
+import { seatBoard, seatCompanion, seatCompanions, type Seated } from '../cad/dockplan';
 import type { Module, PlugRef, Project } from '../model/types';
 import { edit, putBoards, select, store, toast } from '../state';
 import { afterBuild, watchRelayout } from './panelOps';
@@ -41,6 +43,41 @@ export function addLinks(only?: NonNullable<import('../model/types').Link['kind'
   watchRelayout();
   edit((q) => { q.links = numberLinks([...(q.links ?? []), ...add]).map((l) => fillWires(q, l)); stacked = stackCompanions(q); seatCompanions(q); });
   toast(`Connected ${add.length} cable${add.length > 1 ? 's' : ''}.${stacked ? ' The probes and adapters for one board stack up behind it.' : ''} ${left()} ⌘Z undoes it.`);
+}
+
+/**
+ * "Complete this rack": put on the rack what completeRack says it lacks (a supply for each Pi, a powerboard for the
+ * outlets, a switch with its own supply), and connect it all the way Auto-connect would (the switch's uplink too): the
+ * boards, their supplies and every cable are one undo step.
+ */
+export function completeThisRack() {
+  const p = store.get().project;
+  if (!p) return;
+  const gaps = completeRack(p);
+  const boards = gaps.flatMap((g) => g.add.filter((id) => !id.startsWith('own:')).map((id) => ({ id, own: !!g.own }))).flatMap((x) => { const t = TEMPLATES.find((y) => y.id === x.id); return t ? [{ board: t.make(), own: x.own }] : []; });
+  const owns = gaps.flatMap((g) => g.add.filter((id) => id.startsWith('own:')).map((id) => id.slice(4)));
+  if (!gaps.length) return;
+  const n0 = p.modules.length;
+  const put = (q: Project) => {
+    // each new switch brings its own supply, and a switch or hub already there the one it came with
+    const extra = [...q.modules.slice(n0).filter((_, i) => boards[i]?.own), ...owns.flatMap((id) => q.modules.filter((m) => m.id === id))];
+    for (const box of extra) {
+      const b = ownSupply(box);
+      if (!b) continue;
+      q.modules.push(newModule(b, q.modules[q.active].holder));
+      if (q.layout === 'panel' && !q.panel.auto) seatBoard(q, q.modules[q.modules.length - 1].id);
+    }
+    // every cable Auto-connect has now, and boards on ports too weak for them moved to stronger ones
+    const q0 = { ...q, links: numberLinks([...(q.links ?? []), ...autoLinks(q, plugPlaces())]) };
+    const r = strongerPower(q0, plugPlaces());
+    q.links = (r ? r.links : q0.links).map((l) => fillWires(q, l));
+    stackCompanions(q);
+  };
+  if (boards.length) putBoards(boards.map((b) => b.board), false, { stay: true, keepActive: true, also: put });
+  else edit(put);
+  const now = store.get().project!, cables = (now.links?.length ?? 0) - (p.links?.length ?? 0);
+  const added = now.modules.slice(n0).map((m) => m.board.name);
+  toast(`Completed the rack: added ${added.length ? added.join(', ') : 'nothing new'} and ${cables} cable${cables === 1 ? '' : 's'}, all in one step. ⌘Z undoes it.`);
 }
 
 /**

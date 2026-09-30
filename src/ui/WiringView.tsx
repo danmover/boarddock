@@ -5,6 +5,7 @@
 // the cable. A pin header opens into its pins, and a pin then a pin adds a jumper wire. The side panel lists what still
 // needs connecting (and what the rack is short of) and every cable. Click a cable (or a wire) to select it, Del
 // removes it.
+import { CompleteRack } from './CompleteRack';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as RPE } from 'react';
 import type { Link, Pin, PlugRef } from '../model/types';
 import { allPlugs, autoLinks, cableFlow, canCable, connectNote, KIND_COLOR, KIND_NAME, linkKind, numberLinks, PC, pcModule, rankTargets, ROUTER, routerModule, refusal, sameRef, shortName, wiringAdvice, type PlugInfo } from '../model/links';
@@ -569,6 +570,7 @@ function WiringSide({ tab, setTab, onPick }: { tab: 'todo' | 'cables'; setTab: (
       </div>
       {tab === 'todo' ? (
         <div className="wside-body">
+          <CompleteRack />
           {advice.map((a, i) => (
             <div key={i} className="wadv">
               <span>{a.text}</span>

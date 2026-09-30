@@ -15,6 +15,7 @@ import { Icon, I } from './icons';
 import { rackName } from '../model/diff';
 import { countKinds } from './panels';
 import { HeroArt } from './art';
+import { CompleteRack } from './CompleteRack';
 
 export function StartStage() {
   const p = useApp((s) => s.project);
@@ -62,6 +63,8 @@ export function StartStage() {
             <MyPrinter />
           </header>
         )}
+
+        {p && <CompleteRack />}
 
         <div className="start-acts">
           <div role="button" tabIndex={0} className={`sact drop ${over ? 'over' : ''}`} onClick={() => files.current?.click()} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); files.current?.click(); } }}
