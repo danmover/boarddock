@@ -54,7 +54,7 @@ export interface LatchFeaData {
   /** nose travel to let the tongue past (mm), the lateral force at the nose (N), the push on the holder incl. friction (N), strain peak / 99% */
   insertion: { delta: number; lateral: number; push: number; peak: number; p99: number };
   /** the button's release: nose travel, force on the button (N), rod travel after it meets the ramp (mm), strain */
-  release: { delta: number; button: number; rodTravel: number; peak: number; p99: number };
+  release: { delta: number; button: number; rodTravel: number; drop: number; peak: number; p99: number };
   /** the beam's stiffness at the nose (N/mm) */
   stiffness: number;
   /** how far the arm's tongue-side face has moved out (y, mm) at each z when the nose is at `stop.delta` (the button pressed right home): what it clears */
@@ -106,7 +106,7 @@ export function latchFea(latchLoops: Loop[], E: number, nu: number, h: number, o
   k = dRel / u[2 * tip];
   s = stats(L.m, u, L.R, k);
   const rodTravel = Math.abs(u[2 * ramp] * k), button = Math.abs(k) * -rodD[1];
-  const release = { delta: dRel, button, rodTravel, peak: s.peak, p99: s.p99 };
+  const release = { delta: dRel, button, rodTravel, drop: -u[2 * tip + 1] * k, peak: s.peak, p99: s.p99 };
   const arm: { z: number; u: number }[] = [];
   for (let z = -12; z <= p.ramp.top - p.ramp.w + 0.01; z += 1) arm.push({ z, u: (u[2 * nearestNode(L.m, p.yIn + 0.3, z)] * k * atStop.delta) / dRel });
   out.cases.push({ part: 'latch', name: 'Latch: button pressed (nose clears the groove)', force: button, target: `the nose moves ${dRel.toFixed(2)} mm out of the tongue groove`, peakStrain: s.peak, p99Strain: s.p99, notes: [`button travel to release ${(rodTravel + 0.42).toFixed(2)} mm of the ${HD_STROKE} mm stroke (0.42 mm before the rod meets the ramp), friction ${MU} included`], data: { delta: dRel, button, rodTravel } });
@@ -290,4 +290,21 @@ export function crushFea(loops: Loop[], E: number, nu: number, h: number, o: { p
   const u = solve(M, (x, y) => y > o.proud - 0.06 && Math.abs(x - cx) < o.crown / 2 + 0.05, [0, -1]);
   const s = stats(M.m, u, M.R, F);
   return { perMm: F, contact, peak: s.peak, p99: s.p99, where: s.where };
+}
+
+/**
+ * The release rod's neck under the button, in a section (`loops`, plane stress of thickness `t`; `wt`: how much thicker
+ * a place is than that, e.g. the head), 1 N pushed down over `load` (a range of the section's first axis) on the head's
+ * top, the rod held where the tunnel's mouth holds it (below `zcut`). Peak strain (the 3 x 3 pixel average) per newton.
+ */
+export function neckFea(loops: Loop[], E: number, nu: number, h: number, o: { t: number; wt?: (a: number, b: number) => number; zcut: number; load: [number, number] }): { perN: number; where: [number, number] } {
+  const M = model(loops, h, E, nu, o.t, (_a, z) => z < o.zcut, o.wt);
+  let top = -Infinity;
+  for (let i = 0; i < M.m.nNodes; i++) { const a = M.m.nodeXY[2 * i]; if (a > o.load[0] && a < o.load[1]) top = Math.max(top, M.m.nodeXY[2 * i + 1]); }
+  const u = solve(M, (a, z) => a > o.load[0] && a < o.load[1] && z > top - 0.35, [0, -1]);
+  const eps = smoothStrain(M.m, elementStrain(M.m, u, M.R));
+  let at = 0;
+  eps.forEach((e, i) => { if (e > eps[at]) at = i; });
+  const g = M.m.elems[at];
+  return { perN: eps[at], where: [M.m.x0 + ((g % M.m.nx) + 0.5) * M.m.h, M.m.y0 + (Math.floor(g / M.m.nx) + 0.5) * M.m.h] };
 }

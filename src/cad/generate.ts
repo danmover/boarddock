@@ -17,7 +17,7 @@ import { textCS, textWidth } from './font';
 import { computeLevels } from './levels';
 import { boardDetail, moveFx, plugDetail, plugUp } from './boardviz';
 import { DOCK_MIN_ZB, flatHolderDock, gripSpan, holderDock, HD, rod } from './dock';
-import { EAR, TONGUE } from './dockdims';
+import { EAR, LATCH, TONGUE } from './dockdims';
 import { dockFrame, dockSite, earSite, flatFrame, type DockSite, type EarSite } from './dockplan';
 import { dir as dirM, inv, mul, type M4 } from '../geom/mat';
 import { rectSection, roundSection, solveFrame, type FElem, type FNode } from '../fea/frame3d';
@@ -1929,6 +1929,9 @@ function arrangeFeatures(C: Ctx) {
 const tsPoly = (s: DockSite, t0: number, t1: number, s0: number, s1: number): Loop =>
   [[t0, s0], [t1, s0], [t1, s1], [t0, s1]].map(([t, d]) => [s.e[0] * t + s.n[0] * (s.L0 - d), s.e[1] * t + s.n[1] * (s.L0 - d)] as V2);
 
+/** The dock check's words on how the latch holds and how the tongue fits (numbers from the dock FEA, Check › Dock FEA, PETG). */
+const TONGUE_FIT_TEXT = `the latch's nose reaches ${LATCH.engage} mm into the tongue's groove and its holding face is undercut ${LATCH.hook}°, so a pull on the holder draws the nose in instead of levering it out: it holds a 20 N pull with the nose moving under 0.5 mm. It goes in with about 4 N and the button frees it with about 2.5 N (PETG: the push scales with the material's modulus); the beam is a long taper that strains under 1% at full deflection and nothing at rest. The tongue is a slip fit (0.2 mm a side, ${LATCH.play} mm of lift before the hook), and two crush ribs on its front corners take a little of that up: the first push in crushes their crests to the socket's size (about 24 N more, once) and the holder is snug after. From the model, not print-tested.`;
+
 function dockBlocks(C: Ctx, s: DockSite) {
   C.blocked.push({ poly: tsPoly(s, s.tc - 12, s.tc + 12, -3, 6), why: 'dock' });
   const [g0, g1] = gripSpan(s.side);
@@ -1970,7 +1973,7 @@ function dockFeatures(C: Ctx, s: DockSite) {
   const lever = col && col.of > 1 ? col.height : s.far;
   const tb = 2 * TONGUE.hx, th = TONGUE.y1 - TONGUE.y0, F = 20, Mo = F * lever, sig = Mo / ((tb * th * th) / 6);
   if (!col || col.top) C.checks.push({ group: 'Dock', name: 'Release', value: `press the button, ${HD.stroke} mm`, status: 'info', detail: `thumb on the button at the ${({ bottom: 'top', top: 'bottom', left: 'right', right: 'left' } as Record<EdgeName, string>)[s.edge]} edge, two fingers under the grip bar, squeeze and lift. About ${(4.0 * eRatio).toFixed(1)} N (${H.material}); the latch spring returns the button. Rod: ${round(r!.len, 0)} mm, printed flat; push it into its tunnel until it clicks, and it can't slide back out.` });
-  if (!col || col.of <= 1 || col.level === 0) C.checks.push({ group: 'Dock', name: 'Anti-rattle', value: '4 leaves', status: 'info', detail: `the holder can't rattle in its socket: two leaves under its pedestal hold it up on the latch's catch (about 3 N) and two on the tongue's front corners press it back onto the socket's divider and to the middle (about 2 N each way). Together they add about 4 N to the push at the latch's click. From the 2D FEA (Check › Dock FEA), not print-tested.` });
+  if (!col || col.of <= 1 || col.level === 0) C.checks.push({ group: 'Dock', name: 'Latch and tongue fit', value: 'undercut hook, 2 crush ribs', status: 'info', detail: TONGUE_FIT_TEXT });
   if (!col || col.level === 0) C.checks.push({ group: 'Dock', name: `Tongue root, ${F} N push on the far edge`, value: `${round(sig, 0)} MPa`, status: sig < 0.4 * mat.yield ? 'ok' : sig < 0.8 * mat.yield ? 'warn' : 'bad', detail: `${round(lever, 0)} mm lever${col && col.of > 1 ? " (the whole column)" : ""} onto the ${tb} × ${th} mm tongue (${H.material} yields at ~${mat.yield} MPa). Hold the holder while plugging in stiff cables at the far end${sig >= 0.8 * mat.yield ? ` (this is ${sig >= 0.9 * mat.yield ? 'within 10% of' : 'near'} where it yields: try laying this board flat on its dock, Rails step, and compare this check, or print it in a stronger material)` : ''}.` });
   if (s.under && C.zb > DOCK_MIN_ZB - 0.2) C.checks.push({ group: 'Dock', name: 'Board raised over the rod spine', value: `${round(C.zb, 1)} mm`, status: 'info', detail: 'the release-rod spine runs under the board' });
 }
@@ -2004,8 +2007,8 @@ function earFeatures(C: Ctx, s: EarSite) {
   C.checks.push({ group: 'Dock', name: 'Lying flat', value: `ear on the ${s.edge} edge`, status: 'info', detail: `the holder lies top face up on its dock by a tab on its ${s.edge} edge, with the same tongue and socket as a standing one: so it takes the same shoe and socket, and a J-Link or adapter can stand behind it in the socket's other half.` });
   const eRatio = mat.E / MATERIALS.PETG.E;
   C.checks.push({ group: 'Dock', name: 'Release', value: `press the button, ${HD.stroke} mm`, status: 'info', detail: `thumb on the button on the tab, fingers under the tab, squeeze and lift the holder straight up. About ${(4.0 * eRatio).toFixed(1)} N (${H.material}); the latch spring returns the button. Rod: ${round(r!.len, 0)} mm, printed flat; push it in until it clicks, and it can't slide back out.` });
-  C.checks.push({ group: 'Dock', name: 'Anti-rattle', value: '4 leaves', status: 'info', detail: `the holder can't rattle in its socket: two leaves under its pedestal hold it up on the latch's catch (about 3 N) and two on the tongue's front corners press it back onto the socket's divider and to the middle (about 2 N each way). Together they add about 4 N to the push at the latch's click. From the 2D FEA (Check › Dock FEA), not print-tested.` });
-  C.checks.push({ group: 'Dock', name: 'Dock key', value: 'slides in under the tab', status: 'info', detail: `the tongue is a small key of its own, printed on its side so its layers run along it (as a standing holder's tongue does). Slide its dovetail into the groove under the tab from the tab's tip, then push the release rod in from the top until it clicks: the rod through both locks the key in, and a barb under a ledge at the top of its tunnel keeps the rod in. Dovetail ${2 * EAR.dove.root}–${2 * EAR.dove.top} mm, ${EAR.dove.gap} mm clearance a side: not print-tested yet.` });
+  C.checks.push({ group: 'Dock', name: 'Latch and tongue fit', value: 'undercut hook, 2 crush ribs', status: 'info', detail: TONGUE_FIT_TEXT });
+  C.checks.push({ group: 'Dock', name: 'Dock key', value: 'slides in under the tab', status: 'info', detail: `the tongue is a small key of its own, printed on its side so its layers run along it (as a standing holder's tongue does). Slide its dovetail into the groove under the tab from the tab's tip, then push the release rod in from the top until it clicks: the rod through both locks the key in, and two barbs under a gate at the top of its tunnel keep the rod in (its tunnel has 0.4 mm each side, with lead-in chamfers). Dovetail ${2 * EAR.dove.root}–${2 * EAR.dove.top} mm, ${EAR.dove.gap} mm clearance a side: not print-tested yet.` });
   // a press on the far side of the holder (plugging in from above) bends the tongue at the socket mouth the same way
   // a push on a standing holder's far edge does
   const tb = 2 * TONGUE.hx, th = TONGUE.y1 - TONGUE.y0, F = 20, lever = s.far - (TONGUE.y0 + TONGUE.y1) / 2, sig = (F * lever) / ((tb * th * th) / 6);

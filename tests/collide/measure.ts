@@ -237,8 +237,8 @@ export function measure(p: Project, r: GenResult): Measured {
       // a rail shoe's or a DIN clip's rail grip: its pad is drawn as printed, pressed into the wall of its rail by its
       // preload and the play before the part sits on its hook (0.75 mm on a shoe, 0.55 on a clip), by design
       if (cat === 'rail/stand' && [a.cls, b.cls].includes('rail') && [a.kind, b.kind].some((k) => k === 'shoe' || k === 'clip') && q.depth < GRIP.pre + SHOE_GRIP.gap + 0.05) continue;
-      // a holder's anti-rattle bumps (on its tongue's corners, under its pedestal's sides) pressed into the socket, under
-      // 0.6 mm deep, by design; a holder overlapping a socket any deeper is counted
+      // a holder's crush ribs (on its tongue's front corners) pressed into the socket, under 0.6 mm deep, by design;
+      // a holder overlapping a socket any deeper is counted
       if (cat === 'holder-holder' && [a.kind, b.kind].includes('socket') && [a.kind, b.kind].includes('holder') && q.depth < 0.6) continue;
       const t = cats[cat];
       t.vol += q.vol; t.depth = Math.max(t.depth, q.depth); t.n++;

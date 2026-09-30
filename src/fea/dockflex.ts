@@ -1,6 +1,6 @@
 // The dock's rows for the flexure table (flexures.ts): the socket latch, the release rod's two barb fingers, and the
 // tongue's crush ribs. Each is solved on the real geometry (dock.ts), so a change to a profile changes its row.
-import { CRUSH, HD, LATCH, TONGUE } from '../cad/dockdims';
+import { CRUSH, HD } from '../cad/dockdims';
 import { crushFea, fingerFea, latchFea } from './dockfea';
 import type { Flexure } from './flexures';
 
@@ -50,6 +50,5 @@ export async function dockFlexures(o: { E: number; nu: number; h: number; materi
     note: `the crest yields by design, on the first push in: about ${(2 * CRUSH.z.length * perRib).toFixed(0)} N for the ${2 * CRUSH.z.length} ribs (an assumed ${CRUSH_SIGMA} MPa crush stress, not measured); after that the holder goes in and out on the latch's push`,
   });
   info?.({ latch: d, finger: { delta, force: ff.force, peak: ff.peak }, crush: { depth, perRib, total: 2 * CRUSH.z.length * perRib, contact: cf.contact } });
-  void LATCH; void TONGUE;
   return rows;
 }

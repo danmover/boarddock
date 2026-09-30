@@ -43,11 +43,11 @@ export function latchGeom(p: LatchDims = LATCH) {
 
 // holder side, socket-local coordinates (holder A back face at y = 0.5)
 export const HD = {
-  spineHx: 4.0, spineY1: 10.0, tunnelHx: 2.25, tunnelY: [5.8, 9.0] as V2, rodHx: 1.8, rodY: [6.4, 8.6] as V2, voidHx: 1.8, voidY1: 4.4,
-  base: { hx: 10.0, y1: 10.0, t: 3.0 }, grip: { hx: 12.0, t: 4.0, gap: 10.0 }, head: { hx: 8.0, y1: 14.0, t: 3.0 },
+  spineHx: 3.0, spineY1: 10.0, tunnelHx: 2.2, tunnelY: [6.0, 9.0] as V2, rodHx: 1.8, rodY: [6.4, 8.6] as V2, voidHx: 1.8, voidY1: 4.4,
+  base: { hx: 10.0, y1: 10.0, t: 3.0 }, grip: { hx: 12.0, t: 4.0, gap: 10.0 }, head: { hx: 8.0, y1: 12.5, t: 3.0 },
   rodRest: -1.58, stroke: 3.1, backY: 0.5,
-  // The release rod runs in a tunnel `tunnelHx` x `tunnelY` half-size, the rod `rodHx` x `rodY` in it: 0.9 mm more across
-  // and 0.9 more in y, since the tunnel prints across its layers (a hole prints small, a bridged roof sags) and the
+  // The release rod runs in a tunnel `tunnelHx` x `tunnelY` half-size, the rod `rodHx` x `rodY` in it: 0.8 mm more across
+  // and 0.8 more in y, since the tunnel prints across its layers (a hole prints small, a bridged roof sags) and the
   // rod prints a touch large (it was 0.4 more each way, and jammed). The tunnel's mouths have lead-in chamfers, `mouth`:
   // how far the funnel at the top opens on the x sides and down (-y) and up (+y), and `exit` at the bottom, where the
   // rod's tip comes out (a column's rod finds the next holder's tunnel by it).
@@ -57,12 +57,15 @@ export const HD = {
   // foot, `flat` mm of outer face over it (so it is joined to its finger along 1.4 mm) and a flat catch on top. Pushed down the tunnel, the `gate` (the top 2 mm of the tunnel, only `ledge`
   // half-width) bends them 0.25 mm each aside, once, and they click out into a pocket (`pocket` half-width) long
   // enough for the whole stroke. Pulled up, the barbs meet the gate. Two fingers, so that at least one catches
-  // however the rod sits in its tunnel, which has 0.45 mm each side. The fingers are under the tunnel's mouth, not in the
+  // however the rod sits in its tunnel, which has 0.4 mm each side. The fingers are under the tunnel's mouth, not in the
   // stretch between the button and the mouth where a push off-centre bends the rod: the neck under the button is solid.
-  catch: { gate: 2.0, ledge: 2.15, barb: 0.6, ramp: 1.0, flat: 0.4, pocket: 2.7, slot: 0.5, finger: 0.8, root: 4.0 },
+  catch: { gate: 2.0, ledge: 2.1, barb: 0.55, ramp: 1.0, flat: 0.4, pocket: 2.65, slot: 0.5, finger: 0.75, root: 4.0 },
   // The neck's fillets under the button (`fillet` on the x sides, in the print's layers; `gusset` on the +y side, above
   // the shaft), which the tunnel's mouth funnel takes when the button is pressed home.
-  neckFillet: { x: 1.0, y: 0.6 },
+  neckFillet: { x: 0.9, y: 0.6 },
+  // The spine is 6 mm wide (`spineHx` sets where the planner puts things, so it stays), a wall of 0.8 mm beside the bore; under
+  // the grip bar, where the barbs' pocket is, it swells to a collar `collar` half-width so the pocket keeps 1.2 mm walls.
+  collar: { hx: 3.85 },
 };
 /**
  * A column of small boards (J-Links, adapters), each holder standing on its long edge on the one below: the landing on

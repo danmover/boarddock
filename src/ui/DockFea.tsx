@@ -47,7 +47,7 @@ export function DockFeaSection() {
   };
   const allow = mat.strainAllow;
   return (
-    <Section title="Dock FEA · latch, rail shoe, grip and anti-rattle leaves">
+    <Section title="Dock FEA · latch, rail shoe and grip">
       <p className="hint" style={{ marginTop: 0 }}>2D plane-stress models of the springs every dock relies on, in {matName} (E {mat.E} MPa): the socket latch (18 mm wide), the rail shoe hinge (two 7 mm leaves) and the shoe's rail grip (21 mm), the shoe pulled off the rail as a whole. The socket latch is shown pushed in, pressed open by the button, and under a 20 N pull. Each case is scaled to the travel it has to reach.</p>
       <div className="btns" style={{ alignItems: 'center' }}>
         <button className="btn primary" disabled={!!busy} onClick={run}>{busy ? 'Running…' : 'Run dock FEA'}</button>

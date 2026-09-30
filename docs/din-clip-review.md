@@ -27,7 +27,7 @@ From TODO.md: go through the clip in depth, measuring rather than guessing. Ther
 | Lever: frees the jaw | Correct, but the numbers were wrong: said 1.4 N and 8 mm of pad travel | FEA corrected to where the hook really bears | 2.4 N, about 5 mm |
 | Lever: stays on | Its hub's open edge was **0.09 mm** from the neck (prints as one piece). **Nothing held it along the pin**: it could slide 21 mm off the end | Hub opening moved, neck reshaped; a bead on the pin in a groove in the hub | 0.35 mm clear everywhere; at most 0.5 mm of play along the pin |
 | Lever: overload | Past the jaw's stop, about **13 N** on the pad brought the 1.0 mm neck, with its 0.05 mm notch, to the strain limit | Neck tapered from 1.8 mm and filleted; tower wider | About **28 N** |
-| Tongue in the socket | Latch nose 1.05 mm into the groove, flat catch: holds. 0.3 mm of rattle | none (reported) | same |
+| Tongue in the socket | Latch nose 1.05 mm into the groove, flat catch: "holds". 0.3 mm of rattle | none in this review | **Wrong**: the first print showed it popping out, and the model agrees (about 10 N). Redone in the last section |
 | Dock key in its dovetail | Held only by the release rod, and **the rod slid straight out** | The rod clicks into its tunnel (barb under a ledge) | Rod meets the ledge after 0.25 mm; key stopped after 0.25 mm |
 | Shoe tight on the rail | **Only located**: 0.8 mm of play across, 0.3 mm out of the wall, nothing pressing. It slid freely, and would slide down a vertical rail | A sprung rail grip presses the rail's wall; a tooth stops knocks | 9.6 N preload, **about 6 N to push a dock along** |
 | Clip tight on the rail | Only located: 0.2 mm out of the wall, 0.65 mm up and down, nothing pressing | The same rail grip under the top wall | 6.4 N (14 mm clip), about 4 N to push along |
@@ -88,6 +88,8 @@ The hinge leaf's strain in the pull-off case is unchanged: it reaches its limit 
 
 ### The tongue in the socket
 
+> **Superseded** (see "After the first print", the last section): the flat catch here did not hold. It is now a tapered beam with an undercut hook 1.4 mm deep, the 0.3 mm of play is 0.65 mm on purpose, and the anti-rattle leaves are gone.
+
 The holder's tongue (14 × 4.5 mm) goes down into the socket until its pedestal sits on the socket top. The latch nose springs into a groove across the tongue's front face:
 - The nose's tip reaches **1.05 mm** into the groove (0.15 mm short of its back).
 - Its lower face is flat, so a pull on the holder meets a square catch, not a ramp. It can't be pulled out without the button.
@@ -104,6 +106,8 @@ Nothing preloads the tongue, so a holder can rattle by those amounts. This is **
 **Release.** The button's rod meets the latch's 45° ramp after 0.45 mm. The FEA has the nose clear of the groove after 1.94 mm of the 3.1 mm stroke, for 3.2 N on the button (PETG, friction included); the push-in is 9.2 N. Both are unchanged.
 
 ### The release rod
+
+> **Superseded** (see the last section): the rod's tunnel had 0.2 mm each side and jammed in the first print; its barb is now two fingers under a gate, and the tunnel is 0.4 mm each side (0.3 at the gate) with lead-in chamfers.
 
 The rod runs in a 3.6 × 2.6 mm tunnel (the rod is 3.2 × 2.2). **Nothing held it in:** pulled up, it slid straight out without touching anything. On a table rack gravity keeps it down; on a wall, a knock or a hand on the button could pull it out.
 - For a standing holder that only loses the button, and the holder stays latched.
@@ -230,6 +234,8 @@ Already done before this review: a box on a flat clip now stands 2.3 mm up, clea
 
 ## Seen along the way, and since dealt with
 
+> The rattle leaves below (the first bullet) were replaced after the first print: see the last section. The lever's lift, the pull-off FEA and the pixel grid stand.
+
 Four things the review left open, measured and changed afterwards (`tests/dockhold.test.ts`, `tests/dockfea.test.ts`, `tests/dinclip-review.test.ts`). Still none of it printed.
 
 - **The rattle.** The rigid dock end, slid in the socket the review's way, has 0.30 mm of lift before the nose catches, 0.14 mm either way across and 0.20 mm sideways. Now two kinds of leaf, both flexing within the print layers (the holder prints on its back, so the tongue's x-z section is a layer):
@@ -243,3 +249,104 @@ Four things the review left open, measured and changed afterwards (`tests/dockho
 - **The pixel grid.** It sits on multiples of the pixel now, a cut pixel keeps the share the outline covers as its stiffness, and the dock's peaks are 3 x 3 pixel averages: half a pixel of shift moves forces and peaks by under 5% and 12% (a third for forces before). The peaks read lower than the corner peaks the numbers above used (about a quarter), so the strains in this note before this section are the old kind. The solver has an incomplete Cholesky preconditioner (a free shoe took 16,000 Jacobi iterations).
 
 Still open from the review: the Check step's narrow-slot test ignores slivers under 0.15 mm² a layer. That is how the lever's 0.09 mm gap at the neck went unseen. A check of the smallest gap between separate islands of a print-in-place part would catch it (the review test does this for the lever).
+
+## After the first print (PETG, FDM)
+
+The first print of a dock (its shoe, socket, a holder and rod) found four things.
+
+- The shoe's rail grip works well; **nothing about it changed**.
+- **(A)** The release rod would not go through the holder without a hard push, and pushing that hard broke the button off.
+- **(B)** The socket's latch let the holder pop out too easily.
+- **(C)** The stoppers of the tongue "snap really easy": the anti-rattle leaves (slots cut out of the holder's wall, sometimes 0.6 mm left over one) and the latch's stop post.
+
+Numbers below are from the model (PETG, E 2100 MPa, the 2D FEA `src/fea/dockfea.ts` at 0.1 mm), as before. Nothing has been printed since. `tests/dockhold.test.ts`, `rodhole.test.ts`, `joints.test.ts`, `dockfea.test.ts` and `flexures.test.ts` hold them.
+
+### A. The release rod's hole and neck
+
+**Cause** (inferred from the geometry and how FDM prints, not measured). The tunnel was 3.6 x 2.6 mm round a 3.2 x 2.2 mm rod: 0.4 mm on the diameter, 0.2 each side. The holder prints on its back, so the tunnel runs across the layers: a hole prints small and its bridged roof sags, and the rod prints a touch big, so 0.4 mm closed up over the tunnel's 50 mm and the rod jammed. Pushed hard, the load ran into the neck: the head is a 16 x 3 mm plate on a 3.2 x 2.2 mm shaft with slots cut right up to it, and the plate is printed on edge, so a push off-centre bends the shaft in the layers' plane (along the layer lines: the strong way) or across them (the weak way).
+
+**Changed** (`dockdims.ts`: `HD`; `dock.ts`: `rodTunnel`, `rodBore`, `rod`):
+
+| | before | after |
+|---|---|---|
+| Rod | 3.2 x 2.2 | **3.6 x 2.2** (y stays: the socket's core is 0.2 mm off the rod's underside) |
+| Tunnel bore | 3.6 x 2.6 (0.4 total each way) | 4.4 x 3.0: **0.8 across, 0.8 in y** (0.4 each side and 0.4 under and over the rod, the roof being the bridge that sags) |
+| Tightest place (the gate the barbs pass) | 0.2 each side | 0.3 each side (0.3 measured to the 0.02 mm step) |
+| Lead-ins | the rod's tip sloped in y only | 45 degree funnel at the top (1.2 mm on the sides, 1.0 under, 0.5 over), a 0.7 mm chamfer where the rod leaves, and the tip's corners chamfered 0.9 mm |
+| Neck | slots to the head, no fillet | solid from the head to 1.7 mm under the tunnel's mouth; fillets in x (R0.9, in the print's layers) and over the shaft in y (R0.6) which the funnel takes when the button is pressed home |
+| Head | y 6.4 to 14 | y 6.4 to 12.5: a thumb on its far edge is 1.5 mm nearer the shaft |
+| Spine | 6 mm wide, walls of 1.2 mm round the tunnel | 6 mm wide (kept, so that every rack lays out as before), walls of 0.8 mm beside the bore, and under the grip bar a collar 7.7 mm wide, 3.8 mm tall over the barbs' pocket, so that the pocket has 1.2 mm walls |
+| Retention | one barb on one finger hanging from the head, a 0.3 mm click | **two fingers standing from the shaft under the mouth**, each 0.75 mm wide with a barb 0.55 mm out; the gate (the top 2 mm of the tunnel, 0.3 each side) bends each 0.25 mm, once. Two, so one catches however the rod sits in its 0.4 mm each side |
+| Barb's joint to its finger | 0.5 mm | 1.4 mm (a 1.0 mm lead-in and 0.4 mm of outer face) |
+| Flat holder's dovetail | 6.8 mm at its root | 7.8 mm (the pocket is cut across it) |
+
+Print orientation: kept (on its back, y up). The shaft's layers run along it and into the head, so a push along the layers' plane bends it along its lines; the plate's thickness is across them only for the y direction, where the head is nearer the shaft now. Standing the rod on its end would put the neck across the layers for every push.
+
+**The push it takes** (FEA of the neck at the tunnel's mouth, peak strain per newton, the head's 3 x 3 pixel average):
+
+| | before | after |
+|---|---|---|
+| 1 N pushed 4 mm off-centre, across the rod (along the layers) | 0.122% | 0.101% |
+| 1 N on the head's far edge, along the rod (across the layers) | 0.124% | 0.086% |
+| the click of a barb finger | 1.4% (0.3 mm on one finger) | 1.0% peak, 0.7% for 99% (0.25 mm, 0.9 N a finger), once |
+
+The neck gain is modest (about 17% across the rod, 30% along it): the shaft's own section under the tunnel's mouth sets the strain, and the tunnel bounds it; the spine could not be widened for a stronger neck without moving every rack's layout. What changed most is what loads it: the push to seat the rod is the two fingers' click (about 2.5 N) and the wedge of the funnel, not a jammed 50 mm.
+
+A rod down a column of three holders, each up to 0.25 mm off the one under it, passes every tunnel in either direction (it could not with 0.2 mm each side).
+
+### B. The socket latch
+
+**Cause.** The catch's face was flat, square to the pull (the review called it a "square catch, not a ramp": true, and not enough). But the nose sits 2.5 mm off the beam's axis, so a pull on the holder is an eccentric load: it tips the beam, and the tip, with the nose, slides **out** of the groove. The FEA had no pull case, so the review never saw it. With a case for it (a 20 N pull on the holding face, friction left out) the old latch's nose moves 2.0 mm out of a 1.05 mm catch: **it slips at about 10 N**.
+
+**Changed** (`dockdims.ts`: `LATCH`, `latchGeom`; `dock.ts`: `latchProfile`, `noseProfile`, `noseSolid`, `latchGroove`; `dockfea.ts`: `latchFea`):
+
+- **Undercut hook.** The holding face slopes 15 degrees, so it is highest at the mouth and the nose sits in a pocket: a pull now has a share that draws the nose in. The angle that cancels the eccentric tip is fixed by the geometry (about 3 x 2.5 / (2 x 14): 15 to 18 degrees) and does not depend on the beam's stiffness, so the beam can be soft and the catch still holds.
+- **Deeper.** 1.4 mm into the groove (was 1.05). The groove is 0.65 mm over the nose at rest (was 0.3): the undercut needs it, for the nose to leave up and along the face (0.42 mm). The FEA has the nose rising 0.58 mm as it goes out (an eccentric nose rises as the beam tips), so it separates from the face; with no rise at all the play still covers the undercut with 0.23 mm to spare.
+- **A long tapered beam.** 0.9 mm at its root, 0.6 at 7 mm up, 0.9 under the arm, 14.9 mm from the boss's top to the nose's underside (12.6 mm before), the nose 2.35 mm higher. It bends in the socket's print layers, with fillets of 1.0 mm at the root and 0.5 at the nose.
+- **The arm** is 0.9 mm thick where it passes the shoe's lever hub (was 1.6), so it clears the hub by 0.3 mm at the release and 0.2 with the button pressed right home.
+- **No stop post.** The old post (a 1.0 mm wall, 10 mm tall, cut off the anchor plate) is gone: the button's stroke bounds the arm at 1.9 mm of nose travel, where the beam is at 0.85%.
+
+| Latch, PETG | before | after |
+|---|---|---|
+| Holding face | flat, 1.05 mm deep | undercut 15 degrees, 1.4 mm deep |
+| A 20 N pull | nose 2.0 mm out: slips at about 10 N (friction not counted) | nose 0.4 mm out of 1.4: slips at about 69 N; strain 1.1% |
+| Strain at full deflection (the button pressed right home) | 1.4% (over the 1% rule) | **0.85%** peak (0.74% for 99%) |
+| Strain at rest | 0 | 0 |
+| Push to insert (friction 0.3 included; the leaves added 3.7 N to the click) | 11.2 N | **3.9 N** |
+| Button to release | 3.8 N | **2.5 N** (2.1 mm of the 3.1 mm stroke, with the 0.42 mm before the rod meets the ramp) |
+| Beam stiffness at the nose | 4.65 N/mm | 1.55 N/mm |
+
+The holder is looser in z (0.65 mm of lift) and its pull is held by the hook, not by the beam or by friction.
+
+### C. The stoppers
+
+Checked how each is joined (`src/cad/joints.ts`, `tests/joints.test.ts`): the joint's width, the thinnest neck between it and the tip, and in the print pose, layer by layer, whether each piece is joined to the body inside its own layer.
+
+| Feature | what it was | now |
+|---|---|---|
+| Latch stop post | 1.0 mm wall, 10 mm tall, flagged | removed (the stroke bounds the arm) |
+| Anti-rattle side leaves (tongue's front corners) | 0.9 mm leaf, 6 mm long, a slot behind it, 0.7% at rest | removed |
+| Anti-rattle lift leaves (under the pedestal) | 0.9 mm leaf, 0.5 mm slot, sometimes 0.6 mm left over it, 0.4% at rest | removed |
+| Latch nose | 2.7 mm on the arm, no fillet | 2.3 mm on the arm, 0.5 mm fillets, tapering tip: passes |
+| Rod barb | 0.5 mm joint to its finger | 1.4 mm: passes |
+| Tongue crush ribs | (new) | 1.8 mm where they grow out of the face: passes as a tooth |
+| Divider between the tongues | 0.7 mm wall | **0.7 mm, kept**, flagged in the test with its reason: two tongues' back faces 0.15 mm off it leave that much; it is welded to the floor and both walls (29 mm²) |
+
+**Why the leaves went, and what replaces them.** A spring that presses for good has to stay at 0.2% strain or less at rest, or it creeps and takes a set. The leaves sat at 0.7% and 0.4%. A leaf that takes up 0.2 mm at 0.2% has to be 13 mm long and carries 0.45 N: no use. So the anti-rattle is now **two crush ribs**, one on each front corner face of the tongue near its tip, 1.8 mm where they grow out of the face, a 0.3 mm crest standing 0.4 mm proud. The socket's corner faces are 0.28 mm off the tongue's, so a rib is pressed 0.12 mm. They are **meant to deform once**, on the first push in, to the socket's real size. A printed line crushes at about 15 MPa (an assumption, not measured): about 12 N a rib, so about 24 N once for the two, and the holder is snug and centred after. The tongue is otherwise a slip fit: 0.2 mm a side, 0.14 to 0.2 front and back, and 0.65 mm of lift. A holder can rattle by those amounts.
+
+### The flexure table
+
+`src/fea/flexures.ts` (rows from `dockflex.ts` and `boardflex.ts`) holds every printed spring to one rule: at most 1% strain at full deflection and 0.2% at rest (a feature that deforms once, like a barb or a crush rib, may reach 1.5%, and says so), and 1.25% under a design overload (a 20 N pull). `tests/flexures.test.ts` runs them all.
+
+| Flexure | kind | rest | full | 99% | |
+|---|---|---|---|---|---|
+| Socket latch beam | spring | 0.00% | 0.85% | 0.74% | 1.11% under a 20 N pull |
+| Release rod, barb fingers | once | 0.00% | 0.96% | 0.73% | 0.25 mm each, 0.9 N |
+| Tongue crush ribs | once | 0.00% | 1.4% at the rib's base | 0.9% | the crest yields on the first push in |
+
+### What only a print can tell (this round)
+
+- **The latch.** Whether a 15 degree undercut with 0.65 mm of play releases cleanly (the model has the nose rising 0.58 mm as it goes out, 0.16 mm over the undercut's; with none, 0.23 mm to spare), and whether a pull of 20 N with real PETG friction holds as the model says. Whether the soft beam (1.55 N/mm) gives a click you can feel.
+- **The rod.** Whether the 0.3 mm at the gate and 0.4 mm in the bore are enough on your printer for a hole across the layers, and the finger's click. Whether the funnel and the neck fillets print cleanly.
+- **The crush ribs.** The 15 MPa is a guess: they may need more or less than 24 N once, and the fit may want a different height (`CRUSH.proud`) on your printer, or the test-fit kit's `Tongue fit` looser.
+- **The divider,** at 0.7 mm, printed standing.

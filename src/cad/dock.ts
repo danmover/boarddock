@@ -328,6 +328,7 @@ export function holderDock(far: number, pedestal: number, side = 0, fit = 0, col
     col?.foot ? unionMF(PEG.x.map((x) => peg(x))) : tongue(Math.min(1.0, pedestal), fit),
     extXZ(rect2(-HD.base.hx, 0, HD.base.hx, Math.max(HD.base.t, pedestal)), HD.backY, HD.base.y1), // pedestal on the socket top (or on the landing below)
     box(-spineHx, HD.backY, 0, spineHx, spineY1, zg1), // spine, dock face to grip bar
+    ...(col?.landing ? [] : [box(-HD.collar.hx, HD.backY, rodPocketBottom(zg1) - 0.8, HD.collar.hx, spineY1, zg1)]), // the collar round the barbs' pocket, up through the grip bar (so a bar that starts at the spine's edge keeps 1.2 mm beside the pocket, and the finger scoop in its underside leaves no thin wall)
     col?.landing
       ? extXZ(roundCS(rect2(-LANDING.hx, zg0 - 0.01, LANDING.hx, zg1), 1.2).intersect(rect2(-LANDING.hx - 1, zg0 - 0.01, LANDING.hx + 1, zg1 + 1)), HD.backY, spineY1)
       // grip bar: rounded, with a shallow finger scoop in the face the fingers pull on (matches the button's dish)
@@ -404,11 +405,16 @@ function tunnelEnds(top: number, z0: number, hxTop: number): MF {
  * barb and the button's whole stroke, 0.3 mm to spare.
  */
 export function rodTunnel(top: number): MF {
-  const { zb } = rodCatch(top), { gate, ledge, pocket } = HD.catch, [y0, y1] = HD.tunnelY, hx = HD.tunnelHx;
+  const { gate, ledge, pocket } = HD.catch, [y0, y1] = HD.tunnelY, hx = HD.tunnelHx;
   return unionMF([
-    box(-hx, y0, -0.2, hx, y1, top - gate), box(-pocket, y0, zb - HD.stroke - 0.3, pocket, y1, top - gate),
+    box(-hx, y0, -0.2, hx, y1, top - gate), box(-pocket, y0, rodPocketBottom(top), pocket, y1, top - gate),
     box(-ledge, y0, top - gate - 0.01, ledge, y1, top + 0.2), tunnelEnds(top, -0.2, ledge),
   ]);
+}
+
+/** Where the bottom of the barbs' pocket is, for a tunnel whose top is at `top`. */
+export function rodPocketBottom(top: number): number {
+  return rodCatch(top).zb - HD.stroke - 0.3;
 }
 
 /** A straight tunnel (a column's holders under the top one: the rod only passes) from the socket top to `top`, with the same lead-in chamfers. */
