@@ -898,6 +898,12 @@ function perimeter(ol: Loop, step: number): { p: V2; d: V2; s: number }[] {
   });
 }
 
+/** A convex loop with every corner pushed out from its middle by d (the sides about d / sqrt 2 out). */
+function growLoop(p: Loop, d: number): Loop {
+  const c = centroid(p);
+  return p.map((v) => { const dx = v[0] - c[0], dy = v[1] - c[1], l = Math.hypot(dx, dy) || 1; return [v[0] + (dx / l) * d, v[1] + (dy / l) * d] as V2; });
+}
+
 /**
  * Every place a leaf of length L fits: straight (or gently curved, convex) edge the whole way, the board's edge right
  * under the lip, the anchor along the edge, and nothing else there (plugs, the dock, the label, parts at the edge).
@@ -937,6 +943,11 @@ function leafSites(C: Ctx, L: number, lipLen: number, taken: Loop[], o: { kind?:
       const zone: Loop = [at(-ANCHOR, -out), at(L + SLIT + 0.3, -out), at(L + SLIT + 0.3, 1.2), at(-ANCHOR, 1.2)];
       const bl = C.blocked.find((x) => polysOverlap(zone, x.poly));
       if (bl) { no(`blocked by ${bl.why.replace(/^blocked:/, '')}`); continue; }
+      // (a hairpin stands 0.8 mm past the wall's face: the dock's own parts (its lever, spine, button) need that much more room)
+      if (kind === 'u') {
+        const near = C.blocked.find((x) => /^(dock|dock spine|release button)$/.test(x.why) && polysOverlap(zone, growLoop(x.poly, 1.2)));
+        if (near) { no(`blocked by ${near.why}`); continue; }
+      }
       if (taken.some((z) => polysOverlap(zone, z))) { no('taken by another clip'); continue; }
       // (a part standing on the board only meets the lip, over the board's edge, and whatever hangs past the edge)
       const back: Loop = [at(-ANCHOR, -out), at(L + SLIT + 0.3, -out), at(L + SLIT + 0.3, 0.05), at(-ANCHOR, 0.05)];
