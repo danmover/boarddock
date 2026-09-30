@@ -140,6 +140,17 @@ export function settleCables(cables: SimCable[], obs: SimObstacle[], rounds = 60
   };
 
   const tangent = (c: number, i: number) => { const b = beads[c]; return unit(sub(b[Math.min(b.length - 1, i + 1)], b[Math.max(0, i - 1)])); };
+  // whether two beads (at q and p2, running t1 and t2) are closer than `need`: bead to bead, or where their cables cross,
+  // between the beads (the nearest points are up to half a step from them): the lines through them
+  const closer = (q: number[], t1: number[], p2: number[], t2: number[], need: number) => {
+    const d = sub(p2, q), D = len(d);
+    if (D < need) return true;
+    if (D >= need + 1.8) return false;
+    const across = cross(t1, t2), nn = len(across);
+    if (nn < 0.5) return false;
+    const k1 = dot(d, t1), k2 = dot(d, t2), cc = dot(t1, t2);
+    return Math.abs(dot(d, across)) / nn < need && Math.abs(k1 - cc * k2) / (nn * nn) <= 1.5 && Math.abs(cc * k1 - k2) / (nn * nn) <= 1.5;
+  };
   const CC = Math.max(4, 2 * rMax + GAP + 1);
   const ckey = (q: number[]) => `${Math.floor(q[0] / CC)},${Math.floor(q[1] / CC)},${Math.floor(q[2] / CC)}`;
 
@@ -156,13 +167,13 @@ export function settleCables(cables: SimCable[], obs: SimObstacle[], rounds = 60
           if (c2 <= c) continue; // each pair once
           const p2 = beads[c2][i2], need = cables[c].r + cables[c2].r + GAP;
           const d = sub(p2, q), D = len(d);
-          if (D >= need) continue;
+          if (D >= need + 1.8) continue;
+          const t1 = tangent(c, i), t2 = tangent(c2, i2), across = cross(t1, t2);
+          if (!closer(q, t1, p2, t2, need)) continue;
           const h1 = held[c][i], h2 = held[c2][i2];
           if (h1 && h2) continue;
           // which way apart: where they cross, one goes over the other (the later one on top); alongside, straight apart
-          const t1 = tangent(c, i), t2 = tangent(c2, i2);
           let n: number[];
-          const across = cross(t1, t2);
           if (len(across) > 0.5) {
             // keep whichever is already on top there on top; if neither is yet, the later one goes over
             n = unit(across);
@@ -294,7 +305,7 @@ export function settleCables(cables: SimCable[], obs: SimObstacle[], rounds = 60
       const gi = Math.floor(q[0] / CC), gj = Math.floor(q[1] / CC), gk = Math.floor(q[2] / CC);
       for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) for (let dk = -1; dk <= 1; dk++) for (const [c2, i2] of grid.get(`${gi + di},${gj + dj},${gk + dk}`) ?? []) {
         if (c2 === c) continue;
-        if (len(sub(beads[c2][i2], q)) < r + cables[c2].r + 0.05) return false;
+        if (closer(q, tangent(c, i), beads[c2][i2], tangent(c2, i2), r + cables[c2].r + GAP)) return false;
       }
       return true;
     };
