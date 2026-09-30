@@ -146,7 +146,7 @@ const GOALS: Record<NonNullable<ArrangeOpts['goal']>, Partial<Weights>> = {
 };
 
 export function weightsFor(o: ArrangeOpts = {}): Weights {
-  const w: Weights = { cable: 1, long: 0.5, cross: 60, under: 40, rail: 0.15, foot: 0.002, row: 30, dock: 8, access: 25, tol: 2, mains: 2, side: 0.3, group: 0, heat: 0, heatRow: 0, reach: 15, host: 1.5, stock: 0, spare: o.spare ?? 0, mainsAt: o.mains ?? 'auto' };
+  const w: Weights = { cable: 1, long: 0.5, cross: 60, under: 40, rail: 0.15, foot: 0.002, row: 30, dock: 8, access: 25, tol: 2, mains: 2, side: 4, group: 0, heat: 0, heatRow: 0, reach: 15, host: 1.5, stock: 0, spare: o.spare ?? 0, mainsAt: o.mains ?? 'auto' };
   Object.assign(w, GOALS[o.goal ?? 'balanced']);
   if (o.mains === 'off') w.mains = 0;
   if (o.group) w.group = 250;
@@ -175,6 +175,8 @@ export let lastPlan: PlanStats | null = null;
 
 const MARGIN = 8, PAD = 3; // (panelgen's margin at a rail's ends, and a little slack on every width against the real holders' extra bulk)
 const KEEP_APART = 45; // (mm between two boards whose cable ran into something)
+// (a cable's length from where its plugs are: along the rail, across to its street, and the climb down and up again; fitted to 182 cables of real builds, 34 mm out on average)
+export const STREET = 0.95, LEG = 1.49, LEG0 = -38;
 const LANE = 7; // (a cable and the space it keeps from the next)
 const BLOCK = 30, RUNS_INTO = 170; // a cable needs this much room out of its plug; a holder nearer than that in its way costs about a clash
 
@@ -235,7 +237,7 @@ class Model {
     const streets: number[] = [V[rows - 1] - 45];
     for (let r = rows - 1; r > 0; r--) streets.push((V[r] + V[r - 1]) / 2);
     streets.push(V[0] + 45);
-    const nl = this.links.length, load = new Int16Array(streets.length), zc = P.stands !== false ? -5 : 11; // (the streets run under the rails on table stands, else just over their lips)
+    const nl = this.links.length, load = new Int16Array(streets.length);
     let sum = 0, longest = 0;
     for (let l = 0; l < nl; l++) {
       const a = 2 * l, b = a + 1;
@@ -248,7 +250,7 @@ class Model {
         let best = Infinity, bs = 0, bi = 0;
         streets.forEach((st, i) => { const c = Math.abs(va - st) + Math.abs(vb - st); if (c < best) { best = c; bs = st; bi = i; } });
         // (down from each plug to the street under the rails, and up again)
-        len = du + best + (this.EZ[a] - zc) + (this.EZ[b] - zc);
+        len = du + STREET * best + LEG * (this.EZ[a] + this.EZ[b]) + LEG0;
         // (every cable goes by a street, a cable between two plugs on one rail too: measured on real builds, 26 mm out on average, none out by a bias)
         {
           load[bi]++;
@@ -328,7 +330,7 @@ class Model {
         for (let j = 0; j < n; j++) if (j !== i && defs[order[j]].lv) { const g = gapBetween(i, j); if (g < 50) { cost += W.mains * (50 - g); if (detail) detail.mains++; } }
         if (W.mainsAt === 'left') cost += W.side * (x0(i) - MARGIN);
         else if (W.mainsAt === 'right') cost += W.side * (rowU1[Rw[i]] - x1(i));
-        else if (W.mainsAt === 'bottom') cost += 150 * (rows - 1 - Rw[i]);
+        else if (W.mainsAt === 'bottom') cost += 400 * (rows - 1 - Rw[i]);
         else if (W.mainsAt === 'auto' && i > 0 && i < n - 1 && Rw[i - 1] === Rw[i] && Rw[i + 1] === Rw[i] && defs[order[i - 1]].lv && defs[order[i + 1]].lv) cost += 60; // between boards, not at an end
       }
     }
@@ -676,7 +678,8 @@ export function planCandidates(p: Project, classic: RailMount[], count = 2): Pla
   // room to grow: leave this many docks' width free at the end of each rail
   if (model.W.spare) model.reserve = model.W.spare * (model.defs.reduce((a, d) => a + d.opts[0].u1 - d.opts[0].u0 + PAD + p.panel.gap, 0) / Math.max(1, nD));
   const c0 = model.evaluate(start);
-  const rnd = mulberry(hash(`${p.modules.map((m) => m.board.name).join('|')}#${nLinks(p)}${JSON.stringify({ ...o, pick: undefined, plan: undefined, avoid: undefined })}${(o.avoid ?? []).join(';')}${p.panel.maxRail}`)); // (not `pick`: the best and the next best of one search)
+  // (the same random moves whatever the options, so two runs that differ by an option differ by its weight and not by luck; not `pick` either: the best and the next best of one search)
+  const rnd = mulberry(hash(`${p.modules.map((m) => m.board.name).join('|')}#${nLinks(p)}${(o.avoid ?? []).join(';')}${p.panel.maxRail}`));
   const iters = Math.min(9000, 1500 + 420 * nD);
   const found: { s: State; cost: number }[] = [{ s: start, cost: c0 }];
   [start, shuffled(start, rnd), shuffled(start, rnd)].forEach((s0, k) => {
