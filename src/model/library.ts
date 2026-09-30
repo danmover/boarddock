@@ -454,7 +454,7 @@ export const PRINTERS: PrinterSettings[] = PRINTERS_DB.map((x) => ({ name: x.nam
 
 export const DEFAULT_HOLDER: HolderSettings = {
   wall: 1.8, base: 2.0, gap: 0.3, wallAbove: 0.8, standoff: null, minStandoff: 3, leadLen: 1.8,
-  pattern: 'hex', cell: 10, rib: 1.8, tabs: 'auto', tabLip: 0.7, notches: true, label: '', chamfer: true, pinClear: 0.15, material: 'PETG', style: 'frame',
+  pattern: 'hex', cell: 10, rib: 1.8, tabLip: 0.7, notches: true, label: '', chamfer: true, pinClear: 0.15, material: 'PETG', style: 'frame',
 };
 
 export const DEFAULT_FEATURES = { cradles: true, caps: true, ties: true, guards: true };
@@ -542,6 +542,12 @@ export function migrate(p: any): Project {
     if (b?.kind === 'box' && b.comps?.some((c: Comp) => isDebugPort(c) || isUartPort(c))) bareToBoard(b, b.comps.some((c: Comp) => isDebugPort(c)) ? 'probe' : 'adapter');
   }
   for (const m of p.modules) if (m.on && m.onMode === 'towers' && m.board?.role && p.modules.find((x: Module) => x.id === m.on)?.board?.role) m.onMode = 'column';
+  // snap pins are gone (they broke in print): a board is held by its spring clips whatever an older project chose, and a hole
+  // that was a snap pin is a locating pin
+  for (const m of p.modules) {
+    if (m.holder) { delete m.holder.hold; delete m.holder.tabs; }
+    for (const b of [m.board, m.original]) for (const h of b?.holes ?? []) if (h.use === 'snap') h.use = 'auto';
+  }
   // v2 -> v3: boards go onto DIN rail docks, laid out automatically
   return {
     ...p,

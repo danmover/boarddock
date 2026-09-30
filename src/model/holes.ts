@@ -7,7 +7,7 @@ import { holderParts } from './cards';
 export interface HoleGuess { id: string; role: HoleRole; why: string; sure: boolean }
 
 export const ROLE_INFO: Record<HoleRole, { name: string; short: string; color: string; what: string }> = {
-  mount: { name: 'Mounting hole', short: 'mount', color: '#46d58b', what: 'gets a pin from the holder (locating or snap)' },
+  mount: { name: 'Mounting hole', short: 'mount', color: '#46d58b', what: 'gets a locating pin from the holder' },
   standoff: { name: 'Stacking standoff', short: 'standoff', color: '#c084fc', what: 'used by a board stacked on top: left free, room for the screw head or nut below' },
   plug: { name: 'Connector peg', short: 'plug', color: '#f5a524', what: "a connector's pegs or shell tabs: left free, clearance below" },
   lead: { name: 'Part lead', short: 'lead', color: '#5aa9ff', what: "a part's pins: left free, clearance below" },

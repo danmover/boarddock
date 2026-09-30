@@ -4,7 +4,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { initKernel, freeAll, K } from '../src/cad/kernel';
 import { generate } from '../src/cad/assembly';
 import { layerCheck, verdict } from '../src/cad/printcheck';
-import { designBow, designClip, holdOf, leafMech, leafT } from '../src/cad/grip';
+import { designBow, designClip, leafMech, leafT } from '../src/cad/grip';
 import { TEMPLATES, edgeConn } from '../src/model/templates';
 import { MATERIALS, newProject } from '../src/model/library';
 import type { Board, GenResult, Project } from '../src/model/types';
@@ -44,16 +44,9 @@ describe('spring sums', () => {
     for (const L of [14, 16]) {
       const b = designBow({ L, h: 9, mat: MATERIALS.PETG, gap: 0.3, stop: 0.3 });
       expect(b.epsRest).toBeLessThan(0.002);
-      expect(b.epsRestMax).toBeLessThan(0.003);
+      expect(b.epsRestMax).toBeLessThan(0.002); // (0.2% at rest at most, the board 0.15 mm bigger too)
       expect(b.F).toBeGreaterThan(0.1);
     }
-  });
-
-  it('older projects keep working: fingers auto / always / off read as auto / clips / pins', () => {
-    expect(holdOf({ tabs: 'auto' })).toBe('auto');
-    expect(holdOf({ tabs: 'on' })).toBe('clips');
-    expect(holdOf({ tabs: 'off' })).toBe('pins');
-    expect(holdOf({ tabs: 'off', hold: 'both' })).toBe('both');
   });
 });
 
@@ -76,10 +69,10 @@ const odd = (): { name: string; b: Board }[] => {
 
 function held(g: GenResult): { how: string; ok: boolean; warned: boolean } {
   const clips = g.report.checks.map((c) => /^Spring clips \((\d+)\)/.exec(c.name)).find(Boolean);
-  const pins = g.report.checks.map((c) => /^Snap pins \((\d+),/.exec(c.name)).find(Boolean);
-  const nc = clips ? +clips[1] : 0, np = pins ? +pins[1] : 0;
-  const warned = g.report.warnings.some((w) => /Nothing clips this board in: .*(Free an edge|set two holes|Hold the board with)/.test(w));
-  return { how: `${nc} clips, ${np} snap pins`, ok: nc >= 2 || np >= 2, warned };
+  const ledges = g.report.checks.map((c) => /^Fixed ledges \((\d+)\)/.exec(c.name)).find(Boolean);
+  const nc = clips ? +clips[1] : 0, nl = ledges ? +ledges[1] : 0;
+  const warned = g.report.warnings.some((w) => /Nothing clips this board in: .*(Free an edge|lay it flat)/.test(w));
+  return { how: `${nc} clips, ${nl} ledges`, ok: nc >= 2 || (nc >= 1 && nl >= 1), warned };
 }
 
 describe('every board is held', () => {

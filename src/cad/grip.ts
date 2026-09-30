@@ -21,7 +21,7 @@
 // the board's size and weight (`sizeFor`, `clipsNeeded`), and each clip is checked for the force to press the board past
 // it, the strain at full deflection, the pull that releases it, the lift it holds against, and its fatigue margin.
 import type { MaterialProps } from '../model/library';
-import type { HolderSettings } from '../model/types';
+import type { Loop, V2 } from '../model/types';
 
 export const SLIT = 0.6; // slit around a leaf: wide enough that it doesn't fuse on the first layers (0.4 mm nozzle)
 export const FACE = 0.1; // a clip's leaf stands this much further out than the guards, so the board never leans on it
@@ -42,8 +42,14 @@ export const U_ARMS = 2.5; // what a hairpin's two arms and the slot between the
 export const U_TMIN = 0.6; // its arms' least thickness (near the free end, where the bending is least)
 /** A hairpin leaf with arms t0 thick at the fold (0.9 at the most); the slot at the fold takes the rest of U_ARMS, and opens along the arms as they thin. */
 export const uLeaf = (L: number, t0: number, h: number, lipLen: number): Leaf => ({ L, t0, tMin: Math.min(U_TMIN, t0), h, lipLen, u: { slot: U_ARMS - 2 * t0 } });
-/** How much the fold's tight round raises the strain over the beam sum (FEA, tests/springfea.test.ts): more with a narrow slot. */
-const foldKt = (f: Leaf) => 1 + (0.24 * f.t0) / (f.u?.slot ?? 1);
+/** A hairpin's lip length on a stretch of L mm: 3 to 4 mm, but 2.5 on a short stretch, where the arm then carries the load further from the fold. */
+export const hairpinLip = (L: number) => Math.min(4, Math.max(2.5, 0.3 * L));
+
+/**
+ * How much the fold's tight round raises the strain over the beam sum, from the FEA of the whole outline (tests/springfea.test.ts):
+ * 1.23 for the thinnest arms, 1.30 at 0.7 mm rising to 1.41 at 0.9 mm and over (the same for every length of hairpin).
+ */
+const foldKt = (f: Leaf) => (f.t0 <= 0.65 ? 1.23 : f.t0 >= 0.9 ? 1.41 : 1.3 + ((f.t0 - 0.7) / 0.2) * 0.11);
 
 /** Where the board pushes on the leaf: the middle of its lip, which ends 0.3 mm short of the tip (a hairpin: 0.3 mm past its free end). */
 export const loadAt = (f: Leaf) => (f.u ? U_FREE + 0.3 + f.lipLen / 2 : f.L - 0.3 - f.lipLen / 2);
@@ -173,7 +179,7 @@ export interface BowDesign {
 export function designBow(o: { L: number; h: number; mat: MaterialProps; gap: number; stop: number }): BowDesign {
   const lipLen = Math.min(4, Math.max(3, 0.3 * o.L));
   const leaf: Leaf = { L: o.L, t0: 0.8, tMin: 0.6, h: o.h, lipLen };
-  const preload = 0.3, tol = 0.15;
+  const preload = 0.2, tol = 0.15; // (0.2% strain at rest at the most, the board 0.15 mm bigger too)
   const tip = o.stop + preload + 0.3;
   const rest = leafMech(leaf, o.mat.E, preload), restMax = leafMech(leaf, o.mat.E, preload + tol);
   const ins = leafMech(leaf, o.mat.E, preload + 0.3 + tol);
@@ -232,7 +238,7 @@ export interface ClipSpec extends ClipDesign {
 }
 
 /** Peak strain over the beam sum, from the FEA (tests/springfea.test.ts): the root's fillet in a straight leaf, the fold in a hairpin (foldKt). */
-const straightKt = 1.12;
+const straightKt = 1.17;
 
 /**
  * Size a clip of one kind for a stretch of edge L long: the stiffest leaf that keeps the strain at full deflection
@@ -241,15 +247,15 @@ const straightKt = 1.12;
  */
 export function sizeClip(o: ClipAsk): ClipSpec {
   const share = o.share ?? 0.5, lim = share * o.mat.strainAllow, E = o.mat.E, u = o.kind === 'u';
-  const lipLen = u ? Math.min(4, Math.max(3, 0.3 * o.L)) : Math.min(5, Math.max(3, 0.38 * o.L));
+  const lipLen = u ? hairpinLip(o.L) : Math.min(5, Math.max(3, 0.38 * o.L));
   const steps = (a: number, b: number) => { const r: number[] = []; for (let t = a; t <= b + 1e-9; t += 0.05) r.push(Math.round(t * 100) / 100); return r; };
-  const ts = u ? steps(0.7, (U_ARMS - 0.6) / 2) : steps(0.6, 1.6);
+  const ts = u ? steps(0.6, (U_ARMS - 0.6) / 2) : steps(0.6, 1.6);
   const leaf = (t0: number): Leaf => (u ? uLeaf(o.L, t0, o.h, lipLen) : { L: o.L, t0, tMin: Math.min(0.7, t0), h: o.h, lipLen });
   const kt = (f: Leaf) => (f.u ? 1 : straightKt);
   const strain = (t0: number, tip: number) => { const f = leaf(t0); return kt(f) * leafMech(f, E, tip + o.play).eps; };
   const holdAt = (t0: number, tip: number) => (leafMech(leaf(t0), E, tip).k * tip) / MU;
   let tip = o.tip, t0 = ts[0];
-  while (strain(ts[0], tip) > lim && tip > 0.45 + 1e-9) tip = Math.max(0.45, Math.round((tip - 0.05) * 100) / 100);
+  while (strain(ts[0], tip) > lim && tip > 0.4 + 1e-9) tip = Math.max(0.4, Math.round((tip - 0.05) * 100) / 100);
   for (const t of ts) {
     // (a leaf no thicker than its thinnest end is the same thickness all along, and strains more than one a little
     // thicker at the root that tapers: so the strain is not steadily up with the thickness, and one that is over is skipped)
@@ -280,10 +286,29 @@ export function bestClip(o: Omit<ClipAsk, 'kind'>): ClipSpec {
   return b.eps < a.eps && b.push >= a.push ? b : a;
 }
 
-/**
- * What holds the board in. Older projects saved only `tabs` (wall fingers auto / always / off): auto stays auto,
- * always means clips, off means pins.
- */
-export function holdOf(H: Pick<HolderSettings, 'hold' | 'tabs'>): NonNullable<HolderSettings['hold']> {
-  return H.hold ?? (H.tabs === 'on' ? 'clips' : H.tabs === 'off' ? 'pins' : 'auto');
+// ---------------------------------------------------------------------------------------------------------------------
+// Keeping the board from tipping out
+//
+// A board rests on its seats (posts under its edge, all round), so it can only tip about a line along the seats' edge,
+// the side towards the middle lifting. A clip or ledge on that side, well back from the line, stops it: it lifts only a
+// fraction of a millimetre before the ledge is against it. So for every direction the board could tip towards, some
+// clip or ledge must stand well back from the seats' edge that way: two on opposite edges do, three round the board do,
+// two on the same edge don't (the board hinges up about them).
+
+export const N_DIR = 24; // directions tried
+export const SEAT_IN = 3.5; // the seats' edge stands this far in from the board's
+export interface TipFrame { dirs: V2[]; hi: number[]; lo: number[] }
+
+export function tipFrame(outline: Loop): TipFrame {
+  const dirs = Array.from({ length: N_DIR }, (_, k) => [Math.cos((2 * Math.PI * k) / N_DIR), Math.sin((2 * Math.PI * k) / N_DIR)] as V2);
+  const proj = outline.map((v) => dirs.map((d) => v[0] * d[0] + v[1] * d[1]));
+  return { dirs, hi: dirs.map((_, k) => Math.max(...proj.map((r) => r[k]))), lo: dirs.map((_, k) => Math.min(...proj.map((r) => r[k]))) };
 }
+
+/** The directions (bit k: the k-th of N_DIR) a clip or ledge at `p` keeps the board from tipping towards. */
+export function tipCover(f: TipFrame, p: V2): number {
+  let m = 0;
+  for (let k = 0; k < N_DIR; k++) if (f.hi[k] - SEAT_IN - (p[0] * f.dirs[k][0] + p[1] * f.dirs[k][1]) >= Math.max(4, 0.12 * (f.hi[k] - f.lo[k]))) m |= 1 << k;
+  return m;
+}
+export const TIP_FULL = (1 << N_DIR) - 1;

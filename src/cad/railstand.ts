@@ -225,7 +225,8 @@ export function standBoxes(plan: StandPlan): { box: number[]; label: string }[] 
   const out: { box: number[]; label: string }[] = [];
   for (const pc of plan.pieces) {
     const [x0, x1] = pc.kind === 'end' || pc.kind === 'saddle' ? [-w, w] : [w, pc.to != null ? pc.to - w : pc.reach];
-    const [y0, y1] = [-STAND.H, pc.kind === 'end' ? TOP : pc.kind === 'saddle' ? 2.4 : -2.5];
+    // (a bar's top is at -2.5 in its profile, and 0.4 more at mid-thickness: the chamfers at its faces are cut back from that)
+    const [y0, y1] = [-STAND.H, pc.kind === 'end' ? TOP : pc.kind === 'saddle' ? 2.4 : -2.1];
     const zl = pc.kind === 'end' || pc.kind === 'saddle' ? STAND.len : STAND.spacerT;
     const box = (xa: number, xb: number, ya: number, yb: number) => {
       const b = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
