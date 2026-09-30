@@ -30,8 +30,11 @@ export const HD = {
  * two pegs under the next one's pedestal that press into it (x either side of the rod's tunnel, y across the spine;
  * the same Ø4 pegs and crush-rib sockets as a stack's towers).
  */
-export const LANDING = { gap: 0, t: 8, hx: 12 };
-export const PEG = { x: [-7, 7], y: 5.25, r: 2.0, len: 3.4, tip: 0.6 };
+export const LANDING = { gap: 0, t: 6.4, hx: 12 };
+// (printed lying flat, a peg lies on its side: `flare` is a 45 degree cone at its root that holds its underside, and
+// the hole in the landing has the same countersink; `depth`: how deep the hole is, a flat bottom 1.8 mm under the
+// peg's tip; see column.ts)
+export const PEG = { x: [-6.5, 6.5], y: 5.25, r: 2.0, len: 3.4, tip: 0.6, flare: 1.8, depth: 4.6 };
 
 /** Holder frame height (above the bed) of the spine top: the board must sit above it. */
 export const SPINE_TOP = HD.spineY1 - HD.backY;
