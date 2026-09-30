@@ -17,7 +17,7 @@ One rack has been printed so far, from 3.0.0. The DIN rail clip worked. The rest
 - two crush ribs on the tongue replace the stoppers;
 - cable tags are held on by zip ties, and back-to-back holders by a pin and a U clip.
 
-None of 3.1.0 has been reprinted yet, so every number comes from models. Print the test-fit kit first, and read [the known limits](docs/limits.md).
+Nothing from 3.1 has been reprinted yet, so every number comes from models. Print the test-fit kit first, and read [the known limits](docs/limits.md).
 
 ## Download
 
@@ -27,9 +27,9 @@ None of 3.1.0 has been reprinted yet, so every number comes from models. Print t
 
 | System | File | First time |
 |---|---|---|
-| **Windows** | `BoardDock-3.1.0-win-x64-setup.exe` (installer) or `BoardDock-3.1.0-win-x64-portable.exe` (no install) | Choose **More info › Run anyway**. |
-| **macOS** (Apple Silicon) | `BoardDock-3.1.0-mac-arm64.dmg` (open it and drag BoardDock into Applications), or `BoardDock-3.1.0-mac-arm64.zip` | Right-click the app and choose **Open**. |
-| **Linux** | `BoardDock-3.1.0-linux-x86_64.AppImage` (`chmod +x` it, then run it) or `BoardDock-3.1.0-linux-amd64.deb` (`sudo apt install ./BoardDock-3.1.0-linux-amd64.deb`) | Nothing. |
+| **Windows** | `BoardDock-3.1.1-win-x64-setup.exe` (installer) or `BoardDock-3.1.1-win-x64-portable.exe` (no install) | Choose **More info › Run anyway**. |
+| **macOS** (Apple Silicon) | `BoardDock-3.1.1-mac-arm64.dmg` (open it and drag BoardDock into Applications), or `BoardDock-3.1.1-mac-arm64.zip` | Right-click the app and choose **Open**. |
+| **Linux** | `BoardDock-3.1.1-linux-x86_64.AppImage` (`chmod +x` it, then run it) or `BoardDock-3.1.1-linux-amd64.deb` (`sudo apt install ./BoardDock-3.1.1-linux-amd64.deb`) | Nothing. |
 
 The desktop app does two things the browser can't: it opens Cadence Allegro `.brd` boards (with KiCad 10 or newer installed, free from kicad.org), and **Open plate** hands a print plate to a slicer you have installed.
 
