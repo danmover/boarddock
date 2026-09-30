@@ -5,7 +5,7 @@ From TODO.md: go through the clip in depth, measuring rather than guessing. Ther
 1. **The dock's rail shoe** (`src/cad/dock.ts`), with its print-in-place press-down release lever. The socket snaps into it and the holder's tongue plugs into the socket. A board lying flat instead has a separate dock key in a dovetail under the holder's ear.
 2. **The pull-tab DIN clip** (`src/cad/dinclip.ts`) for loose holders and for flat mounts in a panel.
 
-**Nothing has been printed yet.** Every number here comes from the model: exact geometry, a 2D FEA with a textbook modulus, and hand sums. Fit, strength, grip and the feel of the clips are untested until someone prints one. The last section lists what only a print can tell.
+**Written before the first print; see [After the first print](#after-the-first-print-petg-fdm) at the end.** Every number here comes from the model: exact geometry, a 2D FEA with a textbook modulus, and hand sums. Fit, strength, grip and the feel of the clips were untested when it was written. The last sections list what only a print can tell.
 
 ## How it was measured
 
