@@ -36,6 +36,9 @@ export function Library({ onAdd, dense }: { onAdd: (bs: Board[]) => void; dense?
   const comShown = com.filter((e) => (shelf === 'all' || shelf === 'community') && match(`${e.name} ${e.maker ?? ''} community`));
   const picked = Object.values(pick).reduce((a, x) => a + x, 0);
   const bump = (id: string, d: number) => setPick((x) => { const v = Math.max(0, (x[id] ?? 0) + d); const y = { ...x, [id]: v }; if (!v) delete y[id]; return y; });
+  // a count being typed: it may be empty on the way, and only settles (0 takes the board off) when the box loses focus
+  const [typing, setTyping] = useState<{ id: string; text: string } | null>(null);
+  const setCount = (id: string, n: number) => setPick((x) => { const y = { ...x, [id]: Math.max(0, Math.min(99, Math.floor(n))) }; if (!y[id]) delete y[id]; return y; });
   const make = (id: string): Board | null => { if (id.startsWith('mine:')) { const s = mine.find((x) => `mine:${x.id}` === id); return s ? copyOf(s) : null; } return TEMPLATES.find((t) => t.id === id)?.make() ?? null; };
   const isCom = (id: string) => id.startsWith('community:');
   const loadCom = (id: string) => { const e = com.find((x) => `community:${x.id}` === id); return e ? communityBoard(e) : Promise.resolve(null); };
@@ -57,7 +60,9 @@ export function Library({ onAdd, dense }: { onAdd: (bs: Board[]) => void; dense?
         </button>
         <div className="ltile-qty">
           {c > 0 && <button className="qbtn" onClick={() => bump(id, -1)} aria-label={`One ${name} fewer`}>−</button>}
-          {c > 0 && <b>{c}</b>}
+          {c > 0 && <input className="qnum" type="number" inputMode="numeric" min={0} max={99} value={typing?.id === id ? typing.text : c} aria-label={`How many ${name}`} title="Type how many"
+            onFocus={(e) => e.target.select()} onChange={(e) => { setTyping({ id, text: e.target.value }); const n = +e.target.value; if (e.target.value !== '' && n >= 1) setCount(id, n); }}
+            onBlur={(e) => { setTyping(null); if (!(+e.target.value >= 1)) setCount(id, 0); }} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />}
           <button className="qbtn" onClick={() => bump(id, 1)} aria-label={`Pick ${c ? 'another' : 'a'} ${name}`} title="Pick several, then add them all at once">+</button>
         </div>
         {extra}
@@ -75,7 +80,7 @@ export function Library({ onAdd, dense }: { onAdd: (bs: Board[]) => void; dense?
           {com.length > 0 && <button role="tab" aria-selected={shelf === 'community'} className={shelf === 'community' ? 'on' : ''} onClick={() => setShelf('community')}>Community <small>{com.length}</small></button>}
         </div>
       </div>
-      {!picked && <p className="hint lib-tip">Tap a board to add it now, or tap <b>+</b> on each board you have (twice for two), then <b>Add</b>.</p>}
+      {!picked && <p className="hint lib-tip">Tap a board to add it now, or tap <b>+</b> on each board you have (or type how many), then <b>Add</b>.</p>}
       {saved.length > 0 && (
         <section>
           <h4>My boards</h4>

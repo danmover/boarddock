@@ -28,7 +28,7 @@ function glow(): THREE.Texture {
 
 const noRay = () => {};
 
-/** A small label in the scene (where an off-rack lead goes), always facing the camera. */
+/** A small label in the scene (where an off-rack lead goes), always facing the camera and drawn over the boards (never behind one). */
 function labelSprite(text: string): THREE.Sprite {
   const px = 28, pad = 10, cv = document.createElement('canvas'), g = cv.getContext('2d')!;
   g.font = `600 ${px}px system-ui, sans-serif`;
@@ -41,7 +41,7 @@ function labelSprite(text: string): THREE.Sprite {
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
   // the same size on screen however far away (readable zoomed out, not huge zoomed in)
-  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, toneMapped: false, sizeAttenuation: false }));
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false, toneMapped: false, sizeAttenuation: false }));
   const H = 0.021;
   sp.scale.set((H * w) / h, H, 1);
   sp.raycast = noRay;
@@ -64,7 +64,7 @@ const seedOf = (s: string) => { let h = 7; for (let i = 0; i < s.length; i++) h 
 interface LightObj { sprite: THREE.Sprite; dot: THREE.Mesh; base: THREE.Color; pattern: LightPattern; seed: number; i: number; size: number; level: number; dark: boolean }
 interface FlowObj { beads: THREE.Mesh[]; pts: number[][]; cum: number[]; len: number; speed: number; on: boolean; owner: THREE.Mesh | null }
 
-export interface LiveFx { tick(now: number): boolean; setLive(on: boolean): void; hide(v: boolean): void; declutter(camera: THREE.PerspectiveCamera): void; dispose(): void }
+export interface LiveFx { tick(now: number): boolean; setLive(on: boolean): void; hide(v: boolean): void; declutter(camera: THREE.PerspectiveCamera, zoom?: number): void; dispose(): void }
 
 /**
  * Which of these labels (centre, half width and height on screen, distance from the eye) to show so none lies on
@@ -81,9 +81,12 @@ export function keepApart(ls: { x: number; y: number; hw: number; hh: number; d:
   return out;
 }
 
+/** How much of their strength the where-it-goes labels keep when the view is `zoom` times the rack's radius away: all up to 5 (the whole rack in view is about 3.5), none from 8. */
+export const labelFade = (zoom: number) => Math.max(0, Math.min(1, (8 - zoom) / 3));
+
 /** Hang the live touches on the meshes of the ghosts that have them. `live` false: lights on steady, no pulses. */
 export function liveFx(items: { gh: Ghost; mesh: THREE.Object3D }[], live: boolean): LiveFx {
-  const lights: LightObj[] = [], flows: FlowObj[] = [], extras: THREE.Object3D[] = [], tags: { at: THREE.Vector3; texts: string[]; mesh: THREE.Object3D }[] = [];
+  const lights: LightObj[] = [], flows: FlowObj[] = [], extras: THREE.Object3D[] = [], tags: { at: THREE.Vector3; texts: string[]; mesh: THREE.Object3D; mod: string }[] = [];
   const made: { dispose(): void }[] = [], labels: THREE.Sprite[] = [], streaks = new Map<string, THREE.ShaderMaterial>();
   const dotGeo = new THREE.SphereGeometry(1, 12, 8), beadGeo = new THREE.SphereGeometry(1, 10, 6);
   made.push(dotGeo, beadGeo);
@@ -137,9 +140,11 @@ export function liveFx(items: { gh: Ghost; mesh: THREE.Object3D }[], live: boole
       if (F.label) {
         // leads out of plugs close together share one label ("to a screen ×2 · to speakers")
         const t = F.len * 0.8 + F.dash + 7, at = new THREE.Vector3(F.p[0] + F.d[0] * t, F.p[1] + F.d[1] * t, F.p[2] + F.d[2] * t);
-        const near = tags.find((g) => g.at.distanceTo(at) < 45);
+        // (and the same words from one holder are one label, "→ hub ×4", wherever along it the leads are)
+        const mod = gh.tag?.module ?? '', text: string = F.label;
+        const near = tags.find((g) => g.mod === mod && g.texts.includes(text)) ?? tags.find((g) => g.at.distanceTo(at) < 45);
         if (near) near.texts.push(F.label);
-        else tags.push({ at, texts: [F.label], mesh });
+        else tags.push({ at, texts: [F.label], mesh, mod });
       }
     }
     if (fx.flow && fx.flow.pts.length > 1) {
@@ -231,8 +236,10 @@ export function liveFx(items: { gh: Ghost; mesh: THREE.Object3D }[], live: boole
     },
     // where-it-goes labels are the same size on screen at any distance, so on a big rack seen whole they pile up: the
     // nearest keep their place and any that would lie on one of them wait until the view comes closer
-    declutter(camera) {
-      if (labels.length < 2) return;
+    declutter(camera, zoom = 0) {
+      // zoomed right out (the view further than 5 times the rack's radius from what it looks at) they fade away
+      const fade = labelFade(zoom);
+      if (labels.length < 2) { for (const s of labels) { (s.material as THREE.SpriteMaterial).opacity = fade; s.visible = fade > 0.02; } return; }
       const P = camera.projectionMatrix.elements, v = new THREE.Vector3();
       const shown = (s: THREE.Object3D) => { for (let o: THREE.Object3D | null = s.parent; o; o = o.parent) if (!o.visible) return false; return true; };
       const list = labels.filter(shown).map((s) => {
@@ -242,7 +249,7 @@ export function liveFx(items: { gh: Ghost; mesh: THREE.Object3D }[], live: boole
         return { s, x: q.x, y: q.y, hw: (s.scale.x * P[0]) / 2 + 0.01, hh: (s.scale.y * P[5]) / 2 + 0.01, d };
       });
       const keep = keepApart(list);
-      list.forEach((l, i) => { l.s.visible = keep[i]; });
+      list.forEach((l, i) => { (l.s.material as THREE.SpriteMaterial).opacity = fade; l.s.visible = keep[i] && fade > 0.02; });
     },
     dispose() {
       for (const L of lights) { L.sprite.removeFromParent(); L.dot.removeFromParent(); }

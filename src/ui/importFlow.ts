@@ -2,7 +2,7 @@
 // several boards (a Gerber set or an IDF pair stays one board); they join the project unless "replace" is ticked.
 import { importMany, type Converter } from '../import';
 import { amend, lastReplace, loadProject, putBoards, reviseBoard, store, toast } from '../state';
-import { afterBuild, bedNote, placementNote, settleOverlaps } from './panelOps';
+import { afterBuild, bedNote, placementNote, sayWhereWent, settleOverlaps } from './panelOps';
 
 /** A warning that two things on the rack overlap or a cable runs into something. */
 const isClash = (w: string) => / overlap on the panel\.| runs into /.test(w);
@@ -93,7 +93,9 @@ async function openNow(files: File[], opts: { stay?: boolean }): Promise<void> {
   const s = store.get();
   const had = s.project?.modules.length ?? 0;
   const replace = s.replaceMode || !s.project;
-  putBoards(boards, replace, { stay: opts.stay && !replace });
+  // several files into a new rack: stay on Start, with a button to go and check the boards
+  const fresh = !s.project && boards.length > 1;
+  putBoards(boards, replace, { stay: (opts.stay && !replace) || fresh });
   const n = store.get().project?.modules.length ?? 0;
   const names = boards.map((b) => b.name);
   const what = replace && had
@@ -101,7 +103,11 @@ async function openNow(files: File[], opts: { stay?: boolean }): Promise<void> {
     : `${had ? 'Added' : 'Imported'} ${boards.length > 1 ? `${boards.length} boards: ${names.join(', ')}` : names[0]}`;
   const added = had && (!replace || boards.length > 1);
   const p1 = store.get().project!;
-  toast(`${what}${n > 1 ? ` (${n} boards in the project)` : ''}.${replace && had ? lastReplace : ''}${added ? placementNote(p1, p1.modules.slice(had).map((m) => m.id)) : ''}${bedNote(store.get().project!, boards)}${had ? ' ⌘Z undoes it.' : ''}${errors.length ? ` Skipped: ${errors.join('; ')}` : ''}`, opts.stay && !replace ? { label: boards.length > 1 ? 'Check them' : 'Check its board', run: () => store.set({ step: 'board', view: 'assembly' }) } : undefined);
+  const ids = p1.modules.slice(had).map((m) => m.id);
+  const say = (note: string) => `${what}${n > 1 ? ` (${n} boards in the project)` : ''}.${replace && had ? lastReplace : ''}${added ? note : ''}${bedNote(store.get().project!, boards)}${had ? ' ⌘Z undoes it.' : ''}${errors.length ? ` Skipped: ${errors.join('; ')}` : ''}`, first = say(added ? placementNote(p1, ids) : '');
+  const act = fresh ? { label: 'Check the boards', run: () => store.set({ step: 'board', view: 'editor' }) } : opts.stay && !replace ? { label: boards.length > 1 ? 'Check them' : 'Check its board', run: () => store.set({ step: 'board', view: 'assembly' }) } : undefined;
+  toast(first, act);
+  if (added && p1.layout === 'panel' && (!p1.panel.auto || p1.built)) sayWhereWent(ids, first, say, act);
   if (added && p1.layout === 'panel' && !p1.panel.auto) settleOverlaps();
 }
 

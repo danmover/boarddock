@@ -3,6 +3,7 @@
 import { PRINTERS_DB, printerByName } from './printers';
 import { applyHoleRoles } from './holes';
 import { DEBUG_HINT, isDebugPort, isUartPort, numberLinks, SOCKET_NAME } from './links';
+import { CONTRIB_TYPES, contribName, contribThtIds, sizeHint } from './contributed';
 import type { ArrangeSettings, Board, Comp, CompKind, ConnSetup, HolderSettings, Material, Module, MountSettings, PanelSettings, PlugSpec, PrinterSettings, Project, StandSettings } from './types';
 
 export interface ConnType {
@@ -109,10 +110,13 @@ export const CONNECTORS: ConnType[] = [
   { id: 'custom', name: 'Custom connector', entry: 'edge', body: { w: 10, l: 8, h: 5 }, zc: 2.5, overhang: 0.5, plug: { w: 12, h: 8, len: 20, cable: 4 }, match: /$^/, cradle: true },
 ];
 
+// contributed connector types (parts/, npm run parts) follow the built-in ones, ahead of Custom (which connById falls back to)
+CONNECTORS.splice(CONNECTORS.length - 1, 0, ...CONTRIB_TYPES);
+
 export const connById = (id: string) => CONNECTORS.find((c) => c.id === id) ?? CONNECTORS[CONNECTORS.length - 1];
 
 /** More names for the types above as [pattern, type id]: maker part-number families and family names (tried after a type's own `match`). */
-const ALSO: [RegExp, string][] = [
+export const ALSO: [RegExp, string][] = [
   [/xlr|trapc/i, 'xlr'], [/ct3151|fcr7350|caltest/i, 'banana'], [/\bm(8|12)[a-z]?-\d\d[pf]/i, 'm12'], [/\bmd-[3-8]0[a-z]|\bkmdg/i, 'minidin'],
   [/spring[\s_-]?(contact|pin|probe)|\bs1941|\b09(0[5-8]|65)-\d-\d\d/i, 'pogo'], [/sim8\d{3}|nsim|sf53s|sf72s/i, 'sim'],
   [/\bmem2\d{3}|\b6930[78]\d{7}/i, 'microsd'], [/\bmm60-|pci[\s_-]?express[\s_-]?(holder|mini)/i, 'm2'],
@@ -165,6 +169,7 @@ export { SOCKET_NAME };
 
 /** Connector types that are through-hole unless their name says SMD. */
 const THT = new Set(['usb_a', 'usb_a_dual', 'usb_b', 'rj45', 'rj11', 'dsub', 'xt60', 'xt30', 'iec_c14', 'minidin', 'xlr', 'banana', 'm12', 'toslink', 'pcie', 'barrel', 'rca', 'bnc', 'terminal', 'microfit', 'minifit', 'kk254', 'jst_xh', 'jst_ph', 'idc', 'idc_ra', 'header']);
+for (const id of contribThtIds()) THT.add(id);
 
 /**
  * How many pins a connector's name says it has: "1x04" or "2x05", JST's "B4B-" and "SM04B-", the circuits in a Molex
@@ -301,10 +306,12 @@ export function guessPackage(pkg: string, ref = '', value = ''): PkgGuess {
   const says = (r?: RegExp) => !!r && (r.test(name) || r.test(spaced));
   // part numbers and unmistakable names count anywhere; a bare word (HDMI, SMA, TRS, TB6612) only on a connector's reference
   const also = ALSO.find(([r]) => says(r));
-  const hit = CONNECTORS.find((c) => c.id !== 'custom' && says(c.match)) ?? (also && connById(also[1])) ?? (isConnRef ? CONNECTORS.find((c) => c.id !== 'custom' && says(c.weak)) ?? byPitch(name) : undefined);
+  // contributed names (parts/names-*.json): a part number first of all, a bare word (weak) after the library's own weak ones
+  const cn = contribName(name, isConnRef);
+  const hit = (cn && !cn.weak ? connById(cn.type) : undefined) ?? CONNECTORS.find((c) => c.id !== 'custom' && says(c.match)) ?? (also && connById(also[1])) ?? (isConnRef ? CONNECTORS.find((c) => c.id !== 'custom' && says(c.weak)) ?? (cn && connById(cn.type)) ?? byPitch(name) : undefined);
   if (hit && (isConnRef || hit.id !== 'header' || g.kind === 'header')) {
     const keepSize = hit.entry === 'top' && g.w > 0 && g.kind === 'header';
-    const t = keepSize ? hit : sizedConn(hit, name);
+    const t = keepSize ? hit : sizedConn(hit, cn && cn.type === hit.id ? sizeHint(cn, WTB[hit.id]?.rows === 2) + name : name);
     g = {
       w: keepSize ? g.w : t.body.w, l: keepSize ? g.l : t.body.l, h: keepSize ? g.h : t.body.h,
       kind: hit.entry === 'top' && hit.id === 'header' ? 'header' : 'connector', tht: g.tht ?? (!/smd|smt/i.test(name) && (THT.has(hit.id) || /usb[\s_-]?[ab]\b|rj45|barrel|jack|terminal|header/i.test(name))), conn: t,

@@ -11,6 +11,8 @@ import { describeChange, kindName, rackName, sameKind } from '../src/model/diff'
 import { delta, seatLabels, snapshot } from '../src/model/built';
 import { niceName } from '../src/import';
 import { putBoards, loadProject, store, uniqueName, undo } from '../src/state';
+import { generate } from '../src/cad/assembly';
+import { initKernel } from '../src/cad/kernel';
 import type { GenResult, Project } from '../src/model/types';
 
 const T = (id: string) => TEMPLATES.find((t) => t.id === id)!.make();
@@ -79,6 +81,33 @@ describe('layout', () => {
     // not at the end of its boards: a dock on either side of each box
     for (let i = 0; i < order.length; i++) if (order[i] === 'flat' && order.filter((k) => k === 'dock').length >= 2) expect(order.slice(0, i).includes('dock')).toBe(true);
   });
+});
+
+describe('layout of cabled boards', () => {
+  it('docks a hub right after its host and the boards on the hub right after the hub', () => {
+    // the hub is on the Pi 5; a Zero and an Uno are on the hub; nothing else in the list is near them
+    const p = rack(['rpi5', 'pico', 'rpi_zero', 'usb_hub', 'uno', 'pico', 'rpi4', 'nano']);
+    p.links = autoLinks(p);
+    const order = autoAssign(p).map((m) => m.slots.filter((s) => s.module).map((s) => s.module));
+    const at = (i: number) => order.findIndex((u) => u.includes(p.modules[i].id));
+    const [pi5, zero, hub, uno] = [at(0), at(2), at(3), at(4)];
+    expect(Math.abs(hub - pi5)).toBe(1);
+    expect(Math.abs(uno - hub)).toBe(1);
+    expect(Math.abs(zero - hub)).toBeLessThanOrEqual(1); // (in the Pi 5's dock, back to back)
+  });
+
+  it('lays a second rail out the other way round, so the boards cabled across the break are side by side', async () => {
+    await initKernel();
+    const p = rack(['rpi4', 'uno', 'uno', 'uno', 'uno', 'uno']);
+    p.links = autoLinks(p);
+    p.panel.maxRail = 260;
+    const r = generate(p).report.panel!;
+    expect(r.rails.length).toBeGreaterThan(1);
+    // (the first rail runs left to right, the second right to left: its docks in order start at the far end)
+    const seq = (rail: string) => r.mounts.filter((m) => m.rail === rail).sort((a, b) => Number(a.id.split('.')[1]) - Number(b.id.split('.')[1])).map((m) => m.at);
+    expect(seq(r.rails[0].id)[0]).toBeLessThan(seq(r.rails[0].id)[seq(r.rails[0].id).length - 1]);
+    expect(seq(r.rails[1].id)[0]).toBeGreaterThan(seq(r.rails[1].id)[seq(r.rails[1].id).length - 1]);
+  }, 120_000);
 });
 
 describe('names and history', () => {

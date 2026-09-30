@@ -8,6 +8,7 @@ import { KIND_COLOR, KIND_GLOW, KIND_NAME } from './cablekinds';
 
 export { KIND_COLOR, KIND_NAME }; // (the cable kinds' colours and names: cablekinds.ts)
 import { isPoePort, poeAdvice, poeAssign, poeFedIds, poeFeeds, poeTotal, poeWatts, takesPoe } from './poe';
+import { contribOffRack, contribPlugNames, roleAlias } from './contributed';
 
 export type PlugRole = 'host' | 'device' | 'power-in' | 'power-in-dc' | 'power-out' | 'dc-out' | 'hub-up' | 'hub-down' | 'net' | 'video' | 'audio' | 'wire' | 'debug' | 'uart' | 'mains-in' | 'mains-out' | 'other';
 
@@ -47,10 +48,11 @@ const plugTypeName: Record<string, string> = {
   hdmi_micro: 'micro-HDMI', hdmi_mini: 'mini-HDMI', hdmi_a: 'HDMI', rj45: 'RJ45', barrel: 'DC barrel', audio35: '3.5 mm', terminal: 'wires', header: 'jumper',
   swd10: '10-pin debug', cortex20: '20-pin Cortex debug', jtag20: '20-pin debug', dsub: 'D-sub', dp: 'DisplayPort', rj11: 'RJ11', rca: 'RCA', bnc: 'BNC', sma: 'SMA', ufl: 'u.FL', xt60: 'XT60', xt30: 'XT30', sd: 'SD card', microsd: 'microSD', fpc: 'flat cable', idc: 'ribbon', idc_ra: 'ribbon', wtb_side: 'wire plug', jst_gh: 'JST-GH', jst_zh: 'JST-ZH', jst_ph: 'JST-PH', jst_xh: 'JST-XH', picoblade: 'PicoBlade', kk254: 'KK plug', microfit: 'Micro-Fit', minifit: 'Mini-Fit', tagconnect: 'Tag-Connect', iec_c7: 'mains (C7)', iec_c14: 'mains (C13)', sata: 'SATA', sfp: 'SFP', minidin: 'mini-DIN', xlr: 'XLR', banana: '4 mm plug', m12: 'M12', toslink: 'TOSLINK', sim: 'SIM card', b2b: 'board-to-board', m2: 'M.2 card', pcie: 'PCIe card', dimm: 'memory module', pogo: 'spring pins', rf_mini: 'MMCX / SMB', pins_ra: 'pins', ac_au: 'AU outlet', ac_uk: 'UK outlet', ac_us: 'US outlet', ac_eu: 'EU outlet', mains_lead: 'mains lead',
 };
+for (const [id, nm] of contribPlugNames()) plugTypeName[id] = nm; // contributed types (parts/)
 
 export function plugRole(m: Module, c: Comp): PlugRole {
   if (c.role && ROLES.includes(c.role as PlugRole)) return c.role as PlugRole;
-  const t = c.conn?.type ?? '';
+  const t = roleAlias(c.conn?.type ?? ''); // (a contributed type is wired like the built-in one its role names)
   if (isDebugPort(c)) return 'debug';
   if (isUartPort(c)) return 'uart';
   const name = `${m.board.name}`.toLowerCase(), ref = `${c.ref} ${c.pkg} ${c.value ?? ''}`.toLowerCase();
@@ -78,6 +80,8 @@ export function plugRole(m: Module, c: Comp): PlugRole {
 
 /** Where a lead that leaves the rack goes, in a few words for the 3D view ("to a screen", "to the wall"...). */
 export function offRackTo(m: Module, c: Comp): string {
+  const own = contribOffRack(c.conn?.type ?? '');
+  if (own) return own;
   const t = c.conn?.type ?? '', role = plugRole(m, c);
   if (t.startsWith('hdmi') || t === 'dp') return 'to a screen';
   if (role === 'mains-in' || t.startsWith('iec') || t === 'mains_lead') return 'to the wall';

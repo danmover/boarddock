@@ -2,11 +2,12 @@
 // exactly where they are, so nothing jumps.
 import type { EdgeName, GenResult, PanelReport, Project, RailMount, Slot, Turn } from '../model/types';
 import { round, uid } from '../geom/poly';
-import { appendDock, bestDock, seatBoard, dropEmptied, nearestFree, ownDocks, spreadOut, spreadRails, withRiders } from '../cad/dockplan';
+import { appendDock, bestDock, seatBoard, shorterLever, dropEmptied, nearestFree, ownDocks, spreadOut, spreadRails, withRiders } from '../cad/dockplan';
 import { baseOf, columnable, refreshStandoffs } from '../model/holes';
 import { amend, edit, select, store, toast, uniqueName } from '../state';
 import { mountLabels, snapshot } from '../model/built';
 import { isProbe } from '../model/probes';
+import { isPlugPack } from '../model/powerdata';
 import { describeMoves, hasLocks, isDockLocked, placesOf } from '../model/locks';
 import { arrangeAround } from '../cad/arrangelock';
 import { autoEdit, noteReceipts } from './autoEdit';
@@ -308,8 +309,33 @@ export const makeRoom = () => settleOverlaps(undefined, (n) => `${n > 1 ? `${n} 
 
 /** Dock a board the way that keeps its tongue under Check's limit (shorterLever's pick), making room for it. */
 export function dockShorter(mountId: string, slot: number, fix: { edge: EdgeName; lie?: 'flat' }) {
-  setSlot(mountId, slot, (s) => { s.edge = fix.edge; if (fix.lie) s.lie = 'flat'; else delete s.lie; });
+  dockShorterAll([{ mount: mountId, slot, fix }]);
+}
+
+/** Several boards docked a shorter way, in one undo step. */
+export function dockShorterAll(fixes: { mount: string; slot: number; fix: { edge: EdgeName; lie?: 'flat' } }[]) {
+  panelEdit((p) => {
+    for (const { mount, slot, fix } of fixes) {
+      const s = p.panel.mounts.find((x) => x.id === mount)?.slots[slot];
+      if (!s) continue;
+      s.edge = fix.edge;
+      if (fix.lie) s.lie = 'flat'; else delete s.lie;
+    }
+  });
   makeRoom();
+}
+
+/**
+ * A way to dock a board so its tongue root stays under `limit` of the material's yield (0.8: Check's failing line;
+ * 0.4: its warning), with where it sits now. Null when it is not in a dock or no other way of docking does better.
+ */
+export function leverFix(p: Project, pr: PanelReport, moduleId: string, limit = 0.8): { mount: string; slot: number; fix: { edge: EdgeName; lie?: 'flat' } } | null {
+  const q = pr.modules.find((x) => x.id === moduleId), mt = q && pr.mounts.find((x) => x.id === q.mount);
+  const rail = mt && pr.rails.find((r) => r.id === mt.rail), m = p.modules.find((x) => x.id === moduleId);
+  if (!q || !mt || mt.kind !== 'dock' || !rail || !m) return null;
+  const fix = shorterLever(m, rail.dir, mt.turn, q.slot, limit);
+  // (the way it sits now is no fix)
+  return fix && !(fix.edge === q.edge && (fix.lie ?? null) === (q.lie ?? null)) ? { mount: mt.id, slot: q.slot, fix } : null;
 }
 
 export function autoArrange() {
@@ -383,6 +409,33 @@ export function duplicateModule(i: number) {
 }
 
 /** Put a board in a new dock at the end of a rail. */
+/**
+ * The boards that could go into slot `mountId` (a dock, its free slot): any board of its own, not a stack's rider, a
+ * plug pack or one already in that dock; the ones off the rails first. `where`: the dock it would leave.
+ */
+export function putBehindOptions(p: Project, pr: PanelReport | null | undefined, mountId: string): { id: string; name: string; where?: string }[] {
+  const mt = pr?.mounts.find((x) => x.id === mountId), labels = mountLabels(pr);
+  if (!mt || mt.kind !== 'dock') return [];
+  const onRail = new Map<string, string>();
+  for (const x of pr!.mounts) for (const s of x.slots) if (s.module) onRail.set(s.module, labels.get(x.id) ?? x.id);
+  return p.modules
+    .filter((m) => baseOf(p, m) === m && !isPlugPack(m.board) && !mt.slots.some((s) => s.module === m.id))
+    .map((m) => ({ id: m.id, name: m.board.name, where: onRail.has(m.id) ? `dock ${onRail.get(m.id)}` : undefined }))
+    .sort((a, b) => Number(!!a.where) - Number(!!b.where));
+}
+
+/** The docks board `id` could share: another board's dock with a free slot (not the dock it is in), by that board's name. */
+export function shareDockOptions(p: Project, pr: PanelReport | null | undefined, id: string): { id: string; name: string; mount: string; slot: number }[] {
+  const out: { id: string; name: string; mount: string; slot: number }[] = [];
+  for (const mt of pr?.mounts ?? []) {
+    if (mt.kind !== 'dock' || mt.slots.some((s) => s.module === id)) continue;
+    const slot = mt.slots.findIndex((s) => !s.module), other = mt.slots.find((s) => s.module)?.module;
+    const m = p.modules.find((x) => x.id === other);
+    if (slot >= 0 && m) out.push({ id: m.id, name: m.board.name, mount: mt.id, slot });
+  }
+  return out;
+}
+
 export function appendToRail(moduleId: string, railId: string) {
   panelEdit((p) => {
     for (const mt of p.panel.mounts) for (const sl of mt.slots) if (sl.module === moduleId) sl.module = null;
@@ -500,6 +553,38 @@ export function bedNote(p: Project, boards: { name: string; outline: [number, nu
   return ` ${big.length === 1 ? `${big[0].name}'s holder` : `The holders of ${big.map((b) => b.name).join(', ')}`} will not fit the ${p.printer.name} bed (${bx} × ${by} mm): a printer with a bigger bed can be picked in Export.`;
 }
 
+type Went = { id: string; rail: string; kind: string; at?: number | null; slots: { module: string | null }[] };
+
+/** Where each of these boards sits: from the rack's report once it is built (`now`), else from the layout by hand. */
+function whereWent(p: Project, ids: string[], before: PanelReport | null, now: PanelReport | null, short = false): string[] {
+  const seen = new Set((before?.mounts ?? []).map((x) => x.id)), labels = mountLabels(now ?? before);
+  const nameOf = (id?: string | null) => p.modules.find((x) => x.id === id)?.board.name;
+  return ids.flatMap((id) => {
+    const mt: Went | undefined = now ? now.mounts.find((x) => x.id === now.modules.find((q) => q.id === id)?.mount) : p.panel.mounts.find((x) => x.slots.some((s) => s.module === id));
+    if (!mt) return [];
+    const name = nameOf(id) ?? 'It', known = labels.get(mt.id), other = nameOf(mt.slots.find((s) => s.module && s.module !== id)?.module);
+    if (seen.has(mt.id) && known) return [short ? `${name}: the free slot of dock ${known}` : `${name} went into the free slot of dock ${known}${other ? `, back to back with ${other}` : ''} (nothing new to print but its holder)`];
+    const k = (now ?? p.panel).rails.findIndex((x) => x.id === mt.rail) + 1;
+    const rail = k ? ` on rail ${k}` : '';
+    if (short) return [`${name}: a new ${mt.kind === 'flat' ? 'clip' : 'dock'}${known ? ` ${known}` : ''}${rail}`];
+    return [`${name} got a new ${mt.kind === 'flat' ? 'clip' : 'dock'}${known ? ` (dock ${known})` : ''}${rail}${now && mt.at != null ? `, ${Math.round(mt.at)} mm along it` : ', in the first gap that fits or on the end of the rail (Check says if the rail gets longer)'}`];
+  });
+}
+
+/**
+ * Once the rack is built with the new boards: the toast again, with where each went (dock numbers and places now
+ * known). `now` is the toast as it was; `again` makes the new one from the note. Skipped when another toast came since.
+ */
+export function sayWhereWent(ids: string[], now: string, again: (note: string) => string, act?: { label: string; run: () => void }) {
+  const before = rep();
+  afterBuild((r) => {
+    const p = store.get().project;
+    if (store.get().toast !== now || !p || p.layout !== 'panel' || !r.report.panel) return;
+    const spots = whereWent(p, ids, before, r.report.panel, ids.length > 3);
+    if (spots.length) toast(again(` ${spots.join(ids.length > 3 ? '; ' : '. ')}${p.panel.auto ? '' : '; the rest stay put'}.`), act);
+  });
+}
+
 /**
  * One line on where newly added boards go. With `ids` (the boards just added, on a rack laid out by hand or built),
  * where each one actually went: a free slot of a dock already there, or a new dock.
@@ -509,16 +594,7 @@ export function placementNote(p: Project, ids?: string[]): string {
   // an unbuilt rack that lays itself out: nothing to say (the add toast stays short)
   if (p.panel.auto && !p.built) return '';
   if (p.panel.auto) return ' Auto-arrange lays out the whole rack again with it (mark the rack as built in Export to keep boards where they are).';
-  const r = rep(), labels = mountLabels(r);
-  const spots = (ids ?? []).map((id) => {
-    const mt = p.panel.mounts.find((x) => x.slots.some((s) => s.module === id));
-    if (!mt) return null;
-    const m = p.modules.find((x) => x.id === id), other = mt.slots.find((s) => s.module && s.module !== id)?.module;
-    const known = labels.get(mt.id);
-    if (known) return `${m?.board.name ?? 'It'} went into the free slot of dock ${known}${other ? `, back to back with ${p.modules.find((x) => x.id === other)?.board.name}` : ''} (nothing new to print but its holder)`;
-    const k = p.panel.rails.findIndex((x) => x.id === mt.rail) + 1;
-    return `${m?.board.name ?? 'It'} got a new dock${k ? ` on rail ${k}` : ''}, in the first gap that fits or on the end of the rail (Check says if the rail gets longer)`;
-  }).filter(Boolean) as string[];
+  const spots = whereWent(p, ids ?? [], rep(), null);
   if (spots.length && spots.length <= 3) return ` ${spots.join('. ')}; the rest stay put.`;
   return ' Each goes into a free dock slot where it docks well (nothing new to print but its holder), else a new dock in the first gap on the rails or on the end of a rail, which then gets longer (Check says by how much); the rest stay put.';
 }

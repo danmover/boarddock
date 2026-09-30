@@ -13,6 +13,7 @@ import { Num, Seg, Text } from './controls';
 import { Icon, I } from './icons';
 import { DrawBox } from './BoxEditor';
 import { openShapeTool } from './ShapeTool';
+import { say } from './touch';
 
 type Shape = 'rect' | 'round' | 'circle' | 'L' | 'notch' | 'corner' | 'poly' | 'flat' | 'custom';
 type Holes = 'none' | 'corners' | 'spacing';
@@ -160,8 +161,8 @@ function DrawPcb({ put }: { put: (b: Board) => void }) {
     store.set({ step: 'board', view: 'editor' });
     if (shape === 'custom') {
       openShapeTool('line', 'new');
-      toast(`${nb.name} is in the editor with the Shape tool open. Click its corners one by one (or type each edge's length and angle), then click the first one to close it. Or pick Edit and drag the corners of this rectangle.${photo ? ' Scale the photo first, from Photo, to trace over it.' : ''}`);
-    } else toast(`${nb.name} is in the editor. Add its plugs, headers and tall parts from the toolbox on the left: click one, then where it goes. Shape (S) changes its outline.${photo ? ' Scale the photo under it from Photo (two points and the distance between them).' : ''}`);
+      toast(say(`${nb.name} is in the editor with the Shape tool open. Click its corners one by one (or type each edge's length and angle), then click the first one to close it. Or pick Edit and drag the corners of this rectangle.${photo ? ' Scale the photo first, from Photo, to trace over it.' : ''}`));
+    } else toast(say(`${nb.name} is in the editor. Add its plugs, headers and tall parts from the toolbox on the left: click one, then where it goes. Shape (S) changes its outline.${photo ? ' Scale the photo under it from Photo (two points and the distance between them).' : ''}`));
   };
   const tile = ([k, nm, dd]: [Shape, string, string]) => (
     <button key={k} role="radio" aria-checked={shape === k} className={shape === k ? 'on' : ''} onClick={() => setShape(k)}>
@@ -206,7 +207,7 @@ function DrawPcb({ put }: { put: (b: Board) => void }) {
             <label className="field"><span>Which corners</span><Seg value={one ? 'one' : 'all'} options={[['one', 'Top right'], ['all', 'All four']]} onChange={(v) => setOne(v === 'one')} /></label>
           </div>
         </>}
-        {shape === 'custom' && <p className="hint" style={{ margin: '6px 0 0' }}>It opens in the editor's Shape tool: click its corners one by one, or type each edge's length and angle as you go, and click the first corner to close it. Arcs, rounded corners and cut-outs are there too.</p>}
+        {shape === 'custom' && <p className="hint" style={{ margin: '6px 0 0' }}>{say("It opens in the editor's Shape tool: click its corners one by one, or type each edge's length and angle as you go, and click the first corner to close it. Arcs, rounded corners and cut-outs are there too.")}</p>}
         {shape !== 'custom' && <>
           <div className="field" style={{ marginTop: 10 }}><span>Holes</span></div>
           <Seg value={holes} options={[['corners', 'At the corners'], ['spacing', 'By spacing'], ['none', 'None']]} onChange={(v) => {
