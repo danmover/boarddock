@@ -106,18 +106,19 @@ describe('the flows on a built rack', () => {
     expect(dist(f.pts[f.pts.length - 1], plugs[key(to)])).toBeLessThan(dist(f.pts[f.pts.length - 1], plugs[key(from)]));
   }, 120000);
 
-  it("a lead from a plug pack or the mains comes in along its stub: the board it feeds has power, so it runs, into the plug", () => {
+  it("a plug pack's lead runs from the outlet it stands in to the board it feeds, the pulses that way, and the powerboard's lead to the wall brings mains in along its stub", () => {
     const { p, res, plugs } = rig();
-    const pi5 = p.modules[2], plug = plugs[`${pi5.id}/J_PWR`];
-    const stub = res.ghosts.find((g) => g.name === `off-rack cable ${pi5.id}/J_PWR`)!;
-    expect(stub, 'the Pi 5 has its supply lead drawn').toBeTruthy();
-    const f = stub.fx!.flow!;
+    const pi5 = p.modules[2], pack = p.modules[3], plug = plugs[`${pi5.id}/J_PWR`];
+    const lead = p.links!.find((l) => l.kind === 'power' && [l.a.module, l.b.module].includes(pi5.id) && [l.a.module, l.b.module].includes(pack.id))!;
+    const g = res.ghosts.find((x) => x.name === `cable ${lead.id}`);
+    expect(g, 'the Pi 5 has its supply lead drawn, from the pack in the powerboard').toBeTruthy();
+    const f = g!.fx!.flow!;
     expect(f, 'and it has a flow').toBeTruthy();
     expect([f.on, f.slow, f.colour]).toEqual([true, true, KIND_GLOW.power]);
-    expect(dist(f.pts[1], plug)).toBeLessThan(1); // it ends in the plug...
-    expect(dist(f.pts[0], plug)).toBeGreaterThan(5); // ...and starts out along the lead
+    expect(dist(f.pts[f.pts.length - 1], plug)).toBeLessThan(1); // it ends in the plug...
+    expect(dist(f.pts[0], plug)).toBeGreaterThan(5); // ...and starts at the pack
     // the powerboard's own lead to the wall brings mains in
-    const pb = p.modules[4], wall = res.ghosts.find((g) => g.name.startsWith(`off-rack cable ${pb.id}/`) && g.fx?.flow);
+    const pb = p.modules[4], wall = res.ghosts.find((x) => x.name.startsWith(`off-rack cable ${pb.id}/`) && x.fx?.flow);
     expect(wall, "the powerboard's lead to the wall has a flow").toBeTruthy();
     expect(wall!.fx!.flow!.colour).toBe(KIND_GLOW.mains);
   }, 120000);

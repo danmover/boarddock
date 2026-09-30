@@ -8,7 +8,7 @@ import { TEMPLATES } from '../src/model/templates';
 import { newModule, newProject } from '../src/model/library';
 import { autoLinks, numberLinks } from '../src/model/links';
 import { addAdapters, addProbes, fillWires, stackCompanions } from '../src/model/probes';
-import { generatePanel } from '../src/cad/panelgen';
+import { generatePanel, laneFit } from '../src/cad/panelgen';
 import { initKernel } from '../src/cad/kernel';
 
 const ZC = -5.5, D = 4.5;
@@ -64,6 +64,36 @@ describe('a cable settles beside a rail or a plug', () => {
     const high = { id: 'b', pts: [[50, -60, -3], [50, 60, -3]], r: 2.25, pin: [5, 5] as [number, number] };
     const res = settleCables([low, high], [rail]);
     for (const q of res.paths[1]) if (Math.abs(q[1]) < 17) expect(q[2] + 2.25).toBeLessThan(0.3); // its top under the crown, to 0.3 mm
+  });
+});
+
+describe('cables that cross settle a cable apart, not a bead apart', () => {
+  // the least distance between two polylines (the tubes are drawn through the beads, straight between them)
+  const segDist = (P: number[][], Q: number[][]) => {
+    const sub = (a: number[], b: number[]) => a.map((x, i) => x - b[i]), dot = (a: number[], b: number[]) => a.reduce((s, x, i) => s + x * b[i], 0);
+    let best = Infinity;
+    for (let i = 0; i + 1 < P.length; i++) for (let j = 0; j + 1 < Q.length; j++) {
+      const d1 = sub(P[i + 1], P[i]), d2 = sub(Q[j + 1], Q[j]), r = sub(P[i], Q[j]);
+      const a = dot(d1, d1), e = dot(d2, d2), f = dot(d2, r), c = dot(d1, r), b = dot(d1, d2), den = a * e - b * b;
+      let s = den < 1e-9 ? 0 : Math.max(0, Math.min(1, (b * f - c * e) / den)), t = (b * s + f) / e;
+      if (t < 0) { t = 0; s = Math.max(0, Math.min(1, -c / a)); } else if (t > 1) { t = 1; s = Math.max(0, Math.min(1, (b - c) / a)); }
+      best = Math.min(best, Math.hypot(...P[i].map((x, k) => x + s * d1[k] - Q[j][k] - t * d2[k])));
+    }
+    return best;
+  };
+  it('two cables laid right across each other, the beads of each half a step off the crossing, end a diameter apart (not 0.4 mm into each other)', () => {
+    // beads every 2.5 mm from each end: this one's at u 0 and 2.5 either side of the crossing, that one's at v -1.25 and 1.25
+    const a = { id: 'a', pts: [[-40, 0, 0], [40, 0, 0]], r: 2.25, pin: [5, 5] as [number, number] };
+    const b = { id: 'b', pts: [[1.25, -38.75, 0.5], [1.25, 41.25, 0.5]], r: 2.25, pin: [5, 5] as [number, number] };
+    const res = settleCables([a, b], []);
+    expect(segDist(res.paths[0], res.paths[1])).toBeGreaterThan(4.5);
+  });
+});
+
+describe('the lanes of a street', () => {
+  it('go in the order with the fewest crossings: the cable whose plugs are both below goes in the lower lane, whatever order it is asked in', () => {
+    const X = { a1: [0, -20, 0], b1: [100, -20, 0], q: { d: 4.5 } }, Y = { a1: [40, 20, 0], b1: [60, 20, 0], q: { d: 4.5 } };
+    for (const ask of [[X, Y], [Y, X]]) expect(laneFit(ask, () => [-3.5, 3.5], [0]).order).toEqual([X, Y]);
   });
 });
 
