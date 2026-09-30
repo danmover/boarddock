@@ -25,7 +25,7 @@ import type { ClipFeaResult } from '../fea/clipfea';
 import { clipDims } from '../cad/dinclip';
 import { RackBuilder } from './RackBuilder';
 import { DebugPanel } from './DebugPanel';
-import { duplicateModule, markBuilt, unmarkBuilt } from './panelOps';
+import { dockShorterAll, duplicateModule, leverFix, markBuilt, unmarkBuilt } from './panelOps';
 import { removeItems } from './pickOps';
 import { delta, partsFor, strapBoxes, type Delta } from '../model/built';
 import { baseOf as stackBase, ridersOf } from '../model/holes';
@@ -37,16 +37,19 @@ import { copyHolder } from '../model/copyto';
 import { CopyTo } from './CopyTo';
 import { ChecklistButton } from './Checklist';
 import { saveBoard } from '../model/myboards';
-import { ackNote, summarizeChecks } from '../model/checkSummary';
+import { ackNote, collapseChecks, summarizeChecks, verdictOf, type CheckRow } from '../model/checkSummary';
 import { boardSig, tileUrl, useKeptPicture } from './pics';
 import { CompPic } from './Toolbox';
 import { BoxEditor } from './BoxEditor';
+import { RotateBox } from './RotateBox';
+import { turnParts } from './rotateOps';
 import { BoardCheck } from './BoardCheck';
 import { needOf } from '../model/powerdata';
 import { picture } from './snapshot';
 import { boardPicture, holderPicture, type PicPart } from '../worker/client';
 import { GcodeSection, useGcode } from './GcodeSection';
 import { PrintCheckSection } from './PrintCheck';
+import { say } from './touch';
 
 // ============================================================================================ IMPORT
 export function ImportPanel() {
@@ -570,11 +573,11 @@ export function Inspector() {
           {!one && <div style={{ marginBottom: 8 }}><Seg value={common(comps, (c) => c.side) ?? ('' as Comp['side'])} options={[['top', 'On top'], ['bottom', 'Underneath']]} onChange={(v) => setC((x) => { x.side = v; })} /></div>}
           <div className="row3" style={{ marginTop: 8 }}>
             {one && <><Num label="X" value={comps[0].x} onChange={(v) => setC((x) => { x.x = v; })} /><Num label="Y" value={comps[0].y} onChange={(v) => setC((x) => { x.y = v; })} /></>}
-            <Num label="Rotation" unit="°" step={90} value={mixed(common(comps, (c) => c.rot))} onChange={(v) => setC((x) => { x.rot = v; })} />
             <Num label="Width" value={mixed(common(comps, (c) => c.w))} min={0.2} onChange={(v) => setC((x) => { x.w = v; })} />
             <Num label="Length" value={mixed(common(comps, (c) => c.l))} min={0.2} onChange={(v) => setC((x) => { x.l = v; })} />
             <Num label="Height" value={mixed(common(comps, (c) => c.h))} min={0} onChange={(v) => setC((x) => { x.h = v; })} />
           </div>
+          <div style={{ marginTop: 8 }}><RotateBox value={common(comps, (c) => c.rot) ?? null} onTurn={(by) => turnParts(comps.map((c) => c.id), by)} /></div>
           <div className="row" style={{ marginTop: 8 }}>
             <Pick label="Kind" value={common(comps, (c) => c.kind) ?? ('' as Comp['kind'])} options={[['' as Comp['kind'], '— mixed —'], ['generic', 'Part'], ['connector', 'Connector'], ['header', 'Header'], ['switch', 'Button/switch'], ['led', 'LED'], ['module', 'Module'], ['hot', 'Hot part'], ['antenna', 'Antenna/RF']]} onChange={(v) => v && setC((x) => { x.kind = v; })} />
             <div className="field"><span>&nbsp;</span><Check label="Through-hole leads" value={common(comps, (c) => c.tht) ?? false} onChange={(v) => setC((x) => { x.tht = v; })} /></div>
@@ -623,7 +626,7 @@ export function PlugsPanel() {
               </SelRow>
             );
           })}
-          {!conns.length && <p className="hint">No connectors found. Add them in the board editor (Connector tool, click an edge), or select a part and choose "Treat as connector".</p>}
+          {!conns.length && <p className="hint">{say('No connectors found. Add them in the board editor (Connector tool, click an edge), or select a part and choose "Treat as connector".')}</p>}
         </div>
         <p className="hint" style={{ marginTop: 8 }}>Tap a port's <i>empty</i> or <i>cable</i> tag to say whether you'll plug something into it yourself.</p>
       </Section>
@@ -1113,7 +1116,7 @@ export function CheckPanel() {
   const groups = useMemo(() => {
     const g = new Map<string, NonNullable<typeof res>['report']['checks']>();
     for (const c of res?.report.checks ?? []) {
-      if (c.status === 'bad' || (only !== 'all' && c.status !== only)) continue;
+      if (c.status === 'bad' || c.status === 'warn' || (only !== 'all' && c.status !== only)) continue; // (the ones to look at have their own list)
       (g.get(c.group) ?? g.set(c.group, []).get(c.group)!).push(c);
     }
     return [...g.entries()];
@@ -1124,6 +1127,21 @@ export function CheckPanel() {
     </button>
   );
   const show = (module?: string) => { if (!module) return; select([{ kind: 'module', id: module }]); store.set({ view: 'assembly' }); };
+  // the ones to look at: repeated lines as one row with a count, each with its verdict and the fix when there is one
+  const looks = useMemo(() => collapseChecks(sum.look), [sum]);
+  const pr = res?.report.panel;
+  const fixOf = (r: CheckRow): { label: string; title: string; run: () => void } | null => {
+    if (/^Tongue root/.test(r.c.name) && pr && p.layout === 'panel') {
+      const fx = r.modules.flatMap((id) => { const f = leverFix(p, pr, id, 0.4); return f ? [f] : []; });
+      if (!fx.length) return null;
+      const one = fx.length === 1 ? fx[0].fix : null;
+      return { label: one ? (one.lie ? `Lay it flat by its ${one.edge} edge` : `Dock it by its ${one.edge} edge`) : `Dock ${fx.length} another way`, title: 'A shorter lever onto the tongue, with no plug pointing into the table (docks along the rail slide on to make room)', run: () => dockShorterAll(fx) };
+    }
+    if (r.c.name === 'Material') return { label: 'Print in PETG', title: 'Every PLA holder becomes PETG', run: () => edit((q) => { for (const m of q.modules) if (m.holder.material === 'PLA') m.holder.material = 'PETG'; }) };
+    if (r.c.name === 'DC inputs with no supply') return { label: 'Add a 12 V plug pack', title: "Check your board's label for its voltage first", run: () => addAccessory('dc_pack_12v') };
+    return null;
+  };
+  const boardsOf = (r: CheckRow) => { const ns = r.modules.map((id) => p.modules.find((m) => m.id === id)?.board.name).filter(Boolean) as string[]; return ns.length > 3 ? `${ns.slice(0, 3).join(', ')} and ${ns.length - 3} more` : ns.join(', '); };
   const mat = MATERIALS[activeModule(p).holder.material];
   const run = async () => {
     setFeaErr(null);
@@ -1151,7 +1169,22 @@ export function CheckPanel() {
           ))}
         </Section>
       )}
-      {only !== 'ok' && sum.warnings.length > 0 && <div className="warns">{sum.warnings.map((w, i) => <div key={i}>{w}</div>)}</div>}
+      {only !== 'ok' && only !== 'bad' && looks.length > 0 && (
+        <Section title="To look at">
+          {looks.map((r, i) => {
+            const v = verdictOf(r.c.name), fix = fixOf(r);
+            return (
+              <div key={i} className="checkrow"><div className="grow">{r.c.name}{r.n > 1 && <> <Chip>× {r.n}</Chip></>}
+                <div className="hint">{r.n > 1 && boardsOf(r) ? `${boardsOf(r)} · worst: ` : ''}{r.c.detail ?? r.c.group}</div>
+                <div className="verdictrow"><Chip status={v === 'OK to print' ? 'ok' : 'warn'}>{v}</Chip>
+                  {fix && <button className="btn small soft" title={fix.title} onClick={fix.run}>{fix.label}</button>}
+                  {r.modules.length === 1 && <button className="btn small ghost" onClick={() => show(r.modules[0])}><Icon d={I.cube} /> Show in 3D</button>}</div></div>
+                <Chip status="warn">{r.c.value}</Chip></div>
+            );
+          })}
+        </Section>
+      )}
+      {only !== 'ok' && sum.warnings.length > 0 && <div className="warns">{sum.warnings.map((w, i) => <div key={i}>{w} <Chip status="warn">{verdictOf(w)}</Chip></div>)}</div>}
       {only === 'bad' && !sum.failing.length && <p className="hint">Nothing is failing.</p>}
       {only !== 'bad' && groups.map(([g, list]) => (
         <Section key={g} title={g}>

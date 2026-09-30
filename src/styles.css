@@ -304,6 +304,7 @@ canvas.heat { width: 100%; max-height: 420px; object-fit: contain; border-radius
 .pick button { border: 0; background: none; color: var(--subtle); cursor: pointer; padding: 0 0 0 2px; font-size: 13px; line-height: 1; }
 .pick button:hover { color: var(--bad); }
 .selpanel .acts { display: flex; gap: 5px; flex-wrap: wrap; }
+.selpanel .selnote { margin: 0; font-size: 11.8px; }
 .stats { display: flex; gap: 14px; padding: 0 12px; height: 40px; align-items: center; font-family: var(--mono); font-size: 11.5px; color: var(--muted); margin-left: auto; }
 .stats b { color: var(--fg); font-weight: 600; margin-right: 4px; }
 .stats .warn { color: var(--warn); cursor: pointer; }
@@ -480,6 +481,12 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 .slotdrop .none { font-size: 11.5px; color: var(--subtle); padding: 4px 6px; }
 .rchip { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 7px; min-height: 26px; padding: 2px 4px 2px 8px; border-radius: 7px; background: var(--surface-3); border: 1px solid var(--line-2); font-size: 12px; cursor: grab; }
 .rchip.sel { border-color: var(--accent); }
+.rchip { user-select: none; -webkit-user-select: none; }
+.rchip .grip { display: none; color: var(--subtle); font-size: 14px; line-height: 1; padding: 6px 2px 6px 0; touch-action: none; cursor: grab; }
+@media (pointer: coarse) { .rchip .grip { display: inline-block; } .rchip { padding-left: 2px; } }
+.slotbox select.putbehind { height: 24px; font-size: 11.5px; margin-top: 2px; }
+.dragghost { position: fixed; left: 0; top: 0; z-index: 200; pointer-events: none; padding: 3px 10px; border-radius: 99px; background: var(--accent); color: #fff; font-size: 12px; font-weight: 600; box-shadow: 0 4px 14px rgb(0 0 0 / 0.3); white-space: nowrap; }
+body.dragging-board { cursor: grabbing; user-select: none; -webkit-user-select: none; }
 .rchip.over { border-color: var(--accent); background: var(--accent-soft); }
 .rchip i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
 .rchip .grow { flex: 1 1 110px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
@@ -535,6 +542,7 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 .checkrow:last-child { border-bottom: 0; }
 .checkrow .grow { flex: 1; min-width: 0; }
 .checkrow .hint { margin-top: 2px; }
+.checkrow .verdictrow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 5px; }
 
 /* ------------------------------------------------------------------ responsive */
 @media (max-width: 1180px) {
@@ -916,9 +924,10 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 .ltile-main svg.thumb { width: 100%; height: auto; aspect-ratio: 14 / 9; margin-bottom: 4px; }
 .ltile-main .nm { font-size: 13px; font-weight: 650; line-height: 1.25; }
 .ltile-main small { color: var(--subtle); font-size: 10.5px; }
-.ltile-qty { position: absolute; top: 8px; right: 8px; display: flex; align-items: center; gap: 4px; background: var(--glass); border: 1px solid var(--line); border-radius: 999px; padding: 2px; box-shadow: var(--shadow-sm); opacity: 0; transition: opacity 0.12s; }
+.ltile-qty { position: absolute; top: 8px; right: 8px; display: flex; align-items: center; gap: 4px; background: var(--glass); border: 1px solid var(--line); border-radius: 999px; padding: 2px; box-shadow: var(--shadow-sm); opacity: 0.85; transition: opacity 0.12s; }
 .ltile:hover .ltile-qty, .ltile.on .ltile-qty, .ltile-qty:focus-within { opacity: 1; }
-.ltile-qty b { font-family: var(--mono); font-size: 12px; min-width: 14px; text-align: center; }
+.ltile-qty .qnum { font-family: var(--mono); font-size: 12px; font-weight: 700; width: 34px; height: 24px; padding: 0 2px; text-align: center; border: 0; background: transparent; color: var(--text); -moz-appearance: textfield; appearance: textfield; }
+.ltile-qty .qnum::-webkit-outer-spin-button, .ltile-qty .qnum::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .ltile-com { position: absolute; top: 8px; left: 8px; pointer-events: none; font-size: 9.5px; font-weight: 650; letter-spacing: 0.05em; text-transform: uppercase; padding: 1px 7px; border-radius: 99px; border: 1px solid var(--line); background: var(--glass); color: var(--muted); }
 .ltile-x { position: absolute; top: 8px; left: 8px; width: 22px; height: 22px; border-radius: 99px; border: 1px solid var(--line); background: var(--glass); color: var(--muted); cursor: pointer; opacity: 0; transition: opacity 0.12s; }
 .ltile:hover .ltile-x { opacity: 1; }
@@ -1156,9 +1165,10 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 @media (pointer: coarse) {
   .bchip, .tbtn, .btn.small, .stepper button, .iconbtn { min-height: 40px; }
   .bchip { height: auto; }
-  /* no hover on a touch screen: the tiles' + shows all the time */
+  /* the tiles' + is at rest everywhere (no hover on a touch screen); bigger to tap */
   .ltile-qty { opacity: 1; }
   .ltile-qty .qbtn { min-width: 34px; min-height: 34px; }
+  .ltile-qty .qnum { height: 34px; font-size: 14px; }
 }
 
 /* the 3D selection panel's mounting row: stand or lie flat, the edge in the dock, turn, swap; a loose holder's DIN clip */
@@ -1170,7 +1180,8 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 @media (max-width: 600px) {
   .selpanel .top { flex-wrap: wrap; }
   .selpanel .top b { flex: 1 1 auto; }
-  .selpanel .top .grow { flex-basis: 100%; order: 3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .selpanel .top .grow { flex-basis: 100%; order: 3; white-space: normal; overflow-wrap: anywhere; }
+  .selpanel { max-height: 55vh; overflow-y: auto; }
   .selpanel .top .acts { flex-basis: 100%; order: 4; }
   .mountq { margin-top: 4px; padding-top: 6px; }
 }
@@ -1227,6 +1238,17 @@ kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius
 .start-printer span { font-weight: 600; }
 .start-printer select { height: 30px; max-width: 100%; }
 .start-printer small { flex-basis: 100%; color: var(--muted); font-size: 12px; }
+
+/* Complete this rack: what the rack lacks, and one button for all of it */
+.completecard { border: 1px solid var(--accent-line); background: var(--accent-soft); border-radius: var(--r-card); padding: 10px 12px; margin: 0 0 14px; }
+.completecard .cc-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.completecard ul { margin: 6px 0 0; padding-left: 18px; font-size: 12.3px; line-height: 1.5; }
+
+/* a build that is taking a while: what it is on, and for how long */
+.buildstatus { position: absolute; left: 50%; top: 56px; transform: translateX(-50%); z-index: 7; display: flex; flex-direction: column; gap: 6px; min-width: 200px; max-width: min(360px, calc(100% - 24px)); padding: 8px 12px; font-size: 12px; color: var(--muted); }
+.buildstatus .progress { margin: 0; }
+
+.player .stepbtn.on { border-color: var(--accent); color: var(--accent); }
 
 /* Copy to… */
 .copyto { flex: 1 1 100%; }

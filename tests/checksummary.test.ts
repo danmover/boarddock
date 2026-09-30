@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { newModule, newProject } from '../src/model/library';
 import { TEMPLATES } from '../src/model/templates';
 import { mergeNotes } from '../src/cad/assembly';
-import { ackMeasuredHoles, ackNote, summarizeChecks } from '../src/model/checkSummary';
+import { ackMeasuredHoles, ackNote, collapseChecks, summarizeChecks, verdictOf } from '../src/model/checkSummary';
+import { initKernel } from '../src/cad/kernel';
+import { generate } from '../src/cad/assembly';
 import { commitFrom, editMod, loadProject, store, undo } from '../src/state';
-import type { Board, GenReport } from '../src/model/types';
+import type { Board, Check, GenReport } from '../src/model/types';
 
 const T = (id: string) => TEMPLATES.find((t) => t.id === id)!.make();
 
@@ -86,4 +88,26 @@ describe("the perfboard's 'measure the holes' reminder", () => {
     editMod((m) => { m.board.holes[0].d = 2.2; });
     expect(open()).toBe(false);
   });
+});
+
+describe('the items to look at', () => {
+  it('gives each a verdict, and folds the same line from several boards into one row with a count', () => {
+    expect(verdictOf('Tongue root, 8 N push on the far edge')).toBe('OK to print');
+    expect(verdictOf('Material')).toBe('OK to print');
+    expect(verdictOf('DC inputs with no supply')).toBe('worth a look');
+    const c = (module: string, value: string): Check => ({ group: `${module} · Dock`, name: 'Tongue root, 8 N push on the far edge', value, status: 'warn', module });
+    const rows = collapseChecks([c('a', '30 MPa'), c('b', '38 MPa'), c('a', '31 MPa'), { group: 'Power', name: 'Tipping', value: '', status: 'warn' }]);
+    expect(rows.map((r) => [r.c.name, r.n])).toEqual([['Tongue root, 8 N push on the far edge', 3], ['Tipping', 1]]);
+    expect(rows[0].modules).toEqual(['a', 'b']);
+    expect(rows[0].c.value).toBe('38 MPa'); // the worst speaks for the row
+  });
+
+  it("does not warn about a library template's standoff touching a part (the Uno's hole 14, 2.5)", async () => {
+    await initKernel();
+    const p = newProject(T('uno'));
+    p.layout = 'loose';
+    expect(generate(p).report.warnings.some((w) => /^Standoff at hole/.test(w))).toBe(false);
+    p.modules[0].board.source = 'my own file';
+    expect(generate(p).report.warnings.some((w) => /^Standoff at hole/.test(w))).toBe(true);
+  }, 60_000);
 });

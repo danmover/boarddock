@@ -9,6 +9,7 @@ import { boardPicture } from '../worker/client';
 import { picture } from './snapshot';
 import { boardSig, tileUrl } from './pics';
 import { bbox, compRect } from '../geom/poly';
+import { touchy } from './touch';
 
 const failed = new Set<string>();
 export const PART_DRAG = 'application/x-boarddock-part';
@@ -106,7 +107,7 @@ export function Toolbox({ armed, onArm, onClose }: { armed: string | null; onArm
         })}
         {!shown.length && <p className="hint">Nothing called “{q}”. A Keep-out box stands in for anything tall; size it in the inspector.</p>}
       </div>
-      <p className="tbx-foot">Click one, then where it goes (Shift keeps placing), or drag it onto the board. Plugs snap to the nearest edge.</p>
+      <p className="tbx-foot">{touchy() ? 'Tap one, then where it goes, or drag it onto the board.' : 'Click one, then where it goes (Shift keeps placing), or drag it onto the board.'} Plugs snap to the nearest edge.</p>
     </aside>
   );
 }

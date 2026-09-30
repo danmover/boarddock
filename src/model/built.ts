@@ -1,11 +1,11 @@
 // "Mark as built": remember what was printed, cut and bought, so that after adding a board Export can list just the
 // new parts, the new cables and any rail that has to be longer. Parts are recognised by their geometry, so a holder
 // that did not change is not printed again.
-import type { Built, GenResult, Module, PanelReport, PartOut, Project } from './types';
+import type { Built, GenResult, Link, Module, PanelReport, PartOut, PlugRef, Project } from './types';
 import { baseOf, stackMode } from './holes';
 import { isProbe } from './probes';
 import { isPlugPack } from './powerdata';
-import { packGoes } from './links';
+import { baseRef, findModule } from './links';
 
 /**
  * The boxes that need a hook-and-loop strap: those in a holder with strap loops. A J-Link or adapter is a board, a
@@ -106,6 +106,15 @@ export interface PlanStep {
 const railText = (rep: PanelReport | null | undefined, id: string) => `rail ${Math.max(1, (rep?.rails.findIndex((r) => r.id === id) ?? 0) + 1)}`;
 const qtyName = (x: { name: string; qty: number }) => `${x.name}${x.qty > 1 ? ` ×${x.qty}` : ''}`;
 
+/** A plug pack's step: into its outlet with the powerboard off, then its lead to the board. */
+function packPlan(p: Project, m: Module): string {
+  const ls = (p.links ?? []).filter((l) => l.a.module === m.id || l.b.module === m.id);
+  const far = (l: Link) => (l.a.module === m.id ? l.b : l.a);
+  const at = (r: PlugRef) => `${findModule(p, r.module)?.board.name ?? 'its board'} ${baseRef(r.ref)}`;
+  const outlet = ls.find((l) => l.kind === 'mains'), leads = ls.filter((l) => l.kind !== 'mains');
+  return `Plug the ${m.board.name} into ${outlet ? `outlet ${baseRef(far(outlet).ref)} on ${findModule(p, far(outlet).module)?.board.name ?? 'the powerboard'}` : 'a free outlet'}, switched off${leads.length ? `, and run its lead to ${leads.map((l) => at(far(l))).join(' and ')}` : ''}.`;
+}
+
 /** The steps of a delta, in the order you would work at the rack. */
 function planOf(p: Project, res: GenResult, b: Built, d: Omit<Delta, 'plan' | 'any'>): PlanStep[] {
   const rep = res.report.panel, seats = seatLabels(rep), labels = mountLabels(rep);
@@ -150,7 +159,7 @@ function planOf(p: Project, res: GenResult, b: Built, d: Omit<Delta, 'plan' | 'a
   for (const m of fresh) {
     if (swapped.has(m.id)) continue;
     // a plug pack has no holder: it goes in its outlet, its lead to its board
-    if (isPlugPack(m.board)) { out.push({ kind: 'cable', text: `Push ${packGoes(p, m)}.` }); continue; }
+    if (isPlugPack(m.board)) { out.push({ kind: 'cable', text: packPlan(p, m) }); continue; }
     const where = m.on ? (stackMode(p, m) === 'bolted' ? `bolt it onto ${nameOf(m.on)} on its standoffs` : `press it onto the corner towers of ${nameOf(m.on)}'s holder`) : `plug the holder into ${seats.get(m.id) ?? 'its dock'}`;
     out.push({ kind: 'seat', text: `Seat ${m.board.name} in its holder and ${where}.`, parts: take(partsOf(m.id)) });
   }
@@ -160,7 +169,7 @@ function planOf(p: Project, res: GenResult, b: Built, d: Omit<Delta, 'plan' | 'a
     if (ps.length) out.push({ kind: 'print', text: `Print a new holder for ${m.board.name} (${d.why.get(ps[0]) ?? 'it changed'}) and swap it in.`, parts: take(ps) });
   }
   const rest = d.parts.filter((x) => !used.has(x));
-  if (rest.length) out.push({ kind: 'print', text: `Also print: ${[...new Set(rest.map((x) => d.why.get(x) ?? 'changed'))].join(', ')}.`, parts: rest });
+  if (rest.length) out.push({ kind: 'print', text: `Also print: ${rest.map((x) => `${qtyName(x)} (${d.why.get(x) ?? 'changed'})`).join(', ')}.`, parts: rest });
   if (d.cables.length) out.push({ kind: 'cable', text: `Plug in ${d.cables.length > 1 ? `${d.cables.length} cables` : 'a cable'}: ${d.cables.map((c) => (c.was != null ? `#${c.no}, now ${c.buy} m (yours is ${c.was} m)` : `${c.no != null ? `#${c.no} ` : ''}${c.a} to ${c.b} (${c.buy} m)`)).join(', ')}.` });
   if (d.spare.length || d.spareCables.length) out.push({ kind: 'off', text: `Spare now: ${[...d.spare.map(qtyName), ...d.spareCables.map((c) => (c.no != null ? `cable #${c.no}` : `the ${c.a} to ${c.b} cable`))].join(', ')}.` });
   return out;

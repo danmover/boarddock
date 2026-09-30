@@ -21,6 +21,7 @@ import { generate } from '../src/cad/assembly';
 import { generatePanel } from '../src/cad/panelgen';
 import { initKernel } from '../src/cad/kernel';
 import type { Link, Project } from '../src/model/types';
+import { describe as describePick } from '../src/ui/pickOps';
 
 const T = (id: string) => TEMPLATES.find((t) => t.id === id)!.make();
 const rack = (ids: string[]) => { const p = newProject(T(ids[0])); for (const id of ids.slice(1)) p.modules.push(newModule(T(id))); return p; };
@@ -111,6 +112,14 @@ describe('plug packs and powerboards', () => {
     expect(cl.comes.some((x) => /plugs straight into/.test(x))).toBe(true);
     expect(cl.comes.some((x) => /own lead/.test(x))).toBe(true);
     expect(cl.buy).toEqual([]);
+  });
+
+  it('a picked mains cable says its plugs, its outlet and to switch the powerboard off first', () => {
+    const p = rack(['rpi5', 'psu_pi5', 'pb4']);
+    p.links = numberLinks(autoLinks(p));
+    const mains = p.links.find((l) => l.kind === 'mains')!;
+    const d = describePick(p, { kind: 'link', id: mains.id });
+    expect(d.note).toMatch(/Mains lead plugs into AU outlet Powerboard, 4 outlets AC\d\. Switch the powerboard off before plugging in\.$/);
   });
 
   it('refuse a powerboard into another, and a mains outlet onto wires, in plain words', () => {
@@ -323,7 +332,7 @@ describe("a switch's or powered hub's own supply", () => {
     const where = /the USB-C supply, 27 W \(5 A\) into Powerboard, 4 outlets AC\d, its lead to Raspberry Pi 5 J_PWR/;
     expect(r.steps!.find((s) => /leave the rack/.test(s.text))!.text).toMatch(where);
     const plan = delta(p, r)!.plan;
-    expect(plan.find((s) => s.kind === 'cable')!.text).toMatch(new RegExp(`^Push ${where.source}\\.$`));
+    expect(plan.find((s) => s.kind === 'cable')!.text).toMatch(/^Plug the USB-C supply, 27 W \(5 A\) into outlet AC\d on Powerboard, 4 outlets, switched off, and run its lead to Raspberry Pi 5 J_PWR\.$/);
     expect(plan.some((s) => s.kind === 'seat')).toBe(false); // (no holder, no dock)
   }, 120_000);
 });

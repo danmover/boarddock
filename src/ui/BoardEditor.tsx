@@ -23,6 +23,8 @@ import { plugName } from '../model/links';
 import { alignPhoto, dimPopupAt, edgeGaps, fitPhoto, itemsBox, scalePhoto, snapBox, snapLines, type Box2 } from '../model/editorgeo';
 import { PART_DRAG, Toolbox } from './Toolbox';
 import { useShapeTool } from './ShapeTool';
+import { RotateBox } from './RotateBox';
+import { say, touchy } from './touch';
 
 export type Tool = 'select' | 'pan' | 'place' | 'measure' | 'shape' | 'photoScale' | 'photoAlign';
 const PIN_TYPES = new Set(['header', 'pins_ra', 'jst_ph', 'jst_xh', 'jst_gh', 'jst_zh', 'picoblade', 'kk254', 'swd10', 'cortex20', 'jtag20', 'idc']);
@@ -829,7 +831,7 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
       {nSel > 0 && !editDim && !photoAsk && tool !== 'shape' && (
         <div className="selbar floating">
           <b className="mono">{nSel} selected</b>
-          <button className="btn small ghost" onClick={() => rotateSel(sel, 90)} title="R">Rotate 90°</button>
+          <RotateBox compact label="Rotate the selection" value={null} onTurn={(by) => rotateSel(sel, by)} />
           <button className="btn small ghost" onClick={() => duplicateSel(sel)} title="Cmd/Ctrl+D">Duplicate</button>
           {nSel > 1 && <>
             <span className="tsep" />
@@ -853,12 +855,12 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
       )}
       {tool === 'place' && armedItem && phone() && <div className="placebar floating">Tap the board to place the {armedItem.label} <button className="btn small" onClick={() => arm(null)}>Cancel</button></div>}
       <div className="hud floating mono">
-        <span>{tool === 'place' ? `place ${armedItem?.label ?? 'it'}: click ${armedItem?.edge ? 'near the edge it goes on' : 'where it goes'} · Shift keeps placing · Esc stops`
+        <span>{say(tool === 'place' ? `place ${armedItem?.label ?? 'it'}: click ${armedItem?.edge ? 'near the edge it goes on' : 'where it goes'}${touchy() ? '' : ' · Shift keeps placing · Esc stops'}`
           : tool === 'measure' ? (dimA ? 'now the second: a hole, a part (its centre or a side), a corner or an edge' : 'measure: click the first thing, an edge of the board, a corner of it, a hole, or a part (its centre or a side)')
           : tool === 'shape' ? `shape: ${shape.hint}`
           : tool === 'photoScale' ? (photoA ? 'now the second point on the photo' : 'scale the photo: click a point on it you know the distance from (a hole)')
           : tool === 'photoAlign' ? (photoA ? 'now where that point goes on the drawing' : 'line up the photo: click a point on it (a hole)')
-          : 'drag to move (snaps; Alt: freely) · box-drag selects · Shift-click adds · right-drag pans · wheel zooms · V H M S T'}</span>
+          : touchy() ? 'drag to move · tap to select · pinch zooms' : 'drag to move (snaps; Alt: freely) · box-drag selects · Shift-click adds · right-drag pans · wheel zooms · V H M S T')}</span>
         {cursor && <span className="xy">{(cursor[0] - bb.x0).toFixed(1)}, {(cursor[1] - bb.y0).toFixed(1)}</span>}
       </div>
     </div>

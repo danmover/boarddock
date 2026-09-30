@@ -15,6 +15,7 @@ import { Icon, I } from './icons';
 import { rackName } from '../model/diff';
 import { countKinds } from './panels';
 import { HeroArt } from './art';
+import { CompleteRack } from './CompleteRack';
 import { ChecklistButton } from './Checklist';
 import { ClusterPreset } from './ClusterPreset';
 
@@ -52,7 +53,7 @@ export function StartStage() {
             </div>
             <div className="start-head-acts">
               <button className="btn small" onClick={() => store.set({ view: 'assembly' })}><Icon d={I.cube} /> See it in 3D</button>
-              <button className="btn small" onClick={() => store.set({ step: 'board', view: 'editor' })}><Icon d={I.board} /> Its boards</button>
+              <button className="btn small" onClick={() => store.set({ step: 'board', view: 'editor' })}><Icon d={I.board} /> {p.modules.length > 1 ? 'Check the boards' : 'Its board'}</button>
               <ChecklistButton />
               {bad + warn > 0 && <button className="btn small ghost" onClick={() => store.set({ step: 'check' })}>{bad ? `${bad} failing` : `${warn} to look at`}</button>}
             </div>
@@ -65,6 +66,8 @@ export function StartStage() {
             <MyPrinter />
           </header>
         )}
+
+        {p && <CompleteRack />}
 
         <div className="start-acts">
           <div role="button" tabIndex={0} className={`sact drop ${over ? 'over' : ''}`} onClick={() => files.current?.click()} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); files.current?.click(); } }}

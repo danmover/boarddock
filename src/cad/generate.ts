@@ -22,6 +22,7 @@ import { dockFrame, dockSite, earSite, flatFrame, type DockSite, type EarSite } 
 import { dir as dirM, inv, mul, type M4 } from '../geom/mat';
 import { rectSection, roundSection, solveFrame, type FElem, type FNode } from '../fea/frame3d';
 import { designBow, designClip, FACE, holdOf, leafT, MU, onLayer, RAMP, SLIT, type BowDesign, type ClipDesign, type Leaf } from './grip';
+import { progress } from './progress';
 
 const ID = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
@@ -169,6 +170,7 @@ const CACHE_MAX = 48;
 
 export function buildModule(job: Job): ModuleOut {
   const { p } = job;
+  progress(`Building the ${job.name} holder`);
   const mod = p.modules[job.mi];
   if (mod && mod.board === job.b) job = { ...job, used: usedRefs(p, mod) };
   // which pins have a jumper's housing pushed on, and in what colour: a header is in use (for a probe or adapter)
@@ -377,7 +379,7 @@ function standoffs(C: Ctx, clipsHold: boolean, mode: ReturnType<typeof holdOf>) 
     let rMax = h.d / 2 + 2.2;
     for (const k of C.keepouts) { const d = rectDist(at, k.rect); if (d > 0) rMax = Math.min(rMax, d - 0.2); }
     const r = Math.max(h.d / 2 + 0.6, rMax);
-    if (rMax < h.d / 2 + 0.6) C.warnings.push(`Standoff at hole (${round(h.x, 1)}, ${round(h.y, 1)}) touches a part under the board; it was kept at the minimum size.`);
+    if (rMax < h.d / 2 + 0.6 && b.source !== 'template') C.warnings.push(`Standoff at hole (${round(h.x, 1)}, ${round(h.y, 1)}) touches a part under the board; it was kept at the minimum size.`);
     C.standoffs.push({ x: h.x, y: h.y, r });
     C.ribNodes.push({ p: at, r });
     C.keep.push(circle2(h.x, h.y, r + 1.4));

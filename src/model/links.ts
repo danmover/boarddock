@@ -4,15 +4,15 @@
 import type { Board, Comp, Link, Module, PlugRef, Project } from './types';
 import { dcRange, hostTotal, isPlugPack, minOf, needOf, portCap, poweredHub, supplyOf, type Need } from './powerdata';
 import { assign } from './assign';
-import { isPoePort, poeAdvice, poeAssign, poeFedIds, poeTotal, poeWatts, takesPoe } from './poe';
+import { KIND_COLOR, KIND_GLOW, KIND_NAME } from './cablekinds';
+
+export { KIND_COLOR, KIND_NAME }; // (the cable kinds' colours and names: cablekinds.ts)
+import { isPoePort, poeAdvice, poeAssign, poeFedIds, poeFeeds, poeTotal, poeWatts, takesPoe } from './poe';
 import { contribOffRack, contribPlugNames, roleAlias } from './contributed';
 
 export type PlugRole = 'host' | 'device' | 'power-in' | 'power-in-dc' | 'power-out' | 'dc-out' | 'hub-up' | 'hub-down' | 'net' | 'video' | 'audio' | 'wire' | 'debug' | 'uart' | 'mains-in' | 'mains-out' | 'other';
 
 const ROLES: PlugRole[] = ['host', 'device', 'power-in', 'power-in-dc', 'power-out', 'dc-out', 'hub-up', 'hub-down', 'net', 'video', 'audio', 'wire', 'debug', 'uart', 'mains-in', 'mains-out', 'other'];
-
-export const KIND_COLOR: Record<NonNullable<Link['kind']>, string> = { usb: '#3a3f47', power: '#d0443a', net: '#3b7dd8', video: '#7a5cc7', audio: '#2fae9a', wire: '#e0a030', debug: '#a3a9b1', uart: '#c0772f', jumper: '#4f9d57', mains: '#8d6e63' };
-export const KIND_NAME: Record<NonNullable<Link['kind']>, string> = { usb: 'USB', power: 'power', net: 'Ethernet', video: 'video', audio: 'audio', wire: 'wires', debug: 'debug ribbon', uart: 'USB-serial', jumper: 'jumper wires', mains: 'mains' };
 
 /** An accessory rather than a board being served: a box (hub, charger), or a board that serves another (a J-Link, a
  * USB-serial adapter). For wiring: which end of a debug ribbon is the probe. */
@@ -766,12 +766,24 @@ export const shortName = (n: string) => n.replace(/^(Raspberry|Arduino|Adafruit|
 const SOURCE: PlugRole[] = ['mains-out', 'power-out', 'dc-out', 'hub-down', 'host'];
 /** Which way a cable points: from the end that gives (power, a port, a probe's ribbon) to the end that takes. */
 export function cableFlow(p: Project, l: Link): { from: PlugRef; to: PlugRef } {
+  // a PoE lead carries power from the switch's port to the board that takes it
+  const feed = p.modules.some((m) => m.board.poe) ? poeFeeds(p).find((f) => f.link.id === l.id) : undefined; // (only a board with a PoE HAT takes power that way)
+  if (feed) return { from: feed.src.ref, to: feed.take.ref };
   const role = (r: PlugRef) => { const m = findModule(p, r.module); const c = m?.board.comps.find((x) => x.ref === baseRef(r.ref)); return { role: m && c ? plugRole(m, c) : ('other' as PlugRole), box: !!m && isAccessory(m.board) }; };
   let a = { r: l.a, ...role(l.a) }, b = { r: l.b, ...role(l.b) };
   if (SOURCE.indexOf(b.role) >= 0 && SOURCE.indexOf(a.role) < 0) [a, b] = [b, a];
   if (a.role === 'hub-up' || (b.role === 'host' && a.role !== 'host')) [a, b] = [b, a];
   if ((a.role === 'debug' || a.role === 'uart') && b.box && !a.box) [a, b] = [b, a];
   return { from: a.r, to: b.r };
+}
+
+/**
+ * The pulses along a cable in the live 3D view: their colour (the kind's hue, bright) and whether they move slowly. Power
+ * (a supply lead, a PoE lead, mains) runs slower than data, and a PoE lead glows as power, not as Ethernet.
+ */
+export function flowGlow(p: Project, l: Link): { colour: string; slow: boolean } {
+  const kind = l.kind ?? 'usb', poe = kind === 'net' && p.modules.some((m) => m.board.poe) && poeFeeds(p).some((f) => f.link.id === l.id);
+  return { colour: KIND_GLOW[poe ? 'power' : kind], slow: poe || kind === 'power' || kind === 'mains' };
 }
 
 /** What a cable is for, from the plugs' roles, pointing from the end that gives (power, a port) to the end that takes. */

@@ -3,8 +3,8 @@
 // reports plug access, collisions, rail lengths and the parts list.
 import type { Anim, Check, EdgeName, Feature, GenResult, Ghost, Link, MeshData, Module, Motion, PanelReport, PartOut, PickTag, Project, Rail, RailMount, V2 } from '../model/types';
 
-/** The pulses' colours along each kind of cable in the live 3D view. */
-const FLOW_COLOUR: Partial<Record<NonNullable<Link['kind']>, string>> = { power: '#ffb347', usb: '#8fd3ff', net: '#7cc4ff', video: '#c7a8ff', audio: '#7fe8d4', debug: '#ffd166', uart: '#ffd166' };
+/** The leads that leave the rack into a plug, and what runs along them (the pulses' kind): a supply, the mains, your computer. */
+const STUB_FLOW: Partial<Record<PlugRole, NonNullable<Link['kind']>>> = { 'mains-in': 'mains', 'power-in': 'power', 'power-in-dc': 'power', device: 'usb', 'hub-up': 'usb' };
 // mains last: everything low-voltage (and every screw terminal) is done before anything goes near the wall
 const CABLE_ORDER: NonNullable<Link['kind']>[] = ['power', 'usb', 'net', 'video', 'audio', 'wire', 'debug', 'uart', 'jumper', 'mains'];
 // assembly steps after every board's (boards use 300 + 10 per seat): cables, the other plugs, caps, tags, and the
@@ -17,9 +17,10 @@ import { basis, dir, I4, inv, mul, pt as ptM, rotZ, tr, type M4 } from '../geom/
 import { filletPath, leadStub, moveFx, powerFx, ribbonMesh, sphereMesh, tubeMesh } from './boardviz';
 import { poweredBoards } from '../model/lights';
 import { inUse, portUses, type UseWhy } from '../model/portuse';
-import { baseRef, cableFlow, cableNumbers, cablePurpose, cableToBuy, findModule, KIND_COLOR, KIND_NAME, offRackModule, offRackTo, packGoes, plugRole, plugsOf, refText, shortName } from '../model/links';
+import { baseRef, cableFlow, flowGlow, cableNumbers, cablePurpose, cableToBuy, findModule, KIND_COLOR, KIND_NAME, offRackModule, offRackTo, packGoes, plugRole, plugsOf, refText, shortName, type PlugRole } from '../model/links';
 import { isPlugPack } from '../model/powerdata';
 import { cableTag, TAG } from './cabletag';
+import { KIND_GLOW } from '../model/cablekinds';
 import { mainsBudget, mainsText, powerBudget, powerText } from '../model/power';
 import { poeBudget, poeText } from '../model/poe';
 import { buildModule, builtLevels, transformMesh, type ArrangeHooks, type ModuleOut } from './generate';
@@ -32,6 +33,7 @@ import { capStress, pieceMesh, planStands, railI, standBoxes, STAND, type StandL
 import { assemble, bendRadius, bestRoute, escapes, hits, lead, ribbonRoute, segInBox, slope, type Box, type CableEnd, type Choice, type Hit, type Obstacle, type RibbonEnd, type Route } from './cableroute';
 import { settleCables } from './cablesim';
 import { isDebugPort, isProbe, isSmall, isUartPort, jumperToBuy, jumperWiring, ribbonOf, uartWiring } from '../model/probes';
+import { progress } from './progress';
 
 const SHOE_BOX = { x: [-LEN_X / 2, LEN_X / 2], y: [-29, 29], z: [0, 42.8] };
 
@@ -350,6 +352,7 @@ export function generatePanel(p: Project): GenResult {
   if (failed.length) warnings.push(...failed);
 
   // ---- positions along the rails ----
+  progress('Laying the rails out');
   const margin = 8, gap = P.gap;
   if (P.auto) {
     let row: Placed[] = [];
@@ -364,6 +367,17 @@ export function generatePanel(p: Project): GenResult {
       row.push(pl);
     }
     if (row.length) rows.push(row);
+    // with cables, every second rail is laid out the other way round (a snake): the last dock of one rail is beside the
+    // first of the next, so boards cabled across the break are not at opposite ends of two rails
+    if ((p.links ?? []).length && rows.length > 1) {
+      rows.forEach((rw, k) => {
+        if (k % 2 === 0) return;
+        const before = Math.max(...rows[k - 1].map((q) => q.mt.at! + q.hi));
+        const first = Math.min(...rw.map((q) => q.mt.at! + q.lo)), last = Math.max(...rw.map((q) => q.mt.at! + q.hi));
+        const shift = Math.max(0, before - last);
+        for (const q of rw) q.mt.at = first + last - (q.mt.at! + q.hi) - q.lo + shift;
+      });
+    }
     let prev: { x: number; y: number; ylo: number; yhi: number } | null = null;
     rows.forEach((rw, k) => {
       const ylo = Math.min(...rw.map((q) => q.ylo)), yhi = Math.max(...rw.map((q) => q.yhi));
@@ -555,7 +569,8 @@ export function generatePanel(p: Project): GenResult {
   // a mains plug whose lead goes to the wall: it goes in last of all, in the last step
   const toWall = (module: string, ref: string) => { const m = mods.get(module)?.m, c = m?.board.comps.find((x) => x.ref === baseRef(ref)); return !!m && !!c && plugRole(m, c) === 'mains-in' && !linked.has(`${module}/${ref}`); };
   const hang = new Set<string>();
-  const powered = poweredBoards({ ...p, links: live }); // for the lights: boards with no power stay dark
+  // (a link to a plug pack or your computer counts: they are not on the rails, but they power what they are cabled to)
+  const powered = poweredBoards({ ...p, links: (p.links ?? []).filter((l) => (placedIds.has(l.a.module) || placedIds.has(l.b.module)) && hasRef(l.a.module, l.a.ref) && hasRef(l.b.module, l.b.ref)) }); // for the lights: boards with no power stay dark
   // assembly steps: stands 100-130, docks 200-210, each board 300 + 10k (+1 rod, +2 board, +3 stack, +4 into its dock),
   // cables CABLE_SEQ + kind (power first), then other plugs, then caps
   const steps: NonNullable<GenResult['steps']> = [];
@@ -689,6 +704,7 @@ export function generatePanel(p: Project): GenResult {
     freeAll();
   }
 
+  progress('Routing the cables');
   // ---- cables: out of each plug, down to a street between (or beside) the rails, along it, and up to the other
   // plug. On table stands the streets run under the rails' level, through a comb slot in every sleeper they cross;
   // each cable gets its own lane in its street.
@@ -915,7 +931,7 @@ export function generatePanel(p: Project): GenResult {
       const EA = ends.get(`${l.a.module}/${l.a.ref}`)!, EB = ends.get(`${l.b.module}/${l.b.ref}`)!;
       // the 3D view's live touch: pulses running along the cable the way power or data goes, once its source has power
       const fl = cableFlow(p, l), fwd = fl.from.module === l.a.module && fl.from.ref === l.a.ref;
-      const flow = (pts: number[][], r: number): Ghost['fx'] => ({ flow: { pts: fwd ? pts : [...pts].reverse(), r, colour: FLOW_COLOUR[kind] ?? '#9fd8ff', on: powered.has(fl.from.module), slow: kind === 'power' } });
+      const glow = flowGlow(p, l), flow = (pts: number[][], r: number): Ghost['fx'] => ({ flow: { pts: fwd ? pts : [...pts].reverse(), r, colour: glow.colour, on: powered.has(fl.from.module), slow: glow.slow } });
       if (flat(l)) {
         // a flat grey ribbon as wide as the narrower end's connector, square across both sockets, its pin 1 edge red
         const rw = Math.min(ribbonWidth(l.a), ribbonWidth(l.b));
@@ -1106,7 +1122,12 @@ export function generatePanel(p: Project): GenResult {
     const r = Math.max(1.1, e.cable / 2), far = e.p.map((v, j) => v + e.d[j] * 60);
     let clear = 60;
     for (const sd of solid) { if (sd.module === module) continue; const t = segInBox(e.p, far, sd.b, r); if (t) clear = Math.min(clear, t[0] * 60 - 1); }
-    ghosts.push(leadStub(`off-rack cable ${k}`, e.p, e.d, e.cable, m && c ? offRackTo(m, c) : 'off the rack', { kind: 'plug', module, refs: [baseRef(ref)] }, { seq: toWall(module, ref) ? WALL_SEQ : PLUG_SEQ, dir: [0, 0, 1], dist: 0, grow: true }, clear));
+    // (words only for a real lead: a cable in the app, a lead you said goes there, a box's supply or mains lead)
+    const why = m ? (uses.get(module) ?? portUses(p, m)).get(baseRef(ref)) : undefined;
+    const real = toOff.has(`${module}/${baseRef(ref)}`) || why === 'yours' || why === 'supply' || (!!m && !!c && plugRole(m, c) === 'mains-in');
+    // power (or your computer's USB) comes in along the lead, when the board it feeds has power
+    const gives = m && c ? STUB_FLOW[plugRole(m, c)] : undefined;
+    ghosts.push(leadStub(`off-rack cable ${k}`, e.p, e.d, e.cable, !real ? '' : m && c ? offRackTo(m, c) : 'off the rack', { kind: 'plug', module, refs: [baseRef(ref)] }, { seq: toWall(module, ref) ? WALL_SEQ : PLUG_SEQ, dir: [0, 0, 1], dist: 0, grow: true }, clear, real && gives ? { colour: KIND_GLOW[gives], on: powered.has(module), slow: gives !== 'usb' } : undefined));
   }
 
 
@@ -1157,6 +1178,7 @@ export function generatePanel(p: Project): GenResult {
     }
   }
 
+  progress('Checking it');
   // ---- checks ----
   const eR = mat.E / MATERIALS.PETG.E;
   const allow = mat.strainAllow;

@@ -5,6 +5,7 @@
 // the LEDs the real board has, drawn only (they are not parts: nothing is printed round them). Pure.
 import type { Board, Comp, Light, LightPattern, Project, V2 } from './types';
 import { findModule, plugRole } from './links';
+import { poeFedIds } from './poe';
 import { bbox, compRect, inside } from '../geom/poly';
 
 export const LED_COLOUR = { red: '#ff3b30', green: '#38e05a', blue: '#3d8bff', yellow: '#ffd23f', amber: '#ffa126', white: '#f4f7ff' } as const;
@@ -123,6 +124,8 @@ export function poweredBoards(p: Project): Set<string> {
     if (takes.has(role(l.a.module, l.a.ref))) out.add(l.a.module);
     if (takes.has(role(l.b.module, l.b.ref))) out.add(l.b.module);
   }
+  // a board on a PoE port takes its power from the switch: no cable of its own says so
+  for (const id of poeFedIds(p)) out.add(id);
   for (const m of p.modules) {
     if (m.board.kind !== 'box') continue;
     const supply = m.board.comps.filter((c) => c.conn && !c.hidden && ['mains-in', 'power-in-dc', 'other'].includes(plugRole(m, c)));
