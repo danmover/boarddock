@@ -291,7 +291,9 @@ describe("a switch's or powered hub's own supply", () => {
     p.links = numberLinks(autoLinks(p));
     const r = generate(p);
     const where = /the USB-C supply, 27 W \(5 A\) into Powerboard, 4 outlets AC\d, its lead to Raspberry Pi 5 J_PWR/;
-    expect(r.steps!.find((s) => /leave the rack/.test(s.text))!.text).toMatch(where);
+    // (its lead is routed from its outlet to the board like a cable of the rack's, and said with the power cables)
+    expect(r.steps!.find((s) => where.test(s.text))!.text).toMatch(/Push each plug pack into its outlet and its lead into its board/);
+    expect(r.report.cables!.find((c) => c.kind === 'power')!.buy).toBe(0); // (comes with the pack)
     const plan = delta(p, r)!.plan;
     expect(plan.find((s) => s.kind === 'cable')!.text).toMatch(new RegExp(`^Push ${where.source}\\.$`));
     expect(plan.some((s) => s.kind === 'seat')).toBe(false); // (no holder, no dock)

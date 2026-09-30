@@ -536,11 +536,29 @@ export function generatePanel(p: Project): GenResult {
   const ends = new Map<string, { p: number[]; d: number[]; cable: number; w?: number[]; span?: number; wires?: { p: number[]; colour: string; pin?: string }[] }>();
   // only links whose two boards are on the rack and still have that plug get a cable (and hold back their plugs)
   const hasRef = (id: string, ref: string) => !!mods.get(id)?.m.board.comps.some((c) => c.ref === baseRef(ref));
-  const live = (p.links ?? []).filter((l) => placedIds.has(l.a.module) && placedIds.has(l.b.module) && hasRef(l.a.module, l.a.ref) && hasRef(l.b.module, l.b.ref));
+  // a plug pack in a powerboard's outlet on the rack: its own lead runs from that outlet to the board it feeds (drawn and
+  // routed from the outlet, its length checked against the route); a pack in the wall has its lead leave the rack
+  type Lk = NonNullable<Project['links']>[number];
+  const packAt = new Map<string, Lk['a']>();
+  for (const l of p.links ?? []) if (l.kind === 'mains') for (const [pk, o] of [[l.a, l.b], [l.b, l.a]] as const) {
+    const pm = mods.get(pk.module)?.m;
+    if (pm && isPlugPack(pm.board) && placedIds.has(o.module) && hasRef(o.module, o.ref)) packAt.set(pk.module, o);
+  }
+  const viaPack = new Map<string, string>(); // lead link id -> the pack whose lead it is
+  const routedLinks: Lk[] = (p.links ?? []).map((l) => {
+    if (l.kind === 'mains' || (!packAt.has(l.a.module) && !packAt.has(l.b.module))) return l;
+    const far = packAt.has(l.a.module) ? l.b : l.a;
+    if (!placedIds.has(far.module) || !hasRef(far.module, far.ref)) return l;
+    viaPack.set(l.id, packAt.has(l.a.module) ? l.a.module : l.b.module);
+    return { ...l, a: packAt.get(l.a.module) ?? l.a, b: packAt.get(l.b.module) ?? l.b };
+  });
+  const packsRouted = new Set(viaPack.values());
+  const asMade = new Map((p.links ?? []).map((l) => [l.id, l]));
+  const live = routedLinks.filter((l) => placedIds.has(l.a.module) && placedIds.has(l.b.module) && hasRef(l.a.module, l.a.ref) && hasRef(l.b.module, l.b.ref));
   const linked = new Set(live.flatMap((l) => [`${l.a.module}/${l.a.ref}`, `${l.b.module}/${l.b.ref}`]));
   // plugs whose cable leaves the rack: one cabled to your computer or to a plug pack in an outlet, a board's cradled
   // plug with nothing in the rack on the other end, a box's supply
-  const offLinks = (p.links ?? []).flatMap((l) => [[l.a, l.b], [l.b, l.a]]).filter(([, o]) => offRackModule(findModule(p, o.module))).map(([me]) => me);
+  const offLinks = routedLinks.filter((l) => !(l.kind === 'mains' && (packsRouted.has(l.a.module) || packsRouted.has(l.b.module)))).flatMap((l) => [[l.a, l.b], [l.b, l.a]]).filter(([, o]) => offRackModule(findModule(p, o.module))).map(([me]) => me);
   const toOff = new Set(offLinks.map((me) => `${me.module}/${baseRef(me.ref)}`));
   const toOffExact = new Set(offLinks.map((me) => `${me.module}/${me.ref}`)); // (the upper of a pair of sockets keeps its :2)
   const uses = new Map<string, Map<string, UseWhy>>();
@@ -766,7 +784,7 @@ export function generatePanel(p: Project): GenResult {
       rising.push([q[0] - 8, q[1] - 8, q[2], q[0] + 8, q[1] + 8, top]);
     }
     const ribbonEnd = (E: { p: number[]; d: number[]; w?: number[]; span?: number }, c: CableEnd, straight: boolean): RibbonEnd => ({ ...c, w: uv(E.w ?? (Math.abs(E.d[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0])), span: E.span ?? 5, straight });
-    const dbg = (p.links ?? []).filter(near).map((l) => ({ l, e: endsOf(l) })).filter((x) => x.e)
+    const dbg = routedLinks.filter(near).map((l) => ({ l, e: endsOf(l) })).filter((x) => x.e)
       .sort((x, y) => Math.hypot(x.e!.A.p[0] - x.e!.B.p[0], x.e!.A.p[1] - x.e!.B.p[1]) - Math.hypot(y.e!.A.p[0] - y.e!.B.p[0], y.e!.A.p[1] - y.e!.B.p[1]));
     const laid: Box[] = [];
     for (const { l, e } of dbg) {
@@ -792,12 +810,14 @@ export function generatePanel(p: Project): GenResult {
     const routeCables = () => {
       routes.length = nRibbons;
       const cols: Obstacle[] = [];
-      for (const l of p.links ?? []) {
+      for (const l of routedLinks) {
         if (near(l)) continue;
         const e = endsOf(l);
         if (!e) continue;
         const { EA, EB, A, B } = e;
-        const d = 2 * Math.max(1.4, Math.max(EA.cable, EB.cable) / 2);
+        // (a plug pack's lead is as thick as its output plug's, not as the outlet it stands in)
+        const made = asMade.get(l.id), fromPack = viaPack.has(l.id) && made ? (packAt.has(made.a.module) ? EB : EA) : null;
+        const d = 2 * Math.max(1.4, (fromPack ? fromPack.cable : Math.max(EA.cable, EB.cable)) / 2);
         // on stands the streets run under the rails; without them just over the rail lips
         const zc = stands ? STAND.floor + d / 2 + 0.25 : 8.5 + d / 2;
         const ch = bestRoute(A, B, streets, zc, d / 2, obs, ownBox.get(l.a.module) ?? null, ownBox.get(l.b.module) ?? null, stations, cols);
@@ -825,8 +845,17 @@ export function generatePanel(p: Project): GenResult {
         const rs0 = routes.filter((q) => q.ch.street === k).map((q) => ({ q, a1: colOf(q.A, q.ch.ea, c), b1: colOf(q.B, q.ch.eb, c) }))
           .sort((x, y) => (x.a1[1] + x.b1[1]) - (y.a1[1] + y.b1[1]) || Math.min(x.a1[0], x.b1[0]) - Math.min(y.a1[0], y.b1[0]));
         const rs = laneOrder(rs0, c);
-        const pitch = Math.max(0, ...rs.map((x) => x.q.d)) + 2.9;
-        rs.forEach((x, i) => laneOf.set(x.q.l.id, c + (i - (rs.length - 1) / 2) * pitch));
+        const dMax = Math.max(0, ...rs.map((x) => x.q.d));
+        let pitch = dMax + 2.9;
+        // the lanes stay clear of the rails (and the stand blocks under them) either side of the street: a row too wide
+        // for the street moves out where the street is open (beside the outer rails), else the lanes close up
+        const edge = (stands ? STAND.half : STAND.lip) + 2.5 + dMax / 2;
+        const lo = k > 0 ? across[k - 1] + edge : -Infinity, hi = k < across.length ? across[k] - edge : Infinity;
+        const span = (rs.length - 1) * pitch;
+        if (span > hi - lo && Number.isFinite(hi - lo)) pitch = Math.max(dMax + 0.6, (hi - lo) / Math.max(1, rs.length - 1));
+        const width = (rs.length - 1) * pitch;
+        const first = Math.max(lo, Math.min(hi - width, c - width / 2));
+        rs.forEach((x, i) => laneOf.set(x.q.l.id, Number.isFinite(first) ? first + i * pitch : c + (i - (rs.length - 1) / 2) * pitch));
       });
     };
     const nos = cableNumbers(p.links);
@@ -941,7 +970,7 @@ export function generatePanel(p: Project): GenResult {
       const anim: Anim = { seq: cableSeq(kind), dir: [0, 0, 1], dist: 0, grow: true };
       const EA = ends.get(`${l.a.module}/${l.a.ref}`)!, EB = ends.get(`${l.b.module}/${l.b.ref}`)!;
       // the 3D view's live touch: pulses running along the cable the way power or data goes, once its source has power
-      const fl = cableFlow(p, l), fwd = fl.from.module === l.a.module && fl.from.ref === l.a.ref;
+      const made = asMade.get(l.id) ?? l, fl = cableFlow(p, made), fwd = fl.from.module === made.a.module && fl.from.ref === made.a.ref;
       const flow = (pts: number[][], r: number): Ghost['fx'] => ({ flow: { pts: fwd ? pts : [...pts].reverse(), r, colour: FLOW_COLOUR[kind] ?? '#9fd8ff', on: powered.has(fl.from.module), slow: kind === 'power' } });
       if (flat(l)) {
         // a flat grey ribbon as wide as the narrower end's connector, square across both sockets, its pin 1 edge red
@@ -1002,7 +1031,7 @@ export function generatePanel(p: Project): GenResult {
         }
         return { p: path[0], t: [1, 0, 0] };
       };
-      const no = nos.get(l.id)!, purpose = cablePurpose(p, l);
+      const no = nos.get(l.id)!, purpose = cablePurpose(p, made);
       const m0 = along(len / 2);
       // a probe's ribbon comes with it: nothing to buy, but it has to reach
       const probe = kind === 'debug' ? [l.a.module, l.b.module].map((id) => mods.get(id)?.m).find((m) => m && isProbe(m)) : undefined;
@@ -1010,7 +1039,10 @@ export function generatePanel(p: Project): GenResult {
       // a serial cable's loose ends: which pin each goes on
       const head = kind === 'uart' ? [l.a, l.b].map((r) => mods.get(r.module)?.m.board.comps.find((c) => c.ref === baseRef(r.ref))).find((c) => c && isUartPort(c)) : undefined;
       const wires = kind === 'jumper' ? jumperWiring(p, l) : head ? uartWiring(head) : undefined;
-      cables.push({ id: l.id, a: `${nameOf2(l.a.module)} ${refText(mods.get(l.a.module)?.m, l.a.ref)}`, b: `${nameOf2(l.b.module)} ${refText(mods.get(l.b.module)?.m, l.b.ref)}`, ends: `${l.a.module}/${l.a.ref}|${l.b.module}/${l.b.ref}`, kind, length: round(len, 0), buy: ribbon != null ? 0 : kind === 'jumper' ? jumperToBuy(len) / 1000 : cableToBuy(len), no, label: purpose.text, mid: [m0.p[0], m0.p[1], m0.p[2] + d / 2 + 2], ...(ribbon != null ? { ribbon } : {}), ...(wires ? { wires } : {}), ...(clash.length ? { clash: clash.join(', ') } : {}) });
+      // a plug pack's own lead: nothing to buy, but it is as long as it is
+      const pack = viaPack.has(l.id) ? mods.get(viaPack.get(l.id)!)?.m : undefined, packLead = pack?.board.box?.pack?.lead;
+      cables.push({ id: l.id, a: `${nameOf2(made.a.module)} ${refText(mods.get(made.a.module)?.m, made.a.ref)}`, b: `${nameOf2(made.b.module)} ${refText(mods.get(made.b.module)?.m, made.b.ref)}`, ends: `${made.a.module}/${made.a.ref}|${made.b.module}/${made.b.ref}`, kind, length: round(len, 0), buy: ribbon != null || pack ? 0 : kind === 'jumper' ? jumperToBuy(len) / 1000 : cableToBuy(len), no, label: purpose.text, mid: [m0.p[0], m0.p[1], m0.p[2] + d / 2 + 2], ...(ribbon != null ? { ribbon } : {}), ...(wires ? { wires } : {}), ...(clash.length ? { clash: clash.join(', ') } : {}) });
+      if (pack && packLead != null && len > packLead) warnings.push(`The ${pack.board.name}'s own lead is ${round(packLead / 1000, 1)} m but has to run about ${Math.round(len)} mm from its outlet to ${purpose.to === pack.board.name ? purpose.from : purpose.to}. Plug it into an outlet nearer that board, or use a supply with a longer lead (Box › Its own lead).`);
       if (probe && ribbon != null && len > ribbon) warnings.push(`The ${probe.board.name} ribbon is ${ribbon} mm but has to run about ${Math.round(len)} mm to ${purpose.to === probe.board.name ? purpose.from : purpose.to}. Use a longer ribbon (set its length in Plugs, by the header), or put its column closer: in the back slot of that board's dock (Rails).`);
       // jumper wires past the usual 30 cm ones: the adapter is too far from its header
       if (kind === 'jumper' && len > 300) warnings.push(`The jumper wires from ${purpose.from} to ${purpose.to} have to run about ${Math.round(len)} mm, longer than the usual 30 cm ones. Put the adapter closer: in the back slot of that board's dock (drag it there in the Rails step).`);
@@ -1071,7 +1103,6 @@ export function generatePanel(p: Project): GenResult {
             if (s < lo || s > hi) continue;
             for (let f = 0; f < 4; f++) { const n = blockedAt(s, f); if (n === 0) return { s, f }; if (n < best.n) best = { s, f, n }; }
           }
-          if ((globalThis as any).__dbgOn) ((globalThis as any).__tagLog ??= []).push(`tag ${no} ${l.kind ?? 'usb'} ${l.id.slice(-4)} len=${len.toFixed(0)} d=${d} s0=${s0.toFixed(0)} range ${lo.toFixed(0)}..${hi.toFixed(0)} blocked=${best.n}`);
           return best;
         };
         const spot = ({ s, f }: { s: number; f: number }) => {
@@ -1094,9 +1125,6 @@ export function generatePanel(p: Project): GenResult {
           tag: { kind: 'cabletag', refs: [l.id] }, tags: [{ kind: 'cabletag', refs: [l.id] }], anim: { seq: TAG_SEQ, dir: [T1[0], T1[1], T1[2]] as [number, number, number], dist: 25 }, anims: [{ seq: TAG_SEQ, dir: [T2[0], T2[1], T2[2]] as [number, number, number], dist: 25 }] });
       }
     }
-    // DBG-BEGIN
-    if ((globalThis as any).__dbgOn) (globalThis as any).__dbg = { vert, streets, obs: obs.map((o) => ({ box: o.box, label: o.label, module: o.module, plug: o.plug, stand: o.stand })), cables: routes.map((q, qi) => ({ id: q.l.id, kind: q.l.kind, d: q.d, street: q.ch.street, A: q.A, B: q.B, route: planned[qi].route, plan: planned[qi].path, path: sim.paths[qi], hit: planned[qi].hit.map((h) => ({ l: h.ob.label, at: h.at, depth: h.depth })) })), tags: parts.filter((x) => x.tag?.kind === 'cabletag').map((x) => ({ id: x.tag!.refs![0], T: [x.toAssembly, ...(x.instances ?? [])] })) };
-    // DBG-END
     const clashing = cables.filter((c) => c.clash);
     for (const c of clashing) warnings.push(`The ${c.a} to ${c.b} cable runs into ${c.clash}. Move or turn one of the boards, or connect it to another plug.`);
     if (cables.length) checks.push({ group: 'Panel', name: 'Cable routes', value: clashing.length ? `${clashing.length} of ${cables.length} touch something` : `all ${cables.length} clear`, status: clashing.length ? 'warn' : 'ok', detail: clashing.length ? clashing.map((c) => `${c.a} to ${c.b}: ${c.clash}`).join('; ') : 'no clash found in the model: every route misses the holders, boards, plugs, docks, rails and stands, checked with their bounding boxes (a rough check: route the real cables with care)' });
@@ -1255,17 +1283,20 @@ export function generatePanel(p: Project): GenResult {
   const flats = placed.length - docks.length;
   if (docks.length || flats) steps.push({ seq: 210, text: `${docks.length ? 'Press a socket into each shoe, turned the way it is shown.' : ''}${docks.length && flats ? ' ' : ''}${flats ? `Clip the flat rail clip${flats > 1 ? 's' : ''} onto the rail.` : ''}` });
   for (const k of CABLE_ORDER) {
-    const cs = cables.filter((c) => c.kind === k);
-    if (!cs.length) continue;
+    // (a plug pack's own lead is routed like a cable, but it is pushed on with its pack: said with it)
+    const all = cables.filter((c) => c.kind === k), cs = all.filter((c) => !viaPack.has(c.id)), pl = all.filter((c) => viaPack.has(c.id));
+    if (!all.length) continue;
+    const packText = pl.length ? `Push each plug pack into its outlet and its lead into its board: ${[...new Set(pl.map((c) => viaPack.get(c.id)!))].map((id) => packGoes(p, mods.get(id)!.m)).join('; ')}.` : '';
+    if (!cs.length) { steps.push({ seq: cableSeq(k), text: packText }); continue; }
     const combed = pieces.some((x) => /comb/.test(x.name));
     if (k === 'debug') { steps.push({ seq: cableSeq(k), text: `Plug in the debug ribbon${cs.length > 1 ? 's' : ''}, red edge to pin 1, and lay ${cs.length > 1 ? 'them' : 'it'} over the top of the dock: ${cs.map((c) => `${c.no ? `#${c.no} ` : ''}${c.a} to ${c.b}`).join(', ')}.` }); continue; }
     if (k === 'jumper') { steps.push({ seq: cableSeq(k), text: `Push the jumper wires on, one housing per pin: ${cs.map((c) => `${c.no ? `#${c.no} ` : ''}${c.a} to ${c.b} (${Math.round(c.buy * 100)} cm): ${c.wires ?? ''}`).join('. ')}.` }); continue; }
     if (k === 'uart') { steps.push({ seq: cableSeq(k), text: `Plug in the USB-serial cable${cs.length > 1 ? 's' : ''} and push the loose ends onto the header pins: ${cs.map((c) => `${c.no ? `#${c.no} ` : ''}${c.a} to ${c.b} (${c.buy} m): ${c.wires ?? 'ground, TX and RX'}`).join('. ')}.` }); continue; }
     if (k === 'mains') { steps.push({ seq: cableSeq(k), text: `With every powerboard still unplugged from the wall, plug the mains leads and plug packs into their outlets: ${cs.map((c) => `${c.no ? `#${c.no} ` : ''}${c.a} to ${c.b}`).join(', ')}.` }); continue; }
-    steps.push({ seq: cableSeq(k), text: `Plug in the ${KIND_NAME[k]} cable${cs.length > 1 ? 's' : ''}: ${cs.map((c) => `${c.no ? `#${c.no} ` : ''}${c.a} to ${c.b} (${c.buy} m)`).join(', ')}${combed ? '. Press each one into its comb slot as you go' : ''}.` });
+    steps.push({ seq: cableSeq(k), text: `Plug in the ${KIND_NAME[k]} cable${cs.length > 1 ? 's' : ''}: ${cs.map((c) => `${c.no ? `#${c.no} ` : ''}${c.a} to ${c.b} (${c.buy} m)`).join(', ')}${combed ? '. Press each one into its comb slot as you go' : ''}.${packText ? ` ${packText}` : ''}` });
   }
   // (a plug pack goes straight into its outlet, its lead is its own: no cable on the rack, so it's said here)
-  const packs = p.modules.filter((m) => isPlugPack(m.board) && (p.links ?? []).some((l) => l.a.module === m.id || l.b.module === m.id)).map((m) => packGoes(p, m));
+  const packs = p.modules.filter((m) => isPlugPack(m.board) && !packsRouted.has(m.id) && (p.links ?? []).some((l) => l.a.module === m.id || l.b.module === m.id)).map((m) => packGoes(p, m));
   if (ghosts.some((g) => g.tag?.kind === 'plug' && g.anim?.seq === PLUG_SEQ)) steps.push({ seq: PLUG_SEQ, text: `Plug in the cables that leave the rack (supplies, screens, your computer).${packs.length ? ` Push each plug pack into its outlet and its lead into its board: ${packs.join('; ')}.` : ''} Nothing goes into the wall yet.` });
   if (parts.some((x) => x.tag?.kind === 'cap')) steps.push({ seq: CAP_SEQ, text: 'Snap the caps over the plugs to lock them in.' });
   if (parts.some((x) => x.tag?.kind === 'cabletag')) steps.push({ seq: TAG_SEQ, text: 'Snap a numbered tag round each end of every round cable, a hand-width from the plug (a flat ribbon takes none): the numbers match the Wiring view and the shopping list.' });

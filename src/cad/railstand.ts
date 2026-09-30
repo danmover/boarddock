@@ -168,8 +168,8 @@ export function planStands(rails: StandRail[], streets: number[], lanes: StandLa
     for (let i = 0; i + 1 < on.length; i++) {
       const a = on[i], b = on[i + 1], dv = b.v - a.v;
       if (dv < 2 * w + 6) { warnings.push(`Rails ${a.id.replace(/^r/, '')} and ${b.id.replace(/^r/, '')} are ${Math.round(dv)} mm apart: the stand blocks need ${2 * w + 6} mm, so they are not joined there.`); continue; }
-      const st = streets.findIndex((v) => v > a.v + w && v < b.v - w);
-      const ls = st >= 0 ? lanesAt(u, st, a.v) : [];
+      // (every street between the two: a rail that ends short leaves two streets between its neighbours)
+      const ls = streets.flatMap((v, st) => (v > a.v + w && v < b.v - w ? lanesAt(u, st, a.v) : [])).sort((x, y) => x.y - y.y);
       // between the ends a saddle stands on its own under its rail: a spacer only goes in to carry a comb
       if (!ls.length && !isEnd) continue;
       if (ls.some((l) => l.y - l.d / 2 < w + 2.5 || l.y + l.d / 2 > dv - w - 2.5)) warnings.push(`Too many cables run between rails ${a.id.replace(/^r/, '')} and ${b.id.replace(/^r/, '')} for their comb; space the rails further apart.`);
@@ -179,8 +179,8 @@ export function planStands(rails: StandRail[], streets: number[], lanes: StandLa
     // outriggers: to the outer streets when cables run there, or short feet under a lone rail
     for (const side of [-1, 1] as const) {
       const r = side > 0 ? on[on.length - 1] : on[0];
-      const st = side > 0 ? streets.length - 1 : 0;
-      const ls = streets.length && (side > 0 ? streets[st] > r.v : streets[st] < r.v) ? lanesAt(u, st, r.v).map((l) => ({ y: +(side * l.y).toFixed(2), d: l.d })) : [];
+      // every street beyond the outer rail, out to the outer one (a street between rails that end short is crossed too)
+      const ls = streets.flatMap((v, st) => (side > 0 ? v > r.v : v < r.v) ? lanesAt(u, st, r.v).map((l) => ({ y: +(side * l.y).toFixed(2), d: l.d })) : []).sort((x, y) => x.y - y.y);
       if (!ls.length && (on.length > 1 || !isEnd)) continue;
       const reach = ls.length ? Math.max(...ls.map((l) => l.y + l.d / 2)) + 9 : w + 18;
       const M = side > 0 ? basis([0, 1, 0], [0, 0, 1], [1, 0, 0], [u - s3, r.v, 0]) : basis([0, -1, 0], [0, 0, 1], [-1, 0, 0], [u + s3, r.v, 0]);

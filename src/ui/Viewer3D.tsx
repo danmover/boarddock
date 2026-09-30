@@ -1079,7 +1079,8 @@ function applyPose(c: any) {
         }
       }
     } else if (explode > 0) {
-      if (grow) shown = false;
+      // (a cable's tags go with it: rings pulled out on their own hang in mid-air, with no cable through them)
+      if (grow || o.tag?.kind === 'cabletag') shown = false;
       else for (const m of o.moves) {
         const k = m.dist != null ? explode : explode * (0.35 + (0.65 * m.rank) / Math.max(1, n - 1));
         off.addScaledVector(new THREE.Vector3(m.dir[0], m.dir[1], m.dir[2]), (m.dist ?? D) * k);

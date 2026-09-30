@@ -9,6 +9,7 @@ import { GRIP, SHOE_GRIP } from '../../src/cad/dockdims';
 import { compRect, extentAlong } from '../../src/geom/poly';
 import { mul as mulM } from '../../src/cad/assembly';
 import { stackLayers } from '../../src/model/holes';
+import { isPlugPack } from '../../src/model/powerdata';
 import type { Feature, GenResult, MeshData, PickTag, Project } from '../../src/model/types';
 
 /** What a solid is, for sorting what it meets. */
@@ -220,7 +221,10 @@ export function measure(p: Project, r: GenResult): Measured {
   const S = solids(r);
   const { jack, pins, cradles, springs } = allowed(p, r);
   const base = (ref: string) => ref.replace(/:2$/, '');
-  const links = new Map((p.links ?? []).map((l) => [l.id, [`${l.a.module}/${base(l.a.ref)}`, `${l.b.module}/${base(l.b.ref)}`]]));
+  // (a plug pack's own lead starts at the outlet it is plugged into: that outlet is its plug too)
+  const outletOf = new Map<string, string>();
+  for (const l of p.links ?? []) if (l.kind === 'mains') for (const [pk, o] of [[l.a, l.b], [l.b, l.a]]) if (p.modules.some((m) => m.id === pk.module && isPlugPack(m.board))) outletOf.set(pk.module, `${o.module}/${base(o.ref)}`);
+  const links = new Map((p.links ?? []).map((l) => [l.id, [`${l.a.module}/${base(l.a.ref)}`, `${l.b.module}/${base(l.b.ref)}`, ...[l.a, l.b].flatMap((r) => (l.kind !== 'mains' && outletOf.has(r.module) ? [outletOf.get(r.module)!] : []))]]));
   /** The plugs at a cable's ends: a routed cable's link, or the one plug an off-rack lead leaves. */
   const ownPlugs = (c: Solid) => (c.module ? [`${c.module}/${base(c.ref ?? '')}`] : links.get(c.ref ?? '') ?? []);
   const cats: Record<string, Totals> = Object.fromEntries(CATS.map((c) => [c, { vol: 0, depth: 0, n: 0 }]));
