@@ -11,7 +11,7 @@ import { TEMPLATES } from '../src/model/templates';
 import { newModule, newProject } from '../src/model/library';
 import { autoLinks, numberLinks } from '../src/model/links';
 import { fillWires } from '../src/model/probes';
-import { autoAssign } from '../src/cad/dockplan';
+import { autoAssignClassic } from '../src/cad/dockplan';
 import { seeded } from './collide/racks';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -40,7 +40,8 @@ async function open() {
     return q;
   });
   loadProject(p);
-  const mounts = autoAssign(p).map((m, i) => ({ ...m, rail: `r${Math.floor(i / 4)}`, at: i }));
+  // (the classic docks: what the view lays out is a fixed list, whatever the planner then does with the order)
+  const mounts = autoAssignClassic(p).map((m, i) => ({ ...m, rail: `r${Math.floor(i / 4)}`, at: i }));
   store.set({ view: 'wiring', result: { report: { panel: { rails: [...new Set(mounts.map((m) => m.rail))].map((id) => ({ id })), mounts }, cables: [] } } as any });
   host = document.createElement('div');
   document.body.appendChild(host);

@@ -236,7 +236,12 @@ describe('cable clashes', () => {
     const { RACKS } = await import('./collide/racks');
     const { initKernel } = await import('../src/cad/kernel');
     await initKernel();
-    const warns = (name: string) => generate(RACKS.find((r) => r.name === name)!.make()).report.warnings.filter((w) => /runs into/.test(w));
+    const warns = (name: string, classic = false) => {
+      const p = RACKS.find((r) => r.name === name)!.make();
+      // (the classic packing: the rack Auto-arrange used to make, with the clash this test is about)
+      if (classic) p.panel.opts = { plan: 'classic' };
+      return generate(p).report.warnings.filter((w) => /runs into/.test(w));
+    };
     // (the route check uses bounding boxes: this one was only a close shave, the cable clear of the charger's holder)
     expect(warns('rows of rails')).toEqual([]);
     // and the Mega's cable no longer goes into the Nano's plug beside it: it settles clear of a plug and its lead

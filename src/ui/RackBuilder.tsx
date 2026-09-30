@@ -16,6 +16,7 @@ import { putBehindOptions, addDock, addRail, appendToRail, autoArrange, dockShor
 import { shorterLever, turnLabel } from '../cad/dockplan';
 import { mountLabels } from '../model/built';
 import { Icon, I } from './icons';
+import { ArrangeOptions } from './ArrangeOptions';
 
 const DIR_TEXT: Record<string, string> = { front: 'points up', up: 'points back', down: 'points toward you', left: 'points left', right: 'points right', wall: 'into the table' };
 const EDGE_OPTS: ['auto' | EdgeName, string][] = [['auto', 'auto edge'], ['bottom', 'bottom edge'], ['top', 'top edge'], ['left', 'left edge'], ['right', 'right edge']];
@@ -109,7 +110,7 @@ export function RackBuilder() {
 
   return (
     <>
-      <Section title="Layout" right={P.auto ? <Chip status="ok">automatic</Chip> : <span className="btns" style={{ gap: 6 }}><button className="btn small ghost" onClick={tidyUp} title="Take out empty docks and slide overlapping docks apart along their rail; nothing else moves">Tidy up</button><button className="btn small soft" onClick={autoArrange} title={p.built ? 'Lay the whole rack out again: built boards move (it asks first)' : 'Lay the whole rack out again'}><Icon d={I.bolt} /> Auto-arrange</button></span>}>
+      <Section title="Layout" right={P.auto ? <span className="btns" style={{ gap: 6 }}><ArrangeOptions project={p} /><Chip status="ok">automatic</Chip></span> : <span className="btns" style={{ gap: 6 }}><ArrangeOptions project={p} /><button className="btn small ghost" onClick={tidyUp} title="Take out empty docks and slide overlapping docks apart along their rail; nothing else moves">Tidy up</button><button className="btn small soft" onClick={autoArrange} title={p.built ? 'Lay the whole rack out again: built boards move (it asks first)' : 'Lay the whole rack out again'}><Icon d={I.bolt} /> Auto-arrange</button></span>}>
         <div className="quick">
           {([['row', 'One rail', 'M4 16h40M8 16V8h8v8M20 16V8h8v8M32 16V8h8v8'], ['rows', 'Rows', 'M4 9h40M4 21h40M8 9V3h8v6M20 9V3h8v6M32 9V3h8v6M8 21v-6h8v6M20 21v-6h8v6'], ['cols', 'Columns', 'M12 2v24M32 2v24M12 4h7v6h-7M12 13h7v6h-7M32 4h7v6h-7M32 13h7v6h-7']] as const).map(([k, n, d]) => (
             <button key={k} className={P.auto && kind === k ? 'on' : ''} onClick={() => quickLayout(k)}><svg viewBox="0 0 48 28" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d={d} /></svg>{n}</button>

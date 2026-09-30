@@ -360,8 +360,13 @@ export function generatePanel(p: Project): GenResult {
     let cursor = margin;
     // each box (hub, charger) comes right after the boards it feeds (dockplan orders them so), on the same rail when
     // it fits: their cables stay short
+    // (the planner's rows: a new row where its hint changes, as well as where the rail is full)
+    let hint: number | undefined;
+    // room to grow: a free slot's worth of rail (the average dock and its gap) kept at the end of each rail, per slot asked for
+    const spareMm = placed.length ? (P.opts?.spare ?? 0) * (placed.reduce((a, q) => a + q.hi - q.lo + gap, 0) / placed.length) : 0;
     for (const pl of placed) {
-      if (row.length && cursor + (pl.hi - pl.lo) > P.maxRail - margin) { rows.push(row); row = []; cursor = margin; }
+      if (row.length && (cursor + (pl.hi - pl.lo) > P.maxRail - margin - spareMm || (pl.mt.row != null && hint != null && pl.mt.row !== hint))) { rows.push(row); row = []; cursor = margin; }
+      hint = pl.mt.row;
       pl.mt.at = cursor - pl.lo;
       cursor = pl.mt.at + pl.hi + gap;
       row.push(pl);
@@ -369,7 +374,8 @@ export function generatePanel(p: Project): GenResult {
     if (row.length) rows.push(row);
     // with cables, every second rail is laid out the other way round (a snake): the last dock of one rail is beside the
     // first of the next, so boards cabled across the break are not at opposite ends of two rails
-    if ((p.links ?? []).length && rows.length > 1) {
+    // (not when the planner gave the rows: it has already turned and ordered them for their cables)
+    if ((p.links ?? []).length && rows.length > 1 && !rows.some((rw) => rw.some((q) => q.mt.row != null))) {
       rows.forEach((rw, k) => {
         if (k % 2 === 0) return;
         const before = Math.max(...rows[k - 1].map((q) => q.mt.at! + q.hi));
@@ -381,7 +387,7 @@ export function generatePanel(p: Project): GenResult {
     let prev: { x: number; y: number; ylo: number; yhi: number } | null = null;
     rows.forEach((rw, k) => {
       const ylo = Math.min(...rw.map((q) => q.ylo)), yhi = Math.max(...rw.map((q) => q.yhi));
-      const len = Math.max(...rw.map((q) => q.mt.at! + q.hi - q.soft[1])) + margin;
+      const len = Math.max(...rw.map((q) => q.mt.at! + q.hi - q.soft[1])) + margin + spareMm;
       let x = 0, y = 0;
       if (prev) {
         if (P.rowDir === 'h') y = prev.y + prev.ylo - P.rowGap - yhi;

@@ -6,11 +6,12 @@ import { appendDock, bestDock, seatBoard, shorterLever, dropEmptied, nearestFree
 import { baseOf, columnable, refreshStandoffs } from '../model/holes';
 import { amend, edit, select, store, toast, uniqueName } from '../state';
 import { mountLabels, snapshot } from '../model/built';
-import { isProbe } from '../model/probes';
 import { isPlugPack } from '../model/powerdata';
 import { describeMoves, hasLocks, isDockLocked, placesOf } from '../model/locks';
 import { arrangeAround } from '../cad/arrangelock';
 import { autoEdit, noteReceipts } from './autoEdit';
+import { isProbe, stackCompanions } from '../model/probes';
+import { packNew } from '../cad/packnew';
 
 const rep = () => store.get().result?.report.panel ?? null;
 
@@ -343,7 +344,7 @@ export function autoArrange() {
   if (p?.built && !confirm('This rack is built. Auto-arrange lays every board out again: built boards move, and you may need new rails and docks. ⌘Z undoes it. Lay it all out again?')) return;
   // with locks, the docks and rails locked stay and the other boards are seated again; without, the whole rack is laid out again
   if (p && hasLocks(p)) { arrangeLocked(p); return; }
-  edit((q) => { q.panel.auto = true; });
+  edit((q) => { q.panel.auto = true; delete q.panel.opts?.pick; if (q.panel.opts?.stack) stackCompanions(q); });
   select([]);
   if (p) receiptAfterBuild('Auto-arrange', p);
 }
@@ -365,6 +366,21 @@ function arrangeLocked(p: Project) {
   const texts = autoEdit('Auto-arrange', (q) => { materialise(q); seated = arrangeAround(q); }, { layout: true });
   select([]);
   toast(`Auto-arrange left the locked docks and rails as they were and seated ${seated.length} other board${seated.length === 1 ? '' : 's'} again${texts.length ? `: ${texts.slice(0, 2).map((t) => t.replace(/^Auto-arrange /, '')).join('; ')}` : ''}. ⌘Z undoes it.`);
+}
+
+/**
+ * "Pack new boards only": the boards on no rail go where they suit (into a dock's free slot, a gap or the end of a
+ * rail, turned so their plugs face their cables); every dock and rail already there stays exactly where it is.
+ */
+export function packNewBoards() {
+  const p0 = store.get().project;
+  if (!p0 || p0.layout !== 'panel' || p0.panel.auto) return;
+  let placed: ReturnType<typeof packNew> = [];
+  edit((q) => { placed = packNew(q, rep()); });
+  if (!placed.length) { toast('Every board is already on a rail: nothing to pack.'); return; }
+  const name = (id: string) => p0.modules.find((m) => m.id === id)?.board.name ?? 'a board';
+  const bits = placed.map((x) => `${name(x.module)} ${x.where === 'slot' ? 'in a free slot' : x.where === 'beside' ? 'beside its board' : x.where === 'rail' ? 'on a rail of its own' : x.where === 'end' ? 'on the end of a rail' : 'in a gap on a rail'}`);
+  toast(`Packed ${placed.length > 1 ? `${placed.length} new boards` : 'a new board'}: ${bits.slice(0, 3).join(', ')}${bits.length > 3 ? '…' : ''}. Everything else stayed where it was. ⌘Z undoes it.`);
 }
 
 /**

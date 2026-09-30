@@ -44,7 +44,12 @@ function rackOf(ids: string[], f?: (p: Project) => void): Project {
 
 /** Freeze an automatic layout as it came out, the way the first edit by hand does (and Mark as built, with `built`). */
 export function freeze(p: Project, built = false) {
+  // (the racks laid out by hand start from the classic packing, so that they stay the same racks whatever the automatic layout is
+  // made of: what they test is holders, cables and stands on layouts made by hand, not Auto-arrange)
+  const opts = p.panel.opts;
+  p.panel.opts = { ...opts, plan: 'classic' };
   const r = generatePanel(p), pr = r.report.panel!;
+  if (opts) p.panel.opts = opts; else delete p.panel.opts;
   p.panel.rails = pr.rails.map((x) => ({ id: x.id, x: x.x, y: x.y, dir: x.dir, length: built ? x.length : null }));
   p.panel.mounts = pr.mounts.map((m) => ({
     id: m.id, rail: m.rail, at: m.at, kind: m.kind, turn: m.turn, lever: m.leverSide > 0 ? 'pos' as const : 'neg' as const,

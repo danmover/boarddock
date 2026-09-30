@@ -262,6 +262,27 @@ export interface RailMount {
   turn: Turn; // dock: socket turn about the panel normal; flat: board rotation on the panel
   slots: Slot[];
   lever?: 'auto' | 'pos' | 'neg'; // dock: side of the rail the shoe's release lever is on (auto = the more open side)
+  row?: number; // auto layout: the row (rail) the planner put it on; a new row starts where it changes, or when the rail is full
+}
+
+/**
+ * What Auto-arrange is asked to do, beyond keeping every plug reachable. Each option is a weight or a constraint on the
+ * one score the layout planner minimises (see dockplan.ts), never a separate way of laying out. Unset: the default.
+ */
+export interface ArrangeOpts {
+  plan?: 'smart' | 'classic'; // smart (default): the planner scores and improves the layout; classic: pack the boards in the order their cables give
+  goal?: 'balanced' | 'compact' | 'cables' | 'reach'; // what matters most: shortest rails and smallest rack, shortest cables and fewest crossings, or parts easy to reach
+  probes?: 'beside' | 'free'; // a J-Link or adapter docks right beside the board it is cabled to (default), or wherever suits the cables
+  stack?: boolean; // a board's probes and adapters go in one column, up to what the tongue takes (Auto-arrange restacks them)
+  group?: boolean; // alike boards sit in a row, all turned the same way
+  mains?: 'auto' | 'left' | 'right' | 'bottom' | 'off'; // mains items (powerboard, plug packs, chargers) at one end or side, away from the low-voltage boards
+  hosts?: boolean; // hubs, a Pi Zero and probes stay close to their host, by cable count (default on)
+  spare?: number; // free slots to leave on each rail for boards added later
+  stock?: boolean; // prefer layouts where every cable fits a stock length
+  heat?: boolean; // spread the hot boards apart, and to the top of a standing rack
+  fewParts?: boolean; // fewer docks and rails when the cables cost about the same
+  pick?: number; // which of the planner's best candidates the real router chose (0: the first)
+  avoid?: string[]; // "moduleA|moduleB": boards whose cable ran into something in a build, kept apart (set by the build's own retries, never by hand)
 }
 
 export interface PanelSettings {
@@ -277,6 +298,7 @@ export interface PanelSettings {
   cableTags?: boolean; // numbered clip-on tags for every cable, two each (default on)
   rails: Rail[]; // manual layout
   mounts: RailMount[];
+  opts?: ArrangeOpts; // auto: options for Auto-arrange
 }
 
 /** A cable between two plugs (connectors on two boards, or a board and a box such as a hub). */

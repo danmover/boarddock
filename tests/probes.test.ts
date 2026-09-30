@@ -10,7 +10,7 @@ import { powerBudget } from '../src/model/power';
 import { cableLines } from '../src/model/cablelist';
 import { buyText, SOCKET } from '../src/model/cablebuy';
 import { importKicad } from '../src/import/kicad';
-import { autoAssign } from '../src/cad/dockplan';
+import { autoAssignClassic } from '../src/cad/dockplan';
 import { generatePanel } from '../src/cad/panelgen';
 import { initKernel } from '../src/cad/kernel';
 import type { Comp, Project } from '../src/model/types';
@@ -158,7 +158,7 @@ describe('J-Links for a board', () => {
     const p = rack();
     addProbes(p, p.modules[0].id);
     addProbes(p, p.modules.find((m) => m.board.name === 'Sensor board')!.id);
-    const docks = autoAssign(p).filter((m) => m.kind === 'dock');
+    const docks = autoAssignClassic(p).filter((m) => m.kind === 'dock'); // (the classic docks: how a column is seated; the planner then orders them, layout.test.ts)
     const name = (id: string | null) => p.modules.find((m) => m.id === id)?.board.name ?? '';
     // (the dual-MCU board's second J-Link goes before it: its header is on that side)
     expect(docks.map((d) => d.slots.map((s) => name(s.module).replace(/\s*\(.*\)$/, '')))).toEqual([['J-Link', ''], ['Dual-MCU controller', 'J-Link'], ['Sensor board', 'J-Link']]);

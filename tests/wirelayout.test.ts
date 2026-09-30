@@ -5,7 +5,7 @@ import { TEMPLATES } from '../src/model/templates';
 import { newModule, newProject } from '../src/model/library';
 import { allPlugs, autoLinks, numberLinks, PC, pcModule, ROUTER, routerModule } from '../src/model/links';
 import { addAdapters, addProbes, fillWires } from '../src/model/probes';
-import { autoAssign } from '../src/cad/dockplan';
+import { autoAssignClassic } from '../src/cad/dockplan';
 import { badgeSpots, boundsOf, cardSize, fitZoom, flowLayout, freeSpot, rackLayout, railRows, ROOM, type Pos, type Size } from '../src/model/wirelayout';
 import type { Project } from '../src/model/types';
 import { seeded } from './collide/racks';
@@ -51,9 +51,9 @@ function cards(p: Project): Map<string, Size> {
   const mods = [...p.modules, ...(links.some((l) => l.a.module === PC || l.b.module === PC) || plugs.some((q) => q.role === 'device' || q.role === 'hub-up') ? [pcModule(p)] : []), ...(links.some((l) => l.a.module === ROUTER || l.b.module === ROUTER) ? [routerModule(p)] : [])];
   return new Map(mods.map((m) => [m.id, cardSize(plugs.filter((q) => q.module.id === m.id).length)]));
 }
-/** Auto-arrange's docks, four to a rail (as it lays out a rack this size on its default rails), as the view reads them. */
+/** The classic docks, four to a rail (as Auto-arrange lays a rack this size out on its default rails), as the view reads them; the classic order, so the view's tests stay about the view whatever the planner does with the order. */
 function rails(p: Project, perRail = 4): string[][] {
-  const mounts = autoAssign(p).map((m, i) => ({ ...m, rail: `r${Math.floor(i / perRail)}`, at: i }));
+  const mounts = autoAssignClassic(p).map((m, i) => ({ ...m, rail: `r${Math.floor(i / perRail)}`, at: i }));
   return railRows(p, { rails: [...new Set(mounts.map((m) => m.rail))].map((id) => ({ id })), mounts });
 }
 const overlaps = (pos: Pos, size: Map<string, Size>) => {

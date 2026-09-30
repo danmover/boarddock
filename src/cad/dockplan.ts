@@ -14,6 +14,7 @@ import { isProbe, probesOf, targetOf } from '../model/probes';
 import { baseRef, findModule, isAccessory, isBox, plugRole } from '../model/links';
 import { isPlugPack } from '../model/powerdata';
 import { freshRail, isDockLocked, isRailLocked } from '../model/locks';
+import { planAuto } from './autoplan';
 
 /** A module plus the plugs of every board stacked on it: what orientation scoring should look at. */
 export function withRiders(p: Project, m: Module): Module {
@@ -382,7 +383,7 @@ export function slotAccess(m: Module, mt: Pick<RailMount, 'kind' | 'turn'>, slot
  * a dock back to back when that costs (almost) nothing in plug access. Rails and positions are left to the
  * generator, which packs mounts with their real 3D extents.
  */
-export function autoAssign(p: Project): RailMount[] {
+export function autoAssignClassic(p: Project): RailMount[] {
   const railDir = p.panel.rowDir;
   // stacked boards ride on the board below them; score each stack with all of its plugs
   // (a plug pack lives in an outlet, off the rails)
@@ -446,6 +447,16 @@ export function pullBesideHost(p: Project, out: RailMount[], skip: Set<string> =
     return last;
   };
   for (const h of new Set(hostOf.values())) if (!hostOf.has(h)) place(h, new Set());
+}
+
+/**
+ * Automatic placement: the classic docks (above) put in the order, turns and rows the planner scores best (autoplan.ts:
+ * cable lengths and crossings, the rail and floor it takes, and what the rack's Auto-arrange options ask for). With
+ * `opts.plan` 'classic', the classic docks as they came.
+ */
+export function autoAssign(p: Project): RailMount[] {
+  const classic = autoAssignClassic(p);
+  return p.panel.opts?.plan === 'classic' ? classic : planAuto(p, classic);
 }
 
 /**
