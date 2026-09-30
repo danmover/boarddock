@@ -23,7 +23,7 @@ import { badgeText } from '../model/cablebadge';
 import { billOfMaterials } from '../model/bom';
 import { rackName } from '../model/diff';
 import { newSet } from '../model/newparts';
-import { applyView, applyZones, dropVariants } from './viewFx';
+import { applyView, applyZones, dropVariants, zoneVisible } from './viewFx';
 import { leaveFocus, useView3d, view3d, type View3d } from './view3d';
 import { guideHtml, guideSteps, movesOf, NO_TEXT, stepSeqs } from './guide';
 
@@ -1140,7 +1140,7 @@ function applyPose(c: any) {
     o.mesh.userData.offset = off.clone();
     o.mesh.visible = shown && !o.mesh.userData.layerHidden && !o.mesh.userData.focusHidden;
   }
-  if (c.zones) c.zones.visible = !!c.showZones && !Number.isFinite(t) && !(explode > 0); // (not while the parts are moving)
+  if (c.zones) c.zones.visible = zoneVisible(c); // (not while the parts are moving)
   c.world.updateMatrixWorld(true);
   placeHighlights(c);
 }

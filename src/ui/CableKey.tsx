@@ -20,13 +20,15 @@ export function CableKey() {
   const cables = useApp((s) => s.result?.report.cables), zones = useApp((s) => s.result?.report.zones?.length ?? 0), showZones = useView3d((s) => s.zones);
   const kinds = useMemo(() => { const on = new Set((cables ?? []).map((c) => c.kind)); return KIND_ORDER.filter((k) => on.has(k)); }, [cables]);
   if (!kinds.length && !(zones && showZones)) return null;
+  const zoneKey = <span className="mainskey" title="A mains board's footprint with a 10 mm margin"><em />mains zone</span>;
+  if (!kinds.length) return <div className="cablekey floating">{zoneKey}</div>;
   const wide = typeof matchMedia === 'undefined' || matchMedia('(min-width: 861px)').matches;
   return (
     <details className="cablekey floating" open={wide}>
-      <summary title="What each cable colour means">{kinds.length ? 'Cable colours' : 'Mains zone'}</summary>
+      <summary title="What each cable colour means">Cable colours</summary>
       <div className="ck-list">
         {kinds.map((k) => <span key={k}><KindSwatch kind={k} />{KIND_NAME[k]}</span>)}
-        {zones > 0 && showZones && <span className="mainskey" title="A mains board's footprint with a 10 mm margin"><em />mains zone</span>}
+        {zones > 0 && showZones && zoneKey}
       </div>
     </details>
   );

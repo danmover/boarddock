@@ -76,6 +76,9 @@ export function applyView(c: any, fx: ViewFx): boolean {
     m.visible = !hide && !u.animHidden && !u.layerHidden;
   }
   // see-through pieces stay out of the ambient-occlusion pass, or they would darken what is picked like solid ones
+  // the mains zones sit out Isolate, X-ray and What's new: shaded boxes would drown what those are showing
+  c.zonesOff = !!(fx.focus || fx.news);
+  if (c.zones) c.zones.visible = zoneVisible(c);
   c.aoHide = xrayed.length ? (on: boolean) => { for (const m of xrayed) m.visible = on ? false : !m.userData.animHidden && !m.userData.layerHidden && !m.userData.focusHidden; } : null;
   return ok;
 }
@@ -83,6 +86,8 @@ export function applyView(c: any, fx: ViewFx): boolean {
 // ---------------------------------------------------------------- mains zones
 
 const ZONE_COL = 0xff8a3d;
+/** Whether the zones show now: switched on, not in a focus mode, and the rack assembled (not moving). */
+export const zoneVisible = (c: any) => !!c.showZones && !c.zonesOff && !Number.isFinite(c.anim?.t ?? Infinity) && !((c.anim?.explode ?? 0) > 0);
 /** Shaded boxes where mains sits (each mains board's footprint with its margin), in the assembly frame. */
 export function applyZones(c: any, zones: MainsZone[]) {
   const g = c.zones as THREE.Group;
