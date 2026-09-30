@@ -573,7 +573,7 @@ function WiringSide({ tab, setTab, onPick }: { tab: 'todo' | 'cables'; setTab: (
           {advice.map((a, i) => (
             <div key={i} className="wadv">
               <span>{a.text}</span>
-              {a.add && <button className="btn small soft" onClick={() => addAccessory(a.add!, a.count ?? 1)}>{a.add.startsWith('own:') ? 'Add its supply' : `Add ${a.count && a.count > 1 ? `${a.count} × ` : 'a '}${(TEMPLATES.find((t) => t.id === a.add)?.name ?? a.add).replace(/ \(.*$/, '')}`}</button>}
+              {a.add && <button className="btn small soft" onClick={() => addAccessory(a.add!, a.count ?? 1)}>{a.add.startsWith('own:') ? (a.add.includes(',') ? 'Add their supplies' : 'Add its supply') : a.add.startsWith('dcpack:') ? `Add a ${a.add.slice(7)} V plug pack` : `Add ${a.count && a.count > 1 ? `${a.count} × ` : 'a '}${(TEMPLATES.find((t) => t.id === a.add)?.name ?? a.add).replace(/ \(.*$/, '')}`}</button>}
             </div>
           ))}
           {todo.length ? <>

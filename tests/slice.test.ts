@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { unzipSync, strFromU8 } from 'fflate';
-import { printerByName, PRINTERS_DB } from '../src/model/printers';
+import { printerByName, printSettings, PRINTERS_DB } from '../src/model/printers';
 import { defaultCode, genericStart, kiriDevice, kiriProcess, machinePlan } from '../src/slice/profiles';
 import { bambu3mf, gcodeLayers, gcodeStats, md5 } from '../src/slice/kiri';
 
@@ -46,6 +46,19 @@ describe('slicing with Kiri:Moto', () => {
     expect(g.extras).toEqual({});
     expect(g.gcodeLayer).toEqual([]);
     expect(defaultCode(machinePlan(null, 'Custom'), null, { name: 'Custom', bed: [200, 200], spacing: 6 }).start).toMatch(/purge/);
+  });
+
+  it('says in the print settings what the in-app slice draws round the parts: a brim if any part is tall, else one skirt loop', () => {
+    const pr = printerByName('Prusa MK4S / MK4');
+    const row = (tall: string[], name: string) => printSettings(pr, 'PETG', tall).find((r) => r.name === name)!.value;
+    // no tall part: no brim, and the one loop 3 mm out that kiriProcess sets
+    expect(row([], 'Brim')).toBe('none');
+    expect(row([], 'Skirt')).toMatch(/^1 loop, 3 mm/);
+    expect(kiriProcess(pr, 'PETG', false)).toMatchObject({ outputBrimCount: 1, outputBrimOffset: 3 });
+    // a tall part: the 3 mm brim goes on every part (seven touching loops), and no skirt
+    expect(row(['Uno holder'], 'Brim')).toMatch(/^3 mm, on every part.*Uno holder/);
+    expect(row(['Uno holder'], 'Skirt')).toMatch(/^none/);
+    expect(kiriProcess(pr, 'PETG', true)).toMatchObject({ outputBrimCount: 7, outputBrimOffset: 0 });
   });
 
   it('reads time, filament and layers back out of the G-code', () => {

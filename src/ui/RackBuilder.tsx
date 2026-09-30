@@ -9,6 +9,7 @@ import { companionLabel, isProbe } from '../model/probes';
 import { isAccessory } from '../model/links';
 import { edit, isSel, select, setActive, store, toast, useApp } from '../state';
 import { Check, Chip, Num, Pick, Section, Seg } from './controls';
+import { LayoutLock } from './LayoutLock';
 import { accessCounts, MODULE_DRAG, PALETTE } from './PanelEditor';
 import { addDock, addRail, appendToRail, autoArrange, dockShorter, makeRoom, tidyUp, duplicateModule, newRailWith, placeMount, quickLayout, removeMounts, removeRails, seat, setKind, setLever, setRail, setSlot, setStackMode, stackOn, swapSlots, turnMounts, unseat } from './panelOps';
 import { shorterLever, turnLabel } from '../cad/dockplan';
@@ -128,6 +129,8 @@ export function RackBuilder() {
         <div style={{ marginTop: 8 }}><Check label="Two boards back to back in one dock when their plugs allow it" value={P.pairs} onChange={(v) => setAuto((q) => { q.pairs = v; })} /></div>
         <p className="hint">{P.auto ? 'Every board is turned so its plugs stay reachable and packed onto rails. Drag anything below, or in the Rails view, to take over by hand.' : `Your own layout${p.built ? ', frozen when you marked it as built' : ''}. Tidy up takes out empty docks and slides docks apart where they overlap; Auto-arrange starts over (⌘Z undoes either).`}</p>
       </Section>
+
+      <LayoutLock />
 
       <div className="rack">
         {(rep?.rails ?? []).map((r) => {

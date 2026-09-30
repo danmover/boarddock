@@ -23,11 +23,11 @@ beforeEach(() => {
   loadProject(p);
 });
 
-async function open() {
+async function open(plates = 0) {
   host = document.createElement('div');
   document.body.appendChild(host);
   root = createRoot(host);
-  await act(async () => { root!.render(<GcodeSection plates={0} plateMeshes={() => []} plate3mf={() => new Uint8Array()} base="rack" brim={false} plateKey={0} />); });
+  await act(async () => { root!.render(<GcodeSection plates={plates} plateMeshes={() => []} plate3mf={() => new Uint8Array()} base="rack" brim={false} plateKey={0} />); });
   return host;
 }
 const button = (h: HTMLElement, text: string) => [...h.querySelectorAll('button')].find((b) => b.textContent?.trim().startsWith(text)) as HTMLButtonElement | undefined;
@@ -105,5 +105,67 @@ describe('pasting start code for the A1 mini', () => {
     expect(h.textContent).toMatch(/One step first/);
     await act(async () => { button(h, 'Forget it')!.click(); });
     expect(own()).toBeUndefined();
+  });
+
+  it("asks about code an older project kept without saying which printer it was for, then uses what was accepted", async () => {
+    const p = structuredClone(store.get().project!);
+    p.printer.bambu = { start: START, from: 'code you pasted' };
+    loadProject(p);
+    const h = await open();
+    expect(h.textContent).toMatch(/Start code kept, not used/);
+    expect(h.querySelector('[role=alert]')!.textContent).toMatch(/Have a look before this code is used/);
+    expect(h.querySelector('[role=alert]')!.textContent).toMatch(/doesn't say which printer it was loaded for/);
+    await act(async () => { button(h, 'Use it anyway')!.click(); });
+    expect(own()).toMatchObject({ ok: ['printer:unknown'] });
+    expect(h.querySelector('[role=alert]')).toBeNull();
+    expect(h.textContent).toMatch(/Its own start code is in/);
+  });
+});
+
+// Start code typed into the Start and end G-code box for a printer whose start code isn't loaded from a slicer
+describe('typing start code in for another printer', () => {
+  const PLAIN = ['G90', 'M83', 'M140 S{bed_temp}', 'M104 S150', 'G28', 'M190 S{bed_temp}', 'M104 S{temp}', 'M109 S{temp}', 'G92 E0', 'G1 Z2 F3000', 'G1 X3 Y20 F6000', 'G1 Z0.3', 'G1 Y120 E12 F1200', 'G92 E0'].join('\n');
+  const printer = () => store.get().project!.printer;
+  beforeEach(() => {
+    const p = store.get().project!;
+    p.printer = { name: 'Prusa CORE One', bed: [250, 220], spacing: 7, maxZ: 270 };
+    loadProject(structuredClone(p));
+  });
+  const box = (h: HTMLElement) => h.querySelector<HTMLTextAreaElement>('.startcode textarea')!;
+  const slice = (h: HTMLElement) => [...h.querySelectorAll('.slicerow button')].find((b) => b.textContent === 'Slice') as HTMLButtonElement;
+  async function typeStart(h: HTMLElement, code: string) {
+    await type(box(h), code);
+    await act(async () => { box(h).dispatchEvent(new FocusEvent('focusout', { bubbles: true })); });
+  }
+
+  it('checks it, keeps out what cannot be this printer\'s, and asks about what only looks odd', async () => {
+    const h = await open(1);
+    expect(h.querySelector('[role=alert]')).toBeNull();
+    expect(slice(h).disabled).toBe(false);
+    // a 350 mm printer's prime line: past the CORE One's bed by a long way
+    await typeStart(h, `${PLAIN}\nG1 X340 Y300 F6000`);
+    expect(printer().gcodeStart).toContain('X340');
+    const note = h.querySelector('[role=alert]')!;
+    expect(note.textContent).toMatch(/This code can't be used/);
+    expect(note.textContent).toMatch(/X 340 \(90 mm past the right edge\).*250 × 220/);
+    expect(button(h, 'Use it anyway')).toBeUndefined();
+    expect(slice(h).disabled).toBe(true);
+    expect(h.querySelector('.startcode summary')!.textContent).toMatch(/not used yet/);
+    // a move a little off the bed is asked about; accepting it lets the plate be sliced
+    await typeStart(h, `${PLAIN}\nG1 X-12 Y100 F6000`);
+    expect(h.querySelector('[role=alert]')!.textContent).toMatch(/Have a look before this code is used/);
+    expect(slice(h).disabled).toBe(true);
+    await act(async () => { button(h, 'Use it anyway')!.click(); });
+    expect(printer().gcodeOk).toEqual(['start:past']);
+    expect(h.querySelector('[role=alert]')).toBeNull();
+    expect(slice(h).disabled).toBe(false);
+    // changing the code takes back what was accepted
+    await typeStart(h, `${PLAIN}\nG1 X-13 Y100 F6000`);
+    expect(printer().gcodeOk).toBeUndefined();
+    expect(h.querySelector('[role=alert]')).not.toBeNull();
+    // and the profile's own code is one click away
+    await act(async () => { button(h, "Back to the profile's code")!.click(); });
+    expect(printer().gcodeStart).toBeUndefined();
+    expect(h.querySelector('[role=alert]')).toBeNull();
   });
 });

@@ -3,7 +3,7 @@
 import type { Anim, Board, Check, Comp, EdgeName, Feature, GenResult, Ghost, HolderSettings, Loop, MeshData, MountSettings, PartOut, PickTag, Pin, Project, V2 } from '../model/types';
 import { holeKeepout, isMountHole, STANDOFF_LENGTHS } from '../model/holes';
 import { boxProblems } from '../model/boxes';
-import { DEBUG_TYPES, isDebugPort } from '../model/links';
+import { DEBUG_TYPES, isDebugPort, isSocket } from '../model/links';
 import { headerPins, UART_WIRES, uartPins } from '../model/probes';
 import { baseRef, isBox } from '../model/links';
 import { DEFAULT_FEATURES, MATERIALS } from '../model/library';
@@ -444,9 +444,10 @@ function connectors(C: Ctx) {
       const tag = { kind: 'plug' as const, module: C.mid, refs: [c.ref] }, anim = { seq: 30, dir: [0, 0, 1] as [number, number, number] };
       const wp = c.side === 'top' && cn.type === 'header' ? wiredPins(C.p, C.mid, c) : [];
       if (wp.length) {
-        // jumper wires' housings, each pushed down over its pin onto the header's plastic
-        const z0 = zt + Math.min(2.5, c.h), top = z0 + 14.6;
-        const wires = wp.map(({ pin: q, colour }) => { C.ghosts.push(...plugUp(q.x, q.y, z0 - 0.6, { w: 2.5, h: 2.5, len: 14, cable: 1.4 }, tag, anim, 'dupont')); return { p: [q.x, q.y, top] as [number, number, number], colour, pin: q.n }; });
+        // jumper wires' housings, each pushed down over its pin onto the header's plastic; a pin socket (female) takes a
+        // male end instead: the housing stands on the socket's top, its own pin down in the hole
+        const sock = isSocket(c), z0 = zt + (sock ? c.h : Math.min(2.5, c.h)), top = z0 + 14.6;
+        const wires = wp.map(({ pin: q, colour }) => { C.ghosts.push(...plugUp(q.x, q.y, z0 - 0.6, { w: 2.5, h: 2.5, len: 14, cable: 1.4 }, tag, anim, sock ? 'dupont_m' : 'dupont')); return { p: [q.x, q.y, top] as [number, number, number], colour, pin: q.n }; });
         const cx = wires.reduce((a2, q) => a2 + q.p[0], 0) / wires.length, cy = wires.reduce((a2, q) => a2 + q.p[1], 0) / wires.length;
         C.plugs.push({ module: C.mid, ref: c.ref, p: [cx, cy, top], d: [0, 0, 1], cable: cn.plug.cable, w: [Math.cos(rad(ang)), Math.sin(rad(ang)), 0], wires });
         continue;
