@@ -4,9 +4,10 @@
 // Each item also makes a small demo board with just itself on it: that is what its picture shows.
 import type { Board, Comp, Hole, V2 } from './types';
 import { CONNECTORS, connById, connSetup, sizedConn } from './library';
+import { CONTRIB_TYPES, contribDef } from './contributed';
 import { deg, extentAlong, nearestEdge, rad, roundedRectLoop, uid } from '../geom/poly';
 
-export type PaletteGroup = 'USB and power' | 'Video, network and audio' | 'Headers and wires' | 'Debug and serial' | 'Holes' | 'Parts that stand tall' | 'Other';
+export type PaletteGroup = 'USB and power' | 'Video, network and audio' | 'Headers and wires' | 'Debug and serial' | 'Holes' | 'Parts that stand tall' | 'Other' | 'Contributed';
 export interface PaletteItem {
   id: string;
   group: PaletteGroup;
@@ -82,6 +83,13 @@ const debug = (id: string, type: string, label: string, pkg: string, hint: strin
   return { id, group: 'Debug and serial', label, hint, size: mm(t.body.w, t.body.l, t.body.h), make: (b, at) => ({ comp: { ...topConnector(b, type, at, { pkg, w: t.body.w, l: t.body.l, h: t.body.h, tht }), role: 'debug' } }) };
 };
 
+/** A connector type from parts/ (npm run parts): on an edge, or plugged from above, in the toolbox's Contributed group. */
+const contributed = (t: (typeof CONTRIB_TYPES)[number]): PaletteItem => {
+  const size = mm(t.body.w, t.body.l, t.body.h);
+  if (t.entry === 'edge') return { id: `edge_${t.id}`, group: 'Contributed', label: t.name, edge: true, size, hint: `on an edge, facing out: click near the edge it goes on${t.note ? `. ${t.note}` : ''}`, make: (b, at) => ({ comp: edgeConnector(b, t.id, at) }) };
+  return { id: `top_${t.id}`, group: 'Contributed', label: t.name, size, hint: t.note ?? 'its plug goes in from above', make: (b, at) => ({ comp: topConnector(b, t.id, at, { pkg: t.name, w: t.body.w, l: t.body.l, h: t.body.h, tht: contribDef(t.id)?.tht }) }) };
+};
+
 export const PALETTE: PaletteItem[] = [
   ...CONNECTORS.filter((t) => t.entry === 'edge' && EDGE_GROUP[t.id]).map((t): PaletteItem => ({
     id: `edge_${t.id}`, group: EDGE_GROUP[t.id], label: t.name, edge: true, size: mm(t.body.w, t.body.l, t.body.h),
@@ -93,8 +101,10 @@ export const PALETTE: PaletteItem[] = [
   upright('idc10', 'idc', 'Box header 2 × 5 (ribbon)', 'IDC-Header_2x05_P2.54mm_Vertical', 'a ribbon cable pushes in from above'),
   upright('idc16', 'idc', 'Box header 2 × 8 (ribbon)', 'IDC-Header_2x08_P2.54mm_Vertical', 'a ribbon cable pushes in from above'),
   upright('gh4', 'jst_gh', 'JST-GH 4-pin', 'JST_GH_BM04B-GHS-TBT_1x04_P1.25mm_Vertical', '1.25 mm, latching (drones, flight controllers)'),
+  upright('zh4', 'jst_zh', 'JST-ZH 4-pin', 'JST_ZH_B4B-ZR_1x04_P1.50mm_Vertical', '1.5 mm, its plug goes in from above'),
   upright('pico4', 'picoblade', 'Molex PicoBlade 4-pin', 'Molex_PicoBlade_53047-0410_1x04_P1.25mm_Vertical', '1.25 mm, its plug goes in from above'),
   upright('fan4', 'kk254', 'Fan header 4-pin', 'Molex_KK-254_AE-6410-04A_1x04_P2.54mm_Vertical', 'a fan or a KK plug goes in from above'),
+  upright('mfjr4', 'minifit', 'Molex Mini-Fit Jr 2 × 2', 'Molex_Mini-Fit_Jr_5566-04A_2x02_P4.20mm_Vertical', 'power in from above (4.2 mm)'),
   upright('mfit4', 'microfit', 'Molex Micro-Fit 2 × 2', 'Molex_Micro-Fit_3.0_43045-0400_2x02_P3.00mm_Vertical', 'power in from above (3 mm)'),
   upright('ufl', 'ufl', 'u.FL antenna socket', 'U.FL_Hirose_U.FL-R-SMT-1_Vertical', 'a thin antenna lead snaps on from above', 'connector', false),
   upright('b2b', 'b2b', 'Board-to-board connector', 'Board-to-Board_Mezzanine_Vertical', 'another board mates on it, no cable: put the two in a stack', 'connector', false, 'Other'),
@@ -104,11 +114,12 @@ export const PALETTE: PaletteItem[] = [
   upright('pogo', 'pogo', 'Spring-pin (pogo) pads', 'Pogo_Pads_1x04_P2.54mm', 'no connector: a test jig presses spring pins onto the pads', 'connector', false, 'Other'),
   debug('dbg_swd10', 'swd10', 'Debug 10-pin, 1.27 mm', 'PinHeader_2x05_P1.27mm_Vertical_SMD', 'SWD: a J-Link plugs in with its ribbon', false),
   debug('dbg_jtag20', 'jtag20', 'Debug 20-pin, 2.54 mm', 'IDC-Header_2x10_P2.54mm_Vertical', "JTAG box header: a J-Link's own ribbon plugs straight in", true),
+  debug('dbg_cortex20', 'cortex20', 'Debug 20-pin, 1.27 mm (Cortex + trace)', 'PinHeader_2x10_P1.27mm_Vertical_SMD', 'a J-Link plugs in with a 20-pin 1.27 mm ribbon', false),
   debug('dbg_tag', 'tagconnect', 'Tag-Connect pads', 'Tag-Connect_TC2050', 'no connector: the Tag-Connect cable clips on from above', false),
   { id: 'uart6', group: 'Debug and serial', label: 'UART header, FTDI 6-pin', hint: 'GND CTS VCC RX TX DTR: a USB-serial adapter wires onto it', size: mm(15.24, 2.54, 8.5),
     // the usual FTDI order, pin 1 = GND: the board's RX on pin 4 and TX on pin 5 (set, so they are not a guess)
     make: (b, at) => { const c = header(1, 6).make(b, at).comp!; return { comp: { ...c, ref: nextRef(b, 'J_UART'), value: 'FTDI', role: 'uart', uart: { gnd: '1', rx: '4', tx: '5' } } }; } },
-  { id: 'uart4', group: 'Debug and serial', label: 'UART header, 4-pin', hint: 'GND RX TX VCC (check yours): a USB-serial adapter wires onto it', size: mm(10.16, 2.54, 8.5),
+  { id: 'uart4', group: 'Debug and serial', label: 'UART header, 4-pin', hint: 'GND RX TX VCC is a guess: check yours against your board\'s markings. A USB-serial adapter wires onto it', size: mm(10.16, 2.54, 8.5),
     make: (b, at) => { const c = header(1, 4).make(b, at).comp!; return { comp: { ...c, ref: nextRef(b, 'J_UART'), value: 'UART', role: 'uart' } }; } },
   hole('M2', 2.2), hole('M2.5', 2.7), hole('M3', 3.2), hole('M4', 4.3),
   tall('cap6', 'Electrolytic cap Ø6.3', 'C', 'CP_Elec_6.3x7.7', 6.6, 6.6, 7.7), tall('cap8', 'Electrolytic cap Ø8', 'C', 'CP_Elec_8x10.5', 8.3, 8.3, 10.5), tall('cap10', 'Electrolytic cap Ø10', 'C', 'CP_Elec_10x12.5', 10.3, 10.3, 12.5),
@@ -116,19 +127,25 @@ export const PALETTE: PaletteItem[] = [
   tall('heatsink', 'Heatsink', 'HS', 'Heatsink_14x14', 14, 14, 8, 'hot', 'it gets hot: the holder leaves air round it'), tall('esp32', 'ESP32 module', 'U', 'ESP32-WROOM-32', 18, 25.5, 3.1, 'module'), tall('buzzer', 'Buzzer Ø12', 'BZ', 'Buzzer_12x9.5', 12, 12, 9.5),
   tall('coin', 'Coin cell holder', 'BT', 'BatteryHolder_CR2032', 20, 23, 5), tall('led5', 'LED Ø5', 'D', 'LED_D5.0mm', 5.8, 5.8, 8.6, 'led'), tall('antenna', 'Antenna area', 'AE', 'Antenna keep-out', 10, 6, 1, 'antenna', 'nothing printed over it (radio)'),
   { id: 'keepout', group: 'Parts that stand tall', label: 'Keep-out box', hint: 'anything else: size it in the inspector', size: mm(5, 5, 5), make: (b, at) => ({ comp: part(b, at, 'K', 'keep-out box', 5, 5, 5, 'generic', false) }) },
+  ...CONTRIB_TYPES.map(contributed),
 ];
 
-export const PALETTE_GROUPS: PaletteGroup[] = ['USB and power', 'Video, network and audio', 'Headers and wires', 'Debug and serial', 'Holes', 'Parts that stand tall', 'Other'];
+export const PALETTE_GROUPS: PaletteGroup[] = ['USB and power', 'Video, network and audio', 'Headers and wires', 'Debug and serial', 'Holes', 'Parts that stand tall', 'Other', 'Contributed'];
+
+/** The contributed type (parts/) a toolbox entry is, if it is one. */
+export const contribOf = (it: PaletteItem) => (it.group === 'Contributed' ? contribDef(it.id.replace(/^(edge|top)_/, '')) : undefined);
 
 /** The palette item a part came from (by its connector type, footprint or role), for its picture in lists. */
 export function paletteFor(c: Comp): PaletteItem | undefined {
   const t = c.conn?.type;
   if (t && PALETTE.find((x) => x.id === `edge_${t}`)) return PALETTE.find((x) => x.id === `edge_${t}`);
+  if (t && PALETTE.find((x) => x.id === `top_${t}`)) return PALETTE.find((x) => x.id === `top_${t}`);
   if (t === 'swd10') return PALETTE.find((x) => x.id === 'dbg_swd10');
+  if (t === 'cortex20') return PALETTE.find((x) => x.id === 'dbg_cortex20');
   if (t === 'jtag20') return PALETTE.find((x) => x.id === 'dbg_jtag20');
   if (t === 'tagconnect') return PALETTE.find((x) => x.id === 'dbg_tag');
   if (t === 'idc') return PALETTE.find((x) => x.id === (Math.max(c.w, c.l) > 24 ? 'idc16' : 'idc10'));
-  const up = ({ idc: 'idc10', jst_gh: 'gh4', picoblade: 'pico4', kk254: 'fan4', microfit: 'mfit4', ufl: 'ufl', b2b: 'b2b', m2: 'm2', pcie: 'pcie4', dimm: 'sodimm', pogo: 'pogo' } as Record<string, string>)[t ?? ''];
+  const up = ({ idc: 'idc10', jst_gh: 'gh4', jst_zh: 'zh4', minifit: 'mfjr4', picoblade: 'pico4', kk254: 'fan4', microfit: 'mfit4', ufl: 'ufl', b2b: 'b2b', m2: 'm2', pcie: 'pcie4', dimm: 'sodimm', pogo: 'pogo' } as Record<string, string>)[t ?? ''];
   if (up) return PALETTE.find((x) => x.id === up);
   if (t === 'jst_ph' || t === 'jst_xh') return PALETTE.find((x) => x.id === `jst_${t.slice(4)}${Math.max(2, Math.min(4, Math.round((Math.max(c.w, c.l) - 3.9) / (t === 'jst_ph' ? 2 : 2.5)) + 1))}`) ?? PALETTE.find((x) => x.id === `jst_${t.slice(4)}3`);
   if (t === 'header' || c.kind === 'header') {

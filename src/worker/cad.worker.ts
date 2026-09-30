@@ -6,6 +6,7 @@ import { clipProfile, clipDims } from '../cad/dinclip';
 import { latchProfile, noseProfile, shoeFeaProfiles } from '../cad/dock';
 import { testKit } from '../cad/testkit';
 import type { Project } from '../model/types';
+import { listenProgress } from '../cad/progress';
 
 const ready = initKernel(wasmUrl);
 
@@ -15,7 +16,9 @@ self.onmessage = async (e: MessageEvent) => {
     await ready;
     if (type === 'generate') {
       // meshes stay cached in this worker (unchanged holders are not rebuilt), so they are copied, not transferred
+      listenProgress((s) => (self as any).postMessage({ id, progress: s }));
       const res = generate(payload as Project);
+      listenProgress(null);
       (self as any).postMessage({ id, ok: true, result: res });
     } else if (type === 'clipProfile') {
       const p = payload as { W: number; tf: number; tabExt: number; HA?: number };

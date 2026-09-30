@@ -1,13 +1,23 @@
 // Cable edits (undoable).
-import { autoLinks, numberLinks, portBudget, powerShort, sameRef, strongerPower, type PlugAt } from '../model/links';
+import { autoLinks, KIND_NAME, numberLinks, portBudget, powerShort, sameRef, strongerPower, toComputer, type PlugAt } from '../model/links';
 import { TEMPLATES } from '../model/templates';
-import { ownSupply } from '../model/boxes';
+import { dcPack, ownSupply } from '../model/boxes';
+import { completeRack } from '../model/complete';
+import { newModule } from '../model/library';
 import { addAdapters, addProbes, addUartLinks, fillWires, stackCompanions } from '../model/probes';
-import { seatCompanion, seatCompanions, type Seated } from '../cad/dockplan';
+import { seatBoard, seatCompanion, seatCompanions, type Seated } from '../cad/dockplan';
 import type { Module, PlugRef, Project } from '../model/types';
 import { edit, putBoards, select, store, toast } from '../state';
+import { autoEdit } from './autoEdit';
 import { afterBuild, watchRelayout } from './panelOps';
 import { mountLabels } from '../model/built';
+
+/** "9 cables (4 power, 4 Ethernet, 1 mains)". */
+const cablesText = (ls: { kind?: keyof typeof KIND_NAME }[]) => {
+  const n = new Map<string, number>();
+  for (const l of ls) n.set(KIND_NAME[l.kind ?? 'usb'], (n.get(KIND_NAME[l.kind ?? 'usb']) ?? 0) + 1);
+  return `${ls.length} cable${ls.length === 1 ? '' : 's'}${n.size > 1 ? ` (${[...n].map(([k, c]) => `${c} ${k}`).join(', ')})` : n.size ? ` (${[...n.keys()][0]})` : ''}`;
+};
 
 /** Where each plug is on the rack as laid out now (for measuring cables), if it has been laid out. */
 export const plugPlaces = (): PlugAt | undefined => { const m = store.get().result?.report.panel?.plugs; return m ? (k: string) => m[k] : undefined; };
@@ -27,8 +37,9 @@ export function addLinks(only?: NonNullable<import('../model/types').Link['kind'
     const r = strongerPower(q0, plugPlaces());
     if (r || add.length) {
       let stacked = false;
-      edit((q) => { q.links = (r ? r.links : q0.links).map((l) => fillWires(q, l)); stacked = stackCompanions(q); moved = r?.moved ?? 0; });
-      toast(`Connected ${add.length} cable${add.length === 1 ? '' : 's'}${moved ? ` and moved ${moved} board${moved > 1 ? 's' : ''} to stronger ports` : ''}.${stacked ? ' The probes and adapters for one board stack up behind it.' : ''} ⌘Z undoes it.`);
+      autoEdit('Auto-connect', (q) => { q.links = (r ? r.links : q0.links).map((l) => fillWires(q, l)); stacked = stackCompanions(q); moved = r?.moved ?? 0; }, { texts: () => [add.length ? `Auto-connect added ${cablesText(add)}` : '', moved ? `Auto-connect moved ${moved} board${moved > 1 ? 's' : ''} to stronger ports` : ''].filter(Boolean) });
+      const pc = toComputer(p, add);
+      toast(`Connected ${add.length} cable${add.length === 1 ? '' : 's'}${moved ? ` and moved ${moved} board${moved > 1 ? 's' : ''} to stronger ports` : ''}.${stacked ? ' The probes and adapters for one board stack up behind it.' : ''}${pc ? ` ${pc}` : ''} ⌘Z undoes it.`);
       return;
     }
   }
@@ -39,8 +50,44 @@ export function addLinks(only?: NonNullable<import('../model/types').Link['kind'
   if (!add.length) { toast(`Every plug that has a partner is already connected. ${left() || 'Add hubs or chargers (Start › accessories) for more.'}`); return; }
   let stacked = false;
   watchRelayout();
-  edit((q) => { q.links = numberLinks([...(q.links ?? []), ...add]).map((l) => fillWires(q, l)); stacked = stackCompanions(q); seatCompanions(q); });
-  toast(`Connected ${add.length} cable${add.length > 1 ? 's' : ''}.${stacked ? ' The probes and adapters for one board stack up behind it.' : ''} ${left()} ⌘Z undoes it.`);
+  autoEdit('Auto-connect', (q) => { q.links = numberLinks([...(q.links ?? []), ...add]).map((l) => fillWires(q, l)); stacked = stackCompanions(q); seatCompanions(q); }, { texts: () => [`Auto-connect added ${cablesText(add)}`] });
+  const pc = toComputer(p, add);
+  toast(`Connected ${add.length} cable${add.length > 1 ? 's' : ''}.${stacked ? ' The probes and adapters for one board stack up behind it.' : ''}${pc ? ` ${pc}` : ''} ${left()} ⌘Z undoes it.`);
+}
+
+/**
+ * "Complete this rack": put on the rack what completeRack says it lacks (a supply for each Pi, a powerboard for the
+ * outlets, a switch with its own supply), and connect it all the way Auto-connect would (the switch's uplink too): the
+ * boards, their supplies and every cable are one undo step.
+ */
+export function completeThisRack() {
+  const p = store.get().project;
+  if (!p) return;
+  const gaps = completeRack(p);
+  const boards = gaps.flatMap((g) => g.add.filter((id) => !id.startsWith('own:')).map((id) => ({ id, own: !!g.own }))).flatMap((x) => { const t = TEMPLATES.find((y) => y.id === x.id); return t ? [{ board: t.make(), own: x.own }] : []; });
+  const owns = gaps.flatMap((g) => g.add.filter((id) => id.startsWith('own:')).map((id) => id.slice(4)));
+  if (!gaps.length) return;
+  const n0 = p.modules.length;
+  const put = (q: Project) => {
+    // each new switch brings its own supply, and a switch or hub already there the one it came with
+    const extra = [...q.modules.slice(n0).filter((_, i) => boards[i]?.own), ...owns.flatMap((id) => q.modules.filter((m) => m.id === id))];
+    for (const box of extra) {
+      const b = ownSupply(box);
+      if (!b) continue;
+      q.modules.push(newModule(b, q.modules[q.active].holder));
+      if (q.layout === 'panel' && !q.panel.auto) seatBoard(q, q.modules[q.modules.length - 1].id);
+    }
+    // every cable Auto-connect has now, and boards on ports too weak for them moved to stronger ones
+    const q0 = { ...q, links: numberLinks([...(q.links ?? []), ...autoLinks(q, plugPlaces())]) };
+    const r = strongerPower(q0, plugPlaces());
+    q.links = (r ? r.links : q0.links).map((l) => fillWires(q, l));
+    stackCompanions(q);
+  };
+  if (boards.length) putBoards(boards.map((b) => b.board), false, { stay: true, keepActive: true, also: put });
+  else edit(put);
+  const now = store.get().project!, cables = (now.links?.length ?? 0) - (p.links?.length ?? 0);
+  const added = now.modules.slice(n0).map((m) => m.board.name);
+  toast(`Completed the rack: added ${added.length ? added.join(', ') : 'nothing new'} and ${cables} cable${cables === 1 ? '' : 's'}, all in one step. ⌘Z undoes it.`);
 }
 
 /**
@@ -65,23 +112,29 @@ export function rewire() {
   const autoOnes = (p.links ?? []).filter((l) => l.auto);
   if (p.built && autoOnes.length && !confirm('The rack is built: rewiring can change cables you have already bought and tagged. Rewire anyway?')) return;
   let n = 0;
-  edit((q) => {
+  autoEdit('Rewire', (q) => {
     q.links = (q.links ?? []).filter((l) => !l.auto);
     const add = autoLinks(q, plugPlaces());
     n = add.length;
     q.links = numberLinks([...q.links, ...add]).map((l) => fillWires(q, l));
     stackCompanions(q);
-  });
+  }, { texts: () => [`Rewire chose ${n} cable${n === 1 ? '' : 's'} again for the rack as it is laid out now`] });
   toast(`Rewired: ${n} cable${n === 1 ? '' : 's'} chosen again for the rack as it stands now; the ones you connected yourself stayed. ⌘Z undoes it.`);
 }
 
 /** Add an accessory from the library (a charger, a hub, a switch) and connect what it was added for. */
 export function addAccessory(id: string, count = 1) {
-  // own:<box>: the plug pack a switch or powered hub came with, for its DC input
+  // own:<box>: the plug pack a switch or powered hub came with, for its DC input (own:<box>,<box>: for several)
   if (id.startsWith('own:')) {
-    const box = store.get().project?.modules.find((m) => m.id === id.slice(4)), b = box && ownSupply(box);
-    if (!b) return;
-    putBoards([b], false, { stay: true });
+    const bs = id.slice(4).split(',').flatMap((x) => { const box = store.get().project?.modules.find((m) => m.id === x), b = box && ownSupply(box); return b ? [b] : []; });
+    if (!bs.length) return;
+    putBoards(bs, false, { stay: true });
+    addLinks(undefined, true);
+    return;
+  }
+  // dcpack:<volts>: a plug pack at that voltage, for a board whose DC jack takes less than 12 V
+  if (id.startsWith('dcpack:')) {
+    putBoards(Array.from({ length: count }, () => dcPack(Number(id.slice(7)))), false, { stay: true });
     addLinks(undefined, true);
     return;
   }
@@ -200,6 +253,6 @@ export function rebalancePower() {
   if (!p) return;
   const r = strongerPower(p, plugPlaces());
   if (!r) { toast('No free port gives those boards more: add a charger or a supply (Start › Hubs and chargers).'); return; }
-  edit((q) => { q.links = r.links.map((l) => fillWires(q, l)); });
+  autoEdit('Auto-connect', (q) => { q.links = r.links.map((l) => fillWires(q, l)); }, { texts: () => [`Auto-connect moved ${r.moved} board${r.moved > 1 ? 's' : ''} to stronger ports`] });
   toast(`Moved ${r.moved} board${r.moved > 1 ? 's' : ''} to stronger ports. ⌘Z undoes it.`);
 }

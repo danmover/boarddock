@@ -89,4 +89,23 @@ describe('the Add a board window', () => {
     expect(store.get().project!.modules[0].board.name).not.toMatch(/Uno/);
     expect(document.activeElement).toBe(opener);
   });
+
+  it('has a + on every tile at rest, and the count can be typed', async () => {
+    const { dialog } = await setup();
+    const d = dialog()!, plus = d.querySelector<HTMLElement>('.ltile-qty .qbtn[aria-label^="Pick a "]')!;
+    expect(plus).toBeTruthy();
+    await act(async () => { plus.click(); });
+    const box = d.querySelector<HTMLInputElement>('.ltile-qty .qnum')!;
+    expect(box.value).toBe('1');
+    const type = async (v: string) => { await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(box, v); box.dispatchEvent(new Event('input', { bubbles: true })); }); };
+    await type('4');
+    expect(d.querySelector('.lib-foot')!.textContent).toMatch(/4 picked/);
+    await type('');
+    expect(d.querySelector('.lib-foot')!.textContent).toMatch(/4 picked/); // empty on the way: nothing lost yet
+    await type('3');
+    await act(async () => { box.blur(); box.dispatchEvent(new FocusEvent('focusout', { bubbles: true })); });
+    expect(d.querySelector('.lib-foot')!.textContent).toMatch(/3 picked/);
+    await act(async () => { d.querySelector<HTMLElement>('.lib-foot .primary')!.click(); });
+    expect(store.get().project!.modules.length).toBe(3);
+  });
 });

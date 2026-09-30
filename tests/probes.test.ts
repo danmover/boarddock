@@ -7,6 +7,8 @@ import { debugType, newModule, newProject } from '../src/model/library';
 import { autoLinks, isDebugPort, numberLinks, plugRole } from '../src/model/links';
 import { addAdapters, addProbes, addUartLinks, adapterFor, columnHeight, columnLimit, debugHeaders, fillWires, headerPins, isAdapter, isProbe, isSmall, isUartPort, markDebug, probesOf, stackCompanions, uartHeaders, uartPins, uartWiring } from '../src/model/probes';
 import { powerBudget } from '../src/model/power';
+import { cableLines } from '../src/model/cablelist';
+import { buyText, SOCKET } from '../src/model/cablebuy';
 import { importKicad } from '../src/import/kicad';
 import { autoAssign } from '../src/cad/dockplan';
 import { generatePanel } from '../src/cad/panelgen';
@@ -240,6 +242,40 @@ describe('USB-serial adapters', () => {
     // a second press adds nothing
     expect(addAdapters(p, board.id)).toEqual([]);
   });
+
+  it('a pin socket (the Mega\'s J_IO) takes male ends: no female housings drawn on it, and the wires are bought male to female', () => {
+    const p = newProject(T('mega'));
+    p.modules.push(newModule(T('usb_hub7')));
+    const mega = p.modules[0], io = mega.board.comps.find((c) => c.ref === 'J_IO')!;
+    markDebug(io, 'uart');
+    expect(isUartPort(io)).toBe(true);
+    addAdapters(p, mega.id);
+    p.links = numberLinks([...(p.links ?? []), ...autoLinks(p)]).map((l) => fillWires(p, l));
+    const r = generatePanel(p);
+    const on = (ref: string, mat: string) => r.ghosts.filter((g) => g.tag?.kind === 'plug' && g.tag.module === mega.id && g.tag.refs?.[0] === ref && g.name.endsWith(` ${mat}`));
+    // three male ends, each a housing with its own gold pin out of its foot (not the plain female housings)
+    expect(on('J_IO', 'gold').length).toBe(3);
+    expect(on('J_IO', 'black').length).toBe(3);
+    // (the panel stands the board up: whichever way its pins point, the gold reaches out past the housing's foot)
+    const span = (gs: typeof r.ghosts, a: number) => { const v = gs.flatMap((g) => Array.from({ length: g.mesh.pos.length / 3 }, (_, k) => g.mesh.pos[3 * k + a])); return [Math.min(...v), Math.max(...v)]; };
+    const out = [0, 1, 2].map((a) => Math.max(span(on('J_IO', 'black'), a)[0] - span(on('J_IO', 'gold'), a)[0], span(on('J_IO', 'gold'), a)[1] - span(on('J_IO', 'black'), a)[1]));
+    expect(Math.max(...out)).toBeGreaterThan(4);
+    // the adapter's own pins are plain pins: female housings there, no pins of their own
+    const ad = p.modules.find(isAdapter)!;
+    expect(r.ghosts.filter((g) => g.tag?.kind === 'plug' && g.tag.module === ad.id && / gold$/.test(g.name))).toEqual([]);
+    const cl = cableLines(p, r.report.cables ?? []);
+    expect(cl.buy.filter((x) => /jumper wire/.test(x))).toEqual([`3 × male–female jumper wire (Dupont), ${Math.round(r.report.cables!.find((c) => c.kind === 'jumper')!.buy * 100)} cm (number 1)`]);
+    // and a serial cable to a socket says it needs male pins too
+    const q = newProject(T('mega'));
+    q.modules.push(newModule(T('usb_hub7')));
+    markDebug(q.modules[0].board.comps.find((c) => c.ref === 'J_IO')!, 'uart');
+    expect(addUartLinks(q, q.modules[0].id)).toEqual({ added: 1, left: 0 });
+    const rq = generatePanel(q);
+    expect(cableLines(q, rq.report.cables ?? []).buy.some((x) => /^1 × USB to TTL serial cable.*plus male–male jumper wires/.test(x))).toBe(true);
+    // (the pin socket is the header's own look: name it, or say female)
+    expect(buyText('jumper', 0.1, SOCKET, SOCKET)).toMatch(/^male–male jumper wire/);
+    expect(buyText('jumper', 0.1, 'pins', 'pins')).toMatch(/^female–female jumper wire/);
+  }, 120_000);
 
   it('stand on a J-Link in its column, the wires going round the dock to the pins, bought by the wire', () => {
     const p = rack(), r = generatePanel(p);

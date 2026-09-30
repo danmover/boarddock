@@ -1,0 +1,7 @@
+{
+  "name": "Sensor board with JTAG (worked example)",
+  "maker": "BoardDock contributors",
+  "url": "https://github.com/danmover/boarddock/tree/main/examples",
+  "license": "MIT",
+  "source": "A made-up board that ships with BoardDock: one MCU, a 20-pin JTAG header and a 4-pin UART header."
+}

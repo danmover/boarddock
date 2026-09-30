@@ -28,7 +28,7 @@ function glow(): THREE.Texture {
 
 const noRay = () => {};
 
-/** A small label in the scene (where an off-rack lead goes), always facing the camera. */
+/** A small label in the scene (where an off-rack lead goes), always facing the camera and drawn over the boards (never behind one). */
 function labelSprite(text: string): THREE.Sprite {
   const px = 28, pad = 10, cv = document.createElement('canvas'), g = cv.getContext('2d')!;
   g.font = `600 ${px}px system-ui, sans-serif`;
@@ -41,19 +41,30 @@ function labelSprite(text: string): THREE.Sprite {
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
   // the same size on screen however far away (readable zoomed out, not huge zoomed in)
-  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, toneMapped: false, sizeAttenuation: false }));
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false, toneMapped: false, sizeAttenuation: false }));
   const H = 0.021;
   sp.scale.set((H * w) / h, H, 1);
   sp.raycast = noRay;
   sp.renderOrder = 11;
   return sp;
 }
+/**
+ * A streak of light for power or data running along a cable: bright at its head (the end it travels towards) and fading
+ * behind, added to what is behind it so it glows inside the translucent sheath. One material for each colour.
+ */
+function streakMaterial(color: THREE.Color): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: { uColor: { value: color.clone() } }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false,
+    vertexShader: 'varying float vZ; varying vec3 vN; varying vec3 vV; void main(){ vZ = position.z; vec4 mv = modelViewMatrix * vec4(position, 1.0); vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz); gl_Position = projectionMatrix * mv; }',
+    fragmentShader: 'uniform vec3 uColor; varying float vZ; varying vec3 vN; varying vec3 vV; void main(){ float head = smoothstep(-1.0, 0.9, vZ); float body = pow(max(dot(normalize(vN), normalize(vV)), 0.0), 1.4); gl_FragColor = vec4(uColor * (1.2 + 0.8 * head), head * (0.3 + 0.7 * body)); }',
+  });
+}
 const seedOf = (s: string) => { let h = 7; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 9973; return h / 97; };
 
 interface LightObj { sprite: THREE.Sprite; dot: THREE.Mesh; base: THREE.Color; pattern: LightPattern; seed: number; i: number; size: number; level: number; dark: boolean }
-interface FlowObj { beads: THREE.Mesh[]; pts: number[][]; cum: number[]; len: number; speed: number; on: boolean }
+interface FlowObj { beads: THREE.Mesh[]; pts: number[][]; cum: number[]; len: number; speed: number; on: boolean; owner: THREE.Mesh | null }
 
-export interface LiveFx { tick(now: number): boolean; setLive(on: boolean): void; hide(v: boolean): void; declutter(camera: THREE.PerspectiveCamera): void; dispose(): void }
+export interface LiveFx { tick(now: number): boolean; setLive(on: boolean): void; hide(v: boolean): void; declutter(camera: THREE.PerspectiveCamera, zoom?: number): void; dispose(): void }
 
 /**
  * Which of these labels (centre, half width and height on screen, distance from the eye) to show so none lies on
@@ -70,10 +81,13 @@ export function keepApart(ls: { x: number; y: number; hw: number; hh: number; d:
   return out;
 }
 
+/** How much of their strength the where-it-goes labels keep when the view is `zoom` times the rack's radius away: all up to 5 (the whole rack in view is about 3.5), none from 8. */
+export const labelFade = (zoom: number) => Math.max(0, Math.min(1, (8 - zoom) / 3));
+
 /** Hang the live touches on the meshes of the ghosts that have them. `live` false: lights on steady, no pulses. */
 export function liveFx(items: { gh: Ghost; mesh: THREE.Object3D }[], live: boolean): LiveFx {
-  const lights: LightObj[] = [], flows: FlowObj[] = [], extras: THREE.Object3D[] = [], tags: { at: THREE.Vector3; texts: string[]; mesh: THREE.Object3D }[] = [];
-  const made: { dispose(): void }[] = [], labels: THREE.Sprite[] = [];
+  const lights: LightObj[] = [], flows: FlowObj[] = [], extras: THREE.Object3D[] = [], tags: { at: THREE.Vector3; texts: string[]; mesh: THREE.Object3D; mod: string }[] = [];
+  const made: { dispose(): void }[] = [], labels: THREE.Sprite[] = [], streaks = new Map<string, THREE.ShaderMaterial>();
   const dotGeo = new THREE.SphereGeometry(1, 12, 8), beadGeo = new THREE.SphereGeometry(1, 10, 6);
   made.push(dotGeo, beadGeo);
   for (const { gh, mesh } of items) {
@@ -126,31 +140,36 @@ export function liveFx(items: { gh: Ghost; mesh: THREE.Object3D }[], live: boole
       if (F.label) {
         // leads out of plugs close together share one label ("to a screen ×2 · to speakers")
         const t = F.len * 0.8 + F.dash + 7, at = new THREE.Vector3(F.p[0] + F.d[0] * t, F.p[1] + F.d[1] * t, F.p[2] + F.d[2] * t);
-        const near = tags.find((g) => g.at.distanceTo(at) < 45);
+        // (and the same words from one holder are one label, "→ hub ×4", wherever along it the leads are)
+        const mod = gh.tag?.module ?? '', text: string = F.label;
+        const near = tags.find((g) => g.mod === mod && g.texts.includes(text)) ?? tags.find((g) => g.at.distanceTo(at) < 45);
         if (near) near.texts.push(F.label);
-        else tags.push({ at, texts: [F.label], mesh });
+        else tags.push({ at, texts: [F.label], mesh, mod });
       }
     }
     if (fx.flow && fx.flow.pts.length > 1) {
       const pts = fx.flow.pts, cum = [0];
       for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1], pts[i][2] - pts[i - 1][2]));
       const len = cum[cum.length - 1];
-      if (len < 20) continue;
-      const bm = new THREE.MeshBasicMaterial({ color: new THREE.Color(fx.flow.colour), toneMapped: false, transparent: true, opacity: 0.9 });
-      made.push(bm);
-      const n = Math.max(1, Math.min(6, Math.round(len / (fx.flow.slow ? 140 : 90))));
+      if (len < 8) continue;
+      // elongated streaks inside the sheath (a third of a cable's radius wide; about four radii long), head first
+      const bm = streaks.get(fx.flow.colour) ?? streaks.set(fx.flow.colour, streakMaterial(new THREE.Color(fx.flow.colour))).get(fx.flow.colour)!;
+      const rad = Math.max(0.3, fx.flow.r * 0.32), half = Math.max(2, fx.flow.r * 1.6);
+      const n = Math.max(1, Math.min(6, Math.round(len / (fx.flow.slow ? 110 : 70))));
       const beads: THREE.Mesh[] = [];
       for (let k = 0; k < n; k++) {
         const b = new THREE.Mesh(beadGeo, bm);
-        b.scale.set(fx.flow.r * 1.1, fx.flow.r * 1.1, fx.flow.r * 1.1);
+        b.scale.set(rad, rad, half);
         b.raycast = noRay;
+        b.renderOrder = 3;
         b.visible = false;
         mesh.add(b);
         beads.push(b);
       }
-      flows.push({ beads, pts, cum, len, speed: fx.flow.slow ? 45 : 110, on: fx.flow.on });
+      flows.push({ beads, pts, cum, len, speed: fx.flow.slow ? 55 : 110, on: fx.flow.on, owner: (mesh as THREE.Mesh).isMesh ? (mesh as THREE.Mesh) : null });
     }
   }
+  made.push(...streaks.values());
   for (const g of tags) {
     const n = new Map<string, number>();
     for (const t of g.texts) n.set(t, (n.get(t) ?? 0) + 1);
@@ -163,13 +182,17 @@ export function liveFx(items: { gh: Ghost; mesh: THREE.Object3D }[], live: boole
   }
   let on = live, last = -1;
   const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const tmp = new THREE.Color();
+  const tmp = new THREE.Color(), dir = new THREE.Vector3(), Z = new THREE.Vector3(0, 0, 1);
   const place = (f: FlowObj, s: number, b: THREE.Mesh) => {
     let i = 1;
     while (i < f.cum.length - 1 && f.cum[i] < s) i++;
     const a = f.pts[i - 1], c = f.pts[i], seg = f.cum[i] - f.cum[i - 1] || 1, k = (s - f.cum[i - 1]) / seg;
     b.position.set(a[0] + (c[0] - a[0]) * k, a[1] + (c[1] - a[1]) * k, a[2] + (c[2] - a[2]) * k);
+    dir.set(c[0] - a[0], c[1] - a[1], c[2] - a[2]);
+    if (dir.lengthSq() > 1e-9) b.quaternion.setFromUnitVectors(Z, dir.normalize());
   };
+  // a cable being drawn out (the assembly steps, a new cable) has no streaks until it is all there
+  const grown = (f: FlowObj) => !f.owner || (f.owner.geometry.drawRange.count === Infinity && !f.owner.userData.tip?.visible);
   const tick = (now: number): boolean => {
     if (!lights.length && !flows.length) return false;
     const moving = on && !reduce;
@@ -192,7 +215,7 @@ export function liveFx(items: { gh: Ghost; mesh: THREE.Object3D }[], live: boole
       L.dot.visible = lv > 0.02;
     }
     for (const f of flows) {
-      const go = moving && f.on;
+      const go = moving && f.on && grown(f);
       f.beads.forEach((b, k) => {
         b.visible = go;
         if (!go) return;
@@ -213,8 +236,10 @@ export function liveFx(items: { gh: Ghost; mesh: THREE.Object3D }[], live: boole
     },
     // where-it-goes labels are the same size on screen at any distance, so on a big rack seen whole they pile up: the
     // nearest keep their place and any that would lie on one of them wait until the view comes closer
-    declutter(camera) {
-      if (labels.length < 2) return;
+    declutter(camera, zoom = 0) {
+      // zoomed right out (the view further than 5 times the rack's radius from what it looks at) they fade away
+      const fade = labelFade(zoom);
+      if (labels.length < 2) { for (const s of labels) { (s.material as THREE.SpriteMaterial).opacity = fade; s.visible = fade > 0.02; } return; }
       const P = camera.projectionMatrix.elements, v = new THREE.Vector3();
       const shown = (s: THREE.Object3D) => { for (let o: THREE.Object3D | null = s.parent; o; o = o.parent) if (!o.visible) return false; return true; };
       const list = labels.filter(shown).map((s) => {
@@ -224,7 +249,7 @@ export function liveFx(items: { gh: Ghost; mesh: THREE.Object3D }[], live: boole
         return { s, x: q.x, y: q.y, hw: (s.scale.x * P[0]) / 2 + 0.01, hh: (s.scale.y * P[5]) / 2 + 0.01, d };
       });
       const keep = keepApart(list);
-      list.forEach((l, i) => { l.s.visible = keep[i]; });
+      list.forEach((l, i) => { (l.s.material as THREE.SpriteMaterial).opacity = fade; l.s.visible = keep[i] && fade > 0.02; });
     },
     dispose() {
       for (const L of lights) { L.sprite.removeFromParent(); L.dot.removeFromParent(); }

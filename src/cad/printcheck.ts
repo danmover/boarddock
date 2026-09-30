@@ -9,7 +9,10 @@
 //  - sloped roof: layers that each step out a little too far (a roof flatter than about 40 degrees), run after run
 //  - thin: walls narrower than one 0.4 mm line; a slicer without thin-wall detection (Kiri:Moto as set up here)
 //    leaves them out, OrcaSlicer and PrusaSlicer print them as single thin lines
-//  - narrow gap: a slot narrower than 0.3 mm, which prints closed (bad for print-in-place parts)
+//  - narrow gap: a slot narrower than 0.3 mm, which prints closed (bad for print-in-place parts). Seen by width: a
+//    slot of parallel walls at least 0.8 mm long counts however little of it there is per layer (a 0.09 mm gap is
+//    under 0.15 mm² a layer up to 1.6 mm long); the tapering tip of a sharp notch does not
+
 //  - foot: the first layer against the biggest one; a tall part on a tiny foot gets knocked over
 // Pure geometry on manifold's slices; no slicer involved.
 import type { MeshData } from '../model/types';
@@ -32,7 +35,7 @@ export const LIMITS = {
   footBad: 0.1, // first layer under this share of the biggest layer, on a part taller than 5 mm
 };
 
-export interface LayerIssue { z: number; area: number; reach?: number; span?: number; x?: number; y?: number }
+export interface LayerIssue { z: number; area: number; reach?: number; span?: number; width?: number; x?: number; y?: number }
 export interface LayerReport {
   layers: number;
   islands: LayerIssue[]; // need support
@@ -41,7 +44,7 @@ export interface LayerReport {
   bridge: LayerIssue | null; // longest bridge (span in mm, the whole opening)
   slope: LayerIssue | null; // longest run of a roof flatter than the 45 degree rule allows (reach: how far it runs out)
   thin: { z0: number; z1: number; area: number; x: number; y: number } | null; // layers with walls thinner than a line
-  gaps: LayerIssue | null; // narrowest-gap region that would print closed
+  gaps: LayerIssue | null; // narrowest gap that would print closed (width in mm)
   firstLayer: number; // mm² on the bed
   maxLayer: number; // mm², the biggest layer
   height: number;
@@ -55,6 +58,27 @@ const bounds = (m: MeshData) => {
 const centre = (c: CS) => { const b = c.bounds(); return [(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2]; };
 const box2 = (x0: number, y0: number, x1: number, y1: number): CS => K().CrossSection.square([x1 - x0, y1 - y0]).translate([x0, y0]) as CS;
 const biggest = (c: CS): CS => (c.decompose() as CS[]).reduce((a, q) => (q.area() > a.area() ? q : a));
+
+const perimeter = (c: CS) => (c.toPolygons() as [number, number][][]).reduce((s, l) => s + l.reduce((t, p, i) => { const q = l[(i + 1) % l.length]; return t + Math.hypot(q[0] - p[0], q[1] - p[1]); }, 0), 0);
+
+/**
+ * How wide a filled-in piece of a layer is if it is a slot that prints closed, else 0. `g`: what closing the layer by
+ * GAP added. Big pieces (0.15 mm² and up) are slots; smaller ones only when they are long enough (0.8 mm) and of the
+ * same width along it: closing also fills the tip of every sharp inside corner (a 30 to 60 degree notch leaves a
+ * 0.5 to 0.8 mm wedge that tapers to nothing, harmless), and slivers a few hundredths of a mm wide are model noise.
+ */
+export function slotWidth(g: CS): number {
+  const a = g.area();
+  if (a < 0.03) return 0;
+  const P = perimeter(g), h = P / 2;
+  const w = (h - Math.sqrt(Math.max(0, h * h - 4 * a))) / 2; // a strip of area a and perimeter P is w wide
+  if (a >= 0.15) return w;
+  const b = g.bounds();
+  if (Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1]) < 0.8) return 0;
+  if (g.offset(-0.02, 'Round').isEmpty()) return 0; // under 0.04 mm: model noise
+  if (!g.offset((-0.65 * 2 * a) / P, 'Round').isEmpty()) return 0; // thicker than 1.3 times its mean: a wedge
+  return w;
+}
 
 /**
  * How far an overhang u reaches from the supported part of its layer, growing the support inside the layer (so a
@@ -186,9 +210,9 @@ export function layerCheck(mesh: MeshData): LayerReport | null {
       // slots narrower than a gap stays open (closing fills them)
       const shut = cs.offset(GAP / 2, 'Round').offset(-GAP / 2 - 0.01, 'Round').subtract(cs);
       for (const g of shut.decompose() as CS[]) {
-        const ga = g.area();
-        if (ga < 0.15) continue;
-        if (!out.gaps || ga > out.gaps.area) { const [x, y] = centre(g); out.gaps = { z, area: ga, x, y }; }
+        const width = slotWidth(g);
+        if (!width) continue;
+        if (!out.gaps || width < out.gaps.width! - 0.005) { const [x, y] = centre(g); out.gaps = { z, area: g.area(), width, x, y }; }
       }
     }
     runs = nextRuns;
@@ -235,7 +259,7 @@ export function verdict(r: LayerReport, moving = false): PrintVerdict {
   }
   if (r.specks.length) notes.push(`${r.specks.length} speck${r.specks.length > 1 ? 's' : ''} thinner than a line in mid-air (slicers leave ${r.specks.length > 1 ? 'them' : 'it'} out)`);
   if (r.thin) { if (r.thin.area > 3) warn('thin walls'); notes.push(`some walls are under ${LINE} mm (${f(r.thin.area)} mm³, ${f(r.thin.z0)} to ${f(r.thin.z1)} mm up): slicers without thin-wall detection leave them out, which is harmless here`); }
-  if (r.gaps) { if (moving) warn('narrow slot'); notes.push(moving ? `a slot under ${GAP} mm at ${f(r.gaps.z)} mm up may print closed and stop a moving part` : `a slot under ${GAP} mm at ${f(r.gaps.z)} mm up will fill in (nothing moves there)`); }
+  if (r.gaps) { const w = Math.round(r.gaps.width! * 100) / 100; if (moving) warn('narrow slot'); notes.push(moving ? `a slot ${w} mm wide (under ${GAP}) at ${f(r.gaps.z)} mm up may print closed and stop a moving part` : `a slot ${w} mm wide (under ${GAP}) at ${f(r.gaps.z)} mm up will fill in (nothing moves there)`); }
   if (status === 'ok') value = 'no supports';
   const brief = [`${r.layers} layers`, r.islands.length ? `${r.islands.length} in mid-air` : '', tall ? 'tiny foot' : '', r.bridge ? `bridge ${f(r.bridge.span!)} mm` : '', r.cantilever ? `overhang ${f(r.cantilever.reach!)} mm` : '', r.slope ? `flat roof ${f(r.slope.reach!)} mm` : '', r.gaps && moving ? 'narrow slot' : '', r.thin && r.thin.area > 3 ? 'thin walls' : ''].filter(Boolean).join(' · ');
   return { status, value, brief, detail: `${r.layers} layers, ${f(r.firstLayer)} mm² on the bed. ${notes.length ? notes.join('; ') + '.' : 'Every layer sits on the one below.'}` };

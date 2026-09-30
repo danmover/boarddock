@@ -90,6 +90,7 @@ export interface BoxPortGroup {
   across?: number; // a top row: its centre, mm from the front edge (unset: by near)
   amps?: number; // power out: what each port gives, A (unset: typical for its type)
   volts?: number; // DC out: its output voltage
+  poe?: boolean; // Ethernet ports: they give power over Ethernet (PoE); the box's `poe` says how much in all
   turn?: 0 | 90 | 180 | 270; // a side face: the socket turned, clockwise looking at it: 90 or 270 on its side (upright), 180 upside down
 }
 export interface BoxSpec {
@@ -99,6 +100,7 @@ export interface BoxSpec {
   corner?: number; // its corners seen from above: radius (or chamfer size), mm; unset: min(4, width / 6)
   chamfer?: boolean; // corners cut straight across instead of rounded
   pack?: { lead: number; own?: string }; // a plug pack: it plugs straight into an outlet (or the wall), off the rack; lead: its own output lead, mm; own: the box it came with (module id), so it isn't bought
+  poe?: number; // a PoE switch: what all its PoE ports give together, W (unset: a typical figure)
   rating?: number; // a powerboard: what it may carry in all, A at mains voltage (unset: a typical figure for its outlets)
 }
 
@@ -116,6 +118,7 @@ export interface Board {
   box?: BoxSpec; // box: its size and ports, from which outline, thickness and port parts are generated
   color?: string; // box colour in the 3D view
   draw?: number; // A at 5 V it may take from its supply (unset: estimated from what it is)
+  poe?: boolean; // a PoE HAT is fitted: it takes its power over Ethernet from a PoE port (see model/poe.ts), no supply of its own
   ribbon?: number; // a probe's ribbon length, mm (unset: a typical J-Link cable's 200)
   role?: 'probe' | 'adapter'; // a board that serves another one: a debug probe (J-Link), a USB-serial adapter; docked like any board, in a column beside the board it serves
   dims?: Dim[]; // dimensions put on it in the board editor (measured on the real board with calipers)
@@ -199,6 +202,7 @@ export interface PrinterSettings {
   maxZ?: number; // build height
   gcodeStart?: string; // start/end G-code typed in for in-app slicing; empty uses the printer's profile
   gcodeEnd?: string;
+  gcodeOk?: string[]; // the notes from src/slice/startcheck.ts (checkPlainCode) the user read and accepted for that code (ids; blocking ones can't be)
   // a Bambu Lab printer's own start, end and layer-change code, in Bambu Studio's template language, read from the
   // user's own Bambu Studio or OrcaSlicer (BoardDock doesn't ship it): filled in for every print
   // `ok`: the notes from src/slice/startcheck.ts the user read and accepted for this code (ids; blocking ones can't be)
@@ -295,10 +299,19 @@ export interface Built {
   mounts?: Record<string, { rail: string; at: number }>; // dock id -> the rail it was clipped on and where (mm from its start)
 }
 
+/** What is locked in the layout: all of it, or some docks and rails by id. Automatic changes leave these alone. */
+export interface Locks { all?: boolean; docks?: string[]; rails?: string[] }
+/** What an automatic change did, in a line: "Auto-arrange moved Pi 4 #2 from rail 1 to rail 2". */
+export interface Receipt { at: string; what: string; text: string }
+
 export interface Project {
   version: 3;
   name?: string; // what the user calls this rack (file names, the header); unset: made from the boards
   built?: Built;
+  locks?: Locks; // layout lock: docks and rails that Auto-arrange and other automatic changes leave alone (model/locks.ts)
+  receipts?: Receipt[]; // a line for each automatic change to the rack, newest last
+  ticks?: string[]; // the checklist's ticked lines (their keys; see model/checklist.ts)
+  oneNetLength?: boolean; // buy every routed Ethernet lead at one length: the longest route, rounded up to a stock length
   links?: Link[]; // cables between boards
   wiring?: { pos?: Record<string, [number, number]> }; // the Wiring view: where each board's card was put (module id -> x, y)
   modules: Module[];
@@ -396,6 +409,9 @@ export interface Check {
   module?: string; // the board it is about, when it is about one
 }
 
+/** Where mains sits: a mains board's footprint (panel frame, mm) with its margin, and how high the box stands. */
+export interface MainsZone { module: string; name: string; rect: [number, number, number, number]; z: [number, number]; what: string }
+
 export interface GenReport {
   warnings: string[];
   checks: Check[];
@@ -405,6 +421,7 @@ export interface GenReport {
   /** clip frame -> assembly, for the "as installed" view */
   clipFrame: number[] | null;
   panel?: PanelReport | null;
+  zones?: MainsZone[]; // where mains sits on the rack (set after the build: model/zones.ts)
   features?: Feature[];
   frames?: Record<string, number[]>; // module id -> holder frame to assembly
   cables?: { id: string; a: string; b: string; ends?: string; kind: NonNullable<Link['kind']>; length: number; buy: number; clash?: string; no?: number; label?: string; mid?: number[]; ribbon?: number; wires?: string }[]; // ends: "module/ref|module/ref"; no: cable number; label: what it is for; mid: where its number shows (assembly frame); ribbon: a probe's own ribbon (mm), nothing to buy; wires: a serial cable's loose ends, which pin each goes on

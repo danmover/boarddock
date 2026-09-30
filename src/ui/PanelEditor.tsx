@@ -7,10 +7,11 @@ import type { Access, PanelReport, Project, V2 } from '../model/types';
 import { shortName } from '../model/links';
 import { companionLabel, isProbe } from '../model/probes';
 import { isSel, select, store, useApp, type SelItem } from '../state';
+import { MainsZonesSvg, ZonesToggle } from './ViewTools';
+import { registerZone } from './dragBoard';
 import { addDock, addRail, autoArrange, tidyUp, moveRail, nudge, placeMount, removeMounts, removeRails, seat, swapSlots, turnMounts } from './panelOps';
 
 export const PALETTE = ['#4c8dff', '#46d58b', '#f5c542', '#c084fc', '#2dd4bf', '#fb7185', '#a3e635', '#38bdf8'];
-export const MODULE_DRAG = 'application/x-boarddock-module';
 
 const ARROW: Record<string, string> = { up: '↑', down: '↓', left: '←', right: '→', front: '◉', wall: '✕' };
 
@@ -214,25 +215,16 @@ export function PanelEditor() {
     return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); };
   }, []);
 
-  const onDragOver = (e: React.DragEvent) => {
-    if (!e.dataTransfer.types.includes(MODULE_DRAG)) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    setDropAt(toWorld(e));
-  };
-  const onDrop = (e: React.DragEvent) => {
-    const id = e.dataTransfer.getData(MODULE_DRAG);
-    setDropAt(null);
-    if (!id) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const w = toWorld(e);
+  // boards dragged out of the Rails list (by pointer, see dragBoard.ts) land on a dock, a rail or free space here
+  const dropOn = (id: string, x: number, y: number) => {
+    const w = toWorld({ clientX: x, clientY: y });
     const m = mountAt(w);
     if (m && m.kind === 'dock' && (!m.slots[1]?.module || !m.slots[0]?.module)) { seat(id, { mount: m.id, slot: m.slots[0]?.module ? 1 : 0 }); return; }
     const r = railAt(w, 60);
     if (r) { seat(id, { rail: r.id, at: r.at }); return; }
     seat(id);
   };
+  useEffect(() => registerZone('canvas', { over: (on, x, y) => setDropAt(on ? toWorld({ clientX: x, clientY: y }) : null), drop: dropOn }));
 
   const fs = (n: number) => n * px;
   // dock labels already drawn this render (panel frame boxes), so later ones slide along their rail instead of overlapping
@@ -252,11 +244,13 @@ export function PanelEditor() {
     if (ghost.ids.length === 1) return ghost.d;
     return railDir === 'h' ? [ghost.d[0], 0] : [0, ghost.d[1]];
   };
+  // the part of the drawing in view, along x (the view box is fitted into the window, so it can show more than its width)
+  const visX = (() => { const r = svg.current?.getBoundingClientRect(); if (!r || !r.width || !r.height) return [-Infinity, Infinity]; const k = Math.max(vb.w / r.width, vb.h / r.height), ox = vb.x + (vb.w - r.width * k) / 2; return [ox, ox + r.width * k]; })();
   const collide = new Set((rep?.collisions ?? []).flat());
   const shownDrop = dropAt ? (mountAt(dropAt) ? { m: mountAt(dropAt)! } : railAt(dropAt, 60) ? { r: railAt(dropAt, 60)! } : null) : null;
 
   return (
-    <div className="editor" style={{ position: 'absolute', inset: 0 }} onContextMenu={(e) => e.preventDefault()} onDragOver={onDragOver} onDragLeave={() => setDropAt(null)} onDrop={onDrop}>
+    <div className="editor" style={{ position: 'absolute', inset: 0 }} onContextMenu={(e) => e.preventDefault()} data-drop="canvas">
       <svg ref={svg} viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`} onWheel={onWheel} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} style={{ cursor: space ? 'grab' : 'default' }}>
         <defs>
           <pattern id="pg10" width="10" height="10" patternUnits="userSpaceOnUse"><path d="M10 0H0V10" fill="none" stroke="var(--grid)" strokeWidth={fs(0.7)} /></pattern>
@@ -286,6 +280,7 @@ export function PanelEditor() {
           );
         })}
 
+        <MainsZonesSvg px={px} />
         {(['body', 'hub', 'label'] as const).map((layer) => (rep?.mounts ?? []).map((m) => {
           const r = rep!.rails.find((x) => x.id === m.rail);
           if (!r) return null;
@@ -346,15 +341,17 @@ export function PanelEditor() {
                 const name = labelOf(project, q.id, q.stack);
                 const fsz = 11.5;
                 const vertical = h ? across < Math.max(name.length * fsz * 0.6, 24 * 5.9) + 16 && along > across : false;
-                const sub = `${q.edge} edge in · ◉${cnt.front} ✓${cnt.good - cnt.front}${cnt.side ? ` ⚠${cnt.side}` : ''}${cnt.blocked ? ` ✕${cnt.blocked}` : ''}`;
+                const sub = `${q.lie === 'flat' ? `flat, tab ${q.edge}` : `${q.edge} edge in`} · ◉${cnt.front} ✓${cnt.good - cnt.front}${cnt.side ? ` ⚠${cnt.side}` : ''}${cnt.blocked ? ` ✕${cnt.blocked}` : ''}`;
                 const tw = Math.max(name.length * fsz * 0.6, sub.length * 9.5 * 0.62) + 16;
                 const dirs = ['up', 'down', 'left', 'right'] as const;
                 // slide along the rail if another label is there; with no room, just the name, faint
                 const spot = claim(cx, cy, fs(vertical ? 17 : tw / 2), fs(vertical ? tw / 2 : 17), h);
-                const [lx, ly] = spot ?? [cx, cy];
+                const [lx0, ly] = spot ?? [cx, cy];
+                // a pill wider than its board (or than a phone's view) is held inside the view, not clipped at its edge
+                const half = fs(vertical ? 17 : tw / 2) + fs(3), lx = visX[1] - visX[0] > 2 * half ? Math.min(Math.max(lx0, visX[0] + half), visX[1] - half) : lx0;
                 return (
                   <g key={q.id}>
-                    <title>{`${name}: docked by its ${q.edge} edge.\nIts plugs: ◉ faces you, easy to reach · ✓ reachable from the side · ⚠ points at the next dock · ✕ points into the table or wall`}</title>
+                    <title>{`${name}: ${q.lie === 'flat' ? `lies flat, tab on its ${q.edge} edge` : `docked by its ${q.edge} edge`}.\nIts plugs: ◉ faces you, easy to reach · ✓ reachable from the side · ⚠ points at the next dock · ✕ points into the table or wall`}</title>
                     {dirs.map((d) => {
                       const list = q.access.filter((a) => a.dir === d);
                       if (!list.length) return null;
@@ -404,6 +401,7 @@ export function PanelEditor() {
         <button className="tbtn wide" onClick={() => addRail('v')} title="Add a vertical rail">+ Rail ↕</button>
         <button className="tbtn wide" onClick={() => addDock(sel.find((s) => s.kind === 'rail')?.id)} title="Add an empty dock at the end of the selected (or last) rail">+ Dock</button>
         <span className="tsep" />
+        <ZonesToggle />
         <button className="tbtn" onClick={() => setVb(fit(rep))} title="Fit to view">⤢</button>
       </div>
 

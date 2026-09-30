@@ -5,6 +5,7 @@
 // the cable. A pin header opens into its pins, and a pin then a pin adds a jumper wire. The side panel lists what still
 // needs connecting (and what the rack is short of) and every cable. Click a cable (or a wire) to select it, Del
 // removes it.
+import { CompleteRack } from './CompleteRack';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as RPE } from 'react';
 import type { Link, Pin, PlugRef } from '../model/types';
 import { allPlugs, autoLinks, cableFlow, canCable, connectNote, KIND_COLOR, KIND_NAME, linkKind, numberLinks, PC, pcModule, rankTargets, ROUTER, routerModule, refusal, sameRef, shortName, wiringAdvice, type PlugInfo } from '../model/links';
@@ -14,7 +15,10 @@ import { fillWires, headerPins } from '../model/probes';
 import { badgeSpots, boundsOf, CARD, cardSize, fitZoom, flowLayout, freeSpot, rackLayout, railRows, type Pos, type Room, type Size } from '../model/wirelayout';
 import { edit, isSel, select, store, toast, useApp } from '../state';
 import { Icon, I } from './icons';
+import { KindSwatch } from './CableKey';
+import { KIND_DASH, KIND_ORDER } from '../model/cablekinds';
 import { addAccessory, addLinks, plugPlaces, removeLinks, rewire } from './linkOps';
+import { say, touchy } from './touch';
 
 const { W, HEAD, ROW, PROW } = CARD;
 // USB cables are drawn near-black in 3D; on this graph they take the text colour so they show in both themes
@@ -409,7 +413,7 @@ export function WiringView() {
                   }) : <>
                     <title>{`${c ? `Cable ${c.no}: ${c.label ?? ''}` : KIND_NAME[l.kind ?? 'usb']}${l.why ? `\n${l.why}` : l.auto ? '' : '\nconnected by you'}\nclick to select · Del removes it · drag either end to another plug`}</title>
                     <path d={main.d} fill="none" stroke="transparent" strokeWidth={12} />
-                    <path d={main.d} fill="none" stroke={col} strokeWidth={on || (near && !dim) ? 4 : 2.6} strokeLinecap="round" opacity={on ? 1 : 0.85} strokeDasharray={l.kind === 'debug' ? '8 3' : undefined} />
+                    <path d={main.d} fill="none" stroke={col} strokeWidth={on || (near && !dim) ? 4 : 2.6} strokeLinecap="round" opacity={on ? 1 : 0.85} strokeDasharray={KIND_DASH[l.kind ?? 'usb']} />
                   </>}
                   {c && pl && pl.at.y !== pl.on.y && <line x1={pl.on.x} y1={pl.on.y} x2={pl.at.x} y2={pl.at.y} stroke={col} strokeWidth={1} strokeDasharray="2 3" />}
                 </g>
@@ -506,7 +510,7 @@ export function WiringView() {
             </> : <p className="hint">Nothing free fits it{cur ? '' : ': free a plug, or add a hub or a charger'}.</p>}
             <div className="wpop-foot">
               {cur && <button className="btn small ghost" onClick={() => { removeLinks([cur.id]); setPending(null); }}>Disconnect</button>}
-              <span>or click the plug it goes to · Esc</span>
+              <span>{say('or click the plug it goes to · Esc')}</span>
             </div>
           </div>
         );
@@ -533,11 +537,11 @@ export function WiringView() {
         <button className={`tbtn ${side ? 'on' : ''}`} onClick={() => setSide((x) => (x ? null : 'todo'))} title="What still needs connecting, and every cable">List</button>
       </div>
       <div className="hud floating mono">
-        <span>{pendingPin ? `${pendingPin.q.module.board.name} pin ${pendingPin.pin}: now click the pin on another header it goes to · Esc cancels` : pending ? `${pending.module.board.name} ${pending.label}: now click the plug it goes to (green ones fit) · Esc cancels` : 'drag from a plug to where it goes (or click it for its best matches) · drag a connected plug to move that end · ▸ opens a header for jumper wires · drag a card by its title · pinch or ⌘ + scroll zooms'}</span>
+        <span>{say(pendingPin ? `${pendingPin.q.module.board.name} pin ${pendingPin.pin}: now click the pin on another header it goes to · Esc cancels` : pending ? `${pending.module.board.name} ${pending.label}: now click the plug it goes to (green ones fit) · Esc cancels` : touchy() ? 'drag from a plug to where it goes (or tap it for its best matches) · drag a connected plug to move that end · ▸ opens a header for jumper wires · drag a card by its title · pinch zooms' : 'drag from a plug to where it goes (or click it for its best matches) · drag a connected plug to move that end · ▸ opens a header for jumper wires · drag a card by its title · pinch or ⌘ + scroll zooms')}</span>
         <span className="xy">{links.length} cable{links.length === 1 ? '' : 's'}{rep?.cables?.length ? ` · ${(rep.cables.reduce((a, c) => a + c.length, 0) / 1000).toFixed(1)} m` : ''}</span>
       </div>
       <div className="legend2 floating" style={{ bottom: 52 }}>
-        {(Object.keys(KIND_COLOR) as (keyof typeof KIND_COLOR)[]).filter((k) => k !== 'uart' || links.some((l) => l.kind === 'uart')).map((k) => <span key={k}><i style={{ background: wire(k) }} />{KIND_NAME[k]}</span>)}
+        {KIND_ORDER.filter((k) => k !== 'uart' || links.some((l) => l.kind === 'uart')).map((k) => <span key={k}><KindSwatch kind={k} color={wire(k)} />{KIND_NAME[k]}</span>)}
       </div>
     </div>
   );
@@ -568,10 +572,11 @@ function WiringSide({ tab, setTab, onPick }: { tab: 'todo' | 'cables'; setTab: (
       </div>
       {tab === 'todo' ? (
         <div className="wside-body">
+          <CompleteRack />
           {advice.map((a, i) => (
             <div key={i} className="wadv">
               <span>{a.text}</span>
-              {a.add && <button className="btn small soft" onClick={() => addAccessory(a.add!, a.count ?? 1)}>{a.add.startsWith('own:') ? 'Add its supply' : `Add ${a.count && a.count > 1 ? `${a.count} × ` : 'a '}${(TEMPLATES.find((t) => t.id === a.add)?.name ?? a.add).replace(/ \(.*$/, '')}`}</button>}
+              {a.add && <button className="btn small soft" onClick={() => addAccessory(a.add!, a.count ?? 1)}>{a.add.startsWith('own:') ? (a.add.includes(',') ? 'Add their supplies' : 'Add its supply') : a.add.startsWith('dcpack:') ? `Add a ${a.add.slice(7)} V plug pack` : `Add ${a.count && a.count > 1 ? `${a.count} × ` : 'a '}${(TEMPLATES.find((t) => t.id === a.add)?.name ?? a.add).replace(/ \(.*$/, '')}`}</button>}
             </div>
           ))}
           {todo.length ? <>

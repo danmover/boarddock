@@ -2,7 +2,7 @@
 // multi-selection picked in the 3D view (a cradle here, a cap there, a whole dock) goes in one ⌘Z.
 import type { Feature, Project } from '../model/types';
 import { ROLE_INFO } from '../model/holes';
-import { cableNumbers, findModule, KIND_COLOR, KIND_NAME, refText } from '../model/links';
+import { baseRef, cableNumbers, findModule, KIND_COLOR, KIND_NAME, plugName, refText } from '../model/links';
 import { mountLabels } from '../model/built';
 import { dropModule, edit, select, store, toast, type SelItem } from '../state';
 import { materialise } from './panelOps';
@@ -20,7 +20,7 @@ export function featureItem(f: Pick<Feature, 'module' | 'refs'> & { kind: NonNul
 }
 
 /** Human description: a title, a context line and a colour. */
-export function describe(p: Project, it: SelItem): { title: string; sub: string; color: string; removable: string | null } {
+export function describe(p: Project, it: SelItem): { title: string; sub: string; color: string; removable: string | null; note?: string } {
   const mod = (id?: string) => p.modules.find((m) => m.id === id);
   const idx = (id?: string) => p.modules.findIndex((m) => m.id === id);
   const rep = store.get().result?.report.panel;
@@ -42,7 +42,14 @@ export function describe(p: Project, it: SelItem): { title: string; sub: string;
       const l = (p.links ?? []).find((x) => x.id === it.id);
       const c = store.get().result?.report.cables?.find((x) => x.id === it.id);
       const nm = (r?: { module: string; ref: string }) => (r ? `${findModule(p, r.module)?.board.name ?? '?'} ${refText(findModule(p, r.module), r.ref)}` : '?');
-      return { title: `${l ? KIND_NAME[l.kind ?? 'usb'] : ''} cable`, sub: `${nm(l?.a)} to ${nm(l?.b)}${c ? ` · ${Math.round(c.length / 10)} cm, buy ${c.buy} m` : ''}`, color: l ? KIND_COLOR[l.kind ?? 'usb'] : 'var(--muted)', removable: 'Remove cable' };
+      // a mains cable: its length, the plugs at each end, which outlet, and the rule for plugging in
+      let note: string | undefined;
+      if (l?.kind === 'mains') {
+        const type = (r: { module: string; ref: string }) => findModule(p, r.module)?.board.comps.find((x) => x.ref === baseRef(r.ref))?.conn?.type ?? '';
+        const outlet = [l.a, l.b].find((r) => type(r).startsWith('ac_')), other = outlet === l.a ? l.b : l.a;
+        note = `${c ? `${Math.round(c.length / 10)} cm, buy ${c.buy} m. ` : ''}${plugName(type(other)).replace(/^./, (x) => x.toUpperCase())} plugs into ${outlet ? `${plugName(type(outlet))} ${nm(outlet)}` : 'an outlet'}. Switch the powerboard off before plugging in.`;
+      }
+      return { title: `${l ? KIND_NAME[l.kind ?? 'usb'] : ''} cable`, sub: `${nm(l?.a)} to ${nm(l?.b)}${c ? ` · ${Math.round(c.length / 10)} cm, buy ${c.buy} m` : ''}`, color: l ? KIND_COLOR[l.kind ?? 'usb'] : 'var(--muted)', removable: 'Remove cable', note };
     }
     case 'railstand': {
       const all = rep?.stands ?? [], s = all.find((x) => `s${x.station}` === it.id);

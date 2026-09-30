@@ -7,7 +7,7 @@ import { filamentOn, printerByName } from '../model/printers';
 import { defaultCode, machinePlan } from '../slice/profiles';
 import { gcodeLayers, kiriProfiles, slicePlate, type Sliced } from '../slice/kiri';
 import { fromProfileJson } from '../slice/bambutpl';
-import { checkOwnCode, ownUsable, usableCode, type Finding } from '../slice/startcheck';
+import { checkOwnCode, ownUsable, usableCode, usablePlain, type Finding } from '../slice/startcheck';
 import { activeModule, edit, toast, useApp } from '../state';
 import { Pick, Section, download } from './controls';
 import { Icon, I } from './icons';
@@ -15,40 +15,90 @@ import { zipSync } from 'fflate';
 
 type Desk = { slicers: () => Promise<string[]>; openInSlicer: (app: string | null, name: string, bytes: Uint8Array) => Promise<string>; bambuProfile?: (preset: string) => Promise<{ start?: string; end?: string; layer?: string; from?: string; error?: string }> };
 
-export function GcodeSection({ plates, plateMeshes, plate3mf, base, brim, plateKey, fits }: { plates: number; plateMeshes: (i: number) => MeshData[]; plate3mf: (i: number) => Uint8Array; base: string; brim: boolean; plateKey: unknown; fits?: boolean[] }) {
+/** The slicing of a plate set, shared by the Export step's buttons and the G-code section below them. */
+export interface Gcode {
+  plan: ReturnType<typeof machinePlan>;
+  /** Why start or end code typed in isn't used (nothing gets sliced until it is fixed or accepted), if it isn't. */
+  held?: string;
+  /** May the main Export button slice: a start code that is known (a profile's, the printer's own, or your own that passed) and a plate that fits. */
+  canSlice: boolean;
+  prog: { i: number; f: number; what: string } | null;
+  queue: { k: number; n: number; t0: number } | null;
+  done: Record<number, Sliced>;
+  fail: Record<number, string>;
+  look: number | null;
+  setLook: (i: number) => void;
+  busy: boolean;
+  ok: (i: number) => boolean;
+  run: (list: number[]) => Promise<{ i: number; why: string }[]>;
+  /** Slice every plate not sliced yet, and give every plate's G-code file, and the plates that have none (with why). */
+  sliceAll: () => Promise<{ files: Record<string, Uint8Array>; bad: { i: number; why: string }[] }>;
+}
+
+type GcodeProps = { plates: number; plateMeshes: (i: number) => MeshData[]; base: string; brim: boolean; plateKey: unknown; fits?: boolean[] };
+
+export function useGcode({ plates, plateMeshes, base, brim, plateKey, fits }: GcodeProps): Gcode {
   const p = useApp((s) => s.project)!;
   const mat = activeModule(p).holder.material;
   const pr = printerByName(p.printer.name);
-  // a printer's own code is only used once it has passed the check (see BambuCode)
+  // a printer's own code is only used once it has passed the check (see BambuCode); code typed in, too (see StartCode)
   const ownUse = useMemo(() => usableCode(p.printer, mat).own, [p.printer, mat]);
+  const held = useMemo(() => (ownUse ? undefined : usablePlain(p.printer, mat).why), [p.printer, mat, ownUse]);
   const plan = machinePlan(pr, p.printer.name, ownUse?.from);
-  const [prog, setProg] = useState<{ i: number; f: number; what: string } | null>(null);
+  const [prog, setProg] = useState<Gcode['prog']>(null);
   const [done, setDone] = useState<Record<number, Sliced>>({});
   const [fail, setFail] = useState<Record<number, string>>({});
   const [look, setLook] = useState<number | null>(null);
-  const [queue, setQueue] = useState<{ k: number; n: number; t0: number } | null>(null);
+  const [queue, setQueue] = useState<Gcode['queue']>(null);
+  const doneNow = useRef<Record<number, Sliced>>({}), gen = useRef(0);
+  const keep = (x: Record<number, Sliced>) => { doneNow.current = x; setDone(x); };
   // a slice belongs to these plates on this printer with this filament and start code
-  const stale = [plateKey, p.printer.name, p.printer.bed[0], p.printer.bed[1], p.printer.maxZ, p.printer.gcodeStart, p.printer.gcodeEnd, p.printer.bambu, p.printer.plate, mat, brim];
-  useEffect(() => { setDone({}); setFail({}); setLook(null); }, stale);
+  const stale = [plateKey, p.printer.name, p.printer.bed[0], p.printer.bed[1], p.printer.maxZ, p.printer.gcodeStart, p.printer.gcodeEnd, p.printer.gcodeOk, p.printer.bambu, p.printer.plate, mat, brim];
+  useEffect(() => { gen.current++; keep({}); setFail({}); setLook(null); }, stale);
 
+  const ok = (i: number) => fits?.[i] !== false;
   const run = async (list: number[]) => {
-    const t0 = Date.now();
+    const t0 = Date.now(), mine = gen.current, bad: { i: number; why: string }[] = [];
     for (const [k, i] of list.entries()) {
+      if (gen.current !== mine) break; // the plates or settings changed: what is left would be for the old ones
       if (list.length > 1) setQueue({ k, n: list.length, t0 });
       try {
         setFail((x) => ({ ...x, [i]: '' }));
         const r = await slicePlate({ meshes: plateMeshes(i), printer: p.printer, material: mat, brim, density: MATERIALS[mat].density, base: `${base}_plate${i + 1}` }, (f, what) => setProg({ i, f, what }));
-        setDone((x) => ({ ...x, [i]: r }));
+        if (gen.current !== mine) break;
+        keep({ ...doneNow.current, [i]: r });
         setLook((l) => l ?? i);
       } catch (e: any) {
-        setFail((x) => ({ ...x, [i]: String(e?.message ?? e) }));
+        const why = String(e?.message ?? e);
+        bad.push({ i, why });
+        if (gen.current === mine) setFail((x) => ({ ...x, [i]: why }));
       }
     }
     setProg(null);
     setQueue(null);
+    return bad;
   };
-  const busy = !!prog;
-  const ok = (i: number) => fits?.[i] !== false;
+  const sliceAll = async () => {
+    const bad = await run([...Array(plates).keys()].filter((i) => !doneNow.current[i] && ok(i)));
+    for (let i = 0; i < plates; i++) if (!ok(i)) bad.push({ i, why: 'bigger than the bed' });
+    const files: Record<string, Uint8Array> = {};
+    for (const i of Object.keys(doneNow.current).map(Number).sort((a, b) => a - b)) files[doneNow.current[i].file] = doneNow.current[i].bytes;
+    return { files, bad };
+  };
+  // "known": the profile is Kiri:Moto's for this printer (or close), the printer's own code is in, or the code typed in passed; plain code alone isn't
+  const known = plan.fit !== 'none' && (plan.fit !== 'generic' || (!ownUse && !!p.printer.gcodeStart?.trim()));
+  const canSlice = known && !held && [...Array(plates).keys()].some(ok);
+  return { plan, held, canSlice, prog, queue, done, fail, look, setLook, busy: !!prog || !!queue, ok, run, sliceAll };
+}
+
+export function GcodeSection({ g: shared, plate3mf, ...props }: GcodeProps & { plate3mf: (i: number) => Uint8Array; g?: Gcode }) {
+  const { plates, base, brim } = props;
+  const p = useApp((s) => s.project)!;
+  const mat = activeModule(p).holder.material;
+  const pr = printerByName(p.printer.name);
+  // (the Export step passes its own so its buttons see the same slices; alone, the section keeps its own)
+  const mine = useGcode(props);
+  const { plan, held, prog, queue, done, fail, look, setLook, busy, ok, run } = shared ?? mine;
   const left = [...Array(plates).keys()].filter((i) => !done[i] && ok(i));
   const finished = Object.keys(done).map(Number).sort((a, b) => a - b);
   // time left in a "slice all": the plates done so far set the pace
@@ -88,16 +138,17 @@ export function GcodeSection({ plates, plateMeshes, plate3mf, base, brim, plateK
                   ) : (
                     <span className="res">
                       {fail[i] && <small className="bad" title={fail[i]}>{fail[i]}</small>}
-                      <button className="btn small" disabled={busy} onClick={() => run([i])}>{fail[i] ? 'Try again' : 'Slice'}</button>
+                      <button className="btn small" disabled={busy || !!held} title={held} onClick={() => run([i])}>{fail[i] ? 'Try again' : 'Slice'}</button>
                     </span>
                   )}
                 </div>
               );
             })}
           </div>
+          {held && <p className="hint" style={{ margin: '8px 0 0' }}>Slicing waits for the start or end code you typed in (below): it is checked first.</p>}
           {queue && <p className="hint" style={{ margin: '8px 0 0' }}>Plate {queue.k + 1} of {queue.n}{eta != null ? `, about ${Math.max(1, Math.round(eta / 60000))} min left` : ''}. You can keep working: slicing runs in the background.</p>}
           <div className="btns" style={{ marginTop: 8 }}>
-            {plates > 1 && left.length > 1 && <button className="btn soft" disabled={busy} onClick={() => run(left)}>Slice all {left.length} plates</button>}
+            {plates > 1 && left.length > 1 && <button className="btn soft" disabled={busy || !!held} title={held} onClick={() => run(left)}>Slice all {left.length} plates</button>}
             {finished.length > 1 && <button className="btn soft" onClick={zipAll}><Icon d={I.download} /> All G-code ({finished.length} plates, .zip)</button>}
           </div>
           {look != null && done[look] && <LayerView key={look} r={done[look]} bed={p.printer.bed} />}
@@ -247,14 +298,14 @@ function BambuCode({ preset, mat }: { preset: string; mat: Material }) {
 }
 
 /** What the check found in a printer's own code, plainly, and what can be done about it. Findings that stop it can't be accepted. */
-function CodeNotes({ found, ok, onUse, onDrop }: { found: Finding[]; ok?: string[]; onUse: (ids: string[]) => void; onDrop?: () => void }) {
+function CodeNotes({ found, ok, onUse, onDrop, typed }: { found: Finding[]; ok?: string[]; onUse: (ids: string[]) => void; onDrop?: () => void; typed?: boolean }) {
   const stops = found.filter((f) => f.stop), looks = found.filter((f) => !f.stop && !ok?.includes(f.id));
   if (!stops.length && !looks.length) return null;
   return (
     <div className={`fitnote ${stops.length ? 'none' : 'close'}`} role="alert">
       <b>{stops.length ? "This code can't be used" : 'Have a look before this code is used'}</b>
       <ul style={{ margin: '2px 0', paddingLeft: 18 }}>{[...stops, ...looks].map((f) => <li key={f.id}>{f.text}</li>)}</ul>
-      <span>{stops.length ? "It isn't used for any print. Fix it in your slicer and load it again, or slice this plate in Bambu Studio or OrcaSlicer." : "If it is right, use it anyway: what you accepted is kept with it in this project. If not, load the printer's own code again."}</span>
+      <span>{stops.length ? (typed ? "It isn't used for any print. Change it below, or go back to the profile's code." : "It isn't used for any print. Fix it in your slicer and load it again, or slice this plate in Bambu Studio or OrcaSlicer.") : `If it is right, use it anyway: what you accepted is kept with it in this project. If not, ${typed ? "change it below or go back to the profile's code." : "load the printer's own code again."}`}</span>
       <div className="btns">
         {!stops.length && <button className="btn small primary" onClick={() => onUse([...(ok ?? []), ...looks.map((f) => f.id)])}>Use it anyway</button>}
         {onDrop && <button className="btn small ghost" onClick={onDrop}>Leave it out</button>}
@@ -263,9 +314,14 @@ function CodeNotes({ found, ok, onUse, onDrop }: { found: Finding[]; ok?: string
   );
 }
 
-/** The printer's start and end G-code, editable; empty means the profile's own. */
+/**
+ * The printer's start and end G-code, editable; empty means the profile's own. What is typed in is checked the way a
+ * Bambu printer's own code is (startcheck.ts checkPlainCode): code that can't be this printer's isn't used, and code
+ * that only looks odd is used once the user has read why and said to use it.
+ */
 function StartCode() {
   const ps = useApp((s) => s.project!.printer);
+  const mat = useApp((s) => activeModule(s.project!).holder.material);
   const plan = machinePlan(printerByName(ps.name), ps.name);
   const [def, setDef] = useState<{ start: string; end: string } | null>(null);
   const [start, setStart] = useState(ps.gcodeStart ?? '');
@@ -279,17 +335,22 @@ function StartCode() {
   const save = (k: 'gcodeStart' | 'gcodeEnd', v: string) => {
     const was = ps[k] ?? '';
     const next = v.trim() && v !== (k === 'gcodeStart' ? def?.start : def?.end) ? v : '';
-    if (next !== was) edit((q) => { if (next) q.printer[k] = next; else delete q.printer[k]; });
+    // what was accepted belonged to the code before
+    if (next !== was) edit((q) => { if (next) q.printer[k] = next; else delete q.printer[k]; delete q.printer.gcodeOk; });
   };
   const custom = !!(ps.gcodeStart || ps.gcodeEnd);
+  const found = useMemo(() => usablePlain(ps, mat), [ps, mat]);
   return (
-    <details className="startcode">
-      <summary>Start and end G-code{custom ? ' (edited)' : ''}</summary>
-      <p className="hint">{'{temp}'} and {'{bed_temp}'} become the filament's temperatures. Paste your own slicer's start code here if you trust it more.</p>
-      <label className="field"><span>Start</span><textarea className="mono" rows={8} spellCheck={false} value={start || def?.start || ''} onChange={(e) => setStart(e.target.value)} onBlur={(e) => save('gcodeStart', e.target.value)} /></label>
-      <label className="field"><span>End</span><textarea className="mono" rows={5} spellCheck={false} value={end || def?.end || ''} onChange={(e) => setEnd(e.target.value)} onBlur={(e) => save('gcodeEnd', e.target.value)} /></label>
-      {custom && <button className="btn small ghost" onClick={() => edit((q) => { delete q.printer.gcodeStart; delete q.printer.gcodeEnd; })}>Back to the profile's code</button>}
-    </details>
+    <>
+      {custom && <CodeNotes typed found={found.found} ok={ps.gcodeOk} onUse={(ids) => edit((q) => { q.printer.gcodeOk = ids; })} />}
+      <details className="startcode">
+        <summary>Start and end G-code{custom ? (found.why ? ' (edited, not used yet)' : ' (edited)') : ''}</summary>
+        <p className="hint">{'{temp}'} and {'{bed_temp}'} become the filament's temperatures. Paste your own slicer's start code here if you trust it more: it is checked against the {ps.name}'s bed and the {mat} temperatures before it is used.</p>
+        <label className="field"><span>Start</span><textarea className="mono" rows={8} spellCheck={false} value={start || def?.start || ''} onChange={(e) => setStart(e.target.value)} onBlur={(e) => save('gcodeStart', e.target.value)} /></label>
+        <label className="field"><span>End</span><textarea className="mono" rows={5} spellCheck={false} value={end || def?.end || ''} onChange={(e) => setEnd(e.target.value)} onBlur={(e) => save('gcodeEnd', e.target.value)} /></label>
+        {custom && <button className="btn small ghost" onClick={() => edit((q) => { delete q.printer.gcodeStart; delete q.printer.gcodeEnd; delete q.printer.gcodeOk; })}>Back to the profile's code</button>}
+      </details>
+    </>
   );
 }
 
