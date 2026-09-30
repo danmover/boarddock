@@ -17,7 +17,8 @@ import type { GenResult, Project } from '../src/model/types';
 const T = (id: string) => TEMPLATES.find((t) => t.id === id)!.make();
 const rack = () => {
   const p = newProject(T('rpi4'));
-  for (const id of ['uno', 'usb_hub7', 'rpi5', 'net_switch5', 'usb_charger6', 'pico', 'esp32']) p.modules.push(newModule(T(id)));
+  // (a Zero too: the stands' combs come and go with how the rack lays out, and this one has two)
+  for (const id of ['uno', 'usb_hub7', 'rpi5', 'net_switch5', 'usb_charger6', 'pico', 'esp32', 'rpi_zero']) p.modules.push(newModule(T(id)));
   p.links = numberLinks(autoLinks(p));
   return p;
 };

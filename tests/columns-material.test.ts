@@ -18,7 +18,10 @@ beforeAll(async () => { await initKernel(); });
 
 /** Before (v2.1.0 head, PETG): the two holders and the rod of the sensor board's J-Link and adapter column. */
 const BEFORE = { jlink: { g: 7.80, min: 17.7 }, adapter: { g: 4.84, min: 11.7 }, rod: { g: 1.08, min: 3.6 } };
-const sum = (k: 'g' | 'min') => BEFORE.jlink[k] + BEFORE.adapter[k] + BEFORE.rod[k];
+// (the J-Link's holder held its board by four snap pins, its edges having no room for clips; it now gets two 10 mm
+// hairpin clips, Auto's default, which take a little more plastic than the pins: 7.99 g and 18.0 min against 7.80 and 17.7)
+const CLIPS = { g: 0.2, min: 0.4 };
+const sum = (k: 'g' | 'min') => BEFORE.jlink[k] + BEFORE.adapter[k] + BEFORE.rod[k] + CLIPS[k];
 
 function dual(material: Material): Project {
   const p = newProject(T('example_dual_swd'));
@@ -41,7 +44,7 @@ describe('grams and print time of a J-Link and adapter column', () => {
     const density = MATERIALS[p.modules[0].holder.material].density;
     let g = 0, min = 0;
     for (const pt of parts) { const e = estimate(pt, density); g += e.grams; min += e.minutes; }
-    // (13.72 g and 33.0 min before; the landing is 1.2 mm thinner and the peg holes lost their drill cones)
+    // (13.72 g and 33.0 min before, plus the J-Link's clips; the landing is 1.2 mm thinner and the peg holes lost their drill cones)
     expect(g).toBeLessThan(sum('g')); // (13.56 g with the thinner landing; the bottom holder's anti-rattle bumps and slots make it 13.70)
     expect(min).toBeLessThan(sum('min') + 0.1); // (33.03 min with the anti-rattle leaves: two seconds more)
     // and the rod down the column is shorter by the landing's 1.2 mm

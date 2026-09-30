@@ -34,7 +34,7 @@ describe('printability fixes', () => {
 
   it('a Pi 4 with its cradles off: collars and the frame under its plugs print clean', () => {
     const { r } = holderCheck(loose('rpi4', (q) => { q.modules[0].holder.feat = { cradles: false, caps: true, ties: true, guards: true }; }));
-    expect(r.bridge!.span).toBeLessThan(8);
+    expect(r.bridge?.span ?? 0).toBeLessThan(8); // (none at all now that clips, not snap pins, hold the board: the frame under the plugs has nothing to span)
     expect(r.cantilever?.reach ?? 0).toBeLessThan(1.2); // the stray sill under the USB/Ethernet (1.2 mm) is gone
     expect(verdict(r).status).toBe('ok');
   }, 60000);
