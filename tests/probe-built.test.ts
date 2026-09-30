@@ -16,7 +16,9 @@ beforeAll(async () => { await initKernel(); });
 
 /** What Mark as built does: freeze the layout, remember what was printed. */
 function build(p: Project) {
+  p.panel.opts = { plan: 'classic' }; // (the classic packing: the hub beside the board, which is what this test is about)
   const r = generatePanel(p), pr = r.report.panel!;
+  delete p.panel.opts;
   p.panel.rails = pr.rails.map((x) => ({ id: x.id, x: x.x, y: x.y, dir: x.dir, length: x.length }));
   p.panel.mounts = pr.mounts.map((m) => ({ id: m.id, rail: m.rail, at: m.at, kind: m.kind, turn: m.turn, lever: m.leverSide > 0 ? 'pos' as const : 'neg' as const, slots: m.slots.map((s, k) => ({ module: s.module, edge: s.module ? pr.modules.find((x) => x.id === s.module && x.mount === m.id && x.slot === k)?.edge ?? s.edge : s.edge })) }));
   p.panel.auto = false;

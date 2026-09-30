@@ -138,7 +138,9 @@ describe('docking', () => {
     // small boards on three rails 83 and 110 mm apart; the Mega on the first, laid flat, reaches 73 to 168 mm across
     const p = rack(['mega', 'uno', 'pico', 'nano', 'esp32', 'pico', 'nano', 'uno']);
     p.panel.maxRail = 200;
+    p.panel.opts = { plan: 'classic' }; // (the classic packing: the three rails, the Mega on the first, this is written for)
     const pr = generatePanel(p).report.panel!;
+    delete p.panel.opts;
     p.panel.rails = pr.rails.map((x) => ({ id: x.id, x: x.x, y: x.y, dir: x.dir, length: null }));
     p.panel.mounts = pr.mounts.map((m) => ({ id: m.id, rail: m.rail, at: m.at, kind: m.kind, turn: m.turn, lever: m.leverSide > 0 ? 'pos' as const : 'neg' as const, slots: m.slots.map((s) => ({ ...s })) }));
     p.panel.auto = false;

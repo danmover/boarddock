@@ -15,7 +15,7 @@ const FILE = fileURLToPath(new URL('./baseline.json', import.meta.url));
 export const TOL = { vol: 0.5, share: 0.05, depth: 0.1 };
 
 /** Problems with an automatic layout, each as a line of text (the same on every run). */
-function layoutIssues(p: Project, r: GenResult): string[] {
+export function layoutIssues(p: Project, r: GenResult): string[] {
   const out: string[] = [];
   const pr = r.report.panel;
   const name = (id?: string) => p.modules.find((m) => m.id === id)?.board.name ?? id ?? '?';
