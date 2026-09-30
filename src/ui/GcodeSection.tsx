@@ -85,8 +85,8 @@ export function useGcode({ plates, plateMeshes, base, brim, plateKey, fits }: Gc
     for (const i of Object.keys(doneNow.current).map(Number).sort((a, b) => a - b)) files[doneNow.current[i].file] = doneNow.current[i].bytes;
     return { files, bad };
   };
-  // "known": the profile is Kiri:Moto's for this printer (or close), the printer's own code is in, or the code typed in passed; plain code alone isn't
-  const known = plan.fit !== 'none' && (plan.fit !== 'generic' || (!ownUse && !!p.printer.gcodeStart?.trim()));
+  // "known": the start code is Kiri:Moto's profile for this printer (or close), the plain Marlin or Klipper template, or the printer's own; code typed in counts only once it passed (held)
+  const known = plan.fit !== 'none';
   const canSlice = known && !held && [...Array(plates).keys()].some(ok);
   return { plan, held, canSlice, prog, queue, done, fail, look, setLook, busy: !!prog || !!queue, ok, run, sliceAll };
 }
