@@ -2,7 +2,7 @@
 // (its ribbon length, its slot, which way round it plugs in), the ones with nothing on them, one button that adds a
 // J-Link and an adapter for every header without, what to buy, and the printed bench sheet.
 import { useMemo } from 'react';
-import { benchSheet, freeHeaders, headerRows, PROBE_CHOICES, sheetRow, type HeaderRow } from '../model/debuggear';
+import { benchSheet, freeHeaders, headerRows, PROBE_CHOICES, ribbonToBuy, sheetRow, type HeaderRow } from '../model/debuggear';
 import { probeKeyFor, ribbonOf } from '../model/probes';
 import { rackName } from '../model/diff';
 import { edit, select, store, toast, useApp } from '../state';
@@ -39,7 +39,11 @@ export function DebugPanel() {
     const pm = r.probe!, len = ribbonOf(pm.board), run = cables.find((x) => x.id === r.link?.id && x.ribbon != null)?.length;
     return (
       <span className="ribbon" onClick={(e) => e.stopPropagation()} title={run != null ? `Its ribbon has to run about ${Math.round(run)} mm` : "The length of the J-Link's ribbon"}>
-        {run != null && run > len && <Chip status="warn">needs ~{Math.round(run)}</Chip>}
+        {run != null && run > len && <>
+          <Chip status="warn">needs ~{Math.round(run)}</Chip>
+          <button className="btn small soft" title="Set the ribbon to the next standard length that reaches, and buy one that long (30 cm ribbons are common)"
+            onClick={() => edit((q) => { const x = q.modules.find((y) => y.id === pm.id); if (!x) return; const v = ribbonToBuy(run) * 10; if (x.board.box) x.board.box.ribbon = v; else x.board.ribbon = v; })}>Use {ribbonToBuy(run) * 10}</button>
+        </>}
         <input type="number" aria-label={`${pm.board.name} ribbon length (mm)`} value={len} step={10} min={50} max={1000}
           onChange={(e) => { const v = Math.max(50, Math.min(1000, +e.target.value || 200)); edit((q) => { const x = q.modules.find((y) => y.id === pm.id); if (!x) return; if (x.board.box) x.board.box.ribbon = v; else x.board.ribbon = v; }); }} />
         <small>mm</small>
