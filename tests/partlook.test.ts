@@ -122,7 +122,7 @@ describe('the card in an M.2, PCIe or DIMM socket', () => {
     expect(k.h).toBeCloseTo(m2.h + 2, 6);
     // a mini PCIe card is 51 mm and comes up the board from a socket at the bottom edge; an SO-DIMM's 30 mm hangs down from the top
     expect(cardOf(mini, b)!.y - mini.y).toBeGreaterThan(20);
-    expect(cardOf(so, b)!.y - so.y).toBeLessThan(-10);
+    expect(cardOf(so, b)!.y - so.y).toBeCloseTo(-(30 / 2 - so.l / 2), 6); // from the socket's outer edge, over the socket
     expect(Math.max(cardOf(so, b)!.w, cardOf(so, b)!.l)).toBe(so.w);
     // a PCIe card stands over its slot, 107 mm tall
     const p = cardOf(pcie, b)!;

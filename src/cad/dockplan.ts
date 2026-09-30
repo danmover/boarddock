@@ -11,8 +11,9 @@ import { computeLevels } from './levels';
 import { holdOf } from './grip';
 import { baseOf, columnOf, isSmall, ridersOf } from '../model/holes';
 import { isProbe, probesOf, targetOf } from '../model/probes';
-import { baseRef, isAccessory, isBox } from '../model/links';
+import { baseRef, findModule, isAccessory, isBox, plugRole } from '../model/links';
 import { isPlugPack } from '../model/powerdata';
+import { freshRail, isDockLocked, isRailLocked } from '../model/locks';
 
 /** A module plus the plugs of every board stacked on it: what orientation scoring should look at. */
 export function withRiders(p: Project, m: Module): Module {
@@ -316,13 +317,14 @@ export function tongueOk(m: Module, o: Pick<Orientation, 'edge' | 'lie'>): boole
 /**
  * A way to dock a board with its tongue under the Check step's limit, keeping the dock's turn: another edge standing
  * up, or lying flat; the one that keeps its plugs easiest to reach, none pointing into the table. Null when there is none.
+ * `limit`: the share of the material's yield the tongue root may reach (0.8 is Check's failing line; 0.4 its warning).
  */
-export function shorterLever(m: Module, railDir: 'h' | 'v', turn: Turn, slot = 0): { edge: EdgeName; lie?: 'flat' } | null {
+export function shorterLever(m: Module, railDir: 'h' | 'v', turn: Turn, slot = 0, limit = 0.8): { edge: EdgeName; lie?: 'flat' } | null {
   const y = (MATERIALS[m.holder.material] ?? MATERIALS.PETG).yield, sz = holderSize(m);
   let best: { edge: EdgeName; lie?: 'flat'; score: number } | null = null;
   for (const lie of [undefined, 'flat'] as const) for (const edge of EDGES) {
     const depth = edge === 'bottom' || edge === 'top' ? sz.y : sz.x;
-    if (tongueStress(depth, lie) >= 0.8 * y) continue;
+    if (tongueStress(depth, lie) >= limit * y) continue;
     const o = bestDock(m, railDir, slot, [turn], [edge], lie);
     if (o.access.some((a) => a.ok === 'blocked')) continue;
     if (!best || o.score > best.score) best = { edge, ...(lie ? { lie } : {}), score: o.score };
@@ -403,8 +405,47 @@ export function autoAssign(p: Project): RailMount[] {
     const half = docks.length / 2, mid = flats.length && docks.length >= 2 ? units.reduce((b, u) => (Math.abs(u - half) < Math.abs(b - half) ? u : b), docks.length) : docks.length;
     out.push(...docks.slice(0, mid), ...flats, ...docks.slice(mid));
   }
+  pullBesideHost(p, out, new Set([...docked.keys(), ...cols.keys()]));
   out.forEach((m, i) => { m.id = `auto${i}`; });
   return out;
+}
+
+/**
+ * Devices sit right after the host they are cabled to: a hub on a Pi, a Pi Zero on a Pi 4, and the boards on a hub
+ * right after the hub. Host-to-device cables are the ones that have to stay short, whatever else the order was made
+ * for. `skip`: boards that stand in a column beside their own board (a probe's ribbon goes to that board, not its hub)
+ * and boards with such columns (they stay with them).
+ */
+export function pullBesideHost(p: Project, out: RailMount[], skip: Set<string> = new Set()): void {
+  const hostOf = new Map<string, string>(); // device module -> its host
+  for (const l of p.links ?? []) {
+    if (l.kind !== 'usb') continue;
+    const ends = [l.a, l.b].map((r) => { const m = findModule(p, r.module), c = m?.board.comps.find((x) => x.ref === baseRef(r.ref)); return { module: r.module, role: m && c ? plugRole(m, c) : '' }; });
+    const host = ends.find((e) => e.role === 'host' || e.role === 'hub-down'), dev = ends.find((e) => e.role === 'device' || e.role === 'hub-up');
+    if (host && dev && host.module !== dev.module && !hostOf.has(dev.module) && !skip.has(dev.module) && !findModule(p, dev.module)?.board.role) hostOf.set(dev.module, host.module);
+  }
+  if (!hostOf.size) return;
+  const unitOf = (id: string) => out.find((m) => m.slots.some((s) => s.module === id));
+  const kids = (h: string) => [...hostOf].filter(([, x]) => x === h).map(([d]) => d);
+  const placed = new Set<RailMount>();
+  // (`homes`: the docks of the hosts above, never moved: a board in the dock beside a host is that host's, not the hub's)
+  const place = (host: string, homes: Set<RailMount>): RailMount | undefined => {
+    const home = unitOf(host);
+    let last = home;
+    if (!home) return undefined;
+    const up = new Set(homes).add(home);
+    for (const d of kids(host)) {
+      const u = unitOf(d);
+      // (one already within two docks of its host stays: only the far ones are pulled in)
+      if (!u || up.has(u) || placed.has(u) || Math.abs(out.indexOf(u) - out.indexOf(last!)) <= 2) continue;
+      placed.add(u);
+      out.splice(out.indexOf(u), 1);
+      out.splice(out.indexOf(last!) + 1, 0, u);
+      last = place(d, up) ?? u;
+    }
+    return last;
+  };
+  for (const h of new Set(hostOf.values())) if (!hostOf.has(h)) place(h, new Set());
 }
 
 /**
@@ -563,30 +604,36 @@ function docksFor<T extends Module>(p: Project, mods: T[], railDir: 'h' | 'v', o
 export function orderByLinks<T extends Module>(p: Project, mods: T[]): T[] {
   const links = p.links ?? [];
   if (!links.length) return mods;
-  const deg = new Map(mods.map((m) => [m.id, links.filter((l) => l.a.module === m.id || l.b.module === m.id).length]));
-  const nb = (id: string) => links.flatMap((l) => (l.a.module === id ? [l.b.module] : l.b.module === id ? [l.a.module] : []));
+  // a host-to-device link (a board on a Pi's USB, a Pi Zero on a Pi 4) counts three times a plain one: those cables
+  // must stay short, so the board goes next
+  const weight = (l: NonNullable<Project['links']>[number]) => (l.kind === 'usb' ? 3 : l.kind === 'net' ? 2 : 1);
+  const deg = new Map(mods.map((m) => [m.id, links.filter((l) => l.a.module === m.id || l.b.module === m.id).reduce((a, l) => a + weight(l), 0)]));
+  const nb = (id: string) => links.flatMap((l) => (l.a.module === id ? [{ id: l.b.module, w: weight(l) }] : l.b.module === id ? [{ id: l.a.module, w: weight(l) }] : []));
   const left = new Set(mods.map((m) => m.id)), out: T[] = [];
   while (left.size) {
-    // start from the best-connected board left, then follow its connections
-    let cur = [...left].sort((a, b) => (deg.get(b) ?? 0) - (deg.get(a) ?? 0))[0];
+    // start from the best-connected board left, then follow its strongest connection
+    let cur: string | undefined = [...left].sort((a, b) => (deg.get(b) ?? 0) - (deg.get(a) ?? 0))[0];
     while (cur) {
       left.delete(cur);
       out.push(mods.find((m) => m.id === cur)!);
-      cur = nb(cur).filter((id) => left.has(id)).sort((a, b) => (deg.get(b) ?? 0) - (deg.get(a) ?? 0))[0];
+      cur = nb(cur).filter((x) => left.has(x.id)).sort((a, b) => b.w - a.w || (deg.get(b.id) ?? 0) - (deg.get(a.id) ?? 0))[0]?.id;
     }
   }
   return out;
 }
 
-/** Friendly name of a dock turn on a rail, e.g. "standing, parts face left". */
-export function turnLabel(turn: number, railDir: 'h' | 'v', kind: 'dock' | 'flat' = 'dock', lie?: 'flat'): string {
+/**
+ * Friendly name of a dock turn on a rail, e.g. "standing, parts face left" or "lies flat, tab on its bottom edge".
+ * `slots` are the filled slots (lie, and the board edge in the socket when known); "mixed" when they differ.
+ */
+export function turnLabel(turn: number, railDir: 'h' | 'v', kind: 'dock' | 'flat' = 'dock', slots: { lie?: 'flat'; edge?: string }[] = []): string {
   if (kind === 'flat') return `flat, turned ${turn}°`;
-  if (lie === 'flat') return `lying flat, turned ${turn}°`;
+  const flat = slots.filter((s) => s.lie === 'flat');
+  if (flat.length && flat.length < slots.length) return `mixed: ${slots.map((s, i) => `${slots.length > 1 ? (i ? 'back ' : 'front ') : ''}${s.lie === 'flat' ? 'lies flat' : 'stands'}`).join(', ')}`;
+  if (flat.length) return flat.every((s) => s.edge === flat[0].edge) && flat[0].edge ? `lies flat, tab on its ${flat[0].edge} edge` : 'lies flat, tab on its edge';
   // component side of the front slot: hub +y turned by `turn`
   const v = dir(mul(railMatrix({ x: 0, y: 0, dir: railDir }), rotZ(turn)), [0, 1, 0]);
-  const face = classify(v, railDir).dir;
-  const standing = face === 'left' || face === 'right';
-  return `${standing ? 'standing' : 'shelf'}, parts face ${face}`;
+  return `standing, parts face ${classify(v, railDir).dir}`;
 }
 
 /** Put a board on the panel in a new dock at the end of the last rail (manual layouts). */
@@ -596,8 +643,9 @@ export function appendDock(p: Project, moduleId: string) {
   const m0 = p.modules.find((x) => x.id === moduleId);
   if (!m0 || isPlugPack(m0.board)) return; // a plug pack lives in an outlet, off the rails
   const m = withRiders(p, m0);
-  let rail = P.rails[P.rails.length - 1];
-  if (!rail) { rail = { id: 'r1', x: 0, y: 0, dir: P.rowDir, length: null }; P.rails.push(rail); }
+  // (the last rail that is not locked; a locked rail keeps the docks it has)
+  let rail = [...P.rails].reverse().find((r) => !isRailLocked(p, r.id));
+  if (!rail) { rail = P.rails.length ? freshRail(p) : { id: 'r1', x: 0, y: 0, dir: P.rowDir, length: null }; P.rails.push(rail); }
   const o = bestDock(m, rail.dir, 0);
   P.mounts.push({ id: uid('d'), rail: rail.id, at: null, place: 'free', kind: 'dock', turn: o.turn, slots: [{ module: moduleId, edge: o.edge }, { module: null, edge: 'auto' }] });
 }
@@ -616,7 +664,7 @@ export function seatBoard(p: Project, moduleId: string): { where: 'slot' | 'new'
   const cabled = new Set((p.links ?? []).flatMap((l) => (l.a.module === moduleId ? [l.b.module] : l.b.module === moduleId ? [l.a.module] : [])));
   let best: { mt: RailMount; k: number; score: number } | null = null;
   for (const mt of P.mounts) {
-    if (mt.kind !== 'dock' || mt.slots.some((s) => s.lie === 'flat')) continue;
+    if (mt.kind !== 'dock' || mt.slots.some((s) => s.lie === 'flat') || isDockLocked(p, mt.id)) continue;
     const k = mt.slots.findIndex((s) => !s.module);
     const rail = P.rails.find((r) => r.id === mt.rail);
     if (k < 0 || !rail) continue;
@@ -645,7 +693,7 @@ export function seatCompanion(p: Project, moduleId: string): Seated {
   const P = p.panel, m = p.modules.find((x) => x.id === moduleId);
   const t = m && targetOf(p, m), tb = t && baseOf(p, t);
   const home = tb && P.mounts.find((mt) => mt.kind === 'dock' && mt.slots.some((s) => s.module === tb.id));
-  const put = (mt: RailMount) => { const k = mt.slots.findIndex((s) => !s.module); if (k < 0) return false; for (const x of P.mounts) for (const sl of x.slots) if (sl.module === moduleId) sl.module = null; mt.slots[k] = { module: moduleId, edge: 'auto' }; return true; };
+  const put = (mt: RailMount) => { const k = mt.slots.findIndex((s) => !s.module); if (k < 0 || isDockLocked(p, mt.id)) return false; for (const x of P.mounts) for (const sl of x.slots) if (sl.module === moduleId) sl.module = null; mt.slots[k] = { module: moduleId, edge: 'auto' }; return true; };
   if (home && put(home)) return { where: 'home', mount: home.id, rail: home.rail };
   if (home) {
     const near = P.mounts.filter((mt) => mt !== home && mt.kind === 'dock' && mt.rail === home.rail && mt.slots.some((s) => !s.module)).sort((a, b) => Math.abs((a.at ?? 0) - (home.at ?? 0)) - Math.abs((b.at ?? 0) - (home.at ?? 0)));
@@ -757,7 +805,7 @@ export function spreadOut(p: Project, rep: PanelReport, clear = 2, rails?: strin
     let cursor = -Infinity;
     for (const m of on) {
       const [lo, hi] = alongExtent(rep, m.id)!;
-      if (m.at! + lo < cursor - 0.05) { m.at = Math.round((cursor - lo) * 10) / 10; moved.push(m.id); }
+      if (m.at! + lo < cursor - 0.05 && !isDockLocked(p, m.id)) { m.at = Math.round((cursor - lo) * 10) / 10; moved.push(m.id); }
       cursor = Math.max(cursor, m.at! + hi + clear);
     }
   }
@@ -799,7 +847,7 @@ export function spreadRails(p: Project, rep: PanelReport, clear = 2): string[] {
   const moved: string[] = [];
   for (const r of p.panel.rails) {
     const s = shift.get(r.id);
-    if (!s) continue;
+    if (!s || isRailLocked(p, r.id)) continue;
     if (ax) r.y = Math.round((r.y + s) * 10) / 10; else r.x = Math.round((r.x + s) * 10) / 10;
     moved.push(r.id);
   }

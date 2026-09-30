@@ -17,6 +17,7 @@ import { activeModule, commitFrom, editMod, select, store, toast } from '../stat
 import { snapLines } from '../model/editorgeo';
 import { followCorners } from '../model/dims';
 import { area, bbox, ccw, rad, rectLoop } from '../geom/poly';
+import { say } from './touch';
 import {
   addCorner, arcThrough, bendEdge, circlePts, combine, cornerCut, cornersOf, edgeLength, isCorner, lenAng, loopProblem, moveCorner,
   nearestLine, offBoard, polar, removeCorner, setEdgeLength, shapeProblem, slotLoop, snapPoint, type SnapIn, type SnapOut,
@@ -559,10 +560,10 @@ export function useShapeTool({ b, px, active, setTool }: ShapeHost) {
     if (e.key === 'Escape') { setTyped({ L: '', A: '' }); (e.target as HTMLInputElement).blur(); }
   }
 
-  const hint = isBox ? 'a box takes its shape from its size, under Box'
+  const hint = say(isBox ? 'a box takes its shape from its size, under Box'
     : mode === 'edit' ? (pk?.kind === 'v' ? 'drag it (snaps; Alt: freely) · Delete removes it · type X and Y, or round or cut it · Esc' : pk?.kind === 'e' ? 'drag to slide it · type its length, or bend it into an arc · Esc' : 'drag a corner or an edge (snaps; Alt: freely) · click + to add a corner · click to select · E L')
     : mode === 'line' ? (arcOn ? (!draft ? 'arc: click where the shape starts' : arcEnd ? 'now a point the arc passes through' : 'arc: click where it ends') : !draft ? 'click the first corner · Shift: 15° steps · Alt: no snapping' : 'next corner, or type a length (Enter) · click the first point or Enter to close · Backspace undoes · A: arc')
-      : `click to put a ${prim === 'rect' ? `${fmt(pw)} × ${fmt(ph)} rectangle` : prim === 'circle' ? `Ø${fmt(pd)} circle` : `${fmt(sl)} × ${fmt(sw)} slot`} there, or drag to draw one · Alt: no snapping`;
+      : `click to put a ${prim === 'rect' ? `${fmt(pw)} × ${fmt(ph)} rectangle` : prim === 'circle' ? `Ø${fmt(pd)} circle` : `${fmt(sl)} × ${fmt(sw)} slot`} there, or drag to draw one · Alt: no snapping`);
 
   return { onDown, onMove, onUp, layer, panel, hint, cursor: mode === 'edit' ? 'default' : 'crosshair', isBox };
 }

@@ -1,9 +1,10 @@
 // Checking a Bambu printer's own start, end and layer-change code before it is trusted (src/slice/startcheck.ts). The
 // code here is written for these tests; none of it is Bambu's.
 import { describe, it, expect } from 'vitest';
-import { checkOwnCode, ownUsable, usableCode, whyNot, type Finding } from '../src/slice/startcheck';
-import { machinePlan } from '../src/slice/profiles';
-import { printerByName } from '../src/model/printers';
+import { checkOwnCode, checkPlainCode, ownUsable, usableCode, usablePlain, whyNot, type Finding } from '../src/slice/startcheck';
+import { readFileSync } from 'node:fs';
+import { defaultCode, machinePlan } from '../src/slice/profiles';
+import { PRINTERS_DB, printerByName } from '../src/model/printers';
 import type { PrinterSettings } from '../src/model/types';
 
 const settings = (name: string): PrinterSettings => { const pr = printerByName(name)!; return { name, bed: pr.bed, spacing: 6, maxZ: pr.maxZ }; };
@@ -135,8 +136,10 @@ describe('start code from outside, before it is trusted', () => {
     const f = checkOwnCode(good, p1s, 'PETG');
     expect(f.find((x) => x.id === 'printer')).toMatchObject({ stop: true });
     expect(f.find((x) => x.id === 'printer')!.text).toBe("This code was loaded for the A1 mini, and the printer is now the P1S: it is not this printer's.");
-    // (a project from before this check has no printer noted: nothing to compare)
-    expect(checkOwnCode({ ...good, for: undefined }, p1s, 'PETG')).toEqual([]);
+    // (a project from before this check has no printer noted: whose it is isn't known, so it is asked about, not stopped)
+    const old = checkOwnCode({ ...good, for: undefined }, p1s, 'PETG');
+    expect(old).toEqual([{ id: 'printer:unknown', stop: false, text: expect.stringMatching(/doesn't say which printer it was loaded for/) }]);
+    expect(ownUsable({ ok: ['printer:unknown'] }, old)).toBe(true);
   });
 
   it('is used only when nothing stops it and everything to look at has been accepted', () => {
@@ -176,5 +179,103 @@ describe('start code from outside, before it is trusted', () => {
     const start = `${START}\n{if nozzle_diameter[0] > 0.6}\nG1 X250 Y255\n{endif}`;
     expect(check({ start })).toEqual([]);
     expect(ids(check({ start: `${START}\n{if nozzle_diameter[0] < 0.6}\nG1 X250 Y255\n{endif}` }))).toContain('start:reach');
+  });
+});
+
+// Start and end code typed into the Export step's own box (Kiri:Moto's {temp} and {bed_temp} kind), for printers whose
+// code BoardDock doesn't ship, or over the profile's own
+describe('start and end code typed in for a printer, before it is used', () => {
+  const MK3 = settings('Prusa MK3S+'), K1 = settings('Creality K1C'), ENDER = settings('Creality Ender-3 V3 SE');
+  const PLAIN = ['; my start code', 'G90', 'M83', 'M140 S{bed_temp}', 'M104 S150', 'G28', 'M190 S{bed_temp}', 'M104 S{temp}', 'M109 S{temp}', 'G92 E0', 'G1 Z2 F3000', 'G1 X3 Y20 F6000', 'G1 Z0.3', 'G1 Y120 E12 F1200', 'G92 E0'].join('\n');
+  const PEND = 'G91\nG1 E-1 F1800\nG1 Z10\nG90\nG1 X5 Y200\nM104 S0\nM140 S0\nM84';
+  const sorted = (f: Finding[]) => ids(f).sort();
+  const plain = (start?: string, end?: string, ps: PrinterSettings = MK3, mat: 'PETG' | 'PLA' | 'ABS' = 'PETG') => checkPlainCode(ps, mat, { start, end });
+
+  it('lets through start and end code that heats, homes and stays on the bed, and does not look at empty boxes', () => {
+    expect(plain(PLAIN, PEND)).toEqual([]);
+    expect(plain(PLAIN, PEND, ENDER, 'PLA')).toEqual([]);
+    expect(plain(undefined, undefined)).toEqual([]);
+    expect(plain('', '  ')).toEqual([]);
+    // a prime line a few mm in front of the bed (Prusa's), and Kiri's own {layer}-style names
+    expect(plain(`${PLAIN}\nG1 X0 Y-3 F1000\nG1 Z{z_max}`)).toEqual([]);
+  });
+
+  it('stops moves to a bigger printer\'s bed, and asks about ones a little off the bed', () => {
+    const far = plain(`${PLAIN}\nG1 X340 Y300 F6000`, undefined, MK3); // the MK3S+ bed is 250 x 210
+    expect(far.find((f) => f.id === 'start:reach')).toMatchObject({ stop: true });
+    expect(far.find((f) => f.id === 'start:reach')!.text).toMatch(/X 340 \(90 mm past the right edge\) and Y 300 \(90 mm past the back edge\).*250 × 210/);
+    const near = plain(`${PLAIN}\nG1 X-12 Y100 F6000`);
+    expect(ids(near)).toEqual(['start:past']);
+    expect(near[0].stop).toBe(false);
+    // the end code is read the same way, and the height too
+    expect(plain(undefined, `${PEND}\nG1 X400`).map((f) => f.id)).toContain('end:reach');
+    expect(ids(plain(`${PLAIN}\nG1 Z400`))).toEqual(['start:height']);
+    // the code was for a 350 mm bed and the project's bed is now smaller (bed edited: the name becomes Custom)
+    expect(plain(`${PLAIN}\nG1 X300 Y30`, undefined, { name: 'Custom', bed: [220, 220], spacing: 7 }).some((f) => f.id === 'start:reach' && f.stop)).toBe(true);
+  });
+
+  it('reads heater targets against the printer and the filament', () => {
+    expect(sorted(plain(PLAIN.replace('M104 S{temp}\nM109 S{temp}', 'M104 S320\nM109 S320')))).toEqual(['start:hot', 'start:range']);
+    expect(plain(PLAIN.replace('M104 S{temp}\nM109 S{temp}', 'M104 S320\nM109 S320')).find((f) => f.id === 'start:hot')!.stop).toBe(true);
+    expect(sorted(plain(PLAIN.replace(/M140 S\{bed_temp\}/, 'M140 S150').replace(/M190 S\{bed_temp\}/, 'M190 S150')))).toEqual(['start:bedrange', 'start:hotbed']);
+    // 200 C is fine for PLA and PETG's range starts at 220; a 110 C bed is far from PLA's
+    expect(plain(PLAIN.replace(/S\{temp\}/g, 'S200'), undefined, MK3, 'PETG').map((f) => f.id)).toEqual(['start:range']);
+    expect(plain(PLAIN.replace(/S\{temp\}/g, 'S200'), undefined, MK3, 'PLA')).toEqual([]);
+    expect(ids(plain(PLAIN.replace(/S\{bed_temp\}/g, 'S110'), undefined, MK3, 'PLA'))).toEqual(['start:bedrange']);
+    // Marlin's M109 R and Klipper's SET_HEATER_TEMPERATURE count too
+    expect(sorted(plain(PLAIN.replace('M109 S{temp}', 'M109 R{temp}').replace('M104 S{temp}', 'SET_HEATER_TEMPERATURE HEATER=extruder TARGET=330')))).toEqual(['start:hot']); // (M109 R220 is the last target: in range)
+    // the printer's limit is what its maker gives, or a common one (300 C nozzle, 120 C bed) when it isn't known
+    expect(sorted(plain(PLAIN.replace('M109 S{temp}', 'M109 S310'), undefined, { name: 'Custom', bed: [200, 200], spacing: 7 }))).toEqual(['start:hot', 'start:range']);
+  });
+
+  it('stops code that is not start code, or has names the slicer cannot fill in', () => {
+    expect(ids(plain(undefined, PLAIN))).toEqual(['end:heats']);
+    expect(sorted(plain(PEND))).toEqual(['start:end', 'start:home']);
+    expect(ids(plain('; nothing\n'))).toEqual(['start:empty']);
+    expect(sorted(plain('G28\nG1 X10 Y10'))).toEqual(['start:bed', 'start:nozzle']);
+    // an OrcaSlicer or PrusaSlicer start code uses [names] and {if}: none of it is filled in here
+    const orca = plain('M140 S[first_layer_bed_temperature]\nM104 S[first_layer_temperature]\nG28\n{if is_extruder_used[0]}M109 S0{endif}');
+    expect(orca).toHaveLength(1);
+    expect(orca[0]).toMatchObject({ id: 'start:names', stop: true });
+    expect(orca[0].text).toMatch(/\[first_layer_bed_temperature\].*\{if is_extruder_used\[0\]\}/);
+    // a macro takes the temperatures itself: no "never heats", and no homing needed
+    expect(plain('START_PRINT BED_TEMP={bed_temp} EXTRUDER_TEMP={temp}', undefined, K1)).toEqual([]);
+    // ...but a Klipper macro on a Marlin printer, and Bambu's own commands anywhere else, are wrong
+    expect(ids(plain('START_PRINT BED_TEMP={bed_temp} EXTRUDER_TEMP={temp}', undefined, MK3))).toEqual(['start:klipper']);
+    expect(plain(`${PLAIN}\nM620 S0A\nM1002 gcode_claim_action : 2`).find((f) => f.id === 'start:bambu')).toMatchObject({ stop: true });
+  });
+
+  it("asks about code that names another printer in its comments and never this one", () => {
+    expect(ids(plain(`; Prusa MK4 start code\n${PLAIN}`, undefined, MK3))).toEqual(['start:model']);
+    expect(ids(plain(`; from an Ender-3 profile\n${PLAIN}`, undefined, MK3))).toEqual(['start:model']);
+    expect(ids(plain(`; for the Bambu Lab A1\n${PLAIN}`, undefined, MK3))).toEqual(['start:model']);
+    expect(plain(`; Prusa MK3S+ and Prusa MK4\n${PLAIN}`, undefined, MK3)).toEqual([]);
+    expect(plain(`; Ender-3 V3 SE start\n${PLAIN}`, undefined, ENDER)).toEqual([]);
+  });
+
+  it('is used once it passes, or the notes are accepted, and never when something stops it', () => {
+    const ps = (over: Partial<PrinterSettings>): PrinterSettings => ({ ...MK3, ...over });
+    expect(usablePlain(ps({}), 'PETG')).toEqual({ found: [] }); // nothing typed in: the profile's code
+    expect(usablePlain(ps({ gcodeStart: PLAIN, gcodeEnd: PEND }), 'PETG')).toEqual({ found: [] });
+    const off = ps({ gcodeStart: `${PLAIN}\nG1 X-12 Y100` });
+    expect(usablePlain(off, 'PETG').why).toMatch(/moves the nozzle off the bed/);
+    expect(usablePlain({ ...off, gcodeOk: ['start:past'] }, 'PETG').why).toBeUndefined();
+    const bad = ps({ gcodeStart: `${PLAIN}\nG1 X400 Y400`, gcodeOk: ['start:reach', 'start:past'] });
+    expect(usablePlain(bad, 'PETG').why).toMatch(/bigger printer's code/);
+  });
+
+  it("finds nothing to say about the code each printer's own profile starts from, so changing one line of it raises no alarm", () => {
+    const profiles = JSON.parse(readFileSync('public/kiri/profiles.json', 'utf8'));
+    const seen: string[] = [];
+    for (const pr of PRINTERS_DB) {
+      const ps = settings(pr.name), plan = machinePlan(pr, pr.name);
+      if (plan.fit === 'none') continue;
+      const d = defaultCode(plan, plan.kiri ? profiles[plan.kiri] : null, ps);
+      for (const mat of ['PLA', 'PETG'] as const) {
+        const f = checkPlainCode(ps, mat, d);
+        if (f.length) seen.push(`${pr.name} ${mat}: ${ids(f)}`);
+      }
+    }
+    expect(seen).toEqual([]);
   });
 });

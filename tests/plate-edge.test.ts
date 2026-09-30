@@ -1,7 +1,8 @@
 // Plates and the brim: every part's brim (its outline grown by what Kiri:Moto draws round it) has to stay on the bed,
 // inside the margin packPlates keeps round the edge. Pure geometry, no kernel: parts are boxes.
 import { describe, it, expect } from 'vitest';
-import { BRIM_OUT, EDGE, EDGE_CLEAR, SKIRT_OUT, fitsBed, packPlates, placedMesh } from '../src/cad/export';
+import { BRIM_OUT, EDGE, EDGE_CLEAR, MIN_SPACING, SKIRT_OUT, fitsBed, packPlates, placedMesh } from '../src/cad/export';
+import { PRINTERS } from '../src/model/library';
 import { kiriProcess, roundRoom } from '../src/slice/profiles';
 import { printerByName } from '../src/model/printers';
 import type { MeshData, PartOut, V2 } from '../src/model/types';
@@ -95,5 +96,35 @@ describe('a plate keeps its brim on the bed', () => {
         }
       }
     }
+  });
+});
+
+describe('the room between parts for two brims', () => {
+  it('is never less than two brims, and the printers start with at least that', () => {
+    expect(MIN_SPACING).toBeGreaterThanOrEqual(2 * BRIM_OUT + EDGE_CLEAR - 1e-9);
+    for (const pr of PRINTERS) expect(pr.spacing, pr.name).toBeGreaterThanOrEqual(MIN_SPACING);
+  });
+
+  it('keeps every part two brims from its neighbours whatever spacing is asked for (older projects hold 6, the box allowed 2)', () => {
+    let s = 11;
+    const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
+    const parts = Array.from({ length: 30 }, (_, i) => part(`p${i}`, 6 + Math.round(rnd() * 50), 6 + Math.round(rnd() * 50), 1 + Math.floor(rnd() * 3)));
+    let pairs = 0;
+    for (const spacing of [0, 2, 6, MIN_SPACING, 12]) {
+      const plates = packPlates(parts, [256, 256], spacing);
+      // the same plates as with the least allowed, when less is asked for
+      if (spacing <= MIN_SPACING) expect(plates.map((pl) => pl.items.map((it) => [it.part.id, it.x, it.y, it.rot90])), `spacing ${spacing}`).toEqual(packPlates(parts, [256, 256], MIN_SPACING).map((pl) => pl.items.map((it) => [it.part.id, it.x, it.y, it.rot90])));
+      for (const pl of plates) {
+        const boxes = pl.items.map((it) => bbox(placedMesh(it, [256, 256], pl.used)));
+        for (let a = 0; a < boxes.length; a++) for (let b = a + 1; b < boxes.length; b++) {
+          const A = boxes[a], B = boxes[b];
+          // the gap between two boxes: along whichever axis they are apart on
+          const gap = Math.max(B.x0 - A.x1, A.x0 - B.x1, B.y0 - A.y1, A.y0 - B.y1);
+          expect(gap, `spacing ${spacing}, parts ${a} and ${b}`).toBeGreaterThanOrEqual(2 * BRIM_OUT - 1e-6);
+          pairs++;
+        }
+      }
+    }
+    expect(pairs).toBeGreaterThan(500);
   });
 });

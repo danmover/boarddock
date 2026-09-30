@@ -6,7 +6,10 @@ import { boardLights, boxLight, LED_COLOUR } from '../model/lights';
 import { bbox, compRect, extentAlong, inside, rad } from '../geom/poly';
 import { textStrokes, textWidth } from './font';
 import { headerPins } from '../model/probes';
-import { kkPitch, nameCircuits, SOCKET_NAME, wtbPitch } from '../model/library';
+import { kkPitch, nameCircuits, wtbPitch } from '../model/library';
+import { isSocket } from '../model/links';
+import { contribLook } from '../model/contributed';
+import { drawLook } from './lookdraw';
 import { boardCopper } from '../model/copper';
 import { box, circle2, cyl, ext, poly, toMesh, unionCS, unionMF, type MF } from './kernel';
 import { K } from './kernel';
@@ -242,7 +245,7 @@ function partDetail(bin: Bin, c: Comp, zt: number, zb: number) {
     return;
   }
   if (c.kind === 'header' || type === 'header' || ((!type || type === 'custom') && /pin.?header|pin.?socket|conn_\d+x\d+|idc/i.test(name))) {
-    const socket = SOCKET_NAME.test(name);
+    const socket = isSocket(c);
     const baseH = socket ? h : Math.min(2.5, h);
     const nx = Math.max(1, Math.round(w / 2.54)), ny = Math.max(1, Math.round(l / 2.54));
     if (socket && nx * ny <= 120 && h > 2) {
@@ -346,6 +349,9 @@ function partDetail(bin: Bin, c: Comp, zt: number, zb: number) {
     for (const sx of [-1, 1]) bin.add('gold', tf(cylY(sx * 3.6 * s, zc, 1.9 * s, hy - depth, hy - 1).subtract(cylY(sx * 3.6 * s, zc, 1.35 * s, hy - depth + 1, hy)), T));
     return;
   }
+  // a contributed connector with a look of its own (parts/type-*.json): drawn from that (a part plugged from above in its own frame, w along x)
+  const own = contribLook(type);
+  if (own) { if (own.entry === 'top') drawLook(bin, frameOf(c, z0, below), c.w, c.l, h, own.look); else drawLook(bin, T, w, l, h, own.look); return; }
   if (c.conn?.entry === 'edge' || c.kind === 'connector') {
     const metalShell = /usb|hdmi|microsd|sma|rj45|^(dp|sd)$/.test(type) || /usb|hdmi|sd/i.test(name);
     if ((type === 'sma' || type === 'xlr' || type === 'm12' || type === 'minidin') && Math.min(w, h) > 3 && l > 4) {
@@ -1051,10 +1057,12 @@ function plugAt(T: number[], p: PlugSize, tag: PickTag, anim: Anim, type: string
       push('black', loft(T, rect(x1 - 1.8, x1, W + 0.8, H - 1.4, 0.4)));
       push('black', loft(T, rect(0.5, x1 - 3, Math.min(4.5, W * 0.3), 1.4, 0.3, H / 2 + 0.6)));
       return bin.ghosts('plug', tag, anim, {}, true);
-    case 'dupont':
-      // a single jumper housing pushed over one pin (its wire is drawn with the cable)
+    case 'dupont': case 'dupont_m':
+      // a single jumper housing pushed over one pin (its wire is drawn with the cable); the male one has its own pin
+      // sticking out of the front, for a pin socket
       push('black', loft(T, rect(x0, x1 - 1.2, W, H, 0.25)));
       push('black', loft(T, [{ x: x1 - 1.2, w: W, h: H, r: 0.25 }, { x: x1, w: W * 0.72, h: H * 0.72, r: 0.6 }]));
+      if (type === 'dupont_m') push('gold', loft(T, rect(-6, x0 + 0.2, 0.64, 0.64, 0.05)));
       return bin.ghosts('plug', tag, anim, {}, true);
     case 'tagconnect':
       // the spring-pin head held on the pads, then its ribbon
@@ -1086,12 +1094,14 @@ function plugAt(T: number[], p: PlugSize, tag: PickTag, anim: Anim, type: string
  * away, then a dotted line on the way it goes and where to: nothing to route, so no cable hangs about in the air.
  * `clear`: how far out of the plug nothing is in the way.
  */
-export function leadStub(name: string, p: number[], d: number[], cable: number, label: string, tag: PickTag, anim: Anim, clear = Infinity): Ghost {
+/** What runs along a lead that leaves the rack, for its pulses: into the plug (a supply, the mains, your computer), in this glow colour. */
+export interface StubFlow { colour: string; on: boolean; slow: boolean }
+export function leadStub(name: string, p: number[], d: number[], cable: number, label: string, tag: PickTag, anim: Anim, clear = Infinity, flow?: StubFlow): Ghost {
   // (no longer than the way out of the plug is clear, and never under 6 mm, so a plug always shows its lead)
   const r = Math.max(1.1, cable / 2), len = Math.max(6, Math.min(clear, Math.max(30, 10 + 10 * r)));
   return {
     name, mesh: tubeMesh([p, [p[0] + d[0] * len, p[1] + d[1] * len, p[2] + d[2] * len]], r, 16), color: '#2b2e33', opacity: 1, tag, anim, mat: 'cable', smooth: true,
-    fx: { fade: { p, d, len, dash: 34, label, colour: '#8b95a3' } },
+    fx: { fade: { p, d, len, dash: 34, label, colour: '#8b95a3' }, ...(flow ? { flow: { pts: [[p[0] + d[0] * len, p[1] + d[1] * len, p[2] + d[2] * len], p], r: r * 1.4, ...flow } } : {}) },
   };
 }
 

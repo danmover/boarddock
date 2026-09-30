@@ -8,6 +8,10 @@ didn't fit, your printer, nozzle, layer height and filament.
 Open an issue with the file (or a zip of the fab outputs), the EDA tool and version, and a screenshot of
 what BoardDock shows. If the design is private, a DXF of just the outline plus a list of connectors helps.
 
+## Adding a board to the library
+
+Drop its files and a small `board.json` into `boards/<slug>/` and open a pull request; `boards/README.md` says what to upload and how `npm run boards` turns it into a board the app offers.
+
 ## Code
 
 ```bash

@@ -3,9 +3,9 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { zipSync, strToU8 } from 'fflate';
 import type { Board, Comp, Hole, HoleRole, Module, PartOut, Project, V2 } from '../model/types';
 import { applyHoleRoles, boltedOn, detectHoleRoles, ROLE_INFO, stackHardware } from '../model/holes';
-import { allPlugs, baseRef, canCable, connectNote, findModule, offRackModule, powerShort, refText, cableNumbers, cablePurpose, shortName, strongerPower, KIND_COLOR, linkKind, linkOf, plugName, plugRole, plugsOf, portBudget, sameRef } from '../model/links';
+import { allPlugs, baseRef, canCable, connectNote, findModule, offRackModule, powerShort, refText, cableNumbers, cablePurpose, shortName, strongerPower, times, hubOffer, KIND_COLOR, linkKind, linkOf, plugName, plugRole, plugsOf, portBudget, sameRef } from '../model/links';
 import { cableLines } from '../model/cablelist';
-import { addAccessory, addJLinks, addLinks, addSerialAdapters, addUartCables, plugPlaces, rebalancePower, removeLinks, setLink } from './linkOps';
+import { addAccessory, addDebugGearFor, addJLinks, addLinks, addSerialAdapters, addUartCables, plugPlaces, rebalancePower, removeLinks, setLink } from './linkOps';
 import { adapterFor, debugHeaders, isDebugPort, isProbe, isUartPort, markDebug, ribbonOf, uartHeaders, uartPins, type DebugKind } from '../model/probes';
 import { Icon, I } from './icons';
 import { CONNECTORS, DEFAULT_FEATURES, HOLDER_PRESETS, MATERIALS, PRINTERS, connById, connSetup, setLayout } from '../model/library';
@@ -19,28 +19,37 @@ import { bbox, compRect, roundedRectLoop, round, uid } from '../geom/poly';
 import { activeModule, closeProject, dropModule, edit, editMod, isSel, rememberPrinter, select, setActive, store, toast, useApp, type SelItem, type Step } from '../state';
 import { kindName, rackCount, rackName, sameKind } from '../model/diff';
 import { Check, Chip, Num, Pick, Section, Seg, Text, download, safeName } from './controls';
-import { BRIM_OUT, EDGE_CLEAR, estimate, fitsBed, packPlates, placedMesh, write3mf, writeStl } from '../cad/export';
+import { BRIM_OUT, EDGE_CLEAR, MIN_SPACING, estimate, fitsBed, packPlates, placedMesh, write3mf, writeStl } from '../cad/export';
 import { buildTestKit, runClipFea } from '../worker/client';
 import type { ClipFeaResult } from '../fea/clipfea';
 import { clipDims } from '../cad/dinclip';
 import { RackBuilder } from './RackBuilder';
-import { duplicateModule, markBuilt, unmarkBuilt } from './panelOps';
+import { DebugPanel } from './DebugPanel';
+import { dockShorterAll, duplicateModule, leverFix, markBuilt, unmarkBuilt } from './panelOps';
 import { removeItems } from './pickOps';
 import { delta, partsFor, strapBoxes, type Delta } from '../model/built';
 import { baseOf as stackBase, ridersOf } from '../model/holes';
 import { DockFeaSection } from './DockFea';
 import { mainsBudget, mainsText, powerBudget, powerText } from '../model/power';
+import { netSpread } from '../model/netlength';
+import { poeBudget, poeText, takesPoe, canFitPoe, poeHats } from '../model/poe';
+import { copyHolder } from '../model/copyto';
+import { CopyTo } from './CopyTo';
+import { ChecklistButton } from './Checklist';
 import { saveBoard } from '../model/myboards';
-import { ackNote, summarizeChecks } from '../model/checkSummary';
+import { ackNote, collapseChecks, summarizeChecks, verdictOf, type CheckRow } from '../model/checkSummary';
 import { boardSig, tileUrl, useKeptPicture } from './pics';
 import { CompPic } from './Toolbox';
 import { BoxEditor } from './BoxEditor';
+import { RotateBox } from './RotateBox';
+import { turnParts } from './rotateOps';
 import { BoardCheck } from './BoardCheck';
 import { needOf } from '../model/powerdata';
 import { picture } from './snapshot';
 import { boardPicture, holderPicture, type PicPart } from '../worker/client';
-import { GcodeSection } from './GcodeSection';
+import { GcodeSection, useGcode } from './GcodeSection';
 import { PrintCheckSection } from './PrintCheck';
+import { say } from './touch';
 
 // ============================================================================================ IMPORT
 export function ImportPanel() {
@@ -194,8 +203,7 @@ function CopyHolder() {
   const copy = (ids: string[], what: string) => {
     edit((q) => {
       for (const m of q.modules) if (ids.includes(m.id) && m.id !== me.id) {
-        Object.assign(m.holder, structuredClone({ style: H.style, wall: H.wall, base: H.base, gap: H.gap, pattern: H.pattern, cell: H.cell, rib: H.rib, wallAbove: H.wallAbove, chamfer: H.chamfer, material: H.material, feat: H.feat, tabs: H.tabs, tabLip: H.tabLip, hold: H.hold, grip: H.grip, notches: H.notches, release: H.release }));
-        if (H.color) m.holder.color = H.color; else delete m.holder.color;
+        copyHolder(H, m.holder);
       }
     });
     toast(`Copied the holder of ${me.board.name} to ${what}: style, sizes, features, material and colour. ⌘Z undoes it.`);
@@ -205,6 +213,7 @@ function CopyHolder() {
       <span>Copy these settings to</span>
       {kin.length > 1 && kin.length < p.modules.length && <button className="btn small ghost" onClick={() => copy(kin.map((m) => m.id), `the other ${kin.length - 1} ${kindName(p, me.board.name)}${kin.length > 2 ? 's' : ''}`)}><Icon d={I.copy} /> every {shortName(kindName(p, me.board.name))} ({kin.length})</button>}
       <button className="btn small ghost" onClick={() => copy(p.modules.map((m) => m.id), `all ${p.modules.length - 1} other boards`)}><Icon d={I.copy} /> every board ({p.modules.length})</button>
+      <CopyTo start={{ plugs: false, marks: false }} />
     </div>
   );
 }
@@ -452,7 +461,7 @@ function DebugProbes() {
   const m = activeModule(p);
   const heads = debugHeaders(m.board), uarts = uartHeaders(m.board);
   if (!heads.length && !uarts.length) return null;
-  const other = (c: Comp) => { const l = linkOf(p, { module: m.id, ref: c.ref }); const o = l && (l.a.module === m.id ? l.b : l.a); return o ? { m: p.modules.find((x) => x.id === o.module), ref: o.ref, link: l.id } : null; };
+  const other = (c: Comp) => { const l = linkOf(p, { module: m.id, ref: c.ref }); const o = l && (l.a.module === m.id ? l.b : l.a); return o ? { m: findModule(p, o.module), ref: o.ref, link: l.id } : null; };
   const freeDbg = heads.filter((c) => !other(c)), freeUart = uarts.filter((c) => !other(c));
   const kindOf = (x: Module) => x.board.name.replace(/\s*\(.*\)$/, '');
   const row = (c: Comp, chip: ReactNode, extra?: ReactNode) => (
@@ -483,6 +492,7 @@ function DebugProbes() {
       {uarts.map((c) => <UartPins key={c.id} c={c} many={uarts.length > 1} />)}
       {(freeDbg.length > 1 || freeUart.length > 0) && (
         <div className="btns" style={{ marginTop: 8, flexWrap: 'wrap' }}>
+          {freeDbg.length > 0 && freeUart.length > 0 && <button className="btn small soft" onClick={() => addDebugGearFor([m.id])} title="A J-Link on each debug header and an adapter on each UART header, with their USB cables: one undo step (Plugs › Debug and serial does it for every board)">Add {freeDbg.length} J-Link{freeDbg.length > 1 ? 's' : ''} + {freeUart.length} adapter{freeUart.length > 1 ? 's' : ''}</button>}
           {freeDbg.length > 1 && <button className="btn small soft" onClick={() => addJLinks(m.id)}>Add {freeDbg.length} J-Links</button>}
           {freeUart.length > 1 && <button className="btn small soft" onClick={() => addSerialAdapters(m.id)} title="The FT232RL board: jumper wires from its pins to the header">Add {freeUart.length} USB-serial adapters</button>}
           {freeUart.length > 0 && <button className="btn small ghost" onClick={() => addUartCables(m.id)} title="A USB to TTL cable with loose jumper ends, straight to a hub">or {freeUart.length > 1 ? 'serial cables' : 'a serial cable'}</button>}
@@ -563,11 +573,11 @@ export function Inspector() {
           {!one && <div style={{ marginBottom: 8 }}><Seg value={common(comps, (c) => c.side) ?? ('' as Comp['side'])} options={[['top', 'On top'], ['bottom', 'Underneath']]} onChange={(v) => setC((x) => { x.side = v; })} /></div>}
           <div className="row3" style={{ marginTop: 8 }}>
             {one && <><Num label="X" value={comps[0].x} onChange={(v) => setC((x) => { x.x = v; })} /><Num label="Y" value={comps[0].y} onChange={(v) => setC((x) => { x.y = v; })} /></>}
-            <Num label="Rotation" unit="°" step={90} value={mixed(common(comps, (c) => c.rot))} onChange={(v) => setC((x) => { x.rot = v; })} />
             <Num label="Width" value={mixed(common(comps, (c) => c.w))} min={0.2} onChange={(v) => setC((x) => { x.w = v; })} />
             <Num label="Length" value={mixed(common(comps, (c) => c.l))} min={0.2} onChange={(v) => setC((x) => { x.l = v; })} />
             <Num label="Height" value={mixed(common(comps, (c) => c.h))} min={0} onChange={(v) => setC((x) => { x.h = v; })} />
           </div>
+          <div style={{ marginTop: 8 }}><RotateBox value={common(comps, (c) => c.rot) ?? null} onTurn={(by) => turnParts(comps.map((c) => c.id), by)} /></div>
           <div className="row" style={{ marginTop: 8 }}>
             <Pick label="Kind" value={common(comps, (c) => c.kind) ?? ('' as Comp['kind'])} options={[['' as Comp['kind'], '— mixed —'], ['generic', 'Part'], ['connector', 'Connector'], ['header', 'Header'], ['switch', 'Button/switch'], ['led', 'LED'], ['module', 'Module'], ['hot', 'Hot part'], ['antenna', 'Antenna/RF']]} onChange={(v) => v && setC((x) => { x.kind = v; })} />
             <div className="field"><span>&nbsp;</span><Check label="Through-hole leads" value={common(comps, (c) => c.tht) ?? false} onChange={(v) => setC((x) => { x.tht = v; })} /></div>
@@ -616,11 +626,13 @@ export function PlugsPanel() {
               </SelRow>
             );
           })}
-          {!conns.length && <p className="hint">No connectors found. Add them in the board editor (Connector tool, click an edge), or select a part and choose "Treat as connector".</p>}
+          {!conns.length && <p className="hint">{say('No connectors found. Add them in the board editor (Connector tool, click an edge), or select a part and choose "Treat as connector".')}</p>}
         </div>
         <p className="hint" style={{ marginTop: 8 }}>Tap a port's <i>empty</i> or <i>cable</i> tag to say whether you'll plug something into it yourself.</p>
       </Section>
       {chosen.length > 0 && <ConnEditor list={chosen} />}
+      <DebugPanel />
+      {p.modules.length > 1 && <div className="copyholder"><span>Copy this board's plug settings to</span><CopyTo start={{ holder: false }} /></div>}
       <CablesSection />
     </div>
   );
@@ -629,7 +641,7 @@ export function PlugsPanel() {
 
 /** Every cable in the project: what goes where, how long, what to buy. */
 const NO_CABLES: NonNullable<NonNullable<ReturnType<typeof store.get>['result']>['report']['cables']> = [];
-function CablesSection() {
+export function CablesSection() {
   const p = useApp((s) => s.project)!;
   // no `?? []` inside the selector: a new array on every read makes the store re-render forever before the first build
   const cables = useApp((s) => s.result?.report.cables) ?? NO_CABLES;
@@ -639,6 +651,7 @@ function CablesSection() {
   const nos = cableNumbers(links);
   // the same list as the shopping list: ribbons come with their probe, jumper wires by the wire
   const buy = cableLines(p, cables);
+  const spread = netSpread(cables);
   const budget = portBudget(p);
   return (
     <Section title={`Cables · ${links.length}`} right={<span className="btns">
@@ -655,7 +668,7 @@ function CablesSection() {
               return (
                 <div key={l.id} className={`item ${isSel(sel, l.id) ? 'sel' : ''}`} onClick={() => select([{ kind: 'link', id: l.id }])}>
                   <span className="cno" style={{ background: KIND_COLOR[l.kind ?? 'usb'] }}>{nos.get(l.id)}</span>
-                  <span className="grow"><b>{nm(l.a)}</b> <small>to</small> <b>{nm(l.b)}</b><small className="cpurpose">{cablePurpose(p, l).text}</small></span>
+                  <span className="grow"><b>{nm(l.a)}</b> <small>to</small> <b>{nm(l.b)}</b><small className="cpurpose">{cablePurpose(p, l).text}</small>{l.auto && l.why && <small className="cpurpose cwhy">{l.why}</small>}</span>
                   {c ? <span className="chip">{Math.round(c.length / 10)} cm</span> : <span className="chip">{[l.a, l.b].some((r) => offRackModule(findModule(p, r.module))) ? 'off the rack' : 'not on the rails'}</span>}
                   <button className="btn small ghost icon" title="Remove the cable" onClick={(e) => { e.stopPropagation(); removeLinks([l.id]); }}><Icon d={I.x} /></button>
                 </div>
@@ -667,6 +680,7 @@ function CablesSection() {
           <ul className="fmt" style={{ marginTop: 4 }}>{buy.buy.map((k) => <li key={k}>{k}</li>)}{!buy.buy.length && <li>nothing: {cables.length ? 'every cable comes with its part' : 'the cables are sized once the rack is laid out'}</li>}</ul>
           {buy.comes.length > 0 && <p className="hint" style={{ margin: '4px 0 0' }}>Not to buy: {buy.comes.join('; ')}.</p>}
           {p.layout === 'panel' && <Check label="Print a numbered tag for each end of every cable" value={p.panel.cableTags !== false} onChange={(v) => edit((q) => { q.panel.cableTags = v; })} />}
+          {(spread?.n ?? 0) > 1 && spread!.short !== spread!.long && <Check label={`Buy every Ethernet lead at one length (${spread!.long} m, the longest route, rounded up: now ${spread!.short} to ${spread!.long} m)`} value={!!p.oneNetLength} onChange={(v) => edit((q) => { if (v) q.oneNetLength = true; else delete q.oneNetLength; })} />}
         </>
       )}
     </Section>
@@ -727,14 +741,16 @@ function PowerDraw() {
   const mine = plugsOf(p).filter((x) => x.module === m);
   const n = needOf(b, mine.some((x) => x.role === 'power-in'));
   // only boards that take power from a port (a power input, or USB as a device) are in the budget
-  if (b.draw == null && !mine.some((x) => x.role === 'power-in' || x.role === 'device')) return null;
+  const budgeted = b.draw != null || mine.some((x) => x.role === 'power-in' || x.role === 'device');
+  if (!budgeted && !canFitPoe(b)) return null;
   return (
     <>
-      <div className="row" style={{ marginTop: 8, alignItems: 'end' }}>
+      {canFitPoe(b) && <Check label="PoE HAT fitted (powered over its Ethernet)" value={takesPoe(b)} onChange={(v) => editMod((q) => { if (v) q.board.poe = true; else delete q.board.poe; })} hint="On a PoE port of a switch it needs no supply of its own, and Auto-connect leaves its USB-C alone. The HAT goes on the shopping list." />}
+      {budgeted && <div className="row" style={{ marginTop: 8, alignItems: 'end' }}>
         <Num label={`Power${b.draw == null ? ' (estimate)' : ''}`} unit="A at 5 V" value={b.draw ?? n.load} min={0} max={10} step={0.1} onChange={(v) => editMod((q) => { q.board.draw = v; })} hint={n.why} />
         {b.draw != null && <button className="btn small ghost" onClick={() => editMod((q) => { delete q.board.draw; })}>Back to the estimate</button>}
-      </div>
-      {b.draw == null && <p className="hint" style={{ margin: '4px 0 0' }}>{n.why}. Used for the power budget under Plugs › Cables.</p>}
+      </div>}
+      {budgeted && b.draw == null && <p className="hint" style={{ margin: '4px 0 0' }}>{n.why}. Used for the power budget under Plugs › Cables.</p>}
     </>
   );
 }
@@ -747,9 +763,10 @@ function PowerBudget() {
   const p = useApp((s) => s.project)!;
   const srcs = useMemo(() => powerBudget(p), [p.links, p.modules]);
   const mains = useMemo(() => mainsBudget(p), [p.links, p.modules]);
+  const poe = useMemo(() => poeBudget(p), [p.links, p.modules]);
   const stronger = useMemo(() => strongerPower(p, plugPlaces()), [p.links, p.modules]);
   const [open, setOpen] = useState<string | null>(null);
-  if (!srcs.length && !mains.length) return null;
+  if (!srcs.length && !mains.length && !poe.length) return null;
   const bad = srcs.filter((s) => s.status !== 'ok').length;
   return (
     <div className="powerlist">
@@ -764,6 +781,17 @@ function PowerBudget() {
             {s.limited.length > 0 && <small className="pw-note">{s.limited.map((q) => shortName(q.take)).join(', ')}: {s.limited[0].cap} A of the {s.limited[0].peak} A {s.limited.length > 1 ? 'they want' : 'it wants'}, so {s.limited.length > 1 ? 'their' : 'its'} USB ports are held back</small>}
             <div className="pw-bar"><i style={{ width: `${f * 100}%` }} /></div>
             {open === s.module.id && <p className="hint" style={{ margin: '6px 0 0' }}>{t.detail}</p>}
+          </div>
+        );
+      })}
+      {poe.map((s) => {
+        const t = poeText(s), f = Math.min(1, s.load / Math.max(0.01, s.total)), k = `poe-${s.module.id}`;
+        return (
+          <div key={k} className={`pw ${s.status}`} onClick={() => setOpen(open === k ? null : k)} title="Click for the details">
+            <div className="pw-row"><b title={s.module.board.name}>{shortName(s.module.board.name)}</b><small>PoE</small><span className="grow" /><span className="mono">{Math.round(s.load)} / {Math.round(s.total)} W</span></div>
+            {s.over.length > 0 && <small className="pw-note">{s.over.map((q) => shortName(q.name)).join(', ')} want more than one PoE port gives</small>}
+            <div className="pw-bar"><i style={{ width: `${f * 100}%` }} /></div>
+            {open === k && <p className="hint" style={{ margin: '6px 0 0' }}>{t.detail}</p>}
           </div>
         );
       })}
@@ -789,13 +817,13 @@ function PortBudget({ budget }: { budget: ReturnType<typeof portBudget> }) {
   const p = useApp((s) => s.project)!;
   const { devices, usbPorts, powerIns, powerOuts, weak, unwired } = budget;
   const short = useMemo(() => powerShort(p), [p.links, p.modules]);
-  const wires = unwired.length > 0 && <p className="hint">Not wired yet: {unwired.map((u) => `${u.name} (${u.refs.join(', ')})`).join('; ')}. Auto-connect leaves wires and jumper headers to you: connect them in the Wiring view or with “Cable to” on the connector.</p>;
+  const wires = unwired.length > 0 && <p className="hint">Not wired yet: {unwired.map((u) => `${times(u.name, u.count)} (${u.refs.join(', ')})`).join('; ')}. Auto-connect leaves wires and jumper headers to you: connect them in the Wiring view or with “Cable to” on the connector.</p>;
   if (!devices.length && !powerIns.length && !weak.length) return <><p className="hint">{usbPorts.length ? `${usbPorts.length} USB port${usbPorts.length > 1 ? 's' : ''} still free` : 'No USB ports left over'}{powerOuts.length ? `, ${powerOuts.length} charger port${powerOuts.length > 1 ? 's' : ''} free` : ''}.</p>{wires}</>;
   const named = (id: string) => (TEMPLATES.find((t) => t.id === id)?.name ?? id).replace(/ \(.*$/, '');
   const them = devices.length > 1 ? 'them' : 'it';
   return (
     <div className="warns" style={{ marginTop: 8 }}>
-      {devices.length > 0 && <div>{devices.length} USB plug{devices.length > 1 ? 's' : ''} waiting for a port ({devices.map((d) => `${d.module.board.name} ${d.comp.ref}`).join(', ')}); {usbPorts.length} free on the rack.{devices.length > usbPorts.length && <> Plug {them} into your computer (Auto-connect does it), or <button className="btn small" style={{ marginLeft: 4 }} onClick={() => addAccessory(devices.length - usbPorts.length > 3 ? 'usb_hub7' : 'usb_hub')}>Add a USB hub</button></>}</div>}
+      {devices.length > 0 && <div>{devices.length} USB plug{devices.length > 1 ? 's' : ''} waiting for a port ({devices.map((d) => `${d.module.board.name} ${d.comp.ref}`).join(', ')}); {usbPorts.length} free on the rack.{devices.length > usbPorts.length && <> Plug {them} into your computer (Auto-connect does it), or <button className="btn small" style={{ marginLeft: 4 }} onClick={() => addAccessory(hubOffer(devices.length - usbPorts.length).id, hubOffer(devices.length - usbPorts.length).count)} title={`${devices.length - usbPorts.length} plugs have no port: ${hubOffer(devices.length - usbPorts.length).count * hubOffer(devices.length - usbPorts.length).ports} hub ports cover them. Each hub's uplink goes to a free port of the rack, or to your computer.`}>Add {hubOffer(devices.length - usbPorts.length).count > 1 ? `${hubOffer(devices.length - usbPorts.length).count} USB hubs` : 'a USB hub'}</button></>}</div>}
       {wires}
       {(powerIns.length > 0 || weak.length > 0) && <div>
         {powerIns.length > 0 && `${powerIns.length} board${powerIns.length > 1 ? 's need' : ' needs'} power (${powerIns.map((d) => d.module.board.name).join(', ')})`}{powerIns.length > 0 && weak.length > 0 && '; '}
@@ -1088,7 +1116,7 @@ export function CheckPanel() {
   const groups = useMemo(() => {
     const g = new Map<string, NonNullable<typeof res>['report']['checks']>();
     for (const c of res?.report.checks ?? []) {
-      if (c.status === 'bad' || (only !== 'all' && c.status !== only)) continue;
+      if (c.status === 'bad' || c.status === 'warn' || (only !== 'all' && c.status !== only)) continue; // (the ones to look at have their own list)
       (g.get(c.group) ?? g.set(c.group, []).get(c.group)!).push(c);
     }
     return [...g.entries()];
@@ -1099,6 +1127,21 @@ export function CheckPanel() {
     </button>
   );
   const show = (module?: string) => { if (!module) return; select([{ kind: 'module', id: module }]); store.set({ view: 'assembly' }); };
+  // the ones to look at: repeated lines as one row with a count, each with its verdict and the fix when there is one
+  const looks = useMemo(() => collapseChecks(sum.look), [sum]);
+  const pr = res?.report.panel;
+  const fixOf = (r: CheckRow): { label: string; title: string; run: () => void } | null => {
+    if (/^Tongue root/.test(r.c.name) && pr && p.layout === 'panel') {
+      const fx = r.modules.flatMap((id) => { const f = leverFix(p, pr, id, 0.4); return f ? [f] : []; });
+      if (!fx.length) return null;
+      const one = fx.length === 1 ? fx[0].fix : null;
+      return { label: one ? (one.lie ? `Lay it flat by its ${one.edge} edge` : `Dock it by its ${one.edge} edge`) : `Dock ${fx.length} another way`, title: 'A shorter lever onto the tongue, with no plug pointing into the table (docks along the rail slide on to make room)', run: () => dockShorterAll(fx) };
+    }
+    if (r.c.name === 'Material') return { label: 'Print in PETG', title: 'Every PLA holder becomes PETG', run: () => edit((q) => { for (const m of q.modules) if (m.holder.material === 'PLA') m.holder.material = 'PETG'; }) };
+    if (r.c.name === 'DC inputs with no supply') return { label: 'Add a 12 V plug pack', title: "Check your board's label for its voltage first", run: () => addAccessory('dc_pack_12v') };
+    return null;
+  };
+  const boardsOf = (r: CheckRow) => { const ns = r.modules.map((id) => p.modules.find((m) => m.id === id)?.board.name).filter(Boolean) as string[]; return ns.length > 3 ? `${ns.slice(0, 3).join(', ')} and ${ns.length - 3} more` : ns.join(', '); };
   const mat = MATERIALS[activeModule(p).holder.material];
   const run = async () => {
     setFeaErr(null);
@@ -1126,7 +1169,22 @@ export function CheckPanel() {
           ))}
         </Section>
       )}
-      {only !== 'ok' && sum.warnings.length > 0 && <div className="warns">{sum.warnings.map((w, i) => <div key={i}>{w}</div>)}</div>}
+      {only !== 'ok' && only !== 'bad' && looks.length > 0 && (
+        <Section title="To look at">
+          {looks.map((r, i) => {
+            const v = verdictOf(r.c.name), fix = fixOf(r);
+            return (
+              <div key={i} className="checkrow"><div className="grow">{r.c.name}{r.n > 1 && <> <Chip>× {r.n}</Chip></>}
+                <div className="hint">{r.n > 1 && boardsOf(r) ? `${boardsOf(r)} · worst: ` : ''}{r.c.detail ?? r.c.group}</div>
+                <div className="verdictrow"><Chip status={v === 'OK to print' ? 'ok' : 'warn'}>{v}</Chip>
+                  {fix && <button className="btn small soft" title={fix.title} onClick={fix.run}>{fix.label}</button>}
+                  {r.modules.length === 1 && <button className="btn small ghost" onClick={() => show(r.modules[0])}><Icon d={I.cube} /> Show in 3D</button>}</div></div>
+                <Chip status="warn">{r.c.value}</Chip></div>
+            );
+          })}
+        </Section>
+      )}
+      {only !== 'ok' && sum.warnings.length > 0 && <div className="warns">{sum.warnings.map((w, i) => <div key={i}>{w} <Chip status="warn">{verdictOf(w)}</Chip></div>)}</div>}
       {only === 'bad' && !sum.failing.length && <p className="hint">Nothing is failing.</p>}
       {only !== 'bad' && groups.map(([g, list]) => (
         <Section key={g} title={g}>
@@ -1243,11 +1301,29 @@ export function ExportPanel() {
   const dens = MATERIALS[activeModule(p).holder.material].density;
   const est = useMemo(() => parts.map((x) => ({ part: x, ...estimate(x, dens) })), [parts, dens]);
   const tot = est.reduce((a, e) => ({ g: a.g + e.grams * e.part.qty * copies, m: a.m + e.minutes * e.part.qty * copies }), { g: 0, m: 0 });
-  zipRef.current = null;
-  if (!res) return <div><p className="lede">Building…</p></div>;
   const base = safeName(rackName(p));
   const plateMeshes = (i: number) => plates[i].items.map((it) => placedMesh(it, p.printer.bed, plates[i].used));
-  const zipAll = () => {
+  const brim = tallness(parts, p.printer.maxZ ?? 250).tall.length > 0;
+  // slicing lives here so the buttons below and the G-code section see the same slices
+  const g = useGcode({ plates: plates.length, plateKey: plates, fits: plates.map((pl) => fitsBed(pl, p.printer.bed)), plateMeshes, brim, base });
+  zipRef.current = null;
+  if (!res) return <div><p className="lede">Building…</p></div>;
+  /** The G-code of every plate, sliced here first if it isn't yet (in the background: the page stays usable). */
+  const sliceAll = async () => {
+    if (g.busy) { toast('Slicing is still running: this downloads when it is done.'); return null; }
+    const todo = plates.filter((_, i) => !g.done[i] && g.ok(i)).length;
+    if (todo > 0) toast(`Slicing ${todo} plate${todo > 1 ? 's' : ''} in the background. The download starts when ${todo > 1 ? 'they are' : 'it is'} done: you can keep working.`);
+    const r = await g.sliceAll();
+    if (r.bad.length) toast(`${r.bad.length > 1 ? 'Plates' : 'Plate'} ${r.bad.map((b) => b.i + 1).join(', ')} could not be sliced (${r.bad[0].why}).${Object.keys(r.files).length ? ' The rest are in the download.' : ''}`);
+    return r.files;
+  };
+  const gcodeZip = async () => {
+    const files = await sliceAll();
+    if (files && Object.keys(files).length) download(`${base}_gcode.zip`, zipSync(files, { level: 6 }), 'application/zip');
+  };
+  const zipAll = async () => {
+    const gcode = g.canSlice ? await sliceAll() : null;
+    if (g.canSlice && !gcode) return;
     const files: Record<string, Uint8Array> = {};
     plates.forEach((pl, i) => {
       files[`plate_${i + 1}.stl`] = writeStl(plateMeshes(i));
@@ -1256,6 +1332,7 @@ export function ExportPanel() {
     for (const x of parts) files[`parts/${safeName(x.id)}_${safeName(x.name)}.stl`] = writeStl([x.mesh]);
     files[`${base}.boarddock.json`] = strToU8(JSON.stringify(p, null, 1));
     files['BOM.csv'] = strToU8(bomCsv(billOfMaterials(p, res)));
+    for (const [name, bytes] of Object.entries(gcode ?? {})) files[`gcode/${name}`] = bytes;
     const pr = printerByName(p.printer.name), mat = activeModule(p).holder.material;
     const settings = [`Print settings (${pr?.name ?? p.printer.name}, ${mat}${pr ? `, printer preset "${pr.orca}"` : ''}):`, ...printSettings(pr, mat, tallness(parts, p.printer.maxZ ?? 250).tall).map((r) => `  ${r.name}: ${r.value}  (${r.basis}: ${r.why})`)].join('\n');
     files['README.txt'] = strToU8(printNotes(p, res, plates.length, tot, shopping(p, res, onlyNew ? d : null, tot, scope === 'pick' ? pickSet : undefined)).replace('Print: 0.2 mm layers, 3 walls, 15% infill, NO supports. Parts are already in print orientation.', settings));
@@ -1289,13 +1366,31 @@ export function ExportPanel() {
         <div><b>{tot.g.toFixed(0)} g</b><span>{activeModule(p).holder.material}</span></div>
         <div><b>{fmtMin(tot.m)}</b><span>print time, rough</span></div>
       </div>
-      <button className="btn primary" style={{ width: '100%', justifyContent: 'center', marginBottom: 10 }} onClick={() => zipAll()}><Icon d={I.download} /> {scope === 'all' ? 'Download everything' : scope === 'new' ? "Download what's new" : 'Download these'} (.zip)</button>
+      {(() => {
+        const what = scope === 'all' ? 'Download everything' : scope === 'new' ? "Download what's new" : 'Download these';
+        const wait = g.busy ? `Slicing plate ${Math.min(g.queue ? g.queue.k + 1 : (g.prog?.i ?? 0) + 1, plates.length)} of ${plates.length}…` : null;
+        // once the start code is known the main button slices (the STLs, 3MFs and the rest are in the other one)
+        return g.canSlice ? (
+          <div style={{ marginBottom: 10 }}>
+            <button className="btn primary" style={{ width: '100%', justifyContent: 'center' }} disabled={g.busy} onClick={() => gcodeZip()}><Icon d={I.download} /> {wait ?? 'Slice and download all G-code (.zip)'}</button>
+            <button className="btn soft" style={{ width: '100%', justifyContent: 'center', marginTop: 6 }} disabled={g.busy} onClick={() => zipAll()}><Icon d={I.download} /> {what} with the G-code (.zip)</button>
+            <p className="hint" style={{ margin: '6px 0 0' }}>The G-code is sliced here with the start code below, plate by plate, in the background (a plate takes from several seconds to a minute or two).</p>
+          </div>
+        ) : (
+          <button className="btn primary" style={{ width: '100%', justifyContent: 'center', marginBottom: 10 }} onClick={() => zipAll()}><Icon d={I.download} /> {what} (.zip)</button>
+        );
+      })()}
       <Section title="Printer">
-        <Pick label="Printer" value={p.printer.name} options={[...PRINTERS.map((x) => [x.name, x.name] as [string, string]), ['Custom', 'Custom']]} onChange={(v) => setP((x) => { rememberPrinter(v); const pr = PRINTERS.find((q) => q.name === v); delete x.gcodeStart; delete x.gcodeEnd; if (pr) Object.assign(x, { ...pr, spacing: x.spacing }); else x.name = 'Custom'; })} />
+        <Pick label="Printer" value={p.printer.name} options={[...PRINTERS.map((x) => [x.name, x.name] as [string, string]), ['Custom', 'Custom']]} onChange={(v) => {
+          // code loaded from now on says which printer it was for (the check stops it on another); an older project's doesn't, so it goes
+          const unknown = v !== p.printer.name && !!p.printer.bambu && !p.printer.bambu.for;
+          setP((x) => { rememberPrinter(v); const pr = PRINTERS.find((q) => q.name === v); delete x.gcodeStart; delete x.gcodeEnd; delete x.gcodeOk; if (unknown) delete x.bambu; if (pr) Object.assign(x, { ...pr, spacing: x.spacing }); else x.name = 'Custom'; });
+          if (unknown) toast("The printer's own start code kept in this project didn't say which printer it was for, so it was dropped: load it again for this printer.");
+        }} />
         <div className="row3" style={{ marginTop: 8 }}>
           <Num label="Bed X" value={p.printer.bed[0]} min={50} onChange={(v) => setP((x) => { x.bed = [v, x.bed[1]]; x.name = 'Custom'; })} />
           <Num label="Bed Y" value={p.printer.bed[1]} min={50} onChange={(v) => setP((x) => { x.bed = [x.bed[0], v]; x.name = 'Custom'; })} />
-          <Num label="Spacing" value={p.printer.spacing} min={2} max={20} onChange={(v) => setP((x) => { x.spacing = v; })} />
+          <Num label="Spacing" value={Math.max(p.printer.spacing, MIN_SPACING)} min={MIN_SPACING} max={20} hint={`Room between parts: never less than ${MIN_SPACING.toFixed(1)} mm, so neighbouring brims don't run together`} onChange={(v) => setP((x) => { x.spacing = v; })} />
         </div>
         <div className="row" style={{ marginTop: 8 }}>
           <Num label="Build height" value={p.printer.maxZ ?? 250} min={50} max={1000} step={1} onChange={(v) => setP((x) => { x.maxZ = v; x.name = 'Custom'; })} />
@@ -1338,7 +1433,7 @@ export function ExportPanel() {
         <p className="hint">Rough: 3 walls, 5 top/bottom layers, 15% infill, 0.2 mm layers, {activeModule(p).holder.material}. Your slicer's numbers are the real ones.</p>
       </Section>
       <PrintSettings parts={parts} />
-      <GcodeSection plates={plates.length} plateKey={plates} fits={plates.map((pl) => fitsBed(pl, p.printer.bed))} plateMeshes={plateMeshes} brim={tallness(parts, p.printer.maxZ ?? 250).tall.length > 0} plate3mf={(i) => write3mf(plates[i].items.map((it, k) => ({ name: `${it.part.name} ${k + 1}`, mesh: placedMesh(it, p.printer.bed, plates[i].used) })))} base={base} />
+      <GcodeSection g={g} plates={plates.length} plateKey={plates} fits={plates.map((pl) => fitsBed(pl, p.printer.bed))} plateMeshes={plateMeshes} brim={brim} plate3mf={(i) => write3mf(plates[i].items.map((it, k) => ({ name: `${it.part.name} ${k + 1}`, mesh: placedMesh(it, p.printer.bed, plates[i].used) })))} base={base} />
     </div>
   );
 }
@@ -1480,11 +1575,12 @@ export function shopping(p: Project, res: Res, d: Delta | null, tot: { g: number
     other.push(`${2 * straps.length} × 12 mm hook-and-loop strap, ${lo === hi ? `about ${lo} cm` : `${lo} to ${hi} cm`} each (${(all / 100).toFixed(1)} m in all, or a roll to cut): 2 for each of ${straps.length > 3 ? `the ${straps.length} boxes` : straps.map((x) => x.name).join(', ')}`);
   }
   for (const m of mods) { const b = m.on && stackBase(p, m) !== m ? bolts(m) : null; if (b) other.push(b); }
+  for (const h of poeHats({ ...p, modules: mods })) other.push(`${h.qty} × ${h.item}: ${h.note}`);
   if (other.length) out.push({ head: 'Hardware', items: other });
   const adapters = new Map<string, string[]>();
   for (const l of p.links ?? []) {
     if (l.kind !== 'debug') continue;
-    const end = (r: typeof l.a) => { const m = p.modules.find((x) => x.id === r.module); return m && { m, c: m.board.comps.find((x) => x.ref === baseRef(r.ref)) }; };
+    const end = (r: typeof l.a) => { const m = findModule(p, r.module); return m && { m, c: m.board.comps.find((x) => x.ref === baseRef(r.ref)) }; };
     const A = end(l.a), B = end(l.b);
     if (!A?.c || !B?.c || !mods.some((m) => m === A.m || m === B.m)) continue;
     const [pr, bd] = isProbe(A.m) ? [A, B] : [B, A];
@@ -1519,7 +1615,7 @@ function ShoppingList({ p, lines }: { p: Project; lines: { head: string; items: 
   const rail = lines.some((g) => g.head === 'Rails');
   const loose = p.layout === 'loose', nLinks = (p.links ?? []).length;
   return (
-    <Section title="Shopping list">
+    <Section title="Shopping list" right={<ChecklistButton />}>
       {lines.map((g) => (
         <div key={g.head} style={{ marginBottom: 6 }}>
           <div className="field"><span>{g.head}</span></div>

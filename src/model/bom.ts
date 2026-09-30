@@ -6,9 +6,10 @@
 import { MATERIALS } from './library';
 import { cableLines } from './cablelist';
 import { stackHardware, baseOf } from './holes';
-import { adapterFor, isProbe } from './probes';
+import { adapterFor, isDebugPort, isProbe } from './probes';
 import { isPlugPack } from './powerdata';
-import { baseRef, isAccessory } from './links';
+import { poeHats } from './poe';
+import { baseRef, findModule, isAccessory, plugName } from './links';
 import { strapBoxes } from './built';
 import type { GenResult, Module, Project } from './types';
 
@@ -60,7 +61,9 @@ export function billOfMaterials(p: Project, res: GenResult): BomGroup[] {
   const boards = p.modules.filter((m) => !isAccessory(m.board)), probes = p.modules.filter((m) => isProbe(m)), boxes = p.modules.filter((m) => isAccessory(m.board) && !isProbe(m) && !own(m));
   if (boards.length) out.push({ head: 'Boards', rows: byKind(boards) });
   if (boxes.length) out.push({ head: 'Boxes and supplies', rows: byKind(boxes).map((r) => { const m = boxes.find((x) => kindName(x) === r.item)!; return isPlugPack(m.board) ? { ...r, note: 'plugs into an outlet' } : r; }), buy: true });
-  if (probes.length) out.push({ head: 'Debug probes and USB-serial adapters', rows: byKind(probes), buy: true });
+  // (a J-Link's connector says which one to buy: 10-pin Cortex-M, 20-pin Cortex or the JTAG box header)
+  const probeNote = (m: Module) => { const c = m.board.comps.find(isDebugPort); return c ? plugName(c.conn!.type) : undefined; };
+  if (probes.length) out.push({ head: 'Debug probes and USB-serial adapters', rows: byKind(probes).map((r) => { const m = probes.find((x) => kindName(x) === r.item)!; const note = probeNote(m); return note ? { ...r, note: `${note} connector` } : r; }), buy: true });
 
   // ---- rails ----
   const rails = res.report.panel?.rails ?? [];
@@ -91,7 +94,7 @@ export function billOfMaterials(p: Project, res: GenResult): BomGroup[] {
   const adapters = new Map<string, string[]>();
   for (const l of p.links ?? []) {
     if (l.kind !== 'debug') continue;
-    const end = (r: typeof l.a) => { const m = p.modules.find((x) => x.id === r.module); return m && { m, c: m.board.comps.find((x) => x.ref === baseRef(r.ref)) }; };
+    const end = (r: typeof l.a) => { const m = findModule(p, r.module); return m && { m, c: m.board.comps.find((x) => x.ref === baseRef(r.ref)) }; };
     const A = end(l.a), B = end(l.b);
     if (!A?.c || !B?.c) continue;
     const [pr, bd] = isProbe(A.m) ? [A, B] : [B, A];
@@ -99,6 +102,7 @@ export function billOfMaterials(p: Project, res: GenResult): BomGroup[] {
     if (need) adapters.set(need, [...(adapters.get(need) ?? []), pr.m.board.name]);
   }
   for (const [item, who] of adapters) hw.push({ qty: who.length, item, note: who.join(', ') });
+  hw.push(...poeHats(p));
   if (hw.length) out.push({ head: 'Hardware', rows: hw, buy: true });
 
   // ---- filament and tools ----

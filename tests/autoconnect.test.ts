@@ -2,7 +2,8 @@
 // Ethernet to a switch; every suggestion says why; advice names what is missing.
 import { describe, it, expect } from 'vitest';
 import { assign } from '../src/model/assign';
-import { autoLinks, ROUTER, wiringAdvice } from '../src/model/links';
+import { autoLinks, canCable, hubOffer, plugsOf, portBudget, refusal, ROUTER, toComputer, wiringAdvice } from '../src/model/links';
+import { dcPack, ownSupply } from '../src/model/boxes';
 import { TEMPLATES } from '../src/model/templates';
 import { newModule, newProject } from '../src/model/library';
 
@@ -71,5 +72,93 @@ describe('auto-connect', () => {
     const p = rack(['rpi5', 'rpi5', 'uno', 'uno', 'uno', 'uno', 'uno']);
     expect(wiringAdvice(p).some((a) => a.add === 'psu_pi5' && a.count === 2)).toBe(true);
     expect(wiringAdvice(rack(['rpi4', 'rpi5'])).some((a) => a.add === 'usb_charger6')).toBe(true);
+  });
+
+  describe("a plug pack and an Arduino's DC jack (7 to 12 V)", () => {
+    const jackOf = (p: ReturnType<typeof rack>, i: number) => plugsOf(p).find((x) => x.module === p.modules[i] && x.comp.conn?.type === 'barrel')!;
+    const dcLinks = (p: ReturnType<typeof rack>) => autoLinks(p).filter((l) => l.kind === 'power');
+    const otherEnd = (p: ReturnType<typeof rack>, l: { a: { module: string }; b: { module: string } }, id: string) => p.modules.find((m) => m.id === (l.a.module === id ? l.b.module : l.a.module))!;
+
+    it('connects a pack whose voltage is in range, and says what the jack takes', () => {
+      const p = rack(['uno', 'mega', 'dc_pack_12v', 'dc_pack_12v', 'pb4']);
+      const ls = dcLinks(p);
+      expect(ls.length).toBe(2);
+      for (const i of [0, 1]) {
+        const l = ls.find((x) => [x.a, x.b].some((e) => e.module === p.modules[i].id && e.ref === jackOf(p, i).ref.ref))!;
+        expect(l.why).toMatch(/12 V lead to the .* DC jack, which takes 7 to 12 V/);
+      }
+    });
+    it('leaves the jack alone when the pack is out of range, refuses it by hand, and offers a 9 V pack', () => {
+      const p = rack(['uno']);
+      p.modules.push(newModule(dcPack(24, 1)), newModule(T('pb4')));
+      expect(dcLinks(p)).toEqual([]);
+      const pack = plugsOf(p).find((x) => x.role === 'dc-out')!;
+      expect(canCable(p, pack, jackOf(p, 0))).toBe(false);
+      expect(refusal(p, pack, jackOf(p, 0))).toMatch(/puts out 24 V.*takes 7 to 12 V \(9 V is the usual pack\)/);
+      const a = wiringAdvice(p).find((x) => x.add === 'dcpack:9')!;
+      expect(a.text).toMatch(/^Uno R3: the DC jack takes 7 to 12 V, and the plug pack here gives 24 V\. A 9 V pack is the usual pick\.$/);
+      // the 9 V pack that offer adds fits, and Auto-connect uses it
+      p.modules.push(newModule(dcPack(9)));
+      const ls = dcLinks(p);
+      expect(ls.length).toBe(1);
+      expect(otherEnd(p, ls[0], p.modules[0].id).board.name).toMatch(/9 V/);
+      expect(wiringAdvice(p).some((x) => x.add === 'dcpack:9')).toBe(false);
+    });
+    it("takes the pack nearest the usual 9 V when two fit; a box's own pack goes to its box, never an Arduino", () => {
+      const p = rack(['uno']);
+      p.modules.push(newModule(T('dc_pack_12v')), newModule(dcPack(9)), newModule(T('pb4')));
+      expect(otherEnd(p, dcLinks(p)[0], p.modules[0].id).board.name).toMatch(/9 V/);
+      // a switch's own supply is for the switch alone
+      const q = rack(['uno', 'net_switch5']);
+      q.modules.push(newModule(ownSupply(q.modules[1])!), newModule(T('pb4')));
+      const qs = dcLinks(q);
+      expect(qs.length).toBe(1);
+      expect([qs[0].a.module, qs[0].b.module]).toContain(q.modules[1].id);
+      // and a pack that is left over, with a switch already served, goes to the Arduino
+      const r = rack(['uno', 'net_switch5', 'dc_pack_12v', 'dc_pack_12v', 'pb4']);
+      const rs = dcLinks(r);
+      expect(rs.length).toBe(2);
+      expect(rs.some((x) => [x.a.module, x.b.module].includes(r.modules[0].id))).toBe(true);
+      expect(rs.some((x) => [x.a.module, x.b.module].includes(r.modules[1].id))).toBe(true);
+    });
+  });
+
+  it('gives two boards of one kind one advice line, not two the same', () => {
+    const p = rack(['relay4', 'relay4', 'net_switch5', 'net_switch5']);
+    p.modules[1].board.name += ' #2'; p.modules[3].board.name += ' #2';
+    const lines = wiringAdvice(p).map((a) => a.text);
+    expect(lines.filter((t) => /wires you connect yourself/.test(t))).toEqual(['Relay board ×2: the X1, X2, X3, 2 more on each are for wires you connect yourself (click a pin, then the pin it goes to).']);
+    expect(portBudget(p).unwired).toEqual([{ name: 'Relay board', refs: ['X1', 'X2', 'X3', '2 more'], count: 2 }]);
+    // both switches want their supply: one line, one button for both
+    const dc = wiringAdvice(p).filter((a) => a.add?.startsWith('own:'));
+    expect(dc.length).toBe(1);
+    expect(dc[0].text).toMatch(/^Network switch, 5 ports ×2: nothing on their DC inputs\. Add the supplies they came with/);
+    expect(dc[0].add).toBe(`own:${p.modules[2].id},${p.modules[3].id}`);
+    // one of a kind reads as it did
+    expect(wiringAdvice(rack(['relay4'])).map((a) => a.text)).toContain('Relay board: its X1, X2, X3, 2 more are for wires you connect yourself (click a pin, then the pin it goes to).');
+  });
+
+  it('sizes the hub offer to the plugs without a port, and says what goes to your computer', () => {
+    expect(hubOffer(1)).toEqual({ id: 'usb_hub', count: 1, ports: 4 });
+    expect(hubOffer(4)).toEqual({ id: 'usb_hub', count: 1, ports: 4 });
+    expect(hubOffer(7)).toEqual({ id: 'usb_hub7', count: 1, ports: 7 });
+    expect(hubOffer(9)).toEqual({ id: 'usb_hub7', count: 2, ports: 7 });
+    // nine Arduinos and nowhere to plug them: two 7-port hubs (not one, which left two to the computer)
+    const p = rack(Array(9).fill('uno'));
+    const a = wiringAdvice(p).find((x) => /no free port on the rack/.test(x.text))!;
+    expect(a).toMatchObject({ add: 'usb_hub7', count: 2 });
+    expect(a.text).toMatch(/^9 USB plugs have no free port on the rack: .*add 2 hubs \(14 ports, each uplink to a free port or your computer\)\.$/);
+    expect(wiringAdvice(rack(Array(3).fill('uno'))).find((x) => /no free port/.test(x.text))).toMatchObject({ add: 'usb_hub', count: 1 });
+    // with the two hubs on the rack every Arduino has a port on one of them; only the hubs' own uplinks leave the rack, and it says so
+    for (let i = 0; i < a.count!; i++) p.modules.push(newModule(T(a.add!)));
+    const ls = autoLinks(p), uno = new Set(p.modules.filter((m) => /Uno/.test(m.board.name)).map((m) => m.id));
+    expect(ls.filter((l) => [l.a.module, l.b.module].includes('@pc') && [l.a.module, l.b.module].some((id) => uno.has(id)))).toEqual([]);
+    const said = toComputer(p, ls);
+    expect(said).toBe('2 of them go to your computer, off the rack (a 2 m cable each): Powered USB hub, Powered USB hub.');
+    // one plug over what the hubs hold goes to the computer too, and is named
+    const q = rack(Array(5).fill('uno'));
+    q.modules.push(newModule(T('usb_hub')));
+    expect(toComputer(q, autoLinks(q))).toMatch(/^2 of them go to your computer.*: (USB hub|Uno R3), (USB hub|Uno R3)\.$/);
+    expect(toComputer(q, [])).toBe('');
   });
 });

@@ -7,7 +7,7 @@ import { printerByName } from '../model/printers';
 import { writeStl } from '../cad/export';
 import { kiriDevice, kiriProcess, machinePlan, roundRoom, type MachinePlan } from './profiles';
 import { bambuVars, renderTemplate, type TplValue } from './bambutpl';
-import { usableCode } from './startcheck';
+import { usableCode, usablePlain } from './startcheck';
 
 const kiriBase = () => new URL('kiri/', document.baseURI).href;
 
@@ -41,6 +41,9 @@ export async function slicePlate(job: SliceJob, onProgress: (f: number, what: st
     const { own, why } = usableCode(job.printer, job.material);
     const plan = machinePlan(pr, job.printer.name, own?.from);
     if (plan.fit === 'none') throw new Error(why ? `The start code loaded for this printer isn't used, so there is none to slice with. ${why}` : plan.note ?? 'No start code for this printer');
+    // start and end code typed in over the profile's own: only once it has passed the check too
+    const typed: { why?: string } = own ? {} : usablePlain(job.printer, job.material);
+    if (typed.why) throw new Error(`The start or end code typed in isn't used, so there is none to slice with. ${typed.why}`);
     onProgress(0, 'Loading the slicer');
     const [kiri, profiles] = await Promise.all([import(/* @vite-ignore */ kiriBase() + 'kiri-engine.js'), kiriProfiles()]);
     const profile = own ? null : plan.kiri ? (profiles[plan.kiri] ?? null) : null;

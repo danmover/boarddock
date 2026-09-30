@@ -8,11 +8,12 @@ import { ACCEPT } from '../import';
 import { activeModule, lastReplace, putBoards, store, toast, useApp } from '../state';
 import { openFiles } from './importFlow';
 import { rackCount } from '../model/diff';
-import { bedNote, placementNote, settleOverlaps } from './panelOps';
+import { bedNote, placementNote, sayWhereWent, settleOverlaps } from './panelOps';
 import { DrawBoard } from './DrawBoard';
 import { Library } from './Library';
 import { Icon, I } from './icons';
 import { useModalFocus } from './controls';
+import { say } from './touch';
 
 /** "Raspberry Pi 4B", "2 × Raspberry Pi Pico and Relay board", "7 boards". */
 export function countNames(bs: Board[]): string {
@@ -28,7 +29,12 @@ export function addBoards(bs: Board[]) {
   const before = store.get().project?.modules.length ?? 0;
   putBoards(bs, false, { stay: true });
   const p = store.get().project!;
-  toast(`Added ${countNames(bs)} (${rackCount(p)}).${placementNote(p, p.modules.slice(before).map((m) => m.id))}${bedNote(p, bs)} ⌘Z undoes it.`, { label: bs.length > 1 ? 'Check them' : 'Check its board', run: () => store.set({ step: 'board', view: 'assembly' }) });
+  const ids = p.modules.slice(before).map((m) => m.id);
+  const say = (note: string) => `Added ${countNames(bs)} (${rackCount(p)}).${note}${bedNote(p, bs)} ⌘Z undoes it.`, first = say(placementNote(p, ids));
+  const act = { label: bs.length > 1 ? 'Check them' : 'Check its board', run: () => store.set({ step: 'board', view: 'assembly' }) };
+  toast(first, act);
+  // once it is built: where each went, with the dock numbers
+  if (p.layout === 'panel' && (!p.panel.auto || p.built)) sayWhereWent(ids, first, say, act);
   // a board in a dock's free slot makes that dock reach further: slide its neighbours along if they now overlap
   if (p.layout === 'panel' && !p.panel.auto) settleOverlaps();
 }
@@ -69,8 +75,8 @@ export function AddBoardSheet() {
       <div className="sheet wide" role="dialog" aria-modal="true" aria-label={replacing ? `Replace ${target}` : 'Add a board'} tabIndex={-1} ref={sheet}>
         <div className="sheet-head">
           {replacing
-            ? <div><b>Replace {target}</b><small>The board you pick takes its place: its dock, its stack, its holder settings and the cables to plugs the new one also has. Click a picture, or drop its files.</small></div>
-            : <div><b>Add a board</b><small>{n ? `It joins your ${n}-board rack${store.get().project?.built ? ' without moving anything that is built' : ''}. You stay on this step.` : 'Start a rack with it.'} Click a picture to add it, or “+” to pick several.</small></div>}
+            ? <div><b>Replace {target}</b><small>The board you pick takes its place: its dock, its stack, its holder settings and the cables to plugs the new one also has. {say('Click a picture, or drop its files.')}</small></div>
+            : <div><b>Add a board</b><small>{n ? `It joins your ${n}-board rack${store.get().project?.built ? ' without moving anything that is built' : ''}. You stay on this step.` : 'Start a rack with it.'} {say('Click a picture to add it, or “+” to pick several.')}</small></div>}
           <button className="iconbtn" title="Close (Esc)" onClick={close}><Icon d={I.x} /></button>
         </div>
         <div className="sheet-body">
