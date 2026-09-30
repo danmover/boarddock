@@ -2,11 +2,12 @@
 // pegs, part leads and the standoffs of a board stacked on top stay free and get clearance underneath.
 import type { Board, Hole, HoleRole, Loop, Module, Project, V2 } from './types';
 import { bbox, compRect, extentAlong, inside, rad, round, segDist } from '../geom/poly';
+import { holderParts } from './cards';
 
 export interface HoleGuess { id: string; role: HoleRole; why: string; sure: boolean }
 
 export const ROLE_INFO: Record<HoleRole, { name: string; short: string; color: string; what: string }> = {
-  mount: { name: 'Mounting hole', short: 'mount', color: '#46d58b', what: 'gets a pin from the holder (locating or snap)' },
+  mount: { name: 'Mounting hole', short: 'mount', color: '#46d58b', what: 'gets a locating pin from the holder' },
   standoff: { name: 'Stacking standoff', short: 'standoff', color: '#c084fc', what: 'used by a board stacked on top: left free, room for the screw head or nut below' },
   plug: { name: 'Connector peg', short: 'plug', color: '#f5a524', what: "a connector's pegs or shell tabs: left free, clearance below" },
   lead: { name: 'Part lead', short: 'lead', color: '#5aa9ff', what: "a part's pins: left free, clearance below" },
@@ -125,6 +126,23 @@ export function applyHoleRoles(b: Board, above: Board[] = [], force = true) {
   }
 }
 
+/** Small boards (up to about a J-Link's size: longest side, the other side) can stand on their long edge in a column. */
+export const SMALL = { long: 105, mid: 60 };
+
+/** Whether a board is small enough to stand in a column of small boards (never a box). */
+export function isSmall(b: Board): boolean {
+  if (b.kind === 'box' || b.outline.length < 3) return false;
+  const bb = bbox(b.outline), w = bb.x1 - bb.x0, h = bb.y1 - bb.y0;
+  return Math.max(w, h) <= SMALL.long && Math.min(w, h) <= SMALL.mid;
+}
+
+/** Whether board `m` can go on `x`'s stack as part of a column: both small, and nothing on `x`'s stack but a column. */
+export function columnable(p: Project, m: Module, x: Module): boolean {
+  if (!isSmall(m.board) || !isSmall(x.board)) return false;
+  const b = baseOf(p, x);
+  return isSmall(b.board) && ridersOf(p, b).every((r) => r === m || stackMode(p, r) === 'column');
+}
+
 /** Boards stacked directly or indirectly on module `m`, bottom to top. */
 export function ridersOf(p: Project, m: Module): Module[] {
   const out: Module[] = [];
@@ -153,10 +171,13 @@ export function baseOf(p: Project, m: Module): Module {
   return cur;
 }
 
-/** How a stacked board is held: bolted to the board below on standoffs, or on its own printed tower layer. */
-export function stackMode(p: Project, m: Module): 'bolted' | 'towers' {
+/** How a stacked board is held: bolted to the board below on standoffs, on its own printed tower layer, or standing
+ * on its long edge on the holder below (a column of small boards: J-Links, adapters). */
+export function stackMode(p: Project, m: Module): 'bolted' | 'towers' | 'column' {
   if (m.onMode) return m.onMode;
   const below = p.modules.find((x) => x.id === m.on);
+  // a J-Link or adapter on another small board stands in a column with it
+  if (below && (m.board.role || below.board.role) && isSmall(m.board) && isSmall(below.board)) return 'column';
   return below && stackAlign(below.board, m.board).matched >= 2 ? 'bolted' : 'towers';
 }
 
@@ -206,7 +227,7 @@ export function stackNeed(below: Board, upper: Board): { need: number; under: { 
   const a = stackAlign(below, upper);
   const foot = upper.outline.map(([x, y]) => [x + a.dx, y + a.dy] as V2);
   let under: { ref: string; h: number } | null = null;
-  for (const c of below.comps) {
+  for (const c of holderParts(below)) {
     if (c.hidden || c.side !== 'top' || c.h <= 0) continue;
     const shapes: Loop[] = [compRect(c)];
     let h = c.h;
@@ -220,7 +241,7 @@ export function stackNeed(below: Board, upper: Board): { need: number; under: { 
     if ((!under || h > under.h) && shapes.some((q) => overlaps(q, foot))) under = { ref: c.ref, h: round(h, 1) };
   }
   // under the top board: its parts on that side, and the leads of its through-hole parts (about 1.6 mm)
-  const beneath = Math.max(0, ...upper.comps.filter((c) => !c.hidden && c.side === 'bottom').map((c) => c.h), ...upper.comps.filter((c) => !c.hidden && c.side === 'top' && c.tht).map(() => 1.6));
+  const beneath = Math.max(0, ...holderParts(upper).filter((c) => !c.hidden && c.side === 'bottom').map((c) => c.h), ...upper.comps.filter((c) => !c.hidden && c.side === 'top' && c.tht).map(() => 1.6));
   return { need: round((under?.h ?? 0) + beneath + 1, 1), under };
 }
 
@@ -247,6 +268,8 @@ export function stackLayers(p: Project, base: Module): StackLayer[] {
   let prev = base, px = 0, py = 0; // previous board and its offset in the current layer's frame
   let top = 0; // top of the previous board above the current layer board's top
   for (const r of ridersOf(p, base)) {
+    // a column's holders stand edge on edge, not face on face: they are laid out with the dock (see columnOf)
+    if (stackMode(p, r) === 'column') break;
     const a = stackAlign(prev.board, r.board);
     const L = layers[layers.length - 1];
     if (stackMode(p, r) === 'bolted') {
@@ -262,6 +285,17 @@ export function stackLayers(p: Project, base: Module): StackLayer[] {
     prev = r;
   }
   return layers;
+}
+
+/** The boards standing on `base` in a column (each on its long edge on the holder below), bottom to top: empty when
+ * nothing stands on it that way. */
+export function columnOf(p: Project, base: Module): Module[] {
+  const out: Module[] = [];
+  for (const r of ridersOf(p, base)) {
+    if (stackMode(p, r) !== 'column') break;
+    out.push(r);
+  }
+  return out;
 }
 
 /** Boards bolted directly onto module m. */

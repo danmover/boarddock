@@ -12,8 +12,8 @@ export type Via = NonNullable<Board['vias']>[number];
 type Pin = { p: V2; n: V2 | null; comp: number; power?: boolean };
 type Obst = { comp: number; x0: number; y0: number; x1: number; y1: number };
 
-const HEADERS = new Set(['header', 'pins_ra', 'jst_ph', 'jst_xh', 'qwiic', 'swd10', 'jtag20']);
-const POWER = new Set(['usb_c', 'usb_micro_b', 'usb_mini_b', 'usb_a', 'usb_a_dual', 'usb_b', 'barrel', 'terminal']);
+const HEADERS = new Set(['header', 'pins_ra', 'jst_ph', 'jst_xh', 'jst_gh', 'jst_zh', 'picoblade', 'kk254', 'microfit', 'minifit', 'qwiic', 'swd10', 'cortex20', 'jtag20', 'idc']);
+const POWER = new Set(['usb_c', 'usb_micro_b', 'usb_mini_b', 'usb_a', 'usb_a_dual', 'usb_b', 'barrel', 'terminal', 'xt60', 'xt30']);
 
 function rng(seed: string) {
   let h = 2166136261;

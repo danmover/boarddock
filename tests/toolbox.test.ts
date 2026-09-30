@@ -5,8 +5,8 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { existsSync, readdirSync } from 'node:fs';
 import { initKernel, freeAll } from '../src/cad/kernel';
 import { pictureOf, pictureSig } from '../src/cad/boardviz';
-import { PALETTE, demoBoard, paletteFor, partBoard, samePart } from '../src/model/palette';
-import { connById } from '../src/model/library';
+import { PALETTE, contribOf, demoBoard, paletteFor, partBoard, samePart } from '../src/model/palette';
+import { CONNECTORS, connById, connSetup } from '../src/model/library';
 import { TEMPLATES } from '../src/model/templates';
 import { extentAlong, roundedRectLoop } from '../src/geom/poly';
 import TILES from '../src/ui/tiles.json';
@@ -49,9 +49,9 @@ describe('toolbox pictures', () => {
       const demo = demoBoard(it), c = demo.comps[0];
       if (!c) continue;
       const [w, l, h] = it.size.split('×').map(Number);
-      const got = above(pictureOf(demo), demo.thickness, c.x, c.y, 30);
+      const got = above(pictureOf(demo), demo.thickness, c.x, c.y, 80); // (an SO-DIMM socket is 70 mm wide)
       freeAll();
-      if (it.id === 'dbg_tag') { expect(got.h, 'Tag-Connect: pads, flat on the board').toBeLessThan(0.1); continue; }
+      if (it.id === 'dbg_tag' || it.id === 'pogo') { expect(got.h, 'pads, flat on the board').toBeLessThan(0.1); continue; }
       // (a right-angle header's pins run out past its plastic; an audio jack's collar stands proud of its front)
       const lx = it.id === 'edge_pins_ra' ? 7.5 : it.id === 'edge_audio35' ? 1.7 : 0.3;
       expect(Math.abs(got.w - w), `${it.id} width ${got.w.toFixed(2)} vs ${w}`).toBeLessThan(0.3);
@@ -104,7 +104,8 @@ describe('toolbox pictures', () => {
 
   it('every shipped picture is of its 3D model as it is now', () => {
     const want: Record<string, string> = {};
-    for (const it of PALETTE) want[`pal/${it.id}`] = sigOf(demoBoard(it));
+    // (a contributed connector (parts/) has a picture only once someone renders one: until then it shows a drawing made from its look)
+    for (const it of PALETTE) if (!contribOf(it) || SIG[`pal/${it.id}`]) want[`pal/${it.id}`] = sigOf(demoBoard(it));
     for (const t of TEMPLATES) want[t.id] = sigOf(t.make());
     const stale = Object.keys(want).filter((id) => SIG[id] !== want[id]);
     const missing = Object.keys(want).filter((id) => !existsSync(`public/tiles/${id}.webp`));
@@ -112,6 +113,34 @@ describe('toolbox pictures', () => {
     expect(stale, `pictures of an older model: ${stale.join(', ')}. ${HOW}`).toEqual([]);
     expect(missing, `no picture: ${missing.join(', ')}. ${HOW}`).toEqual([]);
     expect([...new Set(gone)], `pictures of things that are gone: ${gone.join(', ')}. ${HOW}`).toEqual([]);
+  });
+});
+
+describe('every connector type is in the toolbox', () => {
+  // (the mains outlets and the fixed mains lead belong to a box's housing, and Custom is what has no type: none of them sits on a board as a part)
+  const onBoard = CONNECTORS.filter((t) => !t.id.startsWith('ac_') && t.id !== 'mains_lead' && t.id !== 'custom');
+  const partOf = (t: (typeof CONNECTORS)[number]): Comp => ({ id: 'x', ref: 'J1', pkg: t.name, side: 'top', x: 0, y: 0, rot: 0, w: t.body.w, l: t.body.l, h: t.body.h, kind: 'connector', tht: false, conn: connSetup(t, 0) });
+
+  it('a part of each type on a board finds its toolbox entry (paletteFor), so its lists show a picture', () => {
+    expect(onBoard.length).toBeGreaterThan(50);
+    const none = onBoard.filter((t) => !paletteFor(partOf(t))).map((t) => t.id);
+    expect(none, `connector types with no toolbox entry: ${none.join(', ')}. Add one in src/model/palette.ts (an upright(...) or debug(...) entry, and its line in paletteFor)`).toEqual([]);
+    // (and the entry is that type's: a JST-ZH is not shown as a JST-PH)
+    for (const id of ['jst_zh', 'minifit', 'cortex20', 'jst_gh', 'microfit', 'swd10']) expect(paletteFor(partOf(connById(id)))?.id, id).toBe({ jst_zh: 'zh4', minifit: 'mfjr4', cortex20: 'dbg_cortex20', jst_gh: 'gh4', microfit: 'mfit4', swd10: 'dbg_swd10' }[id]);
+  });
+
+  it('each new entry is the part its type says (sized as its footprint, on the debug or upright list it belongs to)', () => {
+    for (const [id, type, group] of [['zh4', 'jst_zh', 'Headers and wires'], ['mfjr4', 'minifit', 'Headers and wires'], ['dbg_cortex20', 'cortex20', 'Debug and serial']] as const) {
+      const it = PALETTE.find((x) => x.id === id)!, c = demoBoard(it).comps[0];
+      expect([it.group, c.conn?.type, c.kind]).toEqual([group, type, 'connector']);
+      expect(it.size, id).not.toBe('');
+    }
+    expect(demoBoard(PALETTE.find((x) => x.id === 'dbg_cortex20')!).comps[0].role).toBe('debug');
+  });
+
+  it('every toolbox entry has a shipped picture (tiles.json), or, for a contributed connector, the drawing made from its look', () => {
+    const none = PALETTE.filter((it) => !SIG[`pal/${it.id}`] && !contribOf(it)).map((it) => it.id);
+    expect(none, `no picture: ${none.join(', ')}. ${HOW}`).toEqual([]);
   });
 });
 

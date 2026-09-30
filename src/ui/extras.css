@@ -1,0 +1,37 @@
+/* The 3D view's isolate / X-ray / What's new chip, the mains zones' key, the cable colour key, the rotation box and
+   the command palette (⌘K). Kept apart from styles.css. */
+.focuschip { position: absolute; top: 52px; left: 50%; transform: translateX(-50%); z-index: 6; display: flex; align-items: center; gap: 10px; padding: 5px 6px 5px 12px; font-size: 12px; color: var(--muted); width: max-content; max-width: calc(100% - 24px); }
+.focuschip span { min-width: 0; }
+.cablekey { position: absolute; left: 12px; top: 52px; z-index: 5; padding: 6px 10px; font-size: 11.5px; color: var(--muted); max-width: min(360px, calc(100% - 24px)); }
+.cablekey summary { cursor: pointer; font-weight: 600; color: var(--fg); list-style-position: inside; }
+.cablekey .ck-list { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; }
+.cablekey .ck-list span { white-space: nowrap; }
+.mainskey { display: inline-flex; align-items: center; gap: 5px; }
+.mainskey em { display: inline-block; width: 12px; height: 12px; border-radius: 3px; background: color-mix(in srgb, #ff8a3d 25%, transparent); border: 1.5px solid #ff8a3d; }
+@media (max-width: 860px) { .focuschip { top: 86px; left: 12px; transform: none; } .cablekey { top: 48px; font-size: 10.5px; } }
+
+.rotbox { display: flex; align-items: flex-end; gap: 6px; flex-wrap: wrap; }
+.rotbox .field { flex: 0 1 92px; min-width: 76px; }
+.rotbox .seg button { min-width: 34px; }
+.rotbox .rotturn { display: flex; gap: 4px; }
+.rotbox.compact { flex-wrap: nowrap; align-items: center; gap: 3px; }
+.rotbox.compact input { width: 58px; height: 26px; padding: 0 6px; font-size: 12px; }
+.rotbox.compact select { width: auto; height: 26px; padding: 0 4px; font-size: 12px; }
+
+.cmdveil { position: fixed; inset: 0; z-index: 80; display: flex; align-items: flex-start; justify-content: center; padding: min(14vh, 110px) 12px 12px; background: color-mix(in srgb, var(--bg) 55%, transparent); backdrop-filter: blur(3px); animation: fade 0.12s both; }
+.cmd { width: min(560px, 100%); max-height: min(70vh, 560px); display: flex; flex-direction: column; overflow: hidden; }
+.cmd-in { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.cmd-in svg { width: 16px; height: 16px; color: var(--muted); flex: none; }
+.cmd-in input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--fg); font: inherit; font-size: 15px; }
+.cmd-in .btn { flex: none; }
+.cmd-list { overflow-y: auto; padding: 4px; }
+.cmd-group { padding: 8px 10px 3px; font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--subtle); }
+.cmd-item { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 40px; padding: 6px 10px; border: 0; border-radius: 8px; background: none; color: var(--fg); font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; }
+.cmd-item small { display: block; font-size: 11.5px; color: var(--muted); }
+.cmd-item .grow { flex: 1; min-width: 0; }
+.cmd-item kbd { flex: none; }
+.cmd-item.on, .cmd-item:hover:not(:disabled) { background: var(--accent-soft); }
+.cmd-item:disabled { opacity: 0.5; cursor: default; }
+.cmd-empty { padding: 18px 12px; text-align: center; color: var(--muted); font-size: 13px; }
+.cmd-foot { padding: 6px 12px; border-top: 1px solid var(--line); font-size: 11px; color: var(--subtle); display: flex; gap: 12px; }
+@media (max-width: 860px) { .cmdveil { padding-top: 56px; } .cmd-foot { display: none; } .cmd-item { min-height: 46px; } }

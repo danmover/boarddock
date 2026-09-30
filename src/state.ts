@@ -34,6 +34,7 @@ export interface State {
   sel: Sel;
   result: GenResult | null;
   building: boolean;
+  buildNote: string | null; // what the build is doing now (the holder it is on), while it works
   rendering: boolean; // the 3D view is compiling shaders for a new scene (the old one stays up meanwhile)
   error: string | null;
   showGhosts: boolean;
@@ -43,6 +44,7 @@ export interface State {
   toast: string | null;
   toastAction: { label: string; run: () => void } | null;
   addSheet: boolean; // the Add board sheet is open
+  checklist: boolean; // the buy / print / tools checklist is open
   printParts: PartOut[] | null; // what Export will print, when it is not everything (the print view shows the same)
   exportPick: string[] | null; // Export opens with just these boards picked (after swapping in a new version of one)
 }
@@ -76,6 +78,7 @@ let state: State = {
   sel: [],
   result: null,
   building: false,
+  buildNote: null,
   rendering: false,
   error: null,
   showGhosts: true,
@@ -84,6 +87,7 @@ let state: State = {
   toast: null,
   toastAction: null,
   addSheet: false,
+  checklist: false,
   printParts: null,
   exportPick: null,
   theme: savedTheme() ?? (typeof matchMedia !== 'undefined' && matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'),
@@ -262,15 +266,17 @@ export function addBoard(b: Board) {
  * Put imported boards into the project in one undoable step: added (the default once there is a project), or with
  * `replace` the first one takes the place of the board being edited and the rest are added. The first new board
  * becomes the one being edited (a new rack, or a replace, opens on its first board and adds the rest behind it).
- * `keepActive`: the boards are added after the one being edited, which stays so.
+ * `keepActive`: the boards are added after the one being edited, which stays so. `also`: changes to make to the
+ * new project before it is stored, so they are part of the same undo step.
  */
-export function putBoards(bs: Board[], replace: boolean, opts: { stay?: boolean; keepActive?: boolean } = {}) {
+export function putBoards(bs: Board[], replace: boolean, opts: { stay?: boolean; keepActive?: boolean; also?: (p: Project) => void } = {}) {
   if (!bs.length) return;
   const cur = state.project;
   if (!cur || replace) {
     setBoard(bs[0]);
     if (bs.length > 1) { const past = state.past; putBoards(bs.slice(1), false, { keepActive: true }); store.set({ past }); }
-    store.set({ replaceMode: false });
+    // several files into a new rack: stay on Start (its rack card lists them) rather than open the first
+    store.set({ replaceMode: false, ...(opts.stay && !cur ? { step: 'import' as const, view: 'library' as const } : {}) });
     return;
   }
   const p = structuredClone(cur);
@@ -283,6 +289,7 @@ export function putBoards(bs: Board[], replace: boolean, opts: { stay?: boolean;
     // on a rack laid out by hand or built: a free slot of a dock already there, else a new dock at the end
     if (p.layout === 'panel' && !p.panel.auto) seatBoard(p, p.modules[p.modules.length - 1].id);
   }
+  opts.also?.(p); // (more that goes in the same undo step: what the new boards bring with them)
   if (!opts.keepActive) p.active = first;
   store.set({ project: p, past: [...state.past, cur], future: [], sel: [], replaceMode: false, ...(opts.stay ? {} : { step: 'board' as const, view: 'editor' as const }) });
   persist(p);
@@ -320,9 +327,27 @@ export function dropModule(p: Project, id: string): boolean {
   return true;
 }
 
+/** Ticks on the checklist are not changes to the rack: undo and redo keep them (their lines going, they go too). */
+const keepTicks = (next: Project, cur: Project): Project => {
+  if (next.ticks === cur.ticks) return next;
+  const p = { ...next };
+  if (cur.ticks) p.ticks = cur.ticks; else delete p.ticks;
+  return p;
+};
+
+/** Set the ticked lines of the checklist: kept in the project, but no undo step (a tick is not a change to the rack). */
+export function setTicks(ticks: string[]) {
+  const cur = state.project;
+  if (!cur || (cur.ticks ?? []).join('\n') === ticks.join('\n')) return;
+  const next = { ...cur };
+  if (ticks.length) next.ticks = ticks; else delete next.ticks;
+  store.set({ project: next });
+  persist(next);
+}
+
 export function undo() {
   if (!state.past.length || !state.project) return;
-  const prev = state.past[state.past.length - 1], cur = state.project;
+  const cur = state.project, prev = keepTicks(state.past[state.past.length - 1], cur);
   store.set({ project: prev, past: state.past.slice(0, -1), future: [cur, ...state.future] });
   persist(prev);
   toast(`Undid: ${describeChange(prev, cur)}.${state.past.length ? '' : ' That was the first change.'}`);
@@ -330,7 +355,7 @@ export function undo() {
 
 export function redo() {
   if (!state.future.length || !state.project) return;
-  const next = state.future[0], cur = state.project;
+  const cur = state.project, next = keepTicks(state.future[0], cur);
   store.set({ project: next, past: [...state.past, cur], future: state.future.slice(1) });
   persist(next);
   toast(`Redid: ${describeChange(cur, next)}.`);

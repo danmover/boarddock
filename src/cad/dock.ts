@@ -9,8 +9,9 @@
 //  socket-local: same axes, Z = 0 at the socket top; tongues plug in along -Z; holder A faces +Y
 import type { V2 } from '../model/types';
 import { box, circle2, ext, extCh, K, poly, rect2, roundCS, unionCS, unionMF, type CS, type MF } from './kernel';
-import { EAR, gripSpan, HD, headSpan, LEN_X, NOSE_TIP, SHOE_GRIP, TONGUE } from './dockdims';
+import { CRUSH, EAR, gripSpan, HD, headSpan, HOOK_SLIT, LANDING, LATCH, latchGeom, LEN_X, PEG, SHOE_GRIP, TONGUE, type LatchDims } from './dockdims';
 import { railGrip } from './dinclip';
+import { peg, pegHole } from './column';
 export { gripSpan, headSpan };
 
 const P = (pts: number[][]): CS => poly(pts as V2[], 'NonZero');
@@ -41,28 +42,35 @@ export function rail(len: number): MF {
 // ---------------- socket ----------------
 const S = {
   hx: 9.0, coreY: 6.2, halfY: 10.4, bottom: -20.5, floor: -14.5, anchorTop: -19.0, bossHalf: 9.0, bossBottom: -25.3, bossCh: 1.0,
-  cavHalf: TONGUE.hx + 0.2, cavFullY: TONGUE.y1 - 1.8, cavFrontY: TONGUE.y1 + 0.2, dividerHalf: 0.35, dividerTop: -1.0, windowZ: [-8.4, -4.8], windowX: [-5.2, 5.2], mouthCh: 0.6, // window: 0.45 / 0.4 mm round the nose, so it prints free of the wall
+  cavHalf: TONGUE.hx + 0.2, cavFullY: TONGUE.y1 - 1.8, cavFrontY: TONGUE.y1 + 0.2, dividerHalf: 0.35, dividerTop: -1.0, windowX: [-5.2, 5.2], mouthCh: 0.6, // window: 0.45 / 0.4 mm round the nose, so it prints free of the wall
 };
 // shoe hook notch on all four boss faces; 10 degree retaining face so a pull draws the hooks in
 const BOSS_NOTCH = [[8.2, -23.11], [9.3, -23.3], [9.3, -21.2], [8.2, -22.3]];
-const LATCH = { hx: 9.0, t: 0.85, rIn: 0.6, rOut: 1.0, zRoot: -20.5 };
-const POST = [[9.1, -19.0], [9.4, -18.7], [9.4, -9.0], [10.4, -9.0], [10.4, -19.0]];
-const NOSE = [[6.65, -7.95], [NOSE_TIP, -7.95], [NOSE_TIP, -6.55], [NOSE_TIP + 1.3, -5.25], [6.65, -5.25]];
-const NOSE_HX = 4.8;
 
-/** (y, z) outline of the +Y latch: plain full-width spring beam with rounded roots, stiff arm, 45 deg push ramp on top. */
-export function latchProfile(): CS {
-  const zr = LATCH.zRoot, tr = LATCH.t;
-  const arm = P([[6.6, zr + 0.5], [6.6 + tr, zr + 0.5], [6.6 + tr, -9.75], [8.2, -9.0], [8.2, -0.8], [6.6, -2.4]]);
-  let g = unionCS([arm, rect2(6.6, zr, 6.6 + tr, zr + 0.6), rect2(5.4, zr - 0.6, 9.2, zr)]);
-  g = g.offset(LATCH.rOut, 'Round').offset(-LATCH.rOut, 'Round');
-  g = g.add(g.offset(LATCH.rIn, 'Round').offset(-LATCH.rIn, 'Round'));
-  g = g.intersect(rect2(5.9, zr, 8.2 + tr, 0));
+/**
+ * (y, z) outline of the +Y latch (the beam and its arm, without the nose): a long beam tapering from `t0` thick at its root
+ * to `t1` under the arm, with rounded roots, a stiffer arm above it, and at the arm's top the 45 degree ramp the release
+ * rod pushes. It is one layer in the socket's print pose (standing on its -X end), so it flexes within the layers.
+ */
+export function latchProfile(p: LatchDims = LATCH): CS {
+  const zr = p.zr, yi = p.yIn, { w, top } = p.ramp;
+  const arm = P([[yi, zr + 0.5], [yi + p.t0, zr + 0.5], [yi + p.tm, p.zm], [yi + p.t1, p.zt], [yi + p.arm, p.zt + (p.arm - p.t1)], [yi + p.arm, top - (w - p.arm)], [yi + w, top], [yi, top - w]].filter((q, i, a) => i === 0 || Math.hypot(q[0] - a[i - 1][0], q[1] - a[i - 1][1]) > 1e-9));
+  let g = unionCS([arm, rect2(yi, zr, yi + p.t0, zr + 0.6), rect2(5.4, zr - 0.6, 9.2, zr)]);
+  g = g.offset(p.rOut, 'Round').offset(-p.rOut, 'Round');
+  g = g.add(g.offset(p.rIn, 'Round').offset(-p.rIn, 'Round'));
+  g = g.intersect(rect2(5.9, zr, 9.05, 0));
   const parts = g.decompose();
   return parts.reduce((a, c) => (c.area() > a.area() ? c : a));
 }
 
-export const noseProfile = () => P(NOSE);
+/** The nose (y, z): its holding face (undercut), tip face and lead-in ramp, with a fillet where it meets the arm; see `latchGeom` in dockdims.ts. */
+export const noseProfile = (p: LatchDims = LATCH) => {
+  const g = latchGeom(p), nose = P([g.tip, g.root, g.topRoot, g.top, g.tip2]), arm = latchProfile(p), r = p.noseFillet;
+  if (r <= 0) return nose;
+  // (the closing rounds every inside corner where the nose meets the arm; only what it adds beside the arm's face is kept)
+  const both = arm.add(nose).offset(r, 'Round').offset(-r, 'Round');
+  return nose.add(both.subtract(arm).intersect(rect2(p.yIn - 0.2, g.root[1] - r - 0.5, p.yIn + 0.2 + 2 * r, g.topRoot[1] + r + 0.5)));
+};
 
 function cavity(off = 0): CS {
   const hf = S.cavHalf + off, ff = S.cavFrontY + off, fy2 = S.cavFullY + off * 0.414;
@@ -70,11 +78,14 @@ function cavity(off = 0): CS {
   return P([[-hf, -fy2], [-k, -ff], [k, -ff], [hf, -fy2], [hf, fy2], [k, ff], [-k, ff], [-hf, fy2]]);
 }
 
-function latchSide(): MF {
-  const lat = unionMF([extYZ(latchProfile(), LATCH.hx), extYZ(P(POST), LATCH.hx)]);
-  // nose; its -X end gets a 45 degree face because the socket prints standing on -X
-  const nose = extYZ(P(NOSE), NOSE_HX).subtract(ext(P([[-20, 7], [-4.8, 7], [2.2, 0], [-20, 0]]), -10, -4));
-  return unionMF([lat, nose]);
+/** The nose as a solid (x -noseHx..noseHx): its -X end gets a 45 degree face because the socket prints standing on -X, so each layer reaches only a step further out from the arm than the one under it. */
+export function noseSolid(p: LatchDims = LATCH): MF {
+  const g = latchGeom(p), c = g.root[0] - p.noseHx, y0 = g.yT - 0.5, y1 = g.root[0] + 0.5;
+  return extYZ(noseProfile(p), p.noseHx).subtract(ext(P([[-30, y1], [c - y1, y1], [c - y0, y0], [-30, y0]]), p.zn - 2, p.zn + 8));
+}
+
+function latchSide(p: LatchDims = LATCH): MF {
+  return unionMF([extYZ(latchProfile(p), p.hx), noseSolid(p)]);
 }
 
 function boss(): MF {
@@ -91,11 +102,11 @@ export function socket(): MF {
   let body = unionMF([box(-hx, -S.coreY, S.bottom, hx, S.coreY, 0), box(-hx, -S.halfY, S.bottom, hx, S.halfY, S.anchorTop), boss()]);
   const cuts: MF[] = [ext(cavity(), S.floor, 1.0), hull([ext(cavity(S.mouthCh), 0.0, 0.02), ext(cavity(0), -S.mouthCh, -S.mouthCh + 0.01)])];
   for (const sg of [1, -1]) {
-    const [w0, w1] = S.windowZ, [x0, x1] = S.windowX;
+    const lg = latchGeom(), [w0, w1] = [lg.tip[1] - 0.45, lg.topRoot[1] + 0.4], [x0, x1] = S.windowX; // (0.4 mm round the nose, so it prints free of the wall)
     const yy = (a: number, b: number) => (sg > 0 ? [a, b] : [-b, -a]);
     const [wy0, wy1] = yy(5.4 - 0.9, 5.4 + 0.9);
     cuts.push(box(x0, wy0, w0, x1, wy1, w1)); // nose window
-    const zr = LATCH.zRoot;
+    const zr = LATCH.zr;
     const [sy0, sy1] = yy(7.3 - 1.7, 7.3 + 1.7);
     cuts.push(box(-hx - 0.5, sy0, zr + 0.3, hx + 0.5, sy1, S.anchorTop + 0.01)); // latch slot in the anchor plate
     const [ry0, ry1] = yy(6.1 - 0.5, 6.1 + 0.5);
@@ -129,17 +140,26 @@ const SHOE_JAW = [[17.7, 3.9], [20.6, 3.9], [21.9, 5.2], [21.9, 33.4], [21.5, 34
 // (Measured in the DIN clip review: the hub's open edge was 0.09 mm from the neck, which prints as one piece, and
 // nothing held the lever on along the pin. The neck was 1.0 mm with a notch at its root, where about 13 N on the pad,
 // once the jaw is at its stop, reached the strain limit; now it tapers from 1.8 mm, filleted into a wider tower: 28 N.)
-// `open`: the hub's opening, degrees; `bead`: how far the bead stands off the pin.
-export const SHOE_LEVER = { pivot: [13.4, 39.2] as V2, pad: [24.6, 28.8] as V2, top: 41.0, hook: 22.3, stopGap: 2.0, open: [-118, -39] as V2, bead: 0.6 };
+// The hub's open edge on the neck's side is the lift stop: it meets the neck's left face after about 6 degrees (the pad
+// 1.5 mm up), where it used to have 13.5 degrees (3 mm) before it did. Its gap to the neck can't be less than the
+// print gap, so the edge slants: 0.35 mm off the neck at the pin, and closer out at the ring's rim.
+// `open`: the hub's opening, degrees, its edge on the neck's side at the pin's clearance (r 2.05) and the other edge;
+// `stop`: where that first edge is at the ring's rim (r 3.55); `bead`: how far the bead stands off the pin.
+export const SHOE_LEVER = { pivot: [13.4, 39.2] as V2, pad: [24.6, 28.8] as V2, top: 41.0, hook: 22.3, stopGap: 2.0, open: [-116, -39] as V2, stop: -110.5, bead: 0.6 };
 const TOWER = [[11.2, 22.9], [13.9, 22.9], [13.9, 34.5], [11.8, 34.5], [11.2, 33.9]];
 const NECK = [[12.1, 34.2], [13.9, 34.2], [13.9, 38.2], [12.9, 38.2], [12.9, 37.3]];
 
 /** The rail release lever (y, z), a separate island printed in place round the tower's pin. */
 export function leverProfile(): CS {
-  const [py, pz] = SHOE_LEVER.pivot, [a0, a1] = SHOE_LEVER.open;
+  const [py, pz] = SHOE_LEVER.pivot, [a0, a1] = SHOE_LEVER.open, at = (r: number, deg: number): V2 => [py + r * Math.cos((deg * Math.PI) / 180), pz + r * Math.sin((deg * Math.PI) / 180)];
   const ring = circle2(py, pz, 3.55, 64).subtract(circle2(py, pz, 2.05, 48));
-  const sec: V2[] = [[py, pz]];
-  for (let i = 0; i <= 20; i++) { const a = ((a0 + ((a1 - a0) * i) / 20) * Math.PI) / 180; sec.push([py + 7 * Math.cos(a), pz + 7 * Math.sin(a)]); }
+  // the opening: its neck-side edge is the line from the pin's clearance to the ring's rim, run on past both
+  const A = at(2.05, a0), B = at(3.55, SHOE_LEVER.stop), L = Math.hypot(B[0] - A[0], B[1] - A[1]);
+  const e0: V2 = [A[0] - ((B[0] - A[0]) / L) * 1.5, A[1] - ((B[1] - A[1]) / L) * 1.5], e1: V2 = [B[0] + ((B[0] - A[0]) / L) * 3, B[1] + ((B[1] - A[1]) / L) * 3];
+  const ae = (Math.atan2(e1[1] - pz, e1[0] - py) * 180) / Math.PI;
+  const sec: V2[] = [e0, e1];
+  for (let i = 1; i <= 20; i++) sec.push(at(7, ae + ((a1 - ae) * i) / 20));
+  sec.push(at(1.5, a1));
   const hub = ring.subtract(poly(sec, 'NonZero'));
   const arm = roundCS(rect2(15.6, 37.8, 28.8, 40.4), 0.9);
   const hook = roundCS(rect2(22.3, 30.6, 24.3, 38.8), 0.7);
@@ -178,11 +198,29 @@ export function shoeProfile(): CS {
   // the rail grip on the fixed hook's side: it presses the rail's -y wall from inside the channel, so the shoe sits
   // against the fixed hook (0.4 mm from it as drawn) with a preload, instead of only locating on the rail
   const grip = railGrip(SHOE_GRIP.gap, 7.5, (s, h) => [SHOE_GRIP.wall + s, h]);
-  return c.subtract(unionCS(shoeCuts())).add(unionCS([P(HOOK_TIP), P(mir(HOOK_TIP)), grip]));
+  // (a fillet where each hook's tab meets its beam, under the face the socket bears on)
+  const R = HOOK_SLIT.tab, fil = R > 0 ? [rect2(9.15 - R, 20.33 - R, 9.15, 20.36).subtract(circle2(9.15 - R, 20.33 - R, R, 48))] : [];
+  return c.subtract(unionCS(shoeCuts())).add(unionCS([P(HOOK_TIP), P(mir(HOOK_TIP)), ...fil, ...fil.map((f) => f.mirror([1, 0])), grip]));
+}
+
+/**
+ * A hook slit (y, z) between y0 and y1, up from z0 to z1, with its bottom filleted where the hook beam joins the floor.
+ * The beam is on the y1 side (or on the y0 side with `beamLow`); its side of the bottom is a fillet of radius R, which
+ * is a quarter round across the slit, and past it toward the other wall when R is more than the slit's width (a
+ * step under that wall, out of the way). R up to half the width is the plain round bottom. Everything else in the
+ * bottom is rounded 0.25.
+ */
+function hookSlit(y0: number, y1: number, z0: number, z1: number, R: number, beamLow = false): CS {
+  if (R <= (y1 - y0) / 2 + 1e-9) return slot(y0, y1, z0, z1);
+  const yf = Math.min(y0, y1 - R);
+  // (run on past z1 while it is rounded, so its top corners don't leave a sliver where it opens into the channel)
+  const c = rect2(y0, z0 + R, y1, z1 + 1).add(rect2(yf, z0, y1 - R, z0 + R)).add(rect2(y1 - R, z0, y1, z0 + R).intersect(circle2(y1 - R, z0 + R, R, 64)));
+  const r = roundCS(c, 0.25).intersect(rect2(yf - 1, z0 - 1, y1 + 1, z1 + 0.05)), yc = (y0 + y1) / 2;
+  return beamLow ? r.translate([-yc, 0]).mirror([1, 0]).translate([yc, 0]) : r;
 }
 
 function shoeCuts(): CS[] {
-  const inner = slot(8.55, 9.15, 10.0, 18.05), outer = slot(10.0, 10.6, 10.0, 23.1);
+  const inner = hookSlit(8.55, 9.15, 10.0, 18.05, HOOK_SLIT.inner), outer = hookSlit(10.0, 10.6, 10.0, 23.1, HOOK_SLIT.outer, true);
   const flip = (c: CS) => c.mirror([1, 0]);
   return [
     P([[-9.15, 18], [9.15, 18], [9.15, 23.1], [-9.15, 23.1]]), // socket channel
@@ -234,15 +272,44 @@ export const shoeLever = () => extYZ(leverProfile(), LEN_X / 2).subtract(pinBead
 export const END_POSE = { pose: [0, 0, 1, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 0, 1], inv: [0, 0, -1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1] };
 
 // ---------------- holder side (socket-local coordinates, holder A) ----------------
-export { HD, SPINE_TOP, DOCK_MIN_ZB } from './dockdims';
+export { HD, SPINE_TOP, DOCK_MIN_ZB, LANDING, PEG } from './dockdims';
+
+/**
+ * The latch groove across the tongue's front face (y, z): its floor is the nose's holding face, `play` under it and
+ * undercut the same `hook` degrees (so it is highest at the front, and the nose sits in a pocket), a back wall 0.15 mm
+ * past the nose's tip, and a ceiling 0.45 mm over the nose's top.
+ */
+export function latchGroove(p: LatchDims = LATCH): CS {
+  const g = latchGeom(p), yb = g.yT - 0.15, yf = TONGUE.y1 + 1.5, fl = (y: number) => p.zn - p.play + (y - g.yT) * g.tanHook, zc = g.topRoot[1] + 0.45;
+  return P([[yb, fl(yb)], [yf, fl(yf)], [yf, zc], [yb, zc]]);
+}
 
 /** Tongue that plugs into the socket (after matching_tongue.stl, grown to 14 x 4.5 mm), with a lead-in at the tip. */
 export function tongue(into = 0.2, fit = 0): MF {
   // `fit` shrinks the sides and front face (the back face stays on the socket's divider)
   const f = Math.max(0, Math.min(0.4, fit)), { hx, y0, y1 } = TONGUE;
   let t = ext(P([[-hx + f, y0], [hx - f, y0], [hx - f, y1 - 2 - f * 0.4], [hx - 2 - f * 0.6, y1 - f], [-hx + 2 + f * 0.6, y1 - f], [-hx + f, y1 - 2 - f * 0.4]]), -14, into);
-  t = t.subtract(box(-10, NOSE_TIP - 0.15, -8.25, 10, y1 + 1.5, -4.8)); // latch groove
-  return t.subtract(extYZ(P([[y1 - 0.6, -14.1], [y1 + 0.1, -14.1], [y1 + 0.1, -13.3]]), 10));
+  t = t.subtract(extYZ(latchGroove(), 10)); // latch groove
+  t = t.subtract(extYZ(P([[y1 - 0.6, -14.1], [y1 + 0.1, -14.1], [y1 + 0.1, -13.3]]), 10));
+  return unionMF([t, crushRibs(f)]);
+}
+
+/**
+ * The tongue's crush ribs (socket-local, holder A): on each of its two 45 degree front corner faces, `CRUSH.z.length`
+ * ribs, low and broad (`base` wide where they grow out of the face, so they print as part of the tongue, a `crown`
+ * wide crest `proud` above the face). The socket's chamfered corners are 0.28 mm off the tongue's along the face's
+ * normal (0.39 with the tongue pushed back on its divider), so the ribs are pressed 0.06 to 0.17 mm: the first push in
+ * crushes their crests to the socket's real size, and after that the tongue is snug on its divider and centred. Their ends run out to the face in 45 degree ramps, so they go in without catching.
+ */
+export function crushRibs(f = 0): MF {
+  const { proud, base, crown, a0, z, ramp } = CRUSH, { hx, y1 } = TONGUE;
+  const P1: V2 = [hx - f, y1 - 2 - f * 0.4], P2: V2 = [hx - 2 - f * 0.6, y1 - f], L = Math.hypot(P2[0] - P1[0], P2[1] - P1[1]);
+  const tv = [(P2[0] - P1[0]) / L, (P2[1] - P1[1]) / L], nv = [tv[1], -tv[0]];
+  const at = (a: number, h: number): V2 => [P1[0] + tv[0] * a + nv[0] * h, P1[1] + tv[1] * a + nv[1] * h];
+  const crest = P([at(a0, -0.1), at(a0 + (base - crown) / 2, proud), at(a0 + (base + crown) / 2, proud), at(a0 + base, -0.1)]), foot = P([at(a0, -0.1), at(a0 + 0.1, 0.05), at(a0 + base - 0.1, 0.05), at(a0 + base, -0.1)]);
+  const one = (z0: number, z1: number) => hull([ext(crest, z0 + ramp, z1 - ramp), ext(foot, z0, z0 + 0.02), ext(foot, z1 - 0.02, z1)]);
+  const b = unionMF(z.map(([z0, z1]) => one(z0, z1)));
+  return unionMF([b, b.mirror([1, 0, 0])]);
 }
 
 /**
@@ -251,21 +318,28 @@ export function tongue(into = 0.2, fit = 0): MF {
  * under the board (grip bar centred on it), +1 / -1 when it runs beside the board on the +x / -x side (grip bar
  * reaches away from the board, so it stays clear of plugs on the top edge).
  */
-export function holderDock(far: number, pedestal: number, side = 0, fit = 0) {
+export function holderDock(far: number, pedestal: number, side = 0, fit = 0, col?: { foot: boolean; landing: boolean }) {
   const { spineHx, spineY1, grip } = HD;
-  const zg0 = far + grip.gap, zg1 = zg0 + grip.t;
+  // in a column of holders, one below the top carries the next on a landing on its far wall instead of a grip bar
+  const zg0 = col?.landing ? far + LANDING.gap : far + grip.gap, zg1 = zg0 + (col?.landing ? LANDING.t : grip.t);
   const [g0, g1] = gripSpan(side);
   const add = unionMF([
-    tongue(Math.min(1.0, pedestal), fit),
-    extXZ(rect2(-HD.base.hx, 0, HD.base.hx, Math.max(HD.base.t, pedestal)), HD.backY, HD.base.y1), // pedestal on the socket top
+    // the bottom of a column (or a holder on its own) plugs into the socket; one higher up stands on pegs
+    col?.foot ? unionMF(PEG.x.map((x) => peg(x))) : tongue(Math.min(1.0, pedestal), fit),
+    extXZ(rect2(-HD.base.hx, 0, HD.base.hx, Math.max(HD.base.t, pedestal)), HD.backY, HD.base.y1), // pedestal on the socket top (or on the landing below)
     box(-spineHx, HD.backY, 0, spineHx, spineY1, zg1), // spine, dock face to grip bar
-    // grip bar: rounded, with a shallow finger scoop in the face the fingers pull on (matches the button's dish)
-    extXZ(roundCS(rect2(g0, zg0, g1, zg1), 1.2).subtract(circle2((g0 + g1) / 2, zg0 - ((g1 - g0) ** 2 / 4 + 0.64) / 1.6 + 0.8, ((g1 - g0) ** 2 / 4 + 0.64) / 1.6, 256)), HD.backY, spineY1),
+    ...(col?.landing ? [] : [box(-HD.collar.hx, HD.backY, rodPocketBottom(zg1) - 0.8, HD.collar.hx, spineY1, zg1)]), // the collar round the barbs' pocket, up through the grip bar (so a bar that starts at the spine's edge keeps 1.2 mm beside the pocket, and the finger scoop in its underside leaves no thin wall)
+    col?.landing
+      ? extXZ(roundCS(rect2(-LANDING.hx, zg0 - 0.01, LANDING.hx, zg1), 1.2).intersect(rect2(-LANDING.hx - 1, zg0 - 0.01, LANDING.hx + 1, zg1 + 1)), HD.backY, spineY1)
+      // grip bar: rounded, with a shallow finger scoop in the face the fingers pull on (matches the button's dish)
+      : extXZ(roundCS(rect2(g0, zg0, g1, zg1), 1.2).subtract(circle2((g0 + g1) / 2, zg0 - ((g1 - g0) ** 2 / 4 + 0.64) / 1.6 + 0.8, ((g1 - g0) ** 2 / 4 + 0.64) / 1.6, 256)), HD.backY, spineY1),
   ]);
-  const tunnel = rodTunnel(zg1); // release-rod tunnel
+  // the rod's tunnel: with its catch at the top of the column; straight through a holder the rod only passes
+  const tunnel = col?.landing ? rodBore(zg1) : rodTunnel(zg1);
   const cut = unionMF([
     tunnel,
     box(-HD.voidHx, HD.backY - 0.1, Math.max(HD.base.t, pedestal) + 1.5, HD.voidHx, HD.voidY1, zg0 - 1.5), // back channel (saves filament)
+    ...(col?.landing ? PEG.x.map((x) => pegHole(x, zg1)) : []),
   ]);
   return { add, cut, tunnel, zg0, zg1 };
 }
@@ -294,32 +368,84 @@ export function flatHolderDock(reach: number, fit = 0) {
 }
 
 /**
- * Where the rod's barb sits for a tunnel whose top is at `top` (socket-local z): its catch face (flat, 0.2 mm under
- * the ledge at rest) and its bottom (under a 45 degree lead-in).
+ * Where the rod's barbs sit for a tunnel whose top is at `top` (socket-local z): the catch face (flat, 0.2 mm under the
+ * gate at rest) and the barb's foot (under its lead-in ramp).
  */
 function rodCatch(top: number) {
-  const { ledge, barb } = HD.catch, zcat = top - ledge - 0.2;
-  return { zcat, zb: zcat - 0.4 - barb };
+  const { gate, ramp, flat } = HD.catch, zcat = top - gate - 0.2;
+  return { zcat, zb: zcat - ramp - flat };
 }
 
-/** The release rod's tunnel, open from the socket top to `top`, with the pocket its barb clicks into under the ledge
- * at the top: as long as the barb and the button's whole stroke, 0.3 mm to spare. */
+/** A frustum (hull of two thin boxes, the second bigger) for a chamfer: (x half-widths, y, z) of the small end, then the big end. */
+function frustum(hx0: number, y0: number, y1: number, z0: number, hx1: number, y2: number, y3: number, z1: number): MF {
+  return hull([box(-hx0, y0, z0, hx0, y1, z0 + 0.01), box(-hx1, y2, z1 - 0.01, hx1, y3, z1)]);
+}
+
+/**
+ * The lead-in chamfers of a tunnel from `z0` (the socket end) to `top`: a funnel at the top (the button's neck fillets
+ * and the rod's tip come in there) and a chamfer at the bottom, where the rod leaves. The funnel opens at 45 degrees on
+ * the x sides and the -y side (the floor); on the +y side (the roof, over a thin wall) it is a 45 degree chamfer only
+ * `yPos` deep, since a flatter roof would not print.
+ */
+function tunnelEnds(top: number, z0: number, hxTop: number): MF {
+  const { mouth } = HD, [y0, y1] = HD.tunnelY, zs = top - mouth.depth;
+  const ex = (z: number) => (mouth.x * (z - zs)) / mouth.depth, en = (z: number) => (mouth.yNeg * (z - zs)) / mouth.depth;
+  const at = (z: number, yp: number) => box(-(hxTop + ex(z)), y0 - en(z), z - 0.01, hxTop + ex(z), y1 + yp, z);
+  const zc = top - mouth.yPos, zt = top + 0.2;
+  return unionMF([
+    hull([box(-hxTop, y0, zs, hxTop, y1, zs + 0.01), at(zt, 0)]),
+    hull([at(zc, 0), at(zt, mouth.yPos + 0.2)]),
+    frustum(HD.tunnelHx, y0, y1, z0 + mouth.exit + 0.2, HD.tunnelHx + mouth.exit, y0 - mouth.exit, y1 + mouth.exit * 0.4, z0),
+  ]);
+}
+
+/**
+ * The release rod's tunnel, open from the socket top to `top`: the bore, its lead-in chamfers, the gate in its top 2 mm
+ * (narrower, so the rod's barbs bend past it), and the pocket under the gate the barbs click into: as long as the
+ * barb and the button's whole stroke, 0.3 mm to spare.
+ */
 export function rodTunnel(top: number): MF {
-  const { zb } = rodCatch(top), [y0, y1] = HD.tunnelY;
-  return unionMF([box(-HD.tunnelHx, y0, -0.2, HD.tunnelHx, y1, top + 0.2), box(HD.tunnelHx - 0.1, y0, zb - HD.stroke - 0.3, HD.catch.pocket, y1, top - HD.catch.ledge)]);
+  const { gate, ledge, pocket } = HD.catch, [y0, y1] = HD.tunnelY, hx = HD.tunnelHx;
+  return unionMF([
+    box(-hx, y0, -0.2, hx, y1, top - gate), box(-pocket, y0, rodPocketBottom(top), pocket, y1, top - gate),
+    box(-ledge, y0, top - gate - 0.01, ledge, y1, top + 0.2), tunnelEnds(top, -0.2, ledge),
+  ]);
 }
 
-/** Release rod with its button head, socket-local (rest position). `zg1`: the top of its tunnel. */
-export function rod(zg1: number, side = 0): { m: MF; len: number } {
-  const zh = zg1 + HD.stroke, zf = HD.rodRest, [y0, y1] = HD.rodY, h = HD.head;
+/** Where the bottom of the barbs' pocket is, for a tunnel whose top is at `top`. */
+export function rodPocketBottom(top: number): number {
+  return rodCatch(top).zb - HD.stroke - 0.3;
+}
+
+/** A straight tunnel (a column's holders under the top one: the rod only passes) from the socket top to `top`, with the same lead-in chamfers. */
+export function rodBore(top: number): MF {
+  const [y0, y1] = HD.tunnelY, hx = HD.tunnelHx;
+  return unionMF([box(-hx, y0, -0.2, hx, y1, top + 0.2), tunnelEnds(top, -0.2, hx)]);
+}
+
+/** Release rod with its button head, socket-local (rest position). `zg1`: the top of its tunnel. `drop`: how far the
+ * socket is below this holder's dock face (the top holder of a column: the rod runs down through every holder under it). */
+export function rod(zg1: number, side = 0, drop = 0): { m: MF; len: number } {
+  const zh = zg1 + HD.stroke, zf = HD.rodRest - drop, [y0, y1] = HD.rodY, h = HD.head;
   const [x0, x1] = headSpan(side);
-  // the shaft, and on its +x side a finger hanging from the head, cut free by a 0.5 mm slot, with the barb at its
-  // foot: pushed down the tunnel, the ledge bends the finger 0.3 mm aside and the barb clicks out under it, so the rod
-  // (and a flat holder's dock key, which it locks) can't slide back out; the barb then rides the stroke in its pocket
-  const { zcat, zb } = rodCatch(zg1), bb = HD.catch.barb, xs = HD.rodHx;
-  const shaft = extYZ(P([[y0, zf], [y0 + 0.6, zf], [y1, zf + 1.6], [y1, zh + 0.01], [y0, zh + 0.01]]), HD.rodHx)
-    .subtract(extXZ(unionCS([rect2(0.2, zb - 0.5, 0.7, zh), rect2(0.2, zb - 0.5, xs + 0.1, zb)]), y0 - 0.1, y1 + 0.1))
-    .add(extXZ(P([[xs - 0.05, zb], [xs + bb, zb + bb], [xs + bb, zcat], [xs - 0.05, zcat]]), y0, y1));
+  // the shaft, and two fingers standing from it, free at the top and cut free by a slot beside each (an L: up beside the
+  // finger and across over its top, with rounded corners), and a barb on each: pushed down the tunnel, the gate bends
+  // them aside and the barbs click out under it, so the rod (and a flat holder's dock key, which it locks) can't
+  // slide back out; the barbs then ride the stroke in their pocket. The slots are all under the tunnel's mouth, so
+  // the neck between the button and the mouth, where an off-centre push bends the rod, is the whole rod's width.
+  const { zcat, zb } = rodCatch(zg1), { barb, ramp, slot, finger, root } = HD.catch, xs = HD.rodHx, xi = xs - finger, fr = HD.neckFillet;
+  const cut = (sg: number) => (c: CS) => (sg > 0 ? c : c.mirror([1, 0]));
+  const slots = unionCS([1, -1].map((sg) => cut(sg)(roundCS(unionCS([rect2(xi - slot, zb - root, xi, zcat + slot), rect2(xi - slot, zcat, xs + 0.1, zcat + slot)]), 0.2))));
+  // (the tip: a slope in y, and 45 degree corners in x, so it finds the tunnel and the next holder's)
+  const tipCut = unionCS([1, -1].map((sg) => cut(sg)(P([[xs + 0.1, zf - 0.1], [xs - 0.9, zf - 0.1], [xs + 0.1, zf + 1.0]]))));
+  let shaft = extYZ(P([[y0, zf], [y0 + 0.6, zf], [y1, zf + 1.6], [y1, zh + 0.01], [y0, zh + 0.01]]), xs)
+    .subtract(extXZ(slots, y0 - 0.1, y1 + 0.1)).subtract(extXZ(tipCut, y0 - 0.1, y1 + 0.1));
+  const barbs = unionCS([1, -1].map((sg) => cut(sg)(P([[xs - 0.05, zb], [xs + barb, zb + ramp], [xs + barb, zcat], [xs - 0.05, zcat]]))));
+  shaft = shaft.add(extXZ(barbs, y0, y1));
+  // fillets where the shaft meets the head: in x (in the print's layers, so the layers' lines curve into the head) and above the shaft in y
+  const fx = unionCS([1, -1].map((sg) => cut(sg)(rect2(xs - 0.01, zh - fr.x, xs + fr.x, zh + 0.01).subtract(circle2(xs + fr.x, zh - fr.x, fr.x, 48)))));
+  const fy = rect2(y1 - 0.01, zh - fr.y, y1 + fr.y, zh + 0.01).subtract(circle2(y1 + fr.y, zh - fr.y, fr.y, 48));
+  shaft = unionMF([shaft, extXZ(fx, y0, y1), extYZ(fy, xs)]);
   // a keycap: softly rounded, a shallow dish in the face the thumb presses, a chamfered rim on the face you see, and
   // three chevrons engraved in it pointing the way it moves. All of it takes plastic away rather than adding it.
   const xc = (x0 + x1) / 2, hw = (x1 - x0) / 2, dish = 0.7, R = (hw * hw + dish * dish) / (2 * dish);
@@ -329,4 +455,3 @@ export function rod(zg1: number, side = 0): { m: MF; len: number } {
   const head = toXZ(extCh(face, 0, h.y1 - y0, 0.2, 0.6), h.y1).subtract(extXZ(chev, h.y1 - 0.45, h.y1 + 1));
   return { m: unionMF([shaft, head]), len: zh + h.t - zf };
 }
-

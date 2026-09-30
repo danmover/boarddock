@@ -3,7 +3,7 @@
 import type { Board, Comp, Hole, Side } from './types';
 import { connById, connSetup } from './library';
 import { roundedRectLoop, uid } from '../geom/poly';
-import { makeBox } from './boxes';
+import { makeBox, makeCompanion } from './boxes';
 import { headerPins } from './probes';
 
 /** A header with its pins' nets, pin 1 first. */
@@ -46,7 +46,7 @@ const SHELF: Record<string, Shelf> = {
   uno: 'Arduino and ESP32', mega: 'Arduino and ESP32', nano: 'Arduino and ESP32', esp32: 'Arduino and ESP32',
   proto_5x7: 'Blank and perfboard', blank: 'Blank and perfboard',
   example_dual_swd: 'Examples', example_jtag: 'Examples',
-  usb_hub: 'Hubs and chargers', usb_hub7: 'Hubs and chargers', net_switch5: 'Hubs and chargers', net_switch8: 'Hubs and chargers', usb_hubc: 'Hubs and chargers', usb_charger: 'Hubs and chargers', usb_charger6: 'Hubs and chargers',
+  usb_hub: 'Hubs and chargers', usb_hub7: 'Hubs and chargers', net_switch5: 'Hubs and chargers', net_switch8: 'Hubs and chargers', net_switch8poe: 'Hubs and chargers', usb_hubc: 'Hubs and chargers', usb_charger: 'Hubs and chargers', usb_charger6: 'Hubs and chargers',
   psu_pi5: 'Hubs and chargers', psu_pi4: 'Hubs and chargers', dc_pack_12v: 'Hubs and chargers',
   pb4: 'Powerboards', pb6: 'Powerboards', pb4sw: 'Powerboards', pb4ang: 'Powerboards', pb4usb: 'Powerboards', power_dist: 'Powerboards',
   jlink: 'Probes and adapters', ftdi: 'Probes and adapters', relay4: 'Add-on boards',
@@ -227,19 +227,20 @@ export const TEMPLATES: Template[] = [
   { id: 'usb_hub7', name: 'Powered USB hub, 7 ports on top (160 × 48)', accessory: true, make: () => makeBox('hub7') },
   { id: 'net_switch5', name: 'Network switch, 5 ports (100 × 70)', accessory: true, make: () => makeBox('switch5') },
   { id: 'net_switch8', name: 'Network switch, 8 ports (158 × 100)', accessory: true, make: () => makeBox('switch8') },
+  { id: 'net_switch8poe', name: 'PoE network switch, 8 ports, 120 W (158 × 100)', accessory: true, make: () => makeBox('switch8poe') },
   { id: 'usb_hubc', name: 'USB-C hub with Ethernet (110 × 32)', accessory: true, make: () => makeBox('hubc') },
   { id: 'usb_charger', name: 'USB charger, 4 ports (box 90 × 60 × 28)', accessory: true, make: () => makeBox('charger4') },
   { id: 'usb_charger6', name: 'USB charger, 4 A + 2 C (110 × 70)', accessory: true, make: () => makeBox('charger6') },
   { id: 'psu_pi5', name: 'USB-C supply, 27 W, 5 A (the Raspberry Pi 5 one; a plug pack)', accessory: true, make: () => makeBox('psu_pi5') },
   { id: 'psu_pi4', name: 'USB-C supply, 15 W, 3 A (the Raspberry Pi 4 one; a plug pack)', accessory: true, make: () => makeBox('psu_pi4') },
   { id: 'dc_pack_12v', name: 'DC plug pack, 12 V 2 A (barrel plug)', accessory: true, make: () => makeBox('dc_pack_12v') },
-  { id: 'jlink', name: 'J-Link debug probe (50 × 50 × 3, 10-pin ribbon)', accessory: true, make: () => makeBox('jlink') },
+  { id: 'jlink', name: 'J-Link debug probe (65 × 40, 20-pin 1.27 mm ribbon, USB-B)', accessory: true, make: () => makeCompanion('jlink') },
   { id: 'pb4', name: 'Powerboard, 4 outlets (290 × 58 × 40)', accessory: true, make: () => makeBox('pb4') },
   { id: 'pb6', name: 'Powerboard, 6 outlets (420 × 58 × 40)', accessory: true, make: () => makeBox('pb6') },
   { id: 'pb4sw', name: 'Powerboard, 4 switched outlets (330 × 62 × 42)', accessory: true, make: () => makeBox('pb4sw') },
   { id: 'pb4ang', name: 'Powerboard, 4 angled outlets, room for plug packs (300 × 66 × 40)', accessory: true, make: () => makeBox('pb4ang') },
   { id: 'pb4usb', name: 'Powerboard, 4 outlets and 2 USB (330 × 58 × 40)', accessory: true, make: () => makeBox('pb4usb') },
-  { id: 'ftdi', name: 'USB-serial adapter, FT232RL (36 × 18, mini-USB, 6 pins)', accessory: true, make: () => makeBox('ftdi') },
+  { id: 'ftdi', name: 'USB-serial adapter, FT232RL (36 × 18, mini-USB, 6 pins)', accessory: true, make: () => makeCompanion('ftdi') },
   {
     id: 'power_dist', name: 'DC power distribution board (60 × 40)', accessory: true,
     make: () => {

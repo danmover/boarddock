@@ -19,6 +19,15 @@ describe('Allegro boards', () => {
     expect(r.boards).toHaveLength(0);
     expect(r.errors[0]).toMatch(/Allegro/);
     expect(r.errors[0]).toMatch(/KiCad 10/);
+    expect(r.errors[0]).toMatch(/web browser can’t use KiCad.*desktop app/);
+  });
+  it('a board known only by its version string still goes to KiCad (the reader and the converter agree)', async () => {
+    const b = new Uint8Array(0x2000); b.set([0x76, 0x69, 0x65], 0xf8); // "vie...", no magic number
+    const seen: string[] = [];
+    const r = await importMany([{ name: 'view.brd', bytes: b }], async (name) => { seen.push(name); return { text: kicad }; });
+    expect(seen).toEqual(['view.brd']);
+    expect(r.errors).toEqual([]);
+    expect(r.boards).toHaveLength(1);
   });
   it('with a converter (the desktop app and KiCad 10), loose or in a zip with other files, come in as boards', async () => {
     const seen: string[] = [];

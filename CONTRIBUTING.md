@@ -8,6 +8,10 @@ didn't fit, your printer, nozzle, layer height and filament.
 Open an issue with the file (or a zip of the fab outputs), the EDA tool and version, and a screenshot of
 what BoardDock shows. If the design is private, a DXF of just the outline plus a list of connectors helps.
 
+## Adding a board to the library
+
+Drop its files and a small `board.json` into `boards/<slug>/` and open a pull request; `boards/README.md` says what to upload and how `npm run boards` turns it into a board the app offers.
+
 ## Code
 
 ```bash
@@ -27,5 +31,7 @@ npm run typecheck
 
 ## Releases
 
-Push a tag `vX.Y.Z`. The release workflow builds the Windows, macOS and Linux installers, attaches them to
-a GitHub release, and publishes the web app to GitHub Pages.
+Bump the version (`npm version X.Y.Z --no-git-tag-version`), write the notes in `.github/release-notes/vX.Y.Z.md`
+(install steps, what's new, known limits; GitHub's list of changes is added after them), then push a tag `vX.Y.Z`.
+The release workflow builds the Windows, macOS and Linux installers, attaches them to a GitHub release, and
+publishes the web app to GitHub Pages.

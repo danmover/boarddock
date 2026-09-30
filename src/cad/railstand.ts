@@ -65,13 +65,14 @@ function blockOutline(top: number, rTop: number): CS {
   return roundCS(rect2(-w, -H, w, top), 0.8).intersect(roundCS(rect2(-w, -H - 5, w, top), rTop));
 }
 
-/** End block: the rail end slides 6 mm into a TS35-shaped pocket; crush ribs above the lips and under the crown
- * make it a light press fit. Print pose: the back wall on the bed, pocket mouth up (the top chamfer is its lead-in). */
+/** End block: the rail end slides 6 mm into a TS35-shaped pocket, `clr` clear all round and capped over the lips: a slip
+ * fit, nothing pressing and nothing to wear. (It had four crush ribs, 0.1 mm proud of the rail: a rib that takes 700 N to
+ * press 0.1 mm crushes, so the fit went slack on the second time the rail was slid in. The rail is held by the pocket and
+ * the frame the blocks make.) Print pose: the back wall on the bed, pocket mouth up (the top chamfer is its lead-in). */
 export function endBlock(): MF {
   const base = blockOutline(TOP, 2.4).subtract(windows(-2.3)).subtract(socketCut(1)).subtract(socketCut(-1));
   const c = STAND.clr;
-  const ribs = unionCS([circle2(-7, -c - 0.05, 0.45, 20), circle2(7, -c - 0.05, 0.45, 20), circle2(-15.5, 7.5 + c + 0.35, 0.45, 20), circle2(15.5, 7.5 + c + 0.35, 0.45, 20)]);
-  const pocket = unionCS([railSection().offset(c, 'Miter'), rect2(-12.5 + c, 1 + c, 12.5 - c, TOP + 1), P([[-12.5 + c, TOP - 1.2], [12.5 - c, TOP - 1.2], [13.7, TOP + 0.01], [-13.7, TOP + 0.01]])]).subtract(ribs);
+  const pocket = unionCS([railSection().offset(c, 'Miter'), rect2(-12.5 + c, 1 + c, 12.5 - c, TOP + 1), P([[-12.5 + c, TOP - 1.2], [12.5 - c, TOP - 1.2], [13.7, TOP + 0.01], [-13.7, TOP + 0.01]])]);
   const walled = roundCS(base.subtract(pocket), 0.3);
   const hat = rect2(-12.5 + c, 1 + c, 12.5 - c, TOP + 1).add(P([[-12.5 + c, TOP - 1.2], [12.5 - c, TOP - 1.2], [13.7, TOP + 0.01], [-13.7, TOP + 0.01]]));
   return unionCMF([extCh(roundCS(base.subtract(hat), 0.3), 0, STAND.back, 0, 0.4), extCh(walled, STAND.back, STAND.len, 0.6, 0)]);
@@ -107,6 +108,11 @@ function ladder(a: number, b: number, zb: number, zt: number): CS {
  * (to = null) that ends in a rounded foot at `reach`. Cable comb over the lanes if any.
  */
 export function spacer(to: number | null, lanes: { y: number; d: number }[], reach = 40): MF {
+  return extCh(spacerProfile(to, lanes, reach), 0, STAND.spacerT, 0.4, 0.4);
+}
+
+/** The spacer's profile (y across, z up), before it is extruded: what the FEA of the comb's teeth solves. */
+export function spacerProfile(to: number | null, lanes: { y: number; d: number }[], reach = 40): CS {
   const w = STAND.half, y0 = w + 0.1, y1 = to != null ? to - w - 0.1 : reach;
   const ct = combTop(lanes), zTop = -2.5;
   const cy0 = lanes.length ? Math.max(y0, Math.min(...lanes.map((l) => l.y - l.d / 2)) - 3.2) : 0, cy1 = lanes.length ? Math.min(y1, Math.max(...lanes.map((l) => l.y + l.d / 2)) + 3.2) : 0;
@@ -123,7 +129,7 @@ export function spacer(to: number | null, lanes: { y: number; d: number }[], rea
   let c = unionCS([body.subtract(win), comb ?? rect2(0, 0, 0, 0), tail(w, 1)]);
   if (to != null) c = c.add(tail(to - w, -1));
   if (comb) c = c.subtract(combCut(lanes, ct));
-  return extCh(roundCS(c, 0.25), 0, STAND.spacerT, 0.4, 0.4);
+  return roundCS(c, 0.25);
 }
 
 const unionCMF = (l: MF[]) => (l.length === 1 ? l[0] : l[0].add(l[1]));
@@ -155,11 +161,18 @@ export function planStands(rails: StandRail[], streets: number[], lanes: StandLa
     return all.some((l) => l.u0 - 2 <= u && u <= l.u1 + 2) ? all.map((l) => ({ y: +(l.y - vFrom).toFixed(2), d: l.d })) : [];
   };
   const key = (ls: { y: number; d: number }[]) => ls.map((l) => `${l.y}/${l.d}`).join(',');
+  // (stations a few mm apart, from rails whose ends nearly meet: the blocks and bars of one would lie in the other's)
+  const blocks = new Map<string, number[]>(), bars = new Map<string, number>();
+  const clashBar = (k: string, u: number) => { const last = bars.get(k); if (last != null && Math.abs(u - last) < STAND.spacerT + 2) return true; bars.set(k, u); return false; };
   stations.forEach((u, si) => {
     const on = rails.filter((r) => r.u0 - 0.5 <= u && u <= r.u1 + 0.5).sort((a, b) => a.v - b.v);
     const isEnd = on.some((r) => Math.abs(u - r.u0) < 0.6 || Math.abs(u - r.u1) < 0.6);
     for (const r of on) {
       const kind: PieceKind = Math.abs(u - r.u0) < 0.6 ? 'end' : Math.abs(u - r.u1) < 0.6 ? 'end' : 'saddle';
+      // (a saddle under a rail's own end block, or another saddle, has no room: the block holds the rail there)
+      const near = [...(blocks.get(r.id) ?? []), r.u0 + STAND.len / 2, r.u1 - STAND.len / 2].some((bu) => Math.abs(bu - u) < STAND.len + 1);
+      if (kind === 'saddle' && near) continue;
+      (blocks.get(r.id) ?? blocks.set(r.id, []).get(r.id)!).push(u);
       const M = kind === 'saddle' ? basis([0, 1, 0], [0, 0, 1], [1, 0, 0], [u - STAND.len / 2, r.v, 0])
         : Math.abs(u - r.u0) < 0.6 ? basis([0, 1, 0], [0, 0, 1], [1, 0, 0], [u - STAND.back, r.v, 0])
         : basis([0, -1, 0], [0, 0, 1], [-1, 0, 0], [u + STAND.back, r.v, 0]);
@@ -168,10 +181,11 @@ export function planStands(rails: StandRail[], streets: number[], lanes: StandLa
     for (let i = 0; i + 1 < on.length; i++) {
       const a = on[i], b = on[i + 1], dv = b.v - a.v;
       if (dv < 2 * w + 6) { warnings.push(`Rails ${a.id.replace(/^r/, '')} and ${b.id.replace(/^r/, '')} are ${Math.round(dv)} mm apart: the stand blocks need ${2 * w + 6} mm, so they are not joined there.`); continue; }
-      const st = streets.findIndex((v) => v > a.v + w && v < b.v - w);
-      const ls = st >= 0 ? lanesAt(u, st, a.v) : [];
+      // (every street between the two: a rail that ends short leaves two streets between its neighbours)
+      const ls = streets.flatMap((v, st) => (v > a.v + w && v < b.v - w ? lanesAt(u, st, a.v) : [])).sort((x, y) => x.y - y.y);
       // between the ends a saddle stands on its own under its rail: a spacer only goes in to carry a comb
       if (!ls.length && !isEnd) continue;
+      if (clashBar(`${a.id}|${b.id}`, u)) continue;
       if (ls.some((l) => l.y - l.d / 2 < w + 2.5 || l.y + l.d / 2 > dv - w - 2.5)) warnings.push(`Too many cables run between rails ${a.id.replace(/^r/, '')} and ${b.id.replace(/^r/, '')} for their comb; space the rails further apart.`);
       pieces.push({ kind: 'spacer', key: `spacer ${Math.round(dv * 10) / 10} ${key(ls)}`, station: si, M: basis([0, 1, 0], [0, 0, 1], [1, 0, 0], [u - s3, a.v, 0]), lanes: ls, to: dv, reach: 0 });
     }
@@ -179,9 +193,10 @@ export function planStands(rails: StandRail[], streets: number[], lanes: StandLa
     // outriggers: to the outer streets when cables run there, or short feet under a lone rail
     for (const side of [-1, 1] as const) {
       const r = side > 0 ? on[on.length - 1] : on[0];
-      const st = side > 0 ? streets.length - 1 : 0;
-      const ls = streets.length && (side > 0 ? streets[st] > r.v : streets[st] < r.v) ? lanesAt(u, st, r.v).map((l) => ({ y: +(side * l.y).toFixed(2), d: l.d })) : [];
+      // every street beyond the outer rail, out to the outer one (a street between rails that end short is crossed too)
+      const ls = streets.flatMap((v, st) => (side > 0 ? v > r.v : v < r.v) ? lanesAt(u, st, r.v).map((l) => ({ y: +(side * l.y).toFixed(2), d: l.d })) : []).sort((x, y) => x.y - y.y);
       if (!ls.length && (on.length > 1 || !isEnd)) continue;
+      if (clashBar(`out${side}`, u)) continue;
       const reach = ls.length ? Math.max(...ls.map((l) => l.y + l.d / 2)) + 9 : w + 18;
       const M = side > 0 ? basis([0, 1, 0], [0, 0, 1], [1, 0, 0], [u - s3, r.v, 0]) : basis([0, -1, 0], [0, 0, 1], [-1, 0, 0], [u + s3, r.v, 0]);
       pieces.push({ kind: 'outrigger', key: `outrigger ${Math.round(reach * 10) / 10} ${key(ls)}`, station: si, M, lanes: ls, to: null, reach });
@@ -213,15 +228,27 @@ export function pieceMesh(pc: StandPiece) {
 /** Bounding boxes of the stand pieces in the rack frame (for cable routing), from the plan alone. */
 export function standBoxes(plan: StandPlan): { box: number[]; label: string }[] {
   const w = STAND.half;
-  return plan.pieces.map((pc) => {
+  const out: { box: number[]; label: string }[] = [];
+  for (const pc of plan.pieces) {
     const [x0, x1] = pc.kind === 'end' || pc.kind === 'saddle' ? [-w, w] : [w, pc.to != null ? pc.to - w : pc.reach];
-    const [y0, y1] = [-STAND.H, pc.kind === 'end' ? TOP : pc.kind === 'saddle' ? 2.4 : -2.5];
+    // (a bar's top is at -2.5 in its profile, and 0.4 more at mid-thickness: the chamfers at its faces are cut back from that)
+    const [y0, y1] = [-STAND.H, pc.kind === 'end' ? TOP : pc.kind === 'saddle' ? 2.4 : -2.1];
     const zl = pc.kind === 'end' || pc.kind === 'saddle' ? STAND.len : STAND.spacerT;
-    const b = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
-    for (const x of [x0, x1]) for (const y of [y0, y1]) for (const z of [0, zl]) {
-      const M = pc.M, q = [M[0] * x + M[4] * y + M[8] * z + M[12], M[1] * x + M[5] * y + M[9] * z + M[13], M[2] * x + M[6] * y + M[10] * z + M[14]];
-      for (let k = 0; k < 3; k++) { b[k] = Math.min(b[k], q[k]); b[k + 3] = Math.max(b[k + 3], q[k]); }
+    const box = (xa: number, xb: number, ya: number, yb: number) => {
+      const b = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+      for (const x of [xa, xb]) for (const y of [ya, yb]) for (const z of [0, zl]) {
+        const M = pc.M, q = [M[0] * x + M[4] * y + M[8] * z + M[12], M[1] * x + M[5] * y + M[9] * z + M[13], M[2] * x + M[6] * y + M[10] * z + M[14]];
+        for (let k = 0; k < 3; k++) { b[k] = Math.min(b[k], q[k]); b[k + 3] = Math.max(b[k + 3], q[k]); }
+      }
+      return b;
+    };
+    const label = `table stand ${pc.station + 1}`;
+    out.push({ box: box(x0, x1, y0, y1), label });
+    // the comb stands up from the bar over the lanes it holds: what isn't in a slot goes over it
+    if (pc.lanes.length && pc.kind !== 'end' && pc.kind !== 'saddle') {
+      const cy0 = Math.max(x0, Math.min(...pc.lanes.map((l) => l.y - l.d / 2)) - 3.2), cy1 = Math.min(x1, Math.max(...pc.lanes.map((l) => l.y + l.d / 2)) + 3.2);
+      if (cy1 > cy0) out.push({ box: box(cy0, cy1, y0, combTop(pc.lanes)), label });
     }
-    return { box: b, label: `table stand ${pc.station + 1}` };
-  });
+  }
+  return out;
 }

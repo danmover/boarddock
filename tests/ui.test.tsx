@@ -1,14 +1,17 @@
 // @vitest-environment happy-dom
 // Small UI behaviours, rendered in a fake DOM: the whole title of a card with a checkbox is its label; a modal window
 // keeps the keyboard inside it and gives it back.
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+vi.mock('../src/worker/client', () => ({ boardPicture: async () => '', holderPicture: async () => '', runClipFea: async () => null, buildTestKit: async () => null }));
 import { act, useRef, useState, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { Section, useModalFocus } from '../src/ui/controls';
 import { forgetBoard, myBoards, restoreBoard, saveBoard } from '../src/model/myboards';
 import { TEMPLATES } from '../src/model/templates';
 import { PRINTERS } from '../src/model/library';
-import { putBoards, rememberPrinter, store } from '../src/state';
+import { putBoards, rememberPrinter, select, store } from '../src/state';
+import { PlugsPanel } from '../src/ui/panels';
+import { portUses } from '../src/model/portuse';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 let root: Root | null = null, host: HTMLElement | null = null;
@@ -149,5 +152,63 @@ describe('labels where off-rack leads go', () => {
     const ls = [{ x: 0, y: 0, hw: 0.1, hh: 0.03, d: 500 }, { x: 0.5, y: 0.5, hw: 0.1, hh: 0.03, d: 300 }, { x: 0.52, y: 0.51, hw: 0.1, hh: 0.03, d: 400 }, { x: 0.05, y: 0.01, hw: 0.1, hh: 0.03, d: 200 }];
     expect(keepApart(ls)).toEqual([false, true, false, true]);
     expect(keepApart([ls[0], ls[1]])).toEqual([true, true]);
+  });
+
+  it('fade as the view goes out: all while the rack is whole in view, none once it is far off', async () => {
+    const { labelFade } = await import('../src/ui/liveFx');
+    expect(labelFade(3.5)).toBe(1);
+    expect(labelFade(5)).toBe(1);
+    expect(labelFade(6.5)).toBeCloseTo(0.5, 5);
+    expect(labelFade(8)).toBe(0);
+    expect(labelFade(20)).toBe(0);
+  });
+});
+
+describe('framing a box with the camera', () => {
+  it('backs off far enough for a long row seen from the front, in a wide and in a tall window', async () => {
+    const THREE = await import('three');
+    const { cornerDist } = await import('../src/ui/frame');
+    const row = new THREE.Box3(new THREE.Vector3(0, 0, 0), new THREE.Vector3(700, 60, 30));
+    for (const aspect of [1.7, 0.5]) {
+      const cam = new THREE.PerspectiveCamera(32, aspect);
+      const d = new THREE.Vector3(0, -1, 0.22).normalize();
+      const dist = cornerDist(cam, row, d, 1.3);
+      // put the camera there: all 8 corners land inside the picture
+      cam.up.set(0, 0, 1);
+      const ctr = row.getCenter(new THREE.Vector3());
+      cam.position.copy(ctr).addScaledVector(d, dist);
+      cam.lookAt(ctr);
+      cam.updateMatrixWorld(true);
+      cam.updateProjectionMatrix();
+      for (let i = 0; i < 8; i++) {
+        const q = new THREE.Vector3(i & 1 ? 700 : 0, i & 2 ? 60 : 0, i & 4 ? 30 : 0).project(cam);
+        expect(Math.abs(q.x)).toBeLessThan(1);
+        expect(Math.abs(q.y)).toBeLessThan(1);
+      }
+    }
+  });
+});
+
+describe("an empty port's protection", () => {
+  it('ticking a cradle on a port nothing is plugged into says it will be plugged in', async () => {
+    putBoards([TEMPLATES.find((t) => t.id === 'uno')!.make()], true);
+    const p0 = store.get().project!, dc = p0.modules[0].board.comps.find((c) => c.conn?.type === 'barrel')!;
+    expect(portUses(p0, p0.modules[0]).get(dc.ref)).toBe('unused');
+    await act(async () => { select([{ kind: 'comp', id: dc.id }]); });
+    const h = await mount(<PlugsPanel />);
+    const tick = [...h.querySelectorAll<HTMLLabelElement>('label')].find((l) => /^Guard collar/.test(l.textContent ?? ''))!;
+    expect(h.textContent).toMatch(/This port is empty, so nothing is printed for it/);
+    await act(async () => { tick.querySelector('input')!.click(); });
+    const p1 = store.get().project!, c1 = p1.modules[0].board.comps.find((c) => c.id === dc.id)!;
+    expect([c1.conn!.guard, c1.conn!.use, portUses(p1, p1.modules[0]).get(dc.ref)]).toEqual([true, 'yes', 'yours']);
+  });
+});
+
+describe('wording for the way in', () => {
+  it('says tap and press and hold on a touch screen, and leaves a mouse alone', async () => {
+    const { say } = await import('../src/ui/touch');
+    expect(say('Click a picture, or drop its files.', true)).toBe('Tap a picture, or drop its files.');
+    expect(say('click the first corner · double-click to close · the name shows on hover', true)).toBe('tap the first corner · double-tap to close · the name shows on press and hold');
+    expect(say('Click a picture', false)).toBe('Click a picture');
   });
 });

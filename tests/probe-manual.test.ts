@@ -11,7 +11,9 @@ it('a rack laid out by hand: new probes go into the free back slot of their boar
   const p = newProject(T('example_dual_swd'));
   p.modules.push(newModule(T('usb_hub7')));
   p.panel.pairs = false;
+  p.panel.opts = { plan: 'classic' }; // (the classic packing: the dual-MCU board standing with its long side along the rail, as a column needs)
   const r0 = generatePanel(p);
+  delete p.panel.opts;
   p.panel.rails = r0.report.panel!.rails.map((r) => ({ id: r.id, x: r.x, y: r.y, dir: r.dir, length: r.length }));
   p.panel.mounts = r0.report.panel!.mounts.map((m) => ({ id: m.id, rail: m.rail, at: m.at, kind: m.kind, turn: m.turn, slots: m.slots, lever: m.lever }));
   p.panel.auto = false;

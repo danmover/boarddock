@@ -1,14 +1,16 @@
-// Debug probes (J-Link): debug headers found on import or marked by hand, a J-Link for each, stacked in the back
-// slot of the board's dock (they slide down into slots), ribbons round the dock that come with the probe.
+// Debug probes (J-Link): debug headers found on import or marked by hand, a J-Link for each: ordinary small boards
+// standing on their long edges in columns by their board, ribbons that come with the probe.
 import { describe, it, expect, beforeAll } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { TEMPLATES } from '../src/model/templates';
 import { debugType, newModule, newProject } from '../src/model/library';
 import { autoLinks, isDebugPort, numberLinks, plugRole } from '../src/model/links';
-import { addAdapters, addProbes, addUartLinks, adapterFor, debugHeaders, fillWires, headerPins, isAdapter, isProbe, isUartPort, markDebug, probesOf, stackProbes, uartHeaders, uartPins, uartWiring } from '../src/model/probes';
+import { addAdapters, addProbes, addUartLinks, adapterFor, columnHeight, columnLimit, debugHeaders, fillWires, headerPins, isAdapter, isProbe, isSmall, isUartPort, markDebug, probesOf, stackCompanions, uartHeaders, uartPins, uartWiring } from '../src/model/probes';
 import { powerBudget } from '../src/model/power';
+import { cableLines } from '../src/model/cablelist';
+import { buyText, SOCKET } from '../src/model/cablebuy';
 import { importKicad } from '../src/import/kicad';
-import { autoAssign } from '../src/cad/dockplan';
+import { autoAssignClassic } from '../src/cad/dockplan';
 import { generatePanel } from '../src/cad/panelgen';
 import { initKernel } from '../src/cad/kernel';
 import type { Comp, Project } from '../src/model/types';
@@ -101,10 +103,14 @@ describe('J-Links for a board', () => {
     return p;
   };
 
-  it('is a slim board with its ribbon socket on its face by one edge and its micro-USB on the edge opposite', () => {
-    const j = T('jlink'), dbg = j.comps.find(isDebugPort)!, usb = j.comps.find((c) => c.conn?.type === 'usb_micro_b')!;
-    expect([dbg.conn!.entry, dbg.y < 10, dbg.h]).toEqual(['top', true, 5.6]);
-    expect([usb.conn!.entry, usb.y > 40]).toEqual(['edge', true]);
+  it('is an ordinary small board: the 20-pin 1.27 mm Cortex connector on its face by one long edge, its USB-B on one end', () => {
+    const j = T('jlink'), dbg = j.comps.find(isDebugPort)!, usb = j.comps.find((c) => c.conn?.type === 'usb_b')!;
+    expect([j.kind, j.box, j.role, isSmall(j)]).toEqual([undefined, undefined, 'probe', true]);
+    // the same connector as the boards it debugs (Samtec SHF-110 and the like): one straight ribbon, no adapter
+    expect([dbg.conn!.type, dbg.conn!.entry, dbg.y < 12, dbg.h]).toEqual(['cortex20', 'top', true, 5.6]);
+    // its USB-B flush with its end, as a board's connectors are
+    expect(usb.conn!.entry).toBe('edge');
+    expect(usb.x + usb.w / 2).toBeCloseTo(65 + 6.3, 6);
   });
 
   it('adds one per free header, cabled to it, stacked, the board still the one being edited', () => {
@@ -115,12 +121,17 @@ describe('J-Links for a board', () => {
     expect(added.every(isProbe)).toBe(true);
     expect(p.modules[3].board.name).toBe('Sensor board');
     expect(p.active).toBe(3);
-    expect(added[1].on).toBe(added[0].id);
-    expect(added[1].onMode).toBe('towers');
+    // two J-Links are taller than the dock's tongue takes (a 20 N push on top, PETG): each stands in a column of its own
+    expect(columnHeight(added)).toBeGreaterThan(columnLimit(added[0].holder));
+    expect(added.map((x) => x.on ?? null)).toEqual([null, null]);
     expect(probesOf(p, p.modules[0]).map((m) => m.id)).toEqual(added.map((m) => m.id));
     expect(p.links!.every((l) => l.kind === 'debug')).toBe(true);
     // nothing left to add
     expect(addProbes(p, p.modules[0].id)).toEqual([]);
+    // an adapter on top of a J-Link fits: it goes on the first column
+    const [ad] = addAdapters(p, p.modules[0].id);
+    expect([ad.on, ad.onMode]).toEqual([added[0].id, 'column']);
+    expect(columnHeight([added[0], ad])).toBeLessThanOrEqual(columnLimit(ad.holder));
   });
 
   it('Auto-connect pairs a loose J-Link with a free header and its USB with a hub, never probe to probe', () => {
@@ -135,36 +146,46 @@ describe('J-Links for a board', () => {
     }
     const probes = p.modules.filter(isProbe);
     for (const pr of probes) {
-      const usb = pr.board.comps.find((c) => c.conn?.type === 'usb_micro_b')!;
+      const usb = pr.board.comps.find((c) => c.conn?.type === 'usb_b')!;
       expect(plugRole(pr, usb)).toBe('device');
       expect(p.links.some((l) => l.kind === 'usb' && (l.a.module === pr.id || l.b.module === pr.id))).toBe(true);
     }
-    // the two probes on the dual-MCU board end up in one stack
-    expect(stackProbes(p)).toBe(p.links.filter((l) => l.kind === 'debug' && [l.a.module, l.b.module].includes(p.modules[0].id)).length > 1);
+    // two J-Links on one board are too tall for one column: nothing to stack
+    expect(stackCompanions(p)).toBe(false);
   });
 
-  it('seats each board with its probe stack in the back slot of its dock', () => {
+  it('seats each board with its first column in the back slot of its dock, the next in a dock beside it', () => {
     const p = rack();
     addProbes(p, p.modules[0].id);
     addProbes(p, p.modules.find((m) => m.board.name === 'Sensor board')!.id);
-    const docks = autoAssign(p).filter((m) => m.kind === 'dock');
+    const docks = autoAssignClassic(p).filter((m) => m.kind === 'dock'); // (the classic docks: how a column is seated; the planner then orders them, layout.test.ts)
     const name = (id: string | null) => p.modules.find((m) => m.id === id)?.board.name ?? '';
-    expect(docks.map((d) => d.slots.map((s) => name(s.module).replace(/\s*\(.*\)$/, '')))).toEqual([['Dual-MCU controller', 'J-Link'], ['Sensor board', 'J-Link']]);
+    // (the dual-MCU board's second J-Link goes before it: its header is on that side)
+    expect(docks.map((d) => d.slots.map((s) => name(s.module).replace(/\s*\(.*\)$/, '')))).toEqual([['J-Link', ''], ['Dual-MCU controller', 'J-Link'], ['Sensor board', 'J-Link']]);
+    expect(docks.every((d) => d.turn % 180 === 0)).toBe(true);
   });
 
   it('needs an adapter only where the pin counts differ', () => {
     const p = rack();
-    const [pr] = addProbes(p, p.modules[0].id);
+    // (the J-Link with the 10-pin Cortex-M connector is what a 10-pin header is offered: no adapter)
+    const [own] = addProbes(p, p.modules[0].id, ['J_SWD2']);
+    expect(own.board.comps.find(isDebugPort)!.conn!.type).toBe('swd10');
+    expect(adapterFor(own.board.comps.find(isDebugPort)!, debugHeaders(p.modules[0].board)[0])).toBeNull();
+    const [pr] = addProbes(p, p.modules[0].id, ['J_SWD1'], 'jlink');
     const port = pr.board.comps.find(isDebugPort)!, head = debugHeaders(p.modules[0].board)[0];
-    expect(adapterFor(port, head)).toBeNull(); // a 10-pin J-Link on a 10-pin header
-    expect(adapterFor(port, debugHeaders(T('example_jtag'))[0])).toMatch(/10-to-20-pin adapter/);
+    // the J-Link's 20-pin 1.27 mm connector: a 10-pin header takes an adapter, a 20-pin 1.27 mm one a straight ribbon
+    expect(port.conn!.type).toBe('cortex20');
+    expect(adapterFor(port, head)).toMatch(/20-to-10-pin 1.27 mm adapter/);
+    expect(adapterFor(port, debugHeaders(T('example_jtag'))[0])).toMatch(/1.27 mm to 2.54 mm 20-pin adapter/);
+    const cortex = { ...head, conn: { ...head.conn!, type: 'cortex20' } };
+    expect(adapterFor(port, cortex)).toBeNull();
   });
 });
 
 describe('probe rack', () => {
   beforeAll(async () => { await initKernel(); });
 
-  it('slots the probes in behind their boards, with ribbons that reach and nothing to buy for them', () => {
+  it('stands the probes in columns by their boards, with ribbons that reach and nothing to buy for them', () => {
     const p = newProject(T('example_dual_swd'));
     p.modules.push(newModule(T('example_jtag')), newModule(T('usb_hub7')));
     addProbes(p, p.modules[0].id);
@@ -173,16 +194,19 @@ describe('probe rack', () => {
     for (const m of p.modules.filter((x) => x.board.kind !== 'box')) addUartLinks(p, m.id);
     const r = generatePanel(p);
     const w = r.report.warnings.join('\n');
-    expect(w.split('\n').filter((x) => /Nothing clips|runs into|ribbon is/.test(x))).toEqual([]);
-    // a slot for each probe, the second one for the dual-MCU board on the towers of the first
-    expect(r.report.checks.filter((c) => c.name === 'Slot').length).toBe(3);
-    expect(r.report.checks.filter((c) => c.name === 'Stacking towers').length).toBe(2);
+    expect(w.split('\n').filter((x) => /Nothing clips|runs into/.test(x))).toEqual([]);
+    // J-Links are boards in holders of their own now: clipped in, no slots, no towers
+    expect(r.report.checks.filter((c) => c.name === 'Slot' || c.name === 'Stacking towers')).toEqual([]);
+    expect(r.report.checks.filter((c) => /^Spring clips \([2-9]\)$/.test(c.name) && /^J-Link/.test(c.group)).length).toBe(3); // (as many as each needs: 3 on a J-Link now)
     const ribbons = r.report.cables!.filter((c) => c.kind === 'debug');
     expect(ribbons.length).toBe(3);
-    // short: each J-Link lines up with its board and its ribbon goes the short way, round the end of the dock
-    for (const c of ribbons) { expect(c.buy).toBe(0); expect(c.ribbon).toBe(200); expect(c.length).toBeLessThan(175); expect(c.clash).toBeUndefined(); }
+    for (const c of ribbons) { expect(c.buy).toBe(0); expect(c.ribbon).toBe(200); expect(c.clash).toBeUndefined(); }
+    // short from behind their boards; the dual-MCU board's second J-Link, in the dock beside it, needs a longer ribbon
+    // than the usual 200 mm, and says so
+    expect(ribbons.filter((c) => c.length < 190).length).toBe(2); // (the JTAG box header's ribbon is 25 mm wide: a little longer)
+    expect(Math.max(...ribbons.map((c) => c.length))).toBeLessThan(260);
+    expect(w.split('\n').filter((x) => /ribbon is 200 mm but has to run/.test(x)).map((x) => /J_SWD2/.test(x))).toEqual([true]);
     expect(r.report.cables!.every((c) => !c.clash)).toBe(true);
-    expect(r.report.checks.find((c) => c.name === 'Debug ribbons')?.status).toBe('ok');
     // the serial cables are ordinary cables to buy
     const serial = r.report.cables!.filter((c) => c.kind === 'uart');
     expect(serial.length).toBe(2);
@@ -193,7 +217,7 @@ describe('probe rack', () => {
     expect(r.ghosts.filter((g) => /^cable .* stripe$/.test(g.name)).length).toBe(3);
     // no strap for a probe
     expect(r.report.checks.some((c) => c.name === 'Strap loops' && /J-Link/.test(c.group))).toBe(false);
-    expect((r.steps ?? []).some((s) => /slide the J-Link .* down into it/.test(s.text))).toBe(true);
+    expect((r.steps ?? []).some((s) => /Snap the J-Link .* into its holder/.test(s.text))).toBe(true);
   }, 120_000);
 });
 
@@ -207,12 +231,13 @@ describe('USB-serial adapters', () => {
     return p;
   };
 
-  it('go on top of the board\'s probe stack, jumper wires crossed over from their pins to its UART header', () => {
+  it('go on a J-Link\'s column, jumper wires crossed over from their pins to its UART header', () => {
     const p = rack(), board = p.modules[0];
     const ad = p.modules.filter(isAdapter);
     expect(ad.length).toBe(2);
     expect(probesOf(p, board).map((m) => m.board.name.replace(/ \(.*$/, ''))).toEqual(['J-Link', 'J-Link', 'USB-serial adapter']);
-    expect(ad[0].on).toBe(probesOf(p, board)[1].id);
+    // on the first J-Link's column (the two J-Links are each a column: too tall together)
+    expect([ad[0].on, ad[0].onMode]).toEqual([probesOf(p, board)[0].id, 'column']);
     const l = p.links!.find((x) => x.kind === 'jumper' && x.b.module === board.id)!;
     // its GND (pin 6), TXD (3), RXD (2) to the board's GND (1), RXI (4), TXO (5)
     expect(l.wires!.map((w) => [w.a, w.b])).toEqual([['6', '1'], ['3', '4'], ['2', '5']]);
@@ -222,9 +247,43 @@ describe('USB-serial adapters', () => {
     expect(addAdapters(p, board.id)).toEqual([]);
   });
 
-  it('slot in behind their boards, the wires going round the dock to the pins, bought by the wire', () => {
+  it('a pin socket (the Mega\'s J_IO) takes male ends: no female housings drawn on it, and the wires are bought male to female', () => {
+    const p = newProject(T('mega'));
+    p.modules.push(newModule(T('usb_hub7')));
+    const mega = p.modules[0], io = mega.board.comps.find((c) => c.ref === 'J_IO')!;
+    markDebug(io, 'uart');
+    expect(isUartPort(io)).toBe(true);
+    addAdapters(p, mega.id);
+    p.links = numberLinks([...(p.links ?? []), ...autoLinks(p)]).map((l) => fillWires(p, l));
+    const r = generatePanel(p);
+    const on = (ref: string, mat: string) => r.ghosts.filter((g) => g.tag?.kind === 'plug' && g.tag.module === mega.id && g.tag.refs?.[0] === ref && g.name.endsWith(` ${mat}`));
+    // three male ends, each a housing with its own gold pin out of its foot (not the plain female housings)
+    expect(on('J_IO', 'gold').length).toBe(3);
+    expect(on('J_IO', 'black').length).toBe(3);
+    // (the panel stands the board up: whichever way its pins point, the gold reaches out past the housing's foot)
+    const span = (gs: typeof r.ghosts, a: number) => { const v = gs.flatMap((g) => Array.from({ length: g.mesh.pos.length / 3 }, (_, k) => g.mesh.pos[3 * k + a])); return [Math.min(...v), Math.max(...v)]; };
+    const out = [0, 1, 2].map((a) => Math.max(span(on('J_IO', 'black'), a)[0] - span(on('J_IO', 'gold'), a)[0], span(on('J_IO', 'gold'), a)[1] - span(on('J_IO', 'black'), a)[1]));
+    expect(Math.max(...out)).toBeGreaterThan(4);
+    // the adapter's own pins are plain pins: female housings there, no pins of their own
+    const ad = p.modules.find(isAdapter)!;
+    expect(r.ghosts.filter((g) => g.tag?.kind === 'plug' && g.tag.module === ad.id && / gold$/.test(g.name))).toEqual([]);
+    const cl = cableLines(p, r.report.cables ?? []);
+    expect(cl.buy.filter((x) => /jumper wire/.test(x))).toEqual([`3 × male–female jumper wire (Dupont), ${Math.round(r.report.cables!.find((c) => c.kind === 'jumper')!.buy * 100)} cm (number 1)`]);
+    // and a serial cable to a socket says it needs male pins too
+    const q = newProject(T('mega'));
+    q.modules.push(newModule(T('usb_hub7')));
+    markDebug(q.modules[0].board.comps.find((c) => c.ref === 'J_IO')!, 'uart');
+    expect(addUartLinks(q, q.modules[0].id)).toEqual({ added: 1, left: 0 });
+    const rq = generatePanel(q);
+    expect(cableLines(q, rq.report.cables ?? []).buy.some((x) => /^1 × USB to TTL serial cable.*plus male–male jumper wires/.test(x))).toBe(true);
+    // (the pin socket is the header's own look: name it, or say female)
+    expect(buyText('jumper', 0.1, SOCKET, SOCKET)).toMatch(/^male–male jumper wire/);
+    expect(buyText('jumper', 0.1, 'pins', 'pins')).toMatch(/^female–female jumper wire/);
+  }, 120_000);
+
+  it('stand on a J-Link in its column, the wires going round the dock to the pins, bought by the wire', () => {
     const p = rack(), r = generatePanel(p);
-    expect(r.report.warnings.filter((x) => /runs into|don't fit|towers are close/.test(x))).toEqual([]);
+    expect(r.report.warnings.filter((x) => /runs into|don't fit|towers are close|Nothing clips/.test(x))).toEqual([]);
     expect(r.report.checks.filter((c) => c.name === 'Box ports')).toEqual([]);
     const jumpers = r.report.cables!.filter((c) => c.kind === 'jumper');
     expect(jumpers.length).toBe(2);
@@ -232,7 +291,15 @@ describe('USB-serial adapters', () => {
     // three wires each, with a housing on every pin at both ends
     expect(r.ghosts.filter((g) => / wire \d$/.test(g.name)).length).toBe(6);
     expect((r.steps ?? []).some((s) => /Push the jumper wires on/.test(s.text))).toBe(true);
-    expect(r.report.checks.filter((c) => c.name === 'Slot').length).toBe(5);
+    // each adapter on its J-Link: a column of two, one rod down through both, the adapter in a slot (its ends are
+    // its plugs: no room for spring clips), the holder on the landing below on pegs
+    const cols = r.report.checks.filter((c) => c.name === 'Column');
+    expect(cols.map((c) => c.value).sort()).toEqual(['1 of 2', '1 of 2', '2 of 2', '2 of 2']);
+    expect(r.report.checks.filter((c) => c.name === 'Slot').map((c) => c.group.replace(/ \(.*$/, ''))).toEqual(['USB-serial adapter', 'USB-serial adapter']);
+    expect(r.parts.filter((x) => x.tag?.kind === 'rod').length).toBe(5); // one per dock slot: the two boards, two columns of two, a J-Link alone
+    expect(r.report.checks.filter((c) => /^Tongue root/.test(c.name) && c.status === 'bad')).toEqual([]);
+    expect((r.steps ?? []).filter((s) => /Stand the USB-serial adapter .* holder on its long edge on the J-Link/.test(s.text)).length).toBe(2);
+    expect((r.steps ?? []).filter((s) => /Push the release rod down through the column/.test(s.text)).length).toBe(2);
   }, 120_000);
 });
 

@@ -4,12 +4,15 @@ import type { Anim, Check, Comp, Feature, GenResult, Ghost, Module, PartOut, Pic
 import { isProbe, targetOf } from '../model/probes';
 import { bbox, round } from '../geom/poly';
 import { buildModule, computeLevels, transformMesh, type ArrangeHooks, type Job } from './generate';
-import { box, cyl, freeAll, poly, rect2, toMesh, unionMF } from './kernel';
-import { generatePanel, moveAnim } from './panelgen';
+import { freeAll, rect2, toMesh, unionMF } from './kernel';
+import { rivetClipMesh, rivetPin, rivetStrain } from './rivet';
+import { moveAnim } from './panelgen';
+import { generateChecked } from './arrange';
 import { leadStub, moveFx, powerFx } from './boardviz';
 import { poweredBoards } from '../model/lights';
 import { inUse, portUses } from '../model/portuse';
-import { offRackTo, plugRole } from '../model/links';
+import { offRackTo, packGoes, plugRole, shortName, viewOf } from '../model/links';
+import { isPlugPack } from '../model/powerdata';
 import { dir as dirM, pt as ptM } from '../geom/mat';
 import { printability } from './export';
 
@@ -44,7 +47,10 @@ export function mergeNotes(warnings: string[], names: string[]): string[] {
 }
 
 export function generate(p: Project): GenResult {
-  const r = p.layout === 'panel' ? generatePanel(p) : generateLoose(p);
+  if (p.cablesOff && p.links?.length) return generate(viewOf(p)); // (no cables: none are routed, drawn, tagged or bought, and the layout is not bent to them)
+  const r = p.layout === 'panel' ? generateChecked(p) : generateLoose(p);
+  // a plug pack goes into an outlet and never gets a holder: a rack of nothing else has nothing to print, so say so
+  if (p.modules.length && p.modules.every((m) => isPlugPack(m.board))) r.report.warnings.push(...p.modules.map((m) => `${m.board.name}: a plug pack goes straight into an outlet and gets no holder, so there is nothing to print. Add the board it powers.`));
   r.report.warnings = mergeNotes(r.report.warnings, p.modules.map((m) => m.board.name));
   // printability of every distinct part, in its print pose (cached with the mesh)
   const seen = new Set<string>();
@@ -73,10 +79,20 @@ export function looseOrder(p: Project): Project {
   return { ...p, modules: out, active: Math.max(0, out.findIndex((m) => m.id === active)) };
 }
 
+/** Plug packs go last: a pack lives in an outlet and gets no holder, so the holders come first, in their own order. */
+function packsLast(p: Project): Project {
+  const out = [...p.modules.filter((m) => !isPlugPack(m.board)), ...p.modules.filter((m) => isPlugPack(m.board))];
+  if (out.every((m, i) => m === p.modules[i])) return p;
+  const active = p.modules[p.active]?.id;
+  return { ...p, modules: out, active: Math.max(0, out.findIndex((m) => m.id === active)) };
+}
+
 function generateLoose(p0: Project): GenResult {
-  const p = p0.modules.length > 1 && p0.arrange.mode === 'side' ? looseOrder(p0) : p0;
+  const p = packsLast(p0.modules.length > 1 && p0.arrange.mode === 'side' ? looseOrder(p0) : p0);
   const t0 = Date.now();
-  const mods = p.modules;
+  // the boards and boxes that get a holder (packsLast: the first n of p.modules); a plug pack is left out
+  const mods = p.modules.filter((m) => !isPlugPack(m.board));
+  const packs = p.modules.filter((m) => isPlugPack(m.board) && (p.links ?? []).some((l) => l.a.module === m.id || l.b.module === m.id));
   const n = mods.length;
   const multi = n > 1;
   const mode = multi ? p.arrange.mode : 'single';
@@ -144,9 +160,9 @@ function generateLoose(p0: Project): GenResult {
     hooks[0].rivets = pts.map(([x, y]) => [x + a.c[0], y + a.c[1]] as V2);
     hooks[1].rivets = pts.map(([x, y]) => [x + b.c[0], -y + b.c[1]] as V2);
     const grip = mods[0].holder.base + mods[1].holder.base;
-    extra.push(rivetPart(grip, pts.length));
+    extra.push(...rivetPart(grip, pts.length));
     if (p.mount.kind === 'din' && p.mount.mode === 'flat') notes.push('Back to back needs the DIN clip on an edge: switch the mount to "Standing off the rail".');
-    checks.push({ group: 'Layout', name: 'Back to back', value: `${pts.length} snap rivets`, status: 'info', detail: `bases held together by printed rivets through ${grip.toFixed(1)} mm` });
+    checks.push({ group: 'Layout', name: 'Back to back', value: `${pts.length} pin-and-clip rivets`, status: 'info', detail: `bases held together by printed rivets through ${grip.toFixed(1)} mm: a rigid pin through both, a U clip with two 11 mm arms clicked onto its neck (the arms bend within the layers, ${(rivetStrain() * 100).toFixed(2)}% strain), no snapping legs to break` });
   }
 
   const warnings0: string[] = [];
@@ -211,7 +227,7 @@ function generateLoose(p0: Project): GenResult {
     }
     steps.push({ seq: b0 + 2, text: mode === 'stack' && inStack.indexOf(i) > 0 ? `Press the ${nm} holder onto the corner towers of the one below.` : `Set out the ${nm} holder.` });
     if (o.parts.some((x) => x.tag?.kind === 'clip')) steps.push({ seq: b0 + 3, text: 'Press the DIN clip into the holder until both hooks click (any of four ways round).' });
-    steps.push({ seq: b0 + 4, text: mods[i].board.kind === 'box' ? `Set the ${nm} into its holder and strap it down with a hook-and-loop strap through the loops.` : `Snap the ${nm} into its holder: it clicks under the spring clips or onto the pins.` });
+    steps.push({ seq: b0 + 4, text: mods[i].board.kind === 'box' ? `Set the ${nm} into its holder and strap it down with a hook-and-loop strap through the loops.` : `${o.features.some((f) => f.kind === 'spring' && f.refs?.includes('ledge')) ? `Slide the ${nm}'s edge in under the fixed ledge, tilted, then press the far side down: ` : `Snap the ${nm} into its holder: `}it clicks under the spring clips.` });
     if (o.ghosts.some((g) => g.tag?.kind === 'board' && g.tag.module !== mods[i].id)) steps.push({ seq: b0 + 5, text: `Bolt the board that sits on the ${nm} onto its standoffs.` });
     features.push(...o.features);
     frames[mods[i].id] = T[i];
@@ -224,8 +240,12 @@ function generateLoose(p0: Project): GenResult {
   for (const h of hanging) {
     const ref = h.ref.replace(/:2$/, ''), m = mods.find((x) => x.id === h.module), c = m?.board.comps.find((x) => x.ref === ref);
     const l = (p.links ?? []).find((q) => [q.a, q.b].some((e) => e.module === h.module && e.ref === h.ref));
-    const other = l ? (l.a.module === h.module && l.a.ref === h.ref ? l.b : l.a) : null, om = other && mods.find((x) => x.id === other.module);
-    const label = om ? `to the ${om.board.name} ${other!.ref.replace(/:2$/, '')}` : m && c ? offRackTo(m, c) : 'off the rack';
+    const other = l ? (l.a.module === h.module && l.a.ref === h.ref ? l.b : l.a) : null, om = other && mods.find((x) => x.id === other.module); // (not findModule: your computer or a plug pack has no holder here, so the lead says where it goes)
+    // a label only for a real lead: a cable in the app (the other holder, or off the rack), a lead you said goes there, a
+    // box's own supply or mains lead. A port that is only assumed to be in use (a lone board's USB) gets a stub, no words.
+    const why = m ? portUses(p, m).get(h.ref.replace(/:2$/, '')) : undefined;
+    const real = !!l || why === 'yours' || why === 'supply' || (!!m && !!c && plugRole(m, c) === 'mains-in');
+    const label = !real ? '' : om ? `→ ${shortName(om.board.name)}` : m && c ? offRackTo(m, c) : 'off the rack';
     ghosts.push(leadStub(`off-rack cable ${h.module}/${h.ref}`, h.p, h.d, h.cable, label, { kind: 'plug', module: h.module, refs: [ref] }, { seq: 1e6 + 90, dir: [0, 0, 1], dist: 0, grow: true }));
   }
 
@@ -234,7 +254,9 @@ function generateLoose(p0: Project): GenResult {
   if (nLinks) checks.push({ group: 'Layout', name: 'Cables', value: `${nLinks} not routed`, status: 'info', detail: 'loose holders have no rails to route cables along, so BoardDock doesn\'t route or size them, and the shopping list has no lengths: lay the boards out on your bench and measure each one. On DIN rails every cable is routed and sized.' });
   if (ghosts.some((g) => g.tag?.kind === 'rail')) steps.push({ seq: 0, text: 'Your DIN rail: each holder hooks over its top edge and clicks in at the bottom; pull the tab to take it off.' });
   if (ghosts.some((g) => g.tag?.kind === 'stand')) steps.push({ seq: 1e6 + 50, text: 'Slide the holder onto its stand post.' });
-  if (ghosts.some((g) => g.tag?.kind === 'plug')) steps.push({ seq: 1e6 + 90, text: nLinks ? 'Plug in the cables (loose holders\' cables aren\'t sized: measure each one on your bench before you buy it).' : 'Plug in the cables.' });
+  // (a plug pack has no holder: it goes straight into its outlet, its lead is its own)
+  const packText = packs.length ? `Push each plug pack into its outlet and its lead into its board: ${packs.map((m) => packGoes(p, m)).join('; ')}. Nothing goes into the wall yet.` : '';
+  if (ghosts.some((g) => g.tag?.kind === 'plug') || packText) steps.push({ seq: 1e6 + 90, text: [ghosts.some((g) => g.tag?.kind === 'plug') ? (nLinks ? 'Plug in the cables (loose holders\' cables aren\'t sized: measure each one on your bench before you buy it).' : 'Plug in the cables.') : '', packText].filter(Boolean).join(' ') });
   if (parts.some((x) => x.tag?.kind === 'cap')) steps.push({ seq: 1e6 + 100, text: 'Snap the caps over the plugs to lock them in.' });
   const ai = Math.min(p.active, outs.length - 1);
   const act = outs[ai] ?? outs.find(Boolean);
@@ -314,19 +336,16 @@ function linkPart(hb: number, wallGap: number, qty: number): PartOut {
   }
 }
 
-/** Snap rivet: head, shank through both bases, split barbed tip. Printed lying down, flat underside. */
-function rivetPart(grip: number, qty: number): PartOut {
+/** The rivet for two bases back to back: a pin (head, shank through both bases, a neck just beyond) and a U clip that clicks on the neck (rivet.ts). Both print lying down. */
+function rivetPart(grip: number, qty: number): PartOut[] {
   try {
-    const shank = grip + 0.3;
-    const along = (r0: number, r1: number, x0: number, x1: number) => cyl(0, 0, x0, x1, r0, r1, 32).rotate([0, 90, 0]);
-    let m = unionMF([along(3.2, 3.2, -1.3, 0), along(1.6, 1.6, -0.01, shank), along(1.95, 1.1, shank - 0.01, shank + 2.0)]);
-    m = m.subtract(box(shank - 2.2, -0.42, -5, shank + 2.5, 0.42, 5)); // split tip, flexes sideways in the print plane
-    m = m.subtract(box(-5, -5, -5, shank + 5, 5, -1.3)); // flat underside so it prints lying down
-    m = m.translate([0, 0, 1.3]); // ...on the bed, like every other part
-    const mesh = toMesh(m);
-    const bb = m.boundingBox();
-    void poly;
-    return { id: 'rivet', name: 'Snap rivet (back to back)', qty, mesh, toAssembly: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -400 - 1.3, 1], volume: m.volume(), size: [bb.max[0] - bb.min[0], bb.max[1] - bb.min[1], bb.max[2] - bb.min[2]], color: '#9d8cff', tag: { kind: 'rivet' } };
+    const pin = rivetPin(grip), clip = rivetClipMesh();
+    const pb = pin.boundingBox(), cb = clip.boundingBox();
+    const at = (x: number) => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, 0, -400 - 1.3, 1];
+    return [
+      { id: 'rivet', name: 'Rivet pin (back to back)', qty, mesh: toMesh(pin), toAssembly: at(0), volume: pin.volume(), size: [pb.max[0] - pb.min[0], pb.max[1] - pb.min[1], pb.max[2] - pb.min[2]], color: '#9d8cff', tag: { kind: 'rivet' } },
+      { id: 'rivet_clip', name: 'Rivet clip (back to back)', qty, mesh: toMesh(clip), toAssembly: at(40), volume: clip.volume(), size: [cb.max[0] - cb.min[0], cb.max[1] - cb.min[1], cb.max[2] - cb.min[2]], color: '#b7a9ff', tag: { kind: 'rivet' } },
+    ];
   } finally {
     freeAll();
   }

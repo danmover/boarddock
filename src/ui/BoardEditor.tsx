@@ -16,14 +16,18 @@ import { PALETTE } from '../model/palette';
 import { axisOf, featAt, layoutDims, lineMates, measure, pickFeat, setDim, type DimBox, type DimMove } from '../model/dims';
 import { boardCopper } from '../model/copper';
 import { boardLights } from '../model/lights';
-import { headerPins } from '../model/probes';
+import { headerPins, probeKeyFor } from '../model/probes';
+import { pinoutText, probeLabel } from '../model/debuggear';
+import { cardOf } from '../model/cards';
 import { plugName } from '../model/links';
 import { alignPhoto, dimPopupAt, edgeGaps, fitPhoto, itemsBox, scalePhoto, snapBox, snapLines, type Box2 } from '../model/editorgeo';
 import { PART_DRAG, Toolbox } from './Toolbox';
 import { useShapeTool } from './ShapeTool';
+import { RotateBox } from './RotateBox';
+import { say, touchy } from './touch';
 
 export type Tool = 'select' | 'pan' | 'place' | 'measure' | 'shape' | 'photoScale' | 'photoAlign';
-const PIN_TYPES = new Set(['header', 'pins_ra', 'jst_ph', 'jst_xh', 'swd10', 'jtag20']);
+const PIN_TYPES = new Set(['header', 'pins_ra', 'jst_ph', 'jst_xh', 'jst_gh', 'jst_zh', 'picoblade', 'kk254', 'swd10', 'cortex20', 'jtag20', 'idc']);
 const snap = (v: number) => Math.round(v * 10) / 10;
 const TBX_KEY = 'boarddock.toolbox';
 const CU_KEY = 'boarddock.copper';
@@ -156,6 +160,8 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
     const made = it.make(b, w);
     editMod((m) => { if (made.comp) m.board.comps.push(made.comp); if (made.hole) m.board.holes.push(made.hole); if (made.comp?.conn) boxFromEdits(m.board); });
     if (made.comp) select([{ kind: 'comp', id: made.comp.id }]); else if (made.hole) select([{ kind: 'hole', id: made.hole.id }]);
+    // a debug or UART header: say what plugs into it, and where the pinout is
+    if (made.comp && it.group === 'Debug and serial') toast(made.comp.role === 'uart' ? `${made.comp.ref}: a USB-serial adapter's jumper wires go on it. Its pin names are a guess: check yours (Board › Debug & UART headers).` : `${made.comp.ref}: a J-Link plugs into it (${probeLabel(probeKeyFor(made.comp))}); Plugs › Debug and serial adds one. Pins, 1 first: ${pinoutText(made.comp) ?? 'set them in the board'}.`);
   };
   const arm = (id: string | null) => { setItem(id); setTool(id ? 'place' : 'select'); if (id && phone()) setTbx(false); };
 
@@ -455,6 +461,8 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
     const pitchPx = (c.conn?.type === 'swd10' ? 1.27 : 2.54) / Math.max(px, 1e-6);
     return (
       <g key={c.id} data-id={ghostly ? undefined : c.id} data-kind={ghostly ? undefined : 'comp'} style={{ cursor: ghostly ? 'none' : 'move', pointerEvents: ghostly ? 'none' : undefined }} opacity={ghostly ? 0.65 : 1}>
+        {/* the card in a card socket (M.2, PCIe, DIMM): not drawn in 3D, but the holder keeps clear of its box */}
+        {!ghostly && (() => { const k = cardOf(c, b); return k && <polygon points={compRect(k).map(([x, y]) => `${x},${-y}`).join(' ')} fill="none" stroke="var(--silk)" strokeOpacity={0.7} strokeWidth={fs(1)} strokeDasharray={`${fs(5)} ${fs(3)}`} style={{ pointerEvents: 'none' }}><title>{`Card in ${c.ref}: the holder keeps clear of it`}</title></polygon>; })()}
         {!bottom && !ghostly && !L.metal && <rect transform={T} x={-c.w / 2 - 0.45} y={-c.l / 2 - 0.45} width={c.w + 0.9} height={c.l + 0.9} rx={L.round ? rr + 0.45 : 0.2} fill="none" stroke="var(--silk)" strokeOpacity={0.55} strokeWidth={0.15} style={{ pointerEvents: 'none' }} />}
         {pads.length > 0 && pitchPx * 0.5 > 1.2 && <g transform={T} style={{ pointerEvents: 'none' }}>{pads.map((q, i) => <rect key={i} x={q.x - q.w / 2} y={q.y - q.h / 2} width={q.w} height={q.h} fill="#c9cdd2" />)}</g>}
         <g filter={shadow}>
@@ -590,7 +598,6 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
             <g key={h.id} data-id={h.id} data-kind="hole" style={{ cursor: 'move' }}>
               <circle cx={h.x} cy={-h.y} r={h.d / 2 + 1.1} fill={col} fillOpacity={role === 'free' ? 0.5 : 0.92} stroke={on ? 'var(--accent)' : 'none'} strokeWidth={fs(2.5)} filter={on ? 'url(#glow)' : undefined} />
               <circle cx={h.x} cy={-h.y} r={h.d / 2} fill="var(--viewer)" />
-              {role === 'mount' && h.use === 'snap' && <path d={`M${h.x - h.d / 2},${-h.y}H${h.x + h.d / 2}`} stroke={col} strokeWidth={fs(1.5)} />}
             </g>
           );
         })}
@@ -812,7 +819,7 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
             </>}
             {h && <>
               <b>Hole · Ø{h.d.toFixed(2)}</b>
-              <span>{ROLE_INFO[h.role ?? 'mount'].name}{h.use === 'snap' ? ' · a snap pin' : h.use === 'none' ? ' · left free' : ''}</span>
+              <span>{ROLE_INFO[h.role ?? 'mount'].name}{h.use === 'none' ? ' · left free' : ''}</span>
               <span className="mono">{(h.x - bb.x0).toFixed(2)} from the left, {(h.y - bb.y0).toFixed(2)} from the bottom</span>
               {h.why && <span>{h.why}</span>}
             </>}
@@ -823,7 +830,7 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
       {nSel > 0 && !editDim && !photoAsk && tool !== 'shape' && (
         <div className="selbar floating">
           <b className="mono">{nSel} selected</b>
-          <button className="btn small ghost" onClick={() => rotateSel(sel, 90)} title="R">Rotate 90°</button>
+          <RotateBox compact label="Rotate the selection" value={null} onTurn={(by) => rotateSel(sel, by)} />
           <button className="btn small ghost" onClick={() => duplicateSel(sel)} title="Cmd/Ctrl+D">Duplicate</button>
           {nSel > 1 && <>
             <span className="tsep" />
@@ -847,12 +854,12 @@ export function BoardEditor({ tool, setTool }: { tool: Tool; setTool: (t: Tool) 
       )}
       {tool === 'place' && armedItem && phone() && <div className="placebar floating">Tap the board to place the {armedItem.label} <button className="btn small" onClick={() => arm(null)}>Cancel</button></div>}
       <div className="hud floating mono">
-        <span>{tool === 'place' ? `place ${armedItem?.label ?? 'it'}: click ${armedItem?.edge ? 'near the edge it goes on' : 'where it goes'} · Shift keeps placing · Esc stops`
+        <span>{say(tool === 'place' ? `place ${armedItem?.label ?? 'it'}: click ${armedItem?.edge ? 'near the edge it goes on' : 'where it goes'}${touchy() ? '' : ' · Shift keeps placing · Esc stops'}`
           : tool === 'measure' ? (dimA ? 'now the second: a hole, a part (its centre or a side), a corner or an edge' : 'measure: click the first thing, an edge of the board, a corner of it, a hole, or a part (its centre or a side)')
           : tool === 'shape' ? `shape: ${shape.hint}`
           : tool === 'photoScale' ? (photoA ? 'now the second point on the photo' : 'scale the photo: click a point on it you know the distance from (a hole)')
           : tool === 'photoAlign' ? (photoA ? 'now where that point goes on the drawing' : 'line up the photo: click a point on it (a hole)')
-          : 'drag to move (snaps; Alt: freely) · box-drag selects · Shift-click adds · right-drag pans · wheel zooms · V H M S T'}</span>
+          : touchy() ? 'drag to move · tap to select · pinch zooms' : 'drag to move (snaps; Alt: freely) · box-drag selects · Shift-click adds · right-drag pans · wheel zooms · V H M S T')}</span>
         {cursor && <span className="xy">{(cursor[0] - bb.x0).toFixed(1)}, {(cursor[1] - bb.y0).toFixed(1)}</span>}
       </div>
     </div>

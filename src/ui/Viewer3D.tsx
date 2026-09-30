@@ -12,16 +12,21 @@ import { OutlinePass } from 'three/examples/jsm/postprocessing/OutlinePass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { remaining } from '../cad/motion';
-import type { Anim, Feature, Motion, GenResult, Ghost, MeshData, PickTag, V2 } from '../model/types';
+import type { Anim, Feature, Motion, GenResult, Ghost, MeshData, PickTag, V2, PartOut } from '../model/types';
 import { packPlates, placedMesh, printability, type Plate } from '../cad/export';
-import { store, type Layer, type SelItem } from '../state';
+import { store, toast, type Layer, type SelItem } from '../state';
 import { featureItem } from './pickOps';
 import { KIND_COLOR } from '../model/links';
+import { cornerDist } from './frame';
 import { liveFx } from './liveFx';
 import { growTo } from './cableGrow';
 import { badgeText } from '../model/cablebadge';
 import { billOfMaterials } from '../model/bom';
 import { rackName } from '../model/diff';
+import { newSet } from '../model/newparts';
+import { applyView, applyZones, dropVariants, hoverCable, pickCables, zoneVisible } from './viewFx';
+import { sheathMaterial, sheathOpacity } from './cableLook';
+import { leaveFocus, useView3d, view3d, type View3d } from './view3d';
 import { guideHtml, guideSteps, movesOf, NO_TEXT, stepSeqs } from './guide';
 
 interface Props {
@@ -33,11 +38,15 @@ interface Props {
   camera?: { dir: [number, number, number]; n: number };
   installed?: 'h' | 'v' | null; // show the assembly against the wall it hangs on
   overhangs?: boolean; // print view: paint faces that need support (red) and bridges (amber)
+  only?: OnlyNew | null; // a built rack with things added since: what is new (the Steps' "Only what's new")
   layers: Record<Layer, boolean>;
   sel: SelItem[];
   onPick: (it: SelItem | null, additive: boolean) => void;
   label: (it: SelItem) => { title: string; sub: string };
 }
+
+/** What is new on a built rack: the new parts (as the build gave them), the new cables' ids and the new boards' ids. */
+export interface OnlyNew { parts: PartOut[]; cables: Set<string>; boards: Set<string> }
 
 const LAYER: Record<PickTag['kind'], Layer> = {
   holder: 'holders', rod: 'holders', clip: 'holders', link: 'holders', rivet: 'holders', stand: 'boards',
@@ -110,6 +119,7 @@ function sweepMaterials(): THREE.Material[] {
     out.push(e.m);
     const h = hoverMats.get(e.m);
     if (h) { out.push(h); hoverMats.delete(e.m); }
+    dropVariants(e.m, out);
     matPool.delete(k);
   }
   return out;
@@ -177,7 +187,8 @@ export function surface(mat: Ghost['mat'] | undefined, color: string, opacity: n
     case 'led': return new THREE.MeshStandardMaterial({ ...base, roughness: 0.12, metalness: 0 }); // a clear lens: the live view lights it
     // moulded plugs: satin plastic with a light gloss; cable jackets: matt
     case 'plug': return new THREE.MeshPhysicalMaterial({ ...base, roughness: 0.5, metalness: 0, clearcoat: 0.25, clearcoatRoughness: 0.45 });
-    case 'cable': return new THREE.MeshStandardMaterial({ ...base, roughness: 0.62, metalness: 0 });
+    // cables: a translucent sheath with a rim and a core line (cableLook.ts); opaque when asked to be
+    case 'cable': return opacity < 1 ? sheathMaterial(color, opacity) : new THREE.MeshStandardMaterial({ ...base, roughness: 0.62, metalness: 0 });
     case 'red': return new THREE.MeshStandardMaterial({ ...base, roughness: 0.5, metalness: 0 });
     case 'chip': case 'black': return new THREE.MeshStandardMaterial({ ...base, roughness: 0.5, metalness: 0.05 });
     case 'silk': return new THREE.MeshStandardMaterial({ ...base, roughness: 0.75 });
@@ -254,9 +265,11 @@ function makeContext() {
 
   const c: any = { renderer, scene, camera, controls, world, floor, key, composer, gtao, outline, objs: [] as Obj[], features: [] as Feature[], frames: {} as Record<string, number[]>, dirty: true, fitted: '', tween: null, hover: null as THREE.Mesh | null, radius: 100, ranks: 0, highlights: new THREE.Group(), anim: { t: Infinity, explode: 0 }, afterFrame: [] as (() => void)[], result: null as GenResult | null };
   world.add(c.highlights);
+  c.zones = new THREE.Group(); // the mains zones (viewFx.ts)
+  world.add(c.zones);
   // the live glows and pulses stay out of the ambient-occlusion pass's own renders (a glow would darken the board round it)
   const aoRender = gtao.render.bind(gtao);
-  gtao.render = (...a: Parameters<typeof aoRender>) => { c.fx?.hide(true); aoRender(...a); c.fx?.hide(false); };
+  gtao.render = (...a: Parameters<typeof aoRender>) => { const zv = c.zones.visible; c.zones.visible = false; c.fx?.hide(true); c.aoHide?.(true); aoRender(...a); c.aoHide?.(false); c.fx?.hide(false); c.zones.visible = zv; };
   // dev-only handle for scripted checks and screenshots: point the camera, then it renders
   if (import.meta.env.DEV) (window as any).__bdView = { ctx: c, look: (pos: number[], target: number[]) => { c.tween = null; camera.position.set(pos[0], pos[1], pos[2]); controls.target.set(target[0], target[1], target[2]); controls.update(); c.dirty = true; composer.render(); }, pose: (t: number) => { c.anim = { t, explode: 0 }; applyPose(c); composer.render(); } };
   c.invalidate = () => { c.dirty = true; };
@@ -264,13 +277,18 @@ function makeContext() {
   return c;
 }
 
-export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, installed, overhangs, layers, sel, onPick, label }: Props) {
+export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, installed, overhangs, only, layers, sel, onPick, label }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const tip = useRef<HTMLDivElement>(null);
   const ctx = useRef<any>(null);
   // t: animation time in steps (Infinity = assembled); on: playing; until: pause when t reaches it (one step at a time)
   const [play, setPlay] = useState<{ on: boolean; t: number; n: number; until?: number }>({ on: false, t: Infinity, n: 0 });
   const [explode, setExplode] = useState(0);
+  // Steps and Guide for only what is new since the rack was built: the rest of the rack is there, already put together
+  const [newOnly, setNewOnly] = useState(false);
+  const onlyNew = newOnly && !!only && mode === 'assembly' ? only : null;
+  const onlyRef = useRef(onlyNew);
+  onlyRef.current = onlyNew;
   // the build guide: the steps one at a time on a big card (Back, Next, Print), for a phone at the bench
   const [guide, setGuide] = useState(false);
   const [printing, setPrinting] = useState(''); // while the guide's pictures are taken: how far along
@@ -328,7 +346,7 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
       const moved = controls.update();
       if (!c.dirty && !moved) return;
       c.dirty = false;
-      c.fx?.declutter(camera);
+      c.fx?.declutter(camera, camera.position.distanceTo(controls.target) / Math.max(20, c.radius));
       composer.render();
       c.placeLabels?.();
       // what the scene before this one used, freed only now it has been drawn without it
@@ -346,8 +364,10 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
       const targets = (c.objs as Obj[]).filter((o) => o.mesh.visible && o.tag && o.tag.kind !== 'link' && o.tag.kind !== 'rivet').map((o) => o.mesh);
       const hits = ray.intersectObjects(targets, false);
       // prefer solid parts over see-through plugs when both are hit
-      const solid = hits.find((h) => !(h.object as THREE.Mesh).userData.ghost || (h.object as any).userData.tag?.kind === 'board');
-      const h = solid ?? hits[0];
+      // (and pieces made see-through by X-ray only when nothing else is under the pointer)
+      const live = hits.filter((x) => !x.object.userData.xray), pool = live.length ? live : hits;
+      const solid = pool.find((h) => !(h.object as THREE.Mesh).userData.ghost || (h.object as any).userData.tag?.kind === 'board');
+      const h = solid ?? pool[0];
       if (!h) return null;
       const o = (c.objs as Obj[]).find((x) => x.mesh === h.object)!;
       return { o, point: h.point };
@@ -393,6 +413,7 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
         setEmissive(c.hover, 0);
         c.hover = m;
         setEmissive(m, 1);
+        hoverCable(c, m);
         invalidate();
       }
       const el2 = tip.current;
@@ -408,7 +429,7 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
       }
       renderer.domElement.style.cursor = it ? 'pointer' : '';
     };
-    const onLeave = () => { if (tip.current) tip.current.style.display = 'none'; setEmissive(c.hover, 0); c.hover = null; invalidate(); };
+    const onLeave = () => { if (tip.current) tip.current.style.display = 'none'; setEmissive(c.hover, 0); c.hover = null; hoverCable(c, null); invalidate(); };
     const onDbl = (e: MouseEvent) => {
       const h = hitAt(e as PointerEvent);
       if (!h) return;
@@ -454,15 +475,16 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
   // The new scene is made beside the one on screen. Any shader it needs that isn't compiled yet is compiled first
   // (in the background where the browser can), while the old scene stays up; then the two are swapped, and what
   // only the old one used is freed after the new one's first frame, so equal shaders are never compiled twice.
-  const latest = useRef({ layers, sel });
-  latest.current = { layers, sel };
+  const v3 = useView3d((s) => s);
+  const latest = useRef({ layers, sel, v3 });
+  latest.current = { layers, sel, v3 };
   const [built, setBuilt] = useState(0);
   useEffect(() => {
     const c = ctx.current;
     if (!c) return;
     let live = true;
     buildNo++;
-    const next = prepare(c, result, mode, bed, spacing, theme, installed, !!overhangs);
+    const next = prepare(c, result, mode, bed, spacing, theme, installed, !!overhangs, onlyRef.current);
     const commit = () => {
       // a newer scene took over (it clears the flag when drawn), or the view closed while this one compiled
       if (!live) { next.drop(); if (!ctx.current) store.set({ rendering: false }); return; }
@@ -470,6 +492,7 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
       applyPose(c);
       applyLayers(c, latest.current.layers);
       applySel(c, latest.current.sel);
+      if (mode === 'assembly') applyFx(c, latest.current.v3);
       c.invalidate();
       setBuilt((n) => n + 1);
     };
@@ -479,9 +502,41 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
     store.set({ rendering: true });
     c.renderer.compileAsync(next.group, c.camera, c.scene).then(commit, commit);
     return () => { live = false; };
-  }, [result, mode, bed[0], bed[1], spacing, theme, installed, overhangs]);
+  }, [result, mode, bed[0], bed[1], spacing, theme, installed, overhangs, !!onlyNew]);
+  // (switching it on or off starts the steps over)
+  useEffect(() => { setPlay({ on: false, t: Infinity, n: 0 }); setGuide(false); }, [!!onlyNew]);
 
   useEffect(() => { const c = ctx.current; if (c) { applyLayers(c, layers); c.invalidate(); } }, [layers]);
+
+  // Isolate, X-ray, What's new and the mains zones (view3d.ts); Esc leaves the first two
+  const lastFocus = useRef<View3d['focus']>(null);
+  useEffect(() => {
+    const c = ctx.current;
+    if (!c || c.mode !== 'assembly') return;
+    applyFx(c, v3); // (a rebuilt scene gets it again as it is swapped in)
+    const f = view3d.get().focus; // (applyFx may have left the mode)
+    if (f && f !== lastFocus.current && f.mode === 'isolate') flyTo(c, contentBox(c), null, 1.4);
+    lastFocus.current = f;
+  }, [v3.focus, v3.news]);
+  useEffect(() => {
+    const c = ctx.current;
+    if (!c) return;
+    const z = (c.result as GenResult | null)?.report.zones ?? [];
+    c.showZones = v3.zones && mode === 'assembly' && z.length > 0;
+    applyZones(c, c.showZones ? z : []);
+    applyPose(c);
+    c.invalidate();
+  }, [v3.zones, built, mode]);
+  useEffect(() => {
+    if (!v3.focus && !v3.news) return;
+    const k = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || /^(INPUT|TEXTAREA|SELECT)$/.test((e.target as HTMLElement | null)?.tagName ?? '')) return;
+      e.stopPropagation(); // (this Esc only leaves the view: the selection stays)
+      if (view3d.get().focus) leaveFocus(); else view3d.set({ news: false });
+    };
+    window.addEventListener('keydown', k, true);
+    return () => window.removeEventListener('keydown', k, true);
+  }, [!!v3.focus, v3.news]);
 
   // ---------------------------------------------------------------- cable numbers: a badge on every cable
   const labelsEl = useRef<HTMLDivElement>(null);
@@ -510,7 +565,7 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
       const w = host.clientWidth, h = host.clientHeight;
       const at = items.map((it) => {
         v.copy(it.p).applyMatrix4(c.world.matrixWorld).project(c.camera);
-        const vis = v.z < 1 && v.z > -1 && Math.abs(v.x) < 1.05 && Math.abs(v.y) < 1.05 && (!it.meshes.length || it.meshes.some((m) => m.visible));
+        const vis = v.z < 1 && v.z > -1 && Math.abs(v.x) < 1.05 && Math.abs(v.y) < 1.05 && (!it.meshes.length || it.meshes.some((m) => m.visible && !m.userData.xray));
         return { it, vis, x: ((v.x + 1) / 2) * w, y: ((1 - v.y) / 2) * h, bw: it.el.offsetWidth || 120, bh: it.el.offsetHeight || 22 };
       });
       // nearest labels first keep their spot; the others step down (or up) until they are clear
@@ -652,6 +707,12 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
       <div ref={host} style={{ position: 'absolute', inset: 0 }} />
       <div ref={labelsEl} className="clabels" />
       <div ref={tip} className="hovertip floating" style={{ display: 'none' }} />
+      {mode === 'assembly' && (v3.focus || v3.news) && (
+        <div className="focuschip floating" role="status">
+          <span>{v3.focus ? (v3.focus.mode === 'isolate' ? 'Showing only what you picked' : 'Everything else is see-through') : "Tinted: new since it was built; the rest is see-through"}</span>
+          <button className="btn small" onClick={() => (v3.focus ? leaveFocus() : view3d.set({ news: false }))} title="Esc">Show everything</button>
+        </div>
+      )}
       {mode === 'assembly' && result && guide && play.n > 0 && (
         <div ref={card} className="guide floating" role="region" aria-label="Build guide">
           <div className="g-head">
@@ -685,6 +746,7 @@ export function Viewer3D({ result, mode, bed, spacing, theme, camera: camReq, in
             <>
               <button className="stepbtn wide" title="Step through the assembly one step at a time" onClick={nextStep}>Steps</button>
               <button className="stepbtn wide" title="The build guide: each step on a big card, with Back, Next and Print (the steps with their pictures, and the bill of materials)" onClick={openGuide}>Guide</button>
+              {only && <button className={`stepbtn wide${newOnly ? ' on' : ''}`} aria-pressed={newOnly} title={newOnly ? "Steps and Guide play only what is new since the rack was built, on the rack as it stands. Click for every step." : "Play only what is new since the rack was built: the rest of the rack is already there"} onClick={() => setNewOnly(!newOnly)}>Only what's new</button>}
               <button className={`stepbtn wide live${liveOn ? ' on' : ''}`} aria-pressed={liveOn} title={liveOn ? 'Switched on: lights blink and pulses run along the cables. Click to hold still.' : 'Switch it on: LEDs blink the way they do, boards without power stay dark, pulses run along the cables'} onClick={() => setLiveOn(!liveOn)}><i />Live</button>
               <label title="Pull the parts apart along the way they go together">Explode<input type="range" min={0} max={1} step={0.01} value={explode} onChange={(e) => setExplode(+e.target.value)} /></label>
             </>
@@ -714,7 +776,7 @@ interface Next {
   drop(): void;
 }
 
-function prepare(c: any, result: GenResult | null, mode: 'assembly' | 'print', bed: V2, spacing: number, theme: 'dark' | 'light', installed: 'h' | 'v' | null | undefined, overhangs: boolean): Next {
+export function prepare(c: any, result: GenResult | null, mode: 'assembly' | 'print', bed: V2, spacing: number, theme: 'dark' | 'light', installed: 'h' | 'v' | null | undefined, overhangs: boolean, only: OnlyNew | null = null): Next {
   const group = new THREE.Group();
   group.matrixAutoUpdate = false;
   const objs: Obj[] = [], floor: THREE.Object3D[] = [], own: { dispose(): void }[] = [];
@@ -735,6 +797,7 @@ function prepare(c: any, result: GenResult | null, mode: 'assembly' | 'print', b
     mesh.matrixAutoUpdate = false;
     if (matrix) mesh.matrix.fromArray(matrix);
     mesh.userData = { tag, ghost, cached: true };
+    if (kind === 'cable' && tag?.kind === 'cable' && opacity < 1) { mesh.userData.cableId = tag.refs?.[0]; mesh.userData.cableBase = mat; mesh.renderOrder = 2; }
     if (cg.e && edges && opacity >= 1) {
       const em = pooled(`e|${edgeCol}`, () => new THREE.LineBasicMaterial({ color: edgeCol, transparent: true, opacity: 0.22 }));
       mats.add(em);
@@ -749,15 +812,23 @@ function prepare(c: any, result: GenResult | null, mode: 'assembly' | 'print', b
   const addFloor = (o: THREE.Mesh | THREE.LineSegments, m: THREE.Material) => { mats.add(m); own.push(o.geometry); floor.push(o); };
 
   if (mode === 'assembly') {
+    // what is new since the rack was built (with `only`): parts by their mesh and place, boards and cables by id
+    const fresh = new Set<Obj>();
+    const near = (a: number[], b: number[]) => Math.hypot(a[12] - b[12], a[13] - b[13], a[14] - b[14]) < 1;
+    const newPart = (p: PartOut, T: number[], tag?: PickTag) => !!only && ((!!tag?.module && only.boards.has(tag.module)) || only.parts.some((d) => d.mesh === p.mesh && [d.toAssembly, ...(d.instances ?? [])].slice(0, Math.max(1, d.qty)).some((D) => near(D, T))));
     for (const p of [...result.parts, ...(result.display ?? [])]) {
       if (p.toAssembly[14] <= -300) continue;
       const m = p.displayMesh ?? p.mesh;
       add(m, p.color, 1, p.toAssembly, p.tag, p.anim, false);
-      (p.instances ?? []).forEach((T, k) => add(m, p.color, 1, T, p.tags?.[k] ?? p.tag, p.anims?.[k] ?? p.anim, false));
+      if (newPart(p, p.toAssembly, p.tag)) fresh.add(objs[objs.length - 1]);
+      (p.instances ?? []).forEach((T, k) => { add(m, p.color, 1, T, p.tags?.[k] ?? p.tag, p.anims?.[k] ?? p.anim, false); if (newPart(p, T, p.tags?.[k] ?? p.tag)) fresh.add(objs[objs.length - 1]); });
     }
     next.fx = [];
     for (const gh of result.ghosts) {
-      add(gh.mesh, gh.color, gh.opacity, null, gh.tag, gh.anim, true, false, gh.mat, !!gh.smooth);
+      // (a cable is a sheath you can see into: the one that is grey is a ribbon; the rest of the look is in cableLook.ts)
+      const sheath = gh.mat === 'cable' && gh.tag?.kind === 'cable' && gh.opacity >= 1;
+      add(gh.mesh, gh.color, sheath ? sheathOpacity(gh.name, gh.color === KIND_COLOR.debug) : gh.opacity, null, gh.tag, gh.anim, true, false, gh.mat, !!gh.smooth);
+      if (only && ((gh.tag?.module && only.boards.has(gh.tag.module)) || (gh.tag?.kind === 'cable' && only.cables.has(gh.tag.refs?.[0] ?? '')))) fresh.add(objs[objs.length - 1]);
       if (gh.fx) next.fx.push({ gh, mesh: objs[objs.length - 1].mesh });
     }
     // animation ranks: every distinct step (moves and appearances) in order
@@ -775,6 +846,19 @@ function prepare(c: any, result: GenResult | null, mode: 'assembly' | 'print', b
     for (const o of objs) if (o.anim?.grow) { const l = byRank.get(o.rank)!, k = o.tag?.refs?.[0] ?? o.mesh.uuid; o.lag = l.length > 1 ? (0.35 * l.indexOf(k)) / (l.length - 1) : 0; }
     next.ranks = seqs.length;
     next.phases = seqs;
+    if (only) {
+      // only the steps in which something new moves or appears; the rest of the rack sits there put together
+      const keep = new Set<number>();
+      for (const o of objs) if (fresh.has(o)) { for (const r of [o.rank, o.show, ...o.moves.map((m) => m.rank)]) if (r >= 0) keep.add(r); }
+      const order = [...keep].sort((a, b) => a - b), to = (r: number) => order.indexOf(r);
+      for (const o of objs) {
+        if (fresh.has(o)) { o.rank = to(o.rank); o.show = to(o.show); for (const m of o.moves) m.rank = to(m.rank); continue; }
+        o.moves = []; o.show = -1; o.rank = -1; o.lag = 0;
+        if (o.anim?.grow) o.anim = { ...o.anim, grow: false };
+      }
+      next.ranks = order.length;
+      next.phases = order.map((r) => seqs[r]);
+    }
     const cf = result.report.clipFrame;
     if (installed && cf) {
       const W = installed === 'h' ? [0, -1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0, 0, 0, 1] : [0, -1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
@@ -923,7 +1007,7 @@ function escapeHtml(s: string) {
 
 /** Light up the mesh under the pointer: it wears a lit copy of its (shared) material until the pointer moves on. */
 function setEmissive(m: THREE.Mesh | null, level: number) {
-  if (!m) return;
+  if (!m || m.userData.cableBase) return; // (a cable's hover look is its own: viewFx.ts hoverCable)
   const base = (m.userData.baseMat ?? m.material) as THREE.Material;
   if (!level) { m.material = base; delete m.userData.baseMat; return; }
   if (!(base as THREE.MeshStandardMaterial).isMeshStandardMaterial) return;
@@ -992,7 +1076,9 @@ function flyTo(c: any, box: THREE.Box3, dir: THREE.Vector3 | null, k = 1.3, inst
   const r = Math.max(8, box.getSize(new THREE.Vector3()).length() / 2);
   const d = (dir ?? cam.position.clone().sub(c.controls.target)).clone().normalize();
   const aspect = Math.min(1, cam.aspect || 1);
-  const dist = (r / Math.sin(((cam.fov / 2) * Math.PI) / 180)) * k * 0.72 / Math.sqrt(aspect);
+  // far enough that a ball round the box fits, and that every corner of it does, from this direction and in this window
+  // (a long row of holders seen from the front, or in a tall phone window, is wider than the ball says)
+  const dist = Math.max((r / Math.sin(((cam.fov / 2) * Math.PI) / 180)) * k * 0.72 / Math.sqrt(aspect), cornerDist(cam, box, d, k));
   const p1 = center.clone().add(d.multiplyScalar(dist));
   if (instant) { cam.position.copy(p1); c.controls.target.copy(center); c.tween = null; c.invalidate(); return; }
   c.tween = { p0: cam.position.clone(), p1, q0: c.controls.target.clone(), q1: center, t0: performance.now(), dur: 480 };
@@ -1079,7 +1165,8 @@ function applyPose(c: any) {
         }
       }
     } else if (explode > 0) {
-      if (grow) shown = false;
+      // (a cable's tags go with it: rings pulled out on their own hang in mid-air, with no cable through them)
+      if (grow || o.tag?.kind === 'cabletag') shown = false;
       else for (const m of o.moves) {
         const k = m.dist != null ? explode : explode * (0.35 + (0.65 * m.rank) / Math.max(1, n - 1));
         off.addScaledVector(new THREE.Vector3(m.dir[0], m.dir[1], m.dir[2]), (m.dist ?? D) * k);
@@ -1092,8 +1179,9 @@ function applyPose(c: any) {
     o.mesh.userData.animHidden = !shown;
     o.mesh.matrix.copy(M.makeTranslation(off.x, off.y, off.z).multiply(R).multiply(o.base));
     o.mesh.userData.offset = off.clone();
-    o.mesh.visible = shown && !o.mesh.userData.layerHidden;
+    o.mesh.visible = shown && !o.mesh.userData.layerHidden && !o.mesh.userData.focusHidden;
   }
+  if (c.zones) c.zones.visible = zoneVisible(c); // (not while the parts are moving)
   c.world.updateMatrixWorld(true);
   placeHighlights(c);
 }
@@ -1102,8 +1190,21 @@ function applyLayers(c: any, layers: Record<Layer, boolean>) {
   for (const o of c.objs as Obj[]) {
     const hidden = o.tag ? layers[LAYER[o.tag.kind]] === false : false;
     o.mesh.userData.layerHidden = hidden;
-    o.mesh.visible = !hidden && !o.mesh.userData.animHidden;
+    o.mesh.visible = !hidden && !o.mesh.userData.animHidden && !o.mesh.userData.focusHidden;
   }
+}
+
+/** Isolate / X-ray / What's new on the scene; a mode with nothing in the scene to show is left. */
+function applyFx(c: any, v: View3d) {
+  setEmissive(c.hover, 0);
+  c.hover = null;
+  c.hoverCable = null;
+  const p = store.get().project, res = c.result as GenResult | null;
+  const news = v.news && p && res ? newSet(p, res) : null;
+  const ok = applyView(c, { focus: v.focus, news: news && news.any ? news : null });
+  if (v.news && !(news && news.any)) { view3d.set({ news: false }); toast(news ? 'Nothing is new since the rack was built.' : 'The rack is not marked as built, so nothing is new.'); }
+  else if (!ok && v.focus) leaveFocus();
+  c.invalidate();
 }
 
 /** The feature under a point on a holder (smallest box that contains it). */
@@ -1150,6 +1251,7 @@ function applySel(c: any, sel: SelItem[]) {
     }
   }
   c.outline.selectedObjects = picked;
+  pickCables(c, sel.filter((it) => it.kind === 'link').map((it) => it.id));
   placeHighlights(c);
 }
 

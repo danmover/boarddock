@@ -1,19 +1,22 @@
 // Rails step: the whole rack as a tree (rails > docks > front / back slots > boards, with stacked boards nested
 // under the board they sit on). Drag any board onto a slot, a rail, another board (to stack it) or the tray.
 // Automatic until the first change by hand; every change is undoable.
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Access, EdgeName, Module, PanelReport, Project, Turn } from '../model/types';
-import { baseOf, ridersOf, stackAlign, stackGap, stackHardware, stackMode } from '../model/holes';
+import { baseOf, columnable, columnOf, isSmall, ridersOf, stackAlign, stackGap, stackHardware, stackMode } from '../model/holes';
 import { bbox } from '../geom/poly';
-import { companionLabel, isProbe, targetOf } from '../model/probes';
+import { companionLabel, isProbe } from '../model/probes';
 import { isAccessory } from '../model/links';
 import { edit, isSel, select, setActive, store, toast, useApp } from '../state';
 import { Check, Chip, Num, Pick, Section, Seg } from './controls';
-import { accessCounts, MODULE_DRAG, PALETTE } from './PanelEditor';
-import { addDock, addRail, appendToRail, autoArrange, dockShorter, makeRoom, tidyUp, duplicateModule, newRailWith, placeMount, quickLayout, removeMounts, removeRails, seat, setKind, setLever, setRail, setSlot, setStackMode, stackOn, swapSlots, turnMounts, unseat } from './panelOps';
+import { LayoutLock } from './LayoutLock';
+import { accessCounts, PALETTE } from './PanelEditor';
+import { beginDrag, isDragging, registerZone } from './dragBoard';
+import { putBehindOptions, addDock, addRail, appendToRail, autoArrange, dockShorter, makeRoom, tidyUp, duplicateModule, newRailWith, placeMount, quickLayout, removeMounts, removeRails, seat, setKind, setLever, setRail, setSlot, setStackMode, stackOn, swapSlots, turnMounts, unseat } from './panelOps';
 import { shorterLever, turnLabel } from '../cad/dockplan';
 import { mountLabels } from '../model/built';
 import { Icon, I } from './icons';
+import { ArrangeOptions } from './ArrangeOptions';
 
 const DIR_TEXT: Record<string, string> = { front: 'points up', up: 'points back', down: 'points toward you', left: 'points left', right: 'points right', wall: 'into the table' };
 const EDGE_OPTS: ['auto' | EdgeName, string][] = [['auto', 'auto edge'], ['bottom', 'bottom edge'], ['top', 'top edge'], ['left', 'left edge'], ['right', 'right edge']];
@@ -47,17 +50,13 @@ function AccessList({ list }: { list: Access[] }) {
   );
 }
 
-/** Drop zone for dragged boards. */
+/** Drop zone for dragged boards (see dragBoard.ts): spread `props` on the element that takes the drop. */
 function useDrop(onDrop: (id: string) => void) {
   const [over, setOver] = useState(false);
-  return {
-    over,
-    props: {
-      onDragOver: (e: React.DragEvent) => { if (e.dataTransfer.types.includes(MODULE_DRAG)) { e.preventDefault(); e.stopPropagation(); setOver(true); } },
-      onDragLeave: () => setOver(false),
-      onDrop: (e: React.DragEvent) => { const id = e.dataTransfer.getData(MODULE_DRAG); setOver(false); if (id) { e.preventDefault(); e.stopPropagation(); onDrop(id); } },
-    },
-  };
+  const key = useId(), latest = useRef(onDrop);
+  latest.current = onDrop;
+  useEffect(() => registerZone(key, { over: (on) => setOver(on), drop: (id) => latest.current(id) }), [key]);
+  return { over, props: { 'data-drop': key } };
 }
 
 function BoardChip({ m, color, rider, children, acc }: { m: Module; color: string; rider?: boolean; children?: ReactNode; acc?: Access[] }) {
@@ -67,16 +66,18 @@ function BoardChip({ m, color, rider, children, acc }: { m: Module; color: strin
     if (id === m.id) return;
     const up = p.modules.find((x) => x.id === id);
     // a board goes only on one about its size, never on a hub, charger or powerboard
-    if (up && !stackTargets(p, up).some((x) => x.m === m)) { toast(`${up.board.name} can't sit on ${m.board.name}: ${m.board.kind === 'box' ? 'it is a box (a hub, charger or powerboard), not a board' : isProbe(up) ? 'a probe stacks only on another probe of the same board' : isAccessory(m.board) ? 'it is an accessory, not a board to build on' : 'it is smaller'}. Drop it on a slot or a rail instead.`); return; }
+    if (up && !stackTargets(p, up).some((x) => x.m === m)) { toast(`${up.board.name} can't sit on ${m.board.name}: ${m.board.kind === 'box' ? 'it is a box (a hub, charger or powerboard), not a board' : isSmall(up.board) && isSmall(m.board) ? 'what is on it is not a column of small boards' : isAccessory(m.board) ? 'it is a J-Link or adapter: only a small board stands on it, in a column' : 'it is smaller'}. Drop it on a slot or a rail instead.`); return; }
     if (!stackOn(id, m.id)) store.set({ toast: 'That would put a board on top of itself.' });
   });
   return (
-    <div className={`rchip ${rider ? 'rider' : ''} ${p.active === i ? 'sel' : ''} ${d.over ? 'over' : ''}`} draggable {...d.props}
-      onDragStart={(e) => { e.dataTransfer.setData(MODULE_DRAG, m.id); e.dataTransfer.effectAllowed = 'move'; e.stopPropagation(); }}
-      onClick={(e) => { e.stopPropagation(); setActive(i); select([{ kind: 'module', id: m.id }]); }}
+    <div className={`rchip ${rider ? 'rider' : ''} ${p.active === i ? 'sel' : ''} ${d.over ? 'over' : ''}`} {...d.props}
+      // (by pointer, so a finger can too: a touch drags by the grip, so the list still scrolls)
+      onPointerDown={(e) => { const t = e.target as Element; if (t.closest('button, select, input, a') || (e.pointerType === 'touch' && !t.closest('.grip'))) return; beginDrag(e, m.id, m.board.name); }}
+      onClick={(e) => { e.stopPropagation(); if (isDragging()) return; setActive(i); select([{ kind: 'module', id: m.id }]); }}
       title="Drag onto a slot, a rail, or another board to stack it on top">
+      <span className="grip" aria-hidden="true">⠿</span>
       <i style={{ background: color }} />
-      <span className="grow" title={m.board.name}>{isProbe(m) ? companionLabel(p, m) : m.board.name}{rider && <small style={{ color: 'var(--subtle)', fontWeight: 400 }}> · {stackMode(p, m) === 'bolted' ? 'bolted on top' : 'printed layer'}</small>}</span>
+      <span className="grow" title={m.board.name}>{isProbe(m) ? companionLabel(p, m) : m.board.name}{rider && <small style={{ color: 'var(--subtle)', fontWeight: 400 }}> · {({ bolted: 'bolted on top', towers: 'printed layer', column: 'in a column' } as const)[stackMode(p, m)]}</small>}</span>
       {acc && <AccessChips list={acc} />}
       {children}
     </div>
@@ -109,7 +110,7 @@ export function RackBuilder() {
 
   return (
     <>
-      <Section title="Layout" right={P.auto ? <Chip status="ok">automatic</Chip> : <span className="btns" style={{ gap: 6 }}><button className="btn small ghost" onClick={tidyUp} title="Take out empty docks and slide overlapping docks apart along their rail; nothing else moves">Tidy up</button><button className="btn small soft" onClick={autoArrange} title={p.built ? 'Lay the whole rack out again: built boards move (it asks first)' : 'Lay the whole rack out again'}><Icon d={I.bolt} /> Auto-arrange</button></span>}>
+      <Section title="Layout" right={P.auto ? <span className="btns" style={{ gap: 6 }}><ArrangeOptions project={p} /><Chip status="ok">automatic</Chip></span> : <span className="btns" style={{ gap: 6 }}><ArrangeOptions project={p} /><button className="btn small ghost" onClick={tidyUp} title="Take out empty docks and slide overlapping docks apart along their rail; nothing else moves">Tidy up</button><button className="btn small soft" onClick={autoArrange} title={p.built ? 'Lay the whole rack out again: built boards move (it asks first)' : 'Lay the whole rack out again'}><Icon d={I.bolt} /> Auto-arrange</button></span>}>
         <div className="quick">
           {([['row', 'One rail', 'M4 16h40M8 16V8h8v8M20 16V8h8v8M32 16V8h8v8'], ['rows', 'Rows', 'M4 9h40M4 21h40M8 9V3h8v6M20 9V3h8v6M32 9V3h8v6M8 21v-6h8v6M20 21v-6h8v6'], ['cols', 'Columns', 'M12 2v24M32 2v24M12 4h7v6h-7M12 13h7v6h-7M32 4h7v6h-7M32 13h7v6h-7']] as const).map(([k, n, d]) => (
             <button key={k} className={P.auto && kind === k ? 'on' : ''} onClick={() => quickLayout(k)}><svg viewBox="0 0 48 28" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d={d} /></svg>{n}</button>
@@ -128,6 +129,8 @@ export function RackBuilder() {
         <div style={{ marginTop: 8 }}><Check label="Two boards back to back in one dock when their plugs allow it" value={P.pairs} onChange={(v) => setAuto((q) => { q.pairs = v; })} /></div>
         <p className="hint">{P.auto ? 'Every board is turned so its plugs stay reachable and packed onto rails. Drag anything below, or in the Rails view, to take over by hand.' : `Your own layout${p.built ? ', frozen when you marked it as built' : ''}. Tidy up takes out empty docks and slides docks apart where they overlap; Auto-arrange starts over (⌘Z undoes either).`}</p>
       </Section>
+
+      <LayoutLock />
 
       <div className="rack">
         {(rep?.rails ?? []).map((r) => {
@@ -310,6 +313,11 @@ function RailCard({ r, mts, rep, col, mod, accOf, stackRows }: {
   );
 }
 
+/** The filled slots of a dock: how each sits, and its board edge in the socket. */
+function slotInfo(mt: PanelReport['mounts'][number], rep: PanelReport) {
+  return mt.slots.flatMap((s, i) => (s.module ? [{ lie: s.lie, edge: rep.modules.find((q) => q.mount === mt.id && q.slot === i)?.edge as string | undefined }] : []));
+}
+
 function DockRow({ mt, railDir, rep, col, mod, accOf, stackRows }: {
   mt: PanelReport['mounts'][number]; railDir: 'h' | 'v'; rep: PanelReport; col: (id: string) => string; mod: (id: string | null) => Module | null;
   accOf: (id: string) => Access[] | undefined; stackRows: (m: Module) => ReactNode;
@@ -323,7 +331,7 @@ function DockRow({ mt, railDir, rep, col, mod, accOf, stackRows }: {
     <div className={`dockrow ${isSel(sel, mt.id) ? 'sel' : ''}`}>
       <div className="dh" onClick={(e) => select([{ kind: 'mount', id: mt.id }], e.shiftKey || e.metaKey ? 'toggle' : 'set')}>
         <b>{mt.kind === 'dock' ? 'Dock' : 'Flat clip'} {mountLabels(rep).get(mt.id) ?? mt.id.replace(/^d/, '')}</b>{fresh && <span className="chip acc" title="Holds a board added since the rack was built">new board</span>}
-        <span className="grow">{turnLabel(mt.turn, railDir, mt.kind, mt.slots[0]?.lie ?? mt.slots[1]?.lie)}</span>
+        <span className="grow">{turnLabel(mt.turn, railDir, mt.kind, slotInfo(mt, rep))}</span>
         <button className="btn small ghost icon" title="Turn 90° (R)" onClick={(e) => { e.stopPropagation(); turnMounts([mt.id], 90); }}><Icon d={I.turn} /></button>
         {mt.kind === 'dock' && <button className="btn small ghost icon" title="Swap front and back (F)" onClick={(e) => { e.stopPropagation(); swapSlots([mt.id]); }}><Icon d={I.swap} /></button>}
         <button className="btn small ghost icon" title="Remove the dock (its boards go to the tray)" onClick={(e) => { e.stopPropagation(); removeMounts([mt.id]); }}><Icon d={I.x} /></button>
@@ -333,6 +341,21 @@ function DockRow({ mt, railDir, rep, col, mod, accOf, stackRows }: {
         return <Slot key={slot} mountId={mt.id} slot={slot} label={mt.kind === 'flat' ? 'board' : slot ? 'back' : 'front'} m={m} edge={mt.slots[slot]?.edge ?? 'auto'} lie={mt.slots[slot]?.lie} col={col} acc={m ? accOf(m.id) : undefined} stackRows={stackRows} dock={mt.kind === 'dock'} railDir={railDir} turn={mt.turn} />;
       })}
     </div>
+  );
+}
+
+/** An empty dock slot: a way to fill it without dragging ("Put behind…"): every board that could go there, by name. */
+function PutHere({ mountId, slot }: { mountId: string; slot: number }) {
+  const p = useApp((s) => s.project)!;
+  const rep = useApp((s) => s.result?.report.panel);
+  const opts = putBehindOptions(p, rep, mountId);
+  if (!opts.length) return null;
+  return (
+    <select className="putbehind" value="" aria-label={slot ? 'Put a board behind the one in front' : 'Put a board in this slot'} onClick={(e) => e.stopPropagation()}
+      onChange={(e) => { if (e.target.value) seat(e.target.value, { mount: mountId, slot }); }}>
+      <option value="">{slot ? 'Put behind…' : 'Put here…'}</option>
+      {opts.map((o) => <option key={o.id} value={o.id}>{o.name}{o.where ? ` (from ${o.where})` : ''}</option>)}
+    </select>
   );
 }
 
@@ -381,22 +404,28 @@ function Slot({ mountId, slot, label, m, edge, lie, col, acc, stackRows, dock, r
             {stackRows(m)}
           </>
         ) : <span className="none">{dock ? 'empty: drop a board here' : 'empty'}</span>}
+        {!m && dock && <PutHere mountId={mountId} slot={slot} />}
       </div>
     </div>
   );
 }
 
 /**
- * The boards `m` can sit on: boards at least about its size (never a box such as a hub or a powerboard; a probe only
- * on another probe of the same board), the ones it bolts onto (two or more holes in common) first.
+ * The boards `m` can sit on: boards at least about its size (never a box such as a hub or a powerboard), the ones it
+ * bolts onto (two or more holes in common) first; and for a small board (a J-Link, an adapter), any other small board
+ * whose stack is a column (it stands on its long edge on top). A J-Link or adapter goes only in a column.
  */
-export function stackTargets(p: Project, m: Module): { m: Module; bolts: boolean }[] {
+export function stackTargets(p: Project, m: Module): { m: Module; bolts: boolean; column?: boolean }[] {
   const area = (x: Module) => { const b = bbox(x.board.outline); return (b.x1 - b.x0) * (b.y1 - b.y0); };
-  const probe = isProbe(m), mine = probe ? targetOf(p, m) : null;
+  const companion = isAccessory(m.board);
   return p.modules
     .filter((x) => x !== m && baseOf(p, x) !== m && x.board.kind !== 'box')
-    .filter((x) => (probe ? isProbe(x) && !!mine && targetOf(p, x) === mine : !isAccessory(x.board) && area(x) >= 0.8 * area(m)))
-    .map((x) => ({ m: x, bolts: !probe && stackAlign(x.board, m.board).matched >= 2 }))
+    .map((x) => {
+      if (columnable(p, m, x) && (companion || isAccessory(x.board) || columnOf(p, baseOf(p, x)).length > 0)) return { m: x, bolts: false, column: true };
+      const ok = !companion && !isAccessory(x.board) && area(x) >= 0.8 * area(m) && !columnOf(p, baseOf(p, x)).length;
+      return ok ? { m: x, bolts: stackAlign(x.board, m.board).matched >= 2 } : null;
+    })
+    .filter((x): x is { m: Module; bolts: boolean; column?: boolean } => !!x)
     .sort((a, b) => Number(b.bolts) - Number(a.bolts));
 }
 
@@ -409,7 +438,7 @@ function StackSection() {
   const can = p.modules.filter((m) => !m.on && m.board.kind !== 'box' && stackTargets(p, m).length);
   const who = can.find((m) => m.id === pick) ?? null;
   const put = (id: string, on: string | null) => { if (!stackOn(id, on)) store.set({ toast: 'That would put a board on top of itself.' }); };
-  const label = (x: { m: Module; bolts: boolean }) => `on top of ${x.m.board.name}${x.bolts ? ' (bolts on)' : ''}`;
+  const label = (x: { m: Module; bolts: boolean; column?: boolean }) => `on top of ${x.m.board.name}${x.bolts ? ' (bolts on)' : x.column ? ' (in a column)' : ''}`;
   return (
     <Section title="Stacks" right={<span className="hint" style={{ margin: 0 }}>or drag a board onto another</span>}>
       <div className="list">
@@ -425,7 +454,8 @@ function StackSection() {
                 {opts.map((x) => <option key={x.m.id} value={x.m.id}>{label(x)}</option>)}
               </select>
               <div style={{ display: 'flex', gap: 6, alignItems: 'center', width: '100%', paddingLeft: 18 }}>
-                <div style={{ flex: 1 }}><Seg value={stackMode(p, m)} options={[['bolted', 'Bolted on standoffs'], ['towers', 'Printed layer']]} onChange={(v) => setStackMode(m.id, v)} /></div>
+                <div style={{ flex: 1 }}><Seg value={stackMode(p, m)} options={[['bolted', 'Bolted on standoffs'], ['towers', 'Printed layer'], ...(on && columnable(p, m, on) ? [['column', 'On its edge'] as ['column', string]] : [])]} onChange={(v) => setStackMode(m.id, v)} /></div>
+                <button className="btn small" onClick={() => put(m.id, null)} title="Back onto a dock of its own">Take off the stack</button>
                 {stackMode(p, m) === 'bolted' && <input type="number" style={{ width: 62, height: 26 }} title={`Standoff length (mm)${m.onGap == null ? ': the shortest that clears the parts under it (type your own, or clear it to go back to this)' : ': yours (clear it to let BoardDock pick)'}`} value={m.onGap ?? stackGap(p, m)} step={0.5} min={2} max={40} onChange={(e) => setStackMode(m.id, 'bolted', e.target.value === '' ? null : Math.max(2, +e.target.value || 11))} />}
               </div>
             {(() => {
@@ -439,11 +469,11 @@ function StackSection() {
       </div>
       {can.length > 0 && (
         <div className="row" style={{ marginTop: 8 }}>
-          <Pick label="Put a board" value={who?.id ?? ''} options={[['', 'pick one…'], ...can.map((m) => [m.id, m.board.name] as [string, string])]} onChange={(v) => setPick(v)} />
-          <Pick label="On top of" value="" options={[['', who ? 'pick one…' : 'pick a board first'], ...(who ? stackTargets(p, who).map((x) => [x.m.id, `${x.m.board.name}${x.bolts ? ' (bolts on)' : ''}`] as [string, string]) : [])]} onChange={(v) => { if (who && v) { put(who.id, v); setPick(''); } }} />
+          <Pick label="Stack a board" value={who?.id ?? ''} options={[['', 'pick one…'], ...can.map((m) => [m.id, m.board.name] as [string, string])]} onChange={(v) => setPick(v)} />
+          <Pick label="Stack on…" value="" options={[['', who ? 'pick one…' : 'pick a board first'], ...(who ? stackTargets(p, who).map((x) => [x.m.id, `${x.m.board.name}${x.bolts ? ' (bolts on)' : x.column ? ' (in a column)' : ''}`] as [string, string]) : [])]} onChange={(v) => { if (who && v) { put(who.id, v); setPick(''); } }} />
         </div>
       )}
-      <p className="hint"><b>Bolted</b>: a HAT or shield screwed to the board below on standoffs, lined up on the holes they share ("bolts on": they share two or more); those holes get no pins and room for screw heads. <b>Printed layer</b>: a separate board on its own light holder that presses onto corner towers of the one below. Only boards at least as big as the one on top are offered, and never a hub, charger or powerboard.</p>
+      <p className="hint"><b>Bolted</b>: a HAT or shield screwed to the board below on standoffs, lined up on the holes they share ("bolts on": they share two or more); those holes get no pins and room for screw heads. <b>Printed layer</b>: a separate board on its own light holder that presses onto corner towers of the one below. <b>On its edge</b>: small boards (J-Links, USB-serial adapters, anything up to about a J-Link's size) stand on their long edges in a column, each holder on pegs on the one below; one release rod runs down through them all, and each lifts straight off. Only boards at least as big as the one on top are offered (any small board for a column), and never a hub, charger or powerboard.</p>
     </Section>
   );
 }
@@ -461,7 +491,7 @@ function DockInspector({ one, rep }: { one: PanelReport['mounts'][number]; rep: 
           <button key={t} className={`turn ${one.turn === t ? 'on' : ''}`} onClick={() => turnMounts([one.id], t - one.turn)}>
             <svg viewBox="-12 -12 24 24"><rect x="-6" y="-7" width="12" height="14" rx="2" transform={`rotate(${-t - (v ? 90 : 0)})`} /><line x1="0" y1="0" x2="0" y2="-7" transform={`rotate(${-t - (v ? 90 : 0)})`} /></svg>
             <span>{t}°</span>
-            <small>{turnLabel(t, railDir, one.kind, one.slots[0]?.lie ?? one.slots[1]?.lie)}</small>
+            <small>{turnLabel(t, railDir, one.kind, slotInfo(one, rep))}</small>
           </button>
         ))}
       </div>

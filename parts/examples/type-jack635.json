@@ -1,0 +1,21 @@
+{
+  "id": "jack635",
+  "label": "6.35 mm (1/4 in) audio jack",
+  "plugName": "6.35 mm plug",
+  "entry": "edge",
+  "body": { "w": 14, "l": 20, "h": 12 },
+  "plug": { "w": 16, "h": 16, "len": 30, "cable": 6 },
+  "tht": true,
+  "role": "audio",
+  "offRack": "to an amplifier or an instrument",
+  "note": "Typical catalogue size: check yours against its datasheet.",
+  "look": [
+    { "box": "black", "from": [0, 0, 0], "to": [1, 1, 1] },
+    { "mouth": "round", "at": [0.5, 0.5], "size": [0.62, 0.62], "depth": 0.8 },
+    { "barrel": "metal", "at": [0.5, 0.5], "d": 0.7, "y": [0.85, 1], "bore": 0.87 },
+    { "pins": "gold", "n": 1, "pitch": 1, "d": 1.4, "at": [0.5, 0.2, 0.5], "len": 0.45, "axis": "y" }
+  ],
+  "names": ["ACME-J635-*"],
+  "weak": ["6.35 mm jack"],
+  "source": "Made up for this worked example."
+}

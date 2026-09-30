@@ -5,14 +5,14 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { TEMPLATES } from '../src/model/templates';
 import { newModule, newProject } from '../src/model/library';
 import { autoLinks, numberLinks } from '../src/model/links';
-import { addAdapters, addProbes, companionLabel, fillWires, stackProbes } from '../src/model/probes';
+import { addAdapters, addProbes, companionLabel, fillWires, stackCompanions } from '../src/model/probes';
 import { appendDock, seatBoard, autoAssign, bestDock, dropEmptied, nearestFree, ownDocks, seatCompanion, seatCompanions, shorterLever, spreadOut, spreadRails, tongueStress } from '../src/cad/dockplan';
 import { generatePanel } from '../src/cad/panelgen';
 import { initKernel } from '../src/cad/kernel';
 import { delta, snapshot } from '../src/model/built';
 import { rackCount } from '../src/model/diff';
 import { PALETTE } from '../src/model/palette';
-import { uartPins } from '../src/model/probes';
+import { jumperWiring, uartPins, uartWiring } from '../src/model/probes';
 import type { PanelReport, Project } from '../src/model/types';
 
 const T = (id: string) => TEMPLATES.find((t) => t.id === id)!.make();
@@ -63,6 +63,24 @@ describe('probe names and counts', () => {
     const u = uartPins(c)!;
     expect(u.from).toBe('set');
     expect([u.gnd.n, u.rx.n, u.tx.n]).toEqual(['1', '4', '5']);
+  });
+
+  it('says to check a 4-pin UART header\'s pins, wherever they are shown: the toolbox, the wire list, the serial cable\'s pins', () => {
+    const item = PALETTE.find((x) => x.id === 'uart4')!;
+    expect(item.hint).toMatch(/is a guess: check yours/);
+    const p = newProject(T('blank'));
+    const c = item.make(p.modules[0].board, [10, 10]).comp!;
+    p.modules[0].board.comps.push(c);
+    expect(uartPins(c)!.from).toBe('guess');
+    expect(uartWiring(c)).toMatch(/a guess at its pinout: check the board's markings/);
+    // the adapter's jumper wires name the same pins: say the same
+    const [ad] = addAdapters(p, p.modules[0].id);
+    const l = fillWires(p, p.links!.find((x) => x.kind === 'jumper')!);
+    expect(ad).toBeTruthy();
+    expect(jumperWiring(p, l)).toMatch(/black wire from pin 6 \(GND\) to .* pin 1, .*\(the header's pinout is a guess: check your board's markings\)$/);
+    // a 6-pin FTDI header from the toolbox has its pins set: nothing to check
+    const six = PALETTE.find((x) => x.id === 'uart6')!.make(T('blank'), [10, 10]).comp!;
+    expect(uartWiring(six)).not.toMatch(/guess/);
   });
 });
 
@@ -120,7 +138,9 @@ describe('docking', () => {
     // small boards on three rails 83 and 110 mm apart; the Mega on the first, laid flat, reaches 73 to 168 mm across
     const p = rack(['mega', 'uno', 'pico', 'nano', 'esp32', 'pico', 'nano', 'uno']);
     p.panel.maxRail = 200;
+    p.panel.opts = { plan: 'classic' }; // (the classic packing: the three rails, the Mega on the first, this is written for)
     const pr = generatePanel(p).report.panel!;
+    delete p.panel.opts;
     p.panel.rails = pr.rails.map((x) => ({ id: x.id, x: x.x, y: x.y, dir: x.dir, length: null }));
     p.panel.mounts = pr.mounts.map((m) => ({ id: m.id, rail: m.rail, at: m.at, kind: m.kind, turn: m.turn, lever: m.leverSide > 0 ? 'pos' as const : 'neg' as const, slots: m.slots.map((s) => ({ ...s })) }));
     p.panel.auto = false;
@@ -142,15 +162,17 @@ describe('docking', () => {
     }
   }, 600000);
 
-  it('gives probes taken off their stack a dock right beside their board', () => {
+  it('gives a board\'s J-Links a column each: one behind it, the next in a dock right beside it', () => {
     const p = rack(['example_dual_swd', 'rpi4', 'usb_hub7', 'uno']);
     addProbes(p, p.modules[0].id);
-    for (const m of p.modules) m.on = null; // taken off the stack by hand
+    for (const m of p.modules) m.on = null; // taken off the stack by hand (two J-Links are too tall for one anyway)
     p.links = numberLinks([...(p.links ?? []), ...autoLinks(p)]);
     const mounts = autoAssign(p);
     const i = mounts.findIndex((mt) => mt.slots[0].module === p.modules[0].id);
+    const j = mounts.findIndex((mt) => mt.slots[0].module === p.modules[2].id);
     expect(mounts[i].slots[1].module).toBe(p.modules[1].id); // the first in the back slot
-    expect(mounts[i + 1].slots[0].module).toBe(p.modules[2].id); // the second in the very next dock
+    expect(Math.abs(j - i)).toBe(1); // the second in the very next dock, on the side of the board its header is on
+    expect(mounts[j].turn % 180).toBe(0); // its long side along the rail
   });
 });
 
@@ -183,7 +205,7 @@ describe('racks laid out by hand or built', () => {
     appendDock(p, j.id);
     const docks = p.panel.mounts.length;
     p.links = numberLinks([...(p.links ?? []), ...autoLinks(p)]).map((l) => fillWires(p, l));
-    stackProbes(p);
+    stackCompanions(p);
     expect(seatCompanions(p)).toEqual([j.id]);
     expect(p.panel.mounts.length).toBe(docks - 1);
     const r = generatePanel(p);

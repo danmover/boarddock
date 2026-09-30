@@ -3,24 +3,28 @@
 import type { Anim, Board, Check, Comp, EdgeName, Feature, GenResult, Ghost, HolderSettings, Loop, MeshData, MountSettings, PartOut, PickTag, Pin, Project, V2 } from '../model/types';
 import { holeKeepout, isMountHole, STANDOFF_LENGTHS } from '../model/holes';
 import { boxProblems } from '../model/boxes';
-import { DEBUG_TYPES, isDebugPort, isUartPort } from '../model/links';
+import { DEBUG_TYPES, isDebugPort, isSocket } from '../model/links';
 import { headerPins, UART_WIRES, uartPins } from '../model/probes';
-import { baseRef, isAccessory } from '../model/links';
+import { baseRef, isBox } from '../model/links';
 import { DEFAULT_FEATURES, MATERIALS } from '../model/library';
+import { holderParts } from '../model/cards';
 import { usedRefs } from '../model/portuse';
-import { bbox, centroid, compRect, extentAlong, inside, rad, rayExit, round, segDist } from '../geom/poly';
+import { area, bbox, centroid, compRect, extentAlong, inside, rad, rayExit, round, segDist } from '../geom/poly';
 import type { CS, MF } from './kernel';
 import { box, circle2, csLoops, cyl, ext, extCh, freeAll, K, orientedBox, poly, rect2, roundCS, sweepTZ, toMesh, unionCS, unionMF } from './kernel';
-import { buildClip, clipDims, clipSlots, hookOffset4, RAIL, railProfile } from './dinclip';
+import { buildClip, clipDims, clipSlots, HOOK, HOOK_FEA, hookMove, hookOffset4, JAW_FEA, JAW_STOP_FEA, RAIL, railProfile } from './dinclip';
 import { textCS, textWidth } from './font';
 import { computeLevels } from './levels';
 import { boardDetail, moveFx, plugDetail, plugUp } from './boardviz';
 import { DOCK_MIN_ZB, flatHolderDock, gripSpan, holderDock, HD, rod } from './dock';
-import { EAR, TONGUE } from './dockdims';
+import { EAR, LATCH, TONGUE } from './dockdims';
 import { dockFrame, dockSite, earSite, flatFrame, type DockSite, type EarSite } from './dockplan';
 import { dir as dirM, inv, mul, type M4 } from '../geom/mat';
 import { rectSection, roundSection, solveFrame, type FElem, type FNode } from '../fea/frame3d';
-import { designBow, designClip, FACE, holdOf, leafT, MU, onLayer, RAMP, SLIT, type BowDesign, type ClipDesign, type Leaf } from './grip';
+import { bestClip, boardMass, designBow, FACE, HOLD_SHARE, holdNeed, MU, onLayer, pushTarget, RAMP, sizeClip, SLIT, spanFor, tipCover, tipFor, tipFrame, TIP_FULL, U_ARMS, U_FREE, foldOf, type BoardLoad, type BowDesign, type ClipSpec, type Leaf } from './grip';
+import { leafPlan } from './leafplan';
+import { progress } from './progress';
+import { CAP, capLeg, capProfile } from './plugcap';
 
 const ID = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
@@ -31,6 +35,14 @@ export interface ArrangeHooks {
   rivets?: V2[];
 }
 
+/**
+ * A holder in a column of small boards standing edge on edge in one dock slot. `level`: 0 in the dock, 1 on it...;
+ * `top`: the last one, with the grip bar and the release rod; `drop`: how far below its dock face the socket is (the rod
+ * reaches down through every holder under it); `height`: the column's height over the socket (the tongue's lever);
+ * `of`: how many holders the column has.
+ */
+export interface Column { level: number; of: number; top: boolean; drop: number; height: number; slot?: boolean } // slot: held in a slot, not by spring clips
+
 export interface Job {
   p: Project; mi: number; b: Board; H: HolderSettings; din: boolean; stand: boolean; hooks: ArrangeHooks; name: string;
   level?: number; // 0 = bottom of a stack (default), 1 = the board above it...
@@ -38,7 +50,7 @@ export interface Job {
   // clear, under: the part under it that sets that, below: the board it sits on, own: the length was set by hand
   bolted?: { b: Board; dx: number; dy: number; dz: number; mid: string; gap?: number; need?: number; under?: { ref: string; h: number } | null; below?: string; own?: boolean }[];
   mount?: MountSettings; // overrides p.mount (panel flat clips)
-  dock?: { edge: EdgeName; fit?: number; shift?: number; lie?: 'flat' }; // holder plugs into a rail dock with this board edge (shift: its tongue that far off the middle; lie: flat, by an ear on that edge)
+  dock?: { edge: EdgeName; fit?: number; shift?: number; lie?: 'flat'; column?: Column }; // holder plugs into a rail dock with this board edge (shift: its tongue that far off the middle; lie: flat, by an ear on that edge; column: one of a column of small boards)
   used?: string[]; // the plugs that will have something in them (set by buildModule from the project): only they get cradles, caps, collars and ties
 }
 
@@ -132,9 +144,9 @@ function part(id: string, name: string, m: MF, toAssembly: number[], color: stri
 }
 
 /** Record a pickable feature: a plan-view loop (holder frame) and a height range. */
-function feat(C: Ctx, kind: Feature['kind'], loop: Loop, z0: number, z1: number, refs?: string[]) {
+function feat(C: Ctx, kind: Feature['kind'], loop: Loop, z0: number, z1: number, refs?: string[], at?: { p: V2; n: V2 }) {
   const b = bbox(loop);
-  C.features.push({ kind, module: C.mid, refs, box: [b.x0, b.y0, z0, b.x1, b.y1, z1] });
+  C.features.push({ kind, module: C.mid, refs, ...(at ? { at: at.p, n: at.n } : {}), box: [b.x0, b.y0, z0, b.x1, b.y1, z1] });
 }
 
 /** Solid wall band over a stretch of the outline (frame style has no continuous wall). */
@@ -160,9 +172,14 @@ const CACHE_MAX = 48;
 
 export function buildModule(job: Job): ModuleOut {
   const { p } = job;
+  progress(`Building the ${job.name} holder`);
   const mod = p.modules[job.mi];
   if (mod && mod.board === job.b) job = { ...job, used: usedRefs(p, mod) };
-  const key = JSON.stringify([job.used ?? null, job.mi, p.modules[job.mi]?.id, job.b, job.H, job.din, job.stand, job.hooks, job.name, job.level ?? 0, job.mount ?? null, job.dock ?? null, job.bolted ?? null,
+  // which pins have a jumper's housing pushed on, and in what colour: a header is in use (for a probe or adapter)
+  // before its wires go on, so the plugs in use alone don't tell a header with wires from one without
+  const mid = p.modules[job.mi]?.id ?? `m${job.mi}`;
+  const wired = job.b.comps.flatMap((c) => { const w = c.conn && !c.hidden ? wiredPins(p, mid, c) : []; return w.length ? [`${c.ref}:${w.map((q) => `${q.pin.n}${q.colour}`).join(',')}`] : []; });
+  const key = JSON.stringify([job.used ?? null, wired, job.mi, p.modules[job.mi]?.id, job.b, job.H, job.din, job.stand, job.hooks, job.name, job.level ?? 0, job.mount ?? null, job.dock ?? null, job.bolted ?? null,
     job.din ? p.mount : null, job.stand ? p.stand : null, p.printer.bed]);
   const hit = cache.get(key);
   if (hit) { cache.delete(key); cache.set(key, hit); return hit; }
@@ -188,16 +205,11 @@ function splitAxis(C: Ctx): V2 | null {
   return fits(ext(er), ext(left(er))) ? null : er;
 }
 
-/**
- * A debug probe (J-Link): a thin box that slides down into a slot from its open end, plugs first out, and stays there
- * (see slotBody). Several for one board stack as slots on corner towers.
- */
-const isProbeBox = (b: Board) => isAccessory(b) && b.comps.some((c) => isDebugPort(c) || isUartPort(c));
-
-/** The pins of a header that have a wire pushed on (a jumper link's, or a serial cable's loose ends), with its colour. */
-function wiredPins(C: Ctx, c: Comp): { pin: Pin; colour: string }[] {
-  const mine = (r: { module: string; ref: string }) => r.module === C.mid && baseRef(r.ref) === c.ref;
-  const l = (C.p.links ?? []).find((x) => mine(x.a) || mine(x.b));
+/** The pins of a header of module `mid` that have a wire pushed on (a jumper link's, or a serial cable's loose ends),
+ * with its colour. */
+function wiredPins(p: Project, mid: string, c: Comp): { pin: Pin; colour: string }[] {
+  const mine = (r: { module: string; ref: string }) => r.module === mid && baseRef(r.ref) === c.ref;
+  const l = (p.links ?? []).find((x) => mine(x.a) || mine(x.b));
   if (!l) return [];
   if (l.kind === 'jumper' && l.wires?.length) {
     const pins = headerPins(c), end = mine(l.a) ? 'a' : 'b';
@@ -208,13 +220,13 @@ function wiredPins(C: Ctx, c: Comp): { pin: Pin; colour: string }[] {
 }
 
 /**
- * Boxes (hubs, chargers, probes) sit in low guards: no spring clips, notches or label. Hubs and chargers are strapped
- * down. A box on a flat DIN clip stands clear of the clip's snap hooks, which reach up through the holder's base.
+ * Boxes (hubs, chargers, powerboards) sit in low guards: no spring clips, notches or label, strapped down. A box on a
+ * flat DIN clip stands clear of the clip's snap hooks, which reach up through the holder's base.
  */
 const holderFor = (H: HolderSettings, b: Board, clipped = false): HolderSettings => {
-  if (!isAccessory(b)) return H;
+  if (!isBox(b)) return H;
   const low = clipped ? CLIP_HOOK_RISE + 0.4 : 1.2;
-  return { ...H, tabs: 'off', hold: 'pins', notches: false, label: '', wallAbove: Math.min(H.wallAbove, -(b.thickness - 8)), standoff: Math.max(H.standoff ?? 1.2, low), minStandoff: low };
+  return { ...H, notches: false, label: '', wallAbove: Math.min(H.wallAbove, -(b.thickness - 8)), standoff: Math.max(H.standoff ?? 1.2, low), minStandoff: low };
 };
 
 /** How far a flat DIN clip's snap hooks reach up past the top of the plate they grip (the holder's base). */
@@ -230,14 +242,15 @@ function build(job: Job): ModuleOut {
   const { p, b } = job;
   const M0 = job.mount ?? p.mount;
   const H = holderFor(job.H, b, !!job.din && M0.kind === 'din' && M0.mode === 'flat');
-  const warnings: string[] = [...b.notes];
+  // (a box's note is about its cables and Auto-connect: none with cables off)
+  const warnings: string[] = [...(p.cablesOff && b.kind === 'box' ? [] : b.notes)];
   const checks: Check[] = [];
   const mat = MATERIALS[H.material];
   if (b.box) for (const x of boxProblems(b.box)) checks.push({ group: 'Board', name: 'Box ports', value: "don't fit", status: 'bad', detail: `${x} Make the box bigger under Board › Box, or put fewer ports on that side.` });
 
   // ---- clearance under the board ----
   const keepouts: Ctx['keepouts'] = [];
-  for (const c of b.comps) {
+  for (const c of holderParts(b)) {
     if (c.side === 'bottom' && c.h > 0) keepouts.push({ rect: compRect(c, 0.5), need: c.h + 0.5, why: `${c.ref} (bottom, ${round(c.h, 1)} mm)` });
     if (c.side === 'top' && c.tht) keepouts.push({ rect: compRect(c, 0.6), need: H.leadLen + 0.4, why: `${c.ref} leads` });
   }
@@ -259,7 +272,8 @@ function build(job: Job): ModuleOut {
   checks.push({ group: 'Board', name: 'Clearance under the board', value: `${round(s, 1)} mm`, status: 'info', detail: needMax ? `tallest underside item needs ${round(needMax, 1)} mm (${keepouts.sort((a, c) => c.need - a.need)[0].why}); deeper items get pockets in the base` : 'nothing under the board' });
 
   // ---- base and wall ----
-  if (isProbeBox(b)) slotBody(C);
+  const slot = !!job.dock?.column?.slot;
+  if (slot) slotBody(C);
   else if (frame) frameBody(C);
   else {
     C.pos.push(extCh(outer, 0, base, 0, H.chamfer ? 0.4 : 0));
@@ -273,31 +287,40 @@ function build(job: Job): ModuleOut {
   }
 
   connectors(C);
-  if (b.kind === 'box' && !isProbeBox(b)) strapLoops(C);
+  if (b.kind === 'box') strapLoops(C);
   overhangs(C);
   if (site) dockBlocks(C, site);
   if (ear) earBlocks(C, ear);
   // label first so it gets a long free wall; if that leaves no room for two clips, drop the label
-  const mode = holdOf(H);
+  const gripless = slot || isBox(b); // (a box is strapped down, a slot's board is held by the holder above)
   reserve(C);
   const mark = { pos: C.pos.length, neg: C.neg.length, late: C.late.length, blocked: C.blocked.length, warn: C.warnings.length, checks: C.checks.length, feat: C.features.length };
   const reset = () => { C.pos.length = mark.pos; C.neg.length = mark.neg; C.late.length = mark.late; C.blocked.length = mark.blocked; C.warnings.length = mark.warn; C.checks.length = mark.checks; C.features.length = mark.feat; };
   const labelled = H.label.trim() ? label(C) : false;
-  let held = clips(C, mode);
-  if (labelled && held.length < 2 && mode !== 'pins') {
+  let held = gripless ? [] : clips(C);
+  // (a grip of a fixed ledge and clips is the fallback where plugs take the edges; the label gives way to a plain clip grip)
+  const ledged = () => C.features.slice(mark.feat).some((f) => f.refs?.includes('ledge'));
+  const fallback = held.length >= 2 && ledged();
+  if (labelled && !gripless && (held.length < 2 || fallback)) {
     // the clips are short of an edge: place them first, and the label where it still fits (or leave it off)
     reset();
-    const first = clips(C, mode);
-    if (first.length > held.length) {
+    const first = clips(C);
+    if (first.length > (fallback ? 1 : held.length) && !(fallback && ledged())) {
       held = first;
-      label(C); // where it still fits
+      if (!label(C)) {
+        // (clips towards the ends of their edges leave the middle of a wall free for it)
+        reset();
+        held = clips(C, true);
+        if (held.length < 2) { reset(); held = clips(C); }
+        label(C);
+      }
     } else {
       reset();
       label(C);
-      held = clips(C, mode);
+      held = clips(C);
     }
   }
-  standoffs(C, held.length >= 2, mode);
+  standoffs(C, held.length >= 2, gripless);
   seats(C);
   pockets(C);
   if (job.din && (job.mount ?? p.mount).kind === 'din') mountDin(C);
@@ -358,17 +381,20 @@ function strainStatus(C: Ctx, eps: number): Check['status'] {
   return eps <= allow * 0.85 ? 'ok' : eps <= allow * 1.1 ? 'warn' : 'bad';
 }
 
-function standoffs(C: Ctx, clipsHold: boolean, mode: ReturnType<typeof holdOf>) {
+/**
+ * Standoffs under the board at its mounting holes, each with a locating pin through the hole (it grips nothing: the spring
+ * clips hold the board).
+ */
+function standoffs(C: Ctx, clipsHold: boolean, gripless: boolean) {
   const { b, base, zb, zt } = C;
   const H = C.H;
-  let snaps = 0, pinCheck: Check | null = null;
   for (const h of b.holes) {
     if (!isMountHole(h)) continue;
     const at: V2 = [h.x, h.y];
     let rMax = h.d / 2 + 2.2;
     for (const k of C.keepouts) { const d = rectDist(at, k.rect); if (d > 0) rMax = Math.min(rMax, d - 0.2); }
     const r = Math.max(h.d / 2 + 0.6, rMax);
-    if (rMax < h.d / 2 + 0.6) C.warnings.push(`Standoff at hole (${round(h.x, 1)}, ${round(h.y, 1)}) touches a part under the board; it was kept at the minimum size.`);
+    if (rMax < h.d / 2 + 0.6 && b.source !== 'template') C.warnings.push(`Standoff at hole (${round(h.x, 1)}, ${round(h.y, 1)}) touches a part under the board; it was kept at the minimum size.`);
     C.standoffs.push({ x: h.x, y: h.y, r });
     C.ribNodes.push({ p: at, r });
     C.keep.push(circle2(h.x, h.y, r + 1.4));
@@ -377,41 +403,10 @@ function standoffs(C: Ctx, clipsHold: boolean, mode: ReturnType<typeof holdOf>) 
     const zf = C.frame ? Math.max(C.rimH, Math.min(C.zb - 0.8, C.rimH + 1.6)) : base; // top of the ribs or of the base
     C.pos.push(cyl(h.x, h.y, zf - 0.01, Math.min(zb - 0.3, zf + 1.6), r + 1.4, r)); // 45 degree fillet into the post
     const rp = h.d / 2 - H.pinClear;
-    const snap = h.use === 'snap' || (h.use === 'auto' && h.d >= 2.0 && (mode === 'pins' || mode === 'both' || !clipsHold));
-
-    if (snap && h.d >= 1.8) {
-      snaps++;
-      let barb = Math.min(0.3, Math.max(0.2, 0.08 * h.d));
-      let sw = Math.min(1.1, Math.max(0.6, 0.3 * h.d));
-      const slotDepth = Math.min(2.5, C.s - 0.6);
-      // leg bending strain of the split pin (it bends across layers, so it is judged 30% stricter)
-      const strainOf = (bb: number, w: number) => {
-        const L = zt + 0.1 + (rp + bb - 0.45 * rp) / 2 - (zb - slotDepth);
-        return { L, eps: (3 * (rp - w / 2) * (bb + 0.05)) / (2 * L * L) };
-      };
-      // a short pin (little room under the board) flexes too far: thin its legs (a wider split, legs at least
-      // 0.6 mm) until it is comfortably within the material's limit; only if it would still break, take a little
-      // off the barb (that costs grip)
-      const allow = MATERIALS[H.material].strainAllow, ok = (allow * 0.85) / 1.3, breaks = (allow * 1.1) / 1.3;
-      let tuned = false;
-      while (strainOf(barb, sw).eps > ok && sw + 0.1 <= 2 * (rp - 0.6) + 1e-9) { sw += 0.1; tuned = true; }
-      while (strainOf(barb, sw).eps > breaks * 0.97 && barb > 0.18 + 1e-9) { barb = Math.max(0.18, barb - 0.02); tuned = true; }
-      const cone = rp + barb - 0.45 * rp;
-      C.pos.push(cyl(h.x, h.y, zb - 0.01, zt + 0.1, rp));
-      C.pos.push(cyl(h.x, h.y, zt + 0.1, zt + 0.1 + cone, rp + barb, 0.45 * rp));
-      C.neg.push(box(h.x - sw / 2, h.y - rp - barb - 0.1, zb - slotDepth, h.x + sw / 2, h.y + rp + barb + 0.1, zt + 5));
-      // the split ends in a round, not a sharp corner, so the legs' bending strain doesn't pile up at its root
-      C.neg.push(cyl(0, 0, -(rp + barb + 0.1), rp + barb + 0.1, sw / 2, sw / 2, 24).rotate([90, 0, 0]).translate([h.x, h.y, zb - slotDepth]));
-      const { L, eps } = strainOf(barb, sw);
-      if (snaps === 1) pinCheck = { group: 'Board', name: `Snap pins (Ø${round(h.d, 2)} holes)`, value: `${(eps * 100).toFixed(2)}% strain`, status: strainStatus(C, eps * 1.3), detail: `split pin, ${round(barb, 2)} mm barb, ${round(sw, 1)} mm split ending in a round, ${round(L, 1)} mm flexing length${tuned ? ' (split widened for the short pin)' : ''}. Bends across layers, so judged 30% stricter.` };
-    } else {
-      C.pos.push(cyl(h.x, h.y, zb - 0.01, zt + 0.5, rp), cyl(h.x, h.y, zt + 0.49, zt + 0.5 + rp * 0.5, rp, rp * 0.5));
-    }
+    C.pos.push(cyl(h.x, h.y, zb - 0.01, zt + 0.5, rp), cyl(h.x, h.y, zt + 0.49, zt + 0.5 + rp * 0.5, rp, rp * 0.5));
   }
-  if (pinCheck) C.checks.push({ ...pinCheck, name: `Snap pins (${snaps}, ${pinCheck.name.slice(11)}` });
-  if (!clipsHold && snaps < 2 && !isAccessory(b)) {
-    const holes = b.holes.filter(isMountHole).length;
-    C.warnings.push(`Nothing clips this board in: ${mode === 'pins' ? `${holes ? `only ${snaps} of its holes can take a snap pin` : 'it has no mounting holes for snap pins'}. Set Holder › Hold the board with to Auto or Spring clips` : `${snaps === 1 ? 'one snap pin' : holes ? 'no hole big enough for a snap pin' : 'no mounting holes for snap pins'}${b.holes.some((h) => h.role === 'standoff') ? ' (the others carry the standoffs of the board on top)' : ''} and no free edges for two spring clips facing each other. Free an edge (turn off a plug cradle or the label)${C.job.dock && C.job.dock.lie !== 'flat' ? ', lay it flat in its dock (Layout)' : ''}, or set two holes to "mount" in the hole wizard`}.`);
+  if (!clipsHold && !gripless) {
+    C.warnings.push(`Nothing clips this board in: there is no free stretch of edge for spring clips that would keep it from tipping out. Free an edge (turn off a plug cradle or the label)${C.job.dock && C.job.dock.lie !== 'flat' ? ', lay it flat in its dock (Layout)' : ''}, or make a plug's opening a cutout of the board.`);
   }
 }
 
@@ -433,11 +428,12 @@ function connectors(C: Ctx) {
       // the header's long side)
       const ang = b.kind === 'box' && !isDebugPort(c) ? c.rot : c.w >= c.l ? c.rot : c.rot + 90;
       const tag = { kind: 'plug' as const, module: C.mid, refs: [c.ref] }, anim = { seq: 30, dir: [0, 0, 1] as [number, number, number] };
-      const wp = c.side === 'top' && cn.type === 'header' ? wiredPins(C, c) : [];
+      const wp = c.side === 'top' && cn.type === 'header' ? wiredPins(C.p, C.mid, c) : [];
       if (wp.length) {
-        // jumper wires' housings, each pushed down over its pin onto the header's plastic
-        const z0 = zt + Math.min(2.5, c.h), top = z0 + 14.6;
-        const wires = wp.map(({ pin: q, colour }) => { C.ghosts.push(...plugUp(q.x, q.y, z0 - 0.6, { w: 2.5, h: 2.5, len: 14, cable: 1.4 }, tag, anim, 'dupont')); return { p: [q.x, q.y, top] as [number, number, number], colour, pin: q.n }; });
+        // jumper wires' housings, each pushed down over its pin onto the header's plastic; a pin socket (female) takes a
+        // male end instead: the housing stands on the socket's top, its own pin down in the hole
+        const sock = isSocket(c), z0 = zt + (sock ? c.h : Math.min(2.5, c.h)), top = z0 + 14.6;
+        const wires = wp.map(({ pin: q, colour }) => { C.ghosts.push(...plugUp(q.x, q.y, z0 - 0.6, { w: 2.5, h: 2.5, len: 14, cable: 1.4 }, tag, anim, sock ? 'dupont_m' : 'dupont')); return { p: [q.x, q.y, top] as [number, number, number], colour, pin: q.n }; });
         const cx = wires.reduce((a2, q) => a2 + q.p[0], 0) / wires.length, cy = wires.reduce((a2, q) => a2 + q.p[1], 0) / wires.length;
         C.plugs.push({ module: C.mid, ref: c.ref, p: [cx, cy, top], d: [0, 0, 1], cable: cn.plug.cable, w: [Math.cos(rad(ang)), Math.sin(rad(ang)), 0], wires });
         continue;
@@ -462,7 +458,7 @@ function connectors(C: Ctx) {
     C.blocked.push({ poly: orientedRect(mouth, d, -2, toOut + 2, -(pw / 2 + cl + 3), pw / 2 + cl + 3), why: c.ref });
     // right-angle pins: a jumper's housing on each pin with a wire, straight out
     if (cn.type === 'pins_ra') {
-      const wires = wiredPins(C, c).map(({ pin: q, colour }) => {
+      const wires = wiredPins(C.p, C.mid, c).map(({ pin: q, colour }) => {
         C.ghosts.push(...plugDetail([q.x, q.y], d, zAx, { w: 2.5, h: 2.5, len: 14, cable: 1.4 }, { kind: 'plug', module: C.mid, refs: [c.ref] }, { seq: 30, dir: [d[0], d[1], 0] }, 'dupont'));
         return { p: [q.x + d[0] * 14.6, q.y + d[1] * 14.6, zAx] as [number, number, number], colour, pin: q.n };
       });
@@ -508,7 +504,6 @@ interface CradleSpec { ref: string; mouth: V2; d: V2; sEdge: number; toOut: numb
 const CW = 1.8; // cradle side wall
 const GUARD_FLAT = 6; // widest flat roof over a guard collar's opening; wider ones get a gable
 const CC = 0.3; // plug clearance in the cradle
-
 /**
  * U-cradles outside the wall that carry the plug bodies. Neighbouring connectors on the same edge share walls and
  * one snap-on cap, so tightly packed plugs (like a Raspberry Pi's front edge) still get full protection.
@@ -579,8 +574,13 @@ function cradleGroup(C: Ctx, g: CradleSpec[], H: HolderSettings) {
   const withCap = g.some((sp) => sp.cap);
   const zFloorMin = Math.min(...m.map((k) => k.zf));
   const ledgeZ0 = Math.max(0.6, zFloorMin - 4.0 > 0.6 ? zFloorMin - 4.0 : zFloorMin - 1.5);
+  // the cap's legs reach from the plate over the plugs down to a ledge on each outer wall: their length sets how wide the ledge is
+  const plugTops = m.map((k) => k.sp.zAx + k.sp.ph / 2);
+  const zPlate = Math.max(...plugTops) + 0.2;
+  const zHook = ledgeZ0 - 0.05;
+  const legL = zPlate - zHook, leg = capLeg(legL);
   if (withCap) for (const [tw, sgn] of [[tL, -1], [tR, 1]] as [number, number][]) {
-    const pr = poly([[tw - sgn * 0.01, ledgeZ0], [tw + sgn * 0.7, ledgeZ0], [tw + sgn * 0.7, ledgeZ0 + 0.3], [tw - sgn * 0.01, ledgeZ0 + 1.0]], 'NonZero'); // 0.7: LEDGE below
+    const pr = poly([[tw - sgn * 0.01, ledgeZ0], [tw + sgn * leg.ledge, ledgeZ0], [tw + sgn * leg.ledge, ledgeZ0 + 0.3], [tw - sgn * 0.01, ledgeZ0 + 1.0]], 'NonZero');
     bodies.push(sweepTZ(o, d, pr, sc0, sc1));
   }
   C.late.push(unionMF(bodies).subtract(unionMF(cuts)));
@@ -593,26 +593,15 @@ function cradleGroup(C: Ctx, g: CradleSpec[], H: HolderSettings) {
   }
   if (!withCap) return;
   // one cap over the whole group: top plate, a pad pressing on each plug, legs with hooks at the two outer ends
-  // the legs stand just clear of the ledges' tips (LEDGE out from the cradle's walls); each hook reaches in under its
-  // ledge to just short of the wall, so it catches the ledge's full width less the clearances
-  const LEDGE = 0.7, legT = 1.1, top = 1.6, gp = LEDGE + 0.15, hook = gp - 0.1;
-  const plugTops = m.map((k) => k.sp.zAx + k.sp.ph / 2);
-  const zPlate = Math.max(...plugTops) + 0.2;
-  const zHook = ledgeZ0 - 0.05;
-  const xl = tL - gp, xr = tR + gp;
-  let prof = poly([
-    [xl - legT, zHook - 1.4], [xl + hook, zHook - 0.6], [xl + hook, zHook], [xl, zHook], [xl, zPlate], [xr, zPlate], [xr, zHook], [xr - hook, zHook], [xr - hook, zHook - 0.6], [xr + legT, zHook - 1.4],
-    [xr + legT, zPlate + top - 0.6], [xr + legT - 0.6, zPlate + top], [xl - legT + 0.6, zPlate + top], [xl - legT, zPlate + top - 0.6],
-  ], 'NonZero');
-  m.forEach((k, i) => { if (zPlate - plugTops[i] > 0.4) prof = prof.add(rect2(k.ti - k.halfIn + 0.4, plugTops[i] + 0.2, k.ti + k.halfIn - 0.4, zPlate + 0.01)); });
+  // the legs stand `gap` clear of the ledges' tips; each hook reaches in under its ledge to `wall` short of the cradle's wall
+  const prof = capProfile(tL, tR, zHook, zPlate, leg, m.flatMap((k, i) => (zPlate - plugTops[i] > 0.4 ? [[k.ti - k.halfIn + 0.4, k.ti + k.halfIn - 0.4, plugTops[i] + 0.2] as [number, number, number]] : [])));
   const mesh = prof.extrude(capL);
   const at: V2 = add(o, d, sc0 + 0.3);
   const Tm = matFromBasis([t[0], t[1], 0], [0, 0, 1], [d[0], d[1], 0], [at[0], at[1], 0]);
-  const L = zPlate - zHook;
-  const eps = (3 * legT * (hook - (gp - LEDGE) + 0.05)) / (2 * L * L); // each leg springs out past its ledge's tip
+  const eps = leg.strain;
   const refs = g.map((sp) => sp.ref).join(' + ');
   C.parts.push(part(`cap_${C.parts.length}`, `Plug cap (${refs})`, mesh, Tm, '#f2c94c', 1, { kind: 'cap', module: C.mid, refs: g.map((sp) => sp.ref) }, { seq: 20 + (C.job.level ?? 0), dir: [0, 0, 1] }));
-  C.checks.push({ group: 'Plugs', name: `Cap legs (${refs})`, value: `${(eps * 100).toFixed(2)}% strain`, status: strainStatus(C, eps), detail: `${round(L, 1)} mm legs, ${round(hook, 2)} mm hooks under the cradle ledges; they flex within the layers` });
+  C.checks.push({ group: 'Plugs', name: `Cap legs (${refs})`, value: `${(eps * 100).toFixed(2)}% strain`, status: strainStatus(C, eps), detail: `${round(legL, 1)} mm legs, ${CAP.root} mm at the plate tapering to ${CAP.tip} mm, bending within the layers; each hook reaches ${round(leg.e, 2)} mm under a ${round(leg.ledge, 2)} mm ledge on the cradle and touches nothing at rest (a click, not a press); the strain is at the ${round(leg.move, 2)} mm they spring out to pass it` });
 }
 
 /** A strap loop's size: its slot takes a 12 mm strap (13 mm wide), 1.5 mm ends; 7 mm tall, or as low as 3.5 mm under a
@@ -756,7 +745,7 @@ function tieAnchor(C: Ctx, at: V2, edgeConn: { d: V2; half: number; sEdge: numbe
 function overhangs(C: Ctx) {
   // component bodies that stick out past the board edge need openings in the wall
   const { b, zt, zb } = C;
-  for (const c of b.comps) {
+  for (const c of holderParts(b)) {
     if (c.hidden || c.h <= 0) continue;
     const r = compRect(c, 0.4);
     if (r.every((pt) => inside(pt, b.outline))) continue;
@@ -790,7 +779,7 @@ function edgeSites(C: Ctx, need: number, extraBlocked: Loop[] = [], checkComps =
       const q = add(a, d, s);
       const zone = orientedRect(q, d, 0, need, -(H.gap + H.wall + 1), 2.5); // local t = inward
       const conflict = C.blocked.some((bl) => polysOverlap(zone, bl.poly)) || extraBlocked.some((bl) => polysOverlap(zone, bl)) ||
-        (checkComps && b.comps.some((cc) => cc.side === 'top' && !cc.hidden && cc.h > 0 && polysOverlap(zone, compRect(cc, 0.3))));
+        (checkComps && holderParts(b).some((cc) => cc.side === 'top' && !cc.hidden && cc.h > 0 && polysOverlap(zone, compRect(cc, 0.3))));
       if (!conflict) sites.push({ q, d, n, seg: i, len, free: s });
     }
   }
@@ -846,12 +835,12 @@ function reserve(C: Ctx) {
 }
 
 /** A place for a leaf along the board's edge: root at q, running along `dir`, the board on the `nu` side. */
-interface LeafSite { q: V2; dir: V2; nu: V2; p: V2; L: number; pref: number; zone: Loop; edgeIn: number }
+interface LeafSite { q: V2; dir: V2; nu: V2; p: V2; L: number; pref: number; zone: Loop; edgeIn: number; kind: 'straight' | 'u' | 'ledge'; out: number; arc: number } // (arc: how far round the outline the lip is)
 
 const ANCHOR = 3; // wall block the leaf grows out of, root to its far end
 
 /** Points round the board outline every `step` mm, anticlockwise, each with its tangent there (over ±2 mm). */
-function perimeter(ol: Loop, step: number): { p: V2; d: V2 }[] {
+function perimeter(ol: Loop, step: number): { p: V2; d: V2; s: number }[] {
   let area = 0;
   for (let i = 0; i < ol.length; i++) { const a = ol[i], b = ol[(i + 1) % ol.length]; area += a[0] * b[1] - b[0] * a[1]; }
   const loop = area < 0 ? [...ol].reverse() : ol;
@@ -874,46 +863,71 @@ function perimeter(ol: Loop, step: number): { p: V2; d: V2 }[] {
   };
   return pts.map((p, i) => {
     const a = at(cum[i] - 2), b = at(cum[i] + 2), L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
-    return { p, d: [(b[0] - a[0]) / L, (b[1] - a[1]) / L] as V2 };
+    return { p, d: [(b[0] - a[0]) / L, (b[1] - a[1]) / L] as V2, s: cum[i] };
   });
+}
+
+/** A convex loop with every corner pushed out from its middle by d (the sides about d / sqrt 2 out). */
+function growLoop(p: Loop, d: number): Loop {
+  const c = centroid(p);
+  return p.map((v) => { const dx = v[0] - c[0], dy = v[1] - c[1], l = Math.hypot(dx, dy) || 1; return [v[0] + (dx / l) * d, v[1] + (dy / l) * d] as V2; });
 }
 
 /**
  * Every place a leaf of length L fits: straight (or gently curved, convex) edge the whole way, the board's edge right
  * under the lip, the anchor along the edge, and nothing else there (plugs, the dock, the label, parts at the edge).
+ * `kind` sets where the lip stands on the leaf (the far end of a straight one, the near end of a hairpin) and how far out
+ * the leaf reaches; `reach` is how far the lip's ledge goes over the board (parts standing on the board keep clear of
+ * it); `step` the spacing of the places tried; `why` counts the places turned down and why.
  */
-function leafSites(C: Ctx, L: number, lipLen: number, taken: Loop[]): LeafSite[] {
-  const H = C.H, gw = H.gap + H.wall;
-  const ring = perimeter(C.b.outline, 1);
+function leafSites(C: Ctx, L: number, lipLen: number, taken: Loop[], o: { kind?: 'straight' | 'u' | 'ledge'; reach?: number; step?: number; why?: Record<string, number> } = {}): LeafSite[] {
+  const H = C.H, gw = H.gap + H.wall, kind = o.kind ?? 'straight', reach = o.reach ?? 0.7;
+  const out = kind === 'u' ? Math.max(gw + 1, H.gap + FACE + U_ARMS + 0.05) : kind === 'ledge' ? gw + 0.5 : gw + 1;
+  const A = kind === 'ledge' ? 0.5 : ANCHOR, tail = kind === 'ledge' ? 0.3 : SLIT + 0.3; // (a ledge has no anchor or slits: it is a block on the wall)
+  const ring = perimeter(C.b.outline, o.step ?? 1);
   const dense = perimeter(C.b.outline, 0.5).map((x) => x.p);
   const cen = centroid(C.b.outline);
-  const sc = L - 0.3 - lipLen / 2;
-  const tops = C.b.comps.filter((cc) => cc.side === 'top' && !cc.hidden && cc.h > 0).map((cc) => compRect(cc, 0.3));
-  const out: LeafSite[] = [];
-  for (const { p, d } of ring) {
+  const sc = kind === 'u' ? U_FREE + 0.3 + lipLen / 2 : kind === 'ledge' ? L / 2 : L - 0.3 - lipLen / 2;
+  const tops = holderParts(C.b).filter((cc) => cc.side === 'top' && !cc.hidden && cc.h > 0).map((cc) => compRect(cc, 0.1));
+  const no = (k: string) => { if (o.why) o.why[k] = (o.why[k] ?? 0) + 1; };
+  const sites: LeafSite[] = [];
+  for (const { p, d, s: arc } of ring) {
     const nu: V2 = [-d[1], d[0]]; // into the board
     for (const dir of [d, [-d[0], -d[1]] as V2]) {
       const q = add(p, dir, -sc);
       const S = (v: V2) => (v[0] - q[0]) * dir[0] + (v[1] - q[1]) * dir[1], T = (v: V2) => (v[0] - q[0]) * nu[0] + (v[1] - q[1]) * nu[1];
       let ok = true, lip = -Infinity;
-      const near = [Infinity, Infinity, Infinity]; // the board's edge by the anchor's far end, its root, and the tip
+      const near = [Infinity, Infinity, Infinity]; // the board's edge by the anchor's far end, its root, and the leaf's far end (not hanging past a corner)
       for (const v of dense) {
         const s = S(v), t = T(v);
-        if (s < -ANCHOR - 0.5 || s > L + 1.2) continue;
+        if (s < -A - 0.5 || s > L + 1.2) continue;
         if (t < -0.05) { ok = false; break; } // the board bulges past the leaf's line
         if (Math.abs(s - sc) <= lipLen / 2 && t < 3) lip = Math.max(lip, t);
-        if (Math.abs(s + ANCHOR) < 0.8) near[0] = Math.min(near[0], t);
+        if (Math.abs(s + A) < 0.8) near[0] = Math.min(near[0], t);
         if (Math.abs(s) < 0.8) near[1] = Math.min(near[1], t);
+        if (Math.abs(s - L) < 0.6) near[2] = Math.min(near[2], t);
       }
       // the lip reaches over the board edge, and the anchor stands by it
-      if (!ok || lip > 0.25 || near[0] > 4 || near[1] > 4) continue; // (on a curved edge the anchor's foot reaches in to the rim)
+      if (!ok) { no('the edge is not straight'); continue; }
+      if (lip > 0.25 || near[0] > 4 || near[1] > 4 || near[2] > 4) { no('the edge is not straight'); continue; } // (on a curved edge the anchor's foot reaches in to the rim)
       const at = (s: number, t: number) => add(add(q, dir, s), nu, t);
-      const zone: Loop = [at(-ANCHOR, -(gw + 1)), at(L + SLIT + 0.3, -(gw + 1)), at(L + SLIT + 0.3, 1.2), at(-ANCHOR, 1.2)];
-      if (C.blocked.some((bl) => polysOverlap(zone, bl.poly)) || taken.some((z) => polysOverlap(zone, z)) || tops.some((r) => polysOverlap(zone, r))) continue;
-      out.push({ q, dir, nu, p, L, pref: -Math.abs((p[0] - cen[0]) * d[0] + (p[1] - cen[1]) * d[1]), zone, edgeIn: Math.max(0, near[0], near[1]) });
+      const zone: Loop = [at(-A, -out), at(L + tail, -out), at(L + tail, 1.2), at(-A, 1.2)];
+      const bl = C.blocked.find((x) => polysOverlap(zone, x.poly));
+      if (bl) { no(`blocked by ${bl.why.replace(/^blocked:/, '')}`); continue; }
+      // (a hairpin stands 0.8 mm past the wall's face: the dock's own parts (its lever, spine, button) need that much more room)
+      if (kind === 'u') {
+        const near = C.blocked.find((x) => /^(dock|dock spine|release button)$/.test(x.why) && polysOverlap(zone, growLoop(x.poly, 1.2)));
+        if (near) { no(`blocked by ${near.why}`); continue; }
+      }
+      if (taken.some((z) => polysOverlap(zone, z))) { no('taken by another clip'); continue; }
+      // (a part standing on the board only meets the lip, over the board's edge, and whatever hangs past the edge)
+      const back: Loop = [at(-A, -out), at(L + tail, -out), at(L + tail, 0.05), at(-A, 0.05)];
+      const lipZone: Loop = [at(sc - lipLen / 2 - 0.3, -0.5), at(sc + lipLen / 2 + 0.3, -0.5), at(sc + lipLen / 2 + 0.3, reach + 0.15), at(sc - lipLen / 2 - 0.3, reach + 0.15)];
+      if (tops.some((r) => polysOverlap(back, r) || polysOverlap(lipZone, r))) { no('a part on the board'); continue; }
+      sites.push({ q, dir, nu, p, L, pref: -Math.abs((p[0] - cen[0]) * d[0] + (p[1] - cen[1]) * d[1]), zone, edgeIn: Math.max(0, near[0], near[1]), kind, out, arc });
     }
   }
-  return out;
+  return sites;
 }
 
 /** Local frame of a leaf: s along it from the root, t into the board, z up (mirrored when it runs clockwise). */
@@ -927,113 +941,210 @@ const sweepS = (prof: CS, s0: number, s1: number) => prof.extrude(s1 - s0).trans
 const sweepT = (prof: CS, t0: number, t1: number) => prof.extrude(t1 - t0).transform([1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, t1, 0, 1] as any);
 
 /**
- * Build one leaf in its local frame: cut its zone clear, add the anchor and the tapered leaf (root fillet, rounded
- * tip), and hand back the heights for the lip, which the caller adds.
+ * Build one leaf in its local frame: cut its zone clear, add the anchor and the leaf (a taper with a root fillet, or a
+ * hairpin: leafplan.ts), and hand back the heights for the lip, which the caller adds.
  */
-function leafBody(C: Ctx, st: LeafSite, f: Leaf, face: number, top: number, refs?: string[]) {
+function leafBody(C: Ctx, st: LeafSite, f: Leaf, face: number, top: number, refs?: string[], at?: { p: V2; n: V2 }) {
   const H = C.H, gw = H.gap + H.wall, L = f.L;
   // the zone: everything outside the inner slit, from the anchor's root to past the tip, bed to sky
   C.neg.push(placeLeaf(box(0, -(gw + 4), -1, L + SLIT, face + SLIT, top + 30), st));
-  // anchor: a short wall block, as tall as the leaf at its root, falling at 45 degrees to the wall height
+  // anchor: a short wall block, as tall as the leaf at its root, falling at 45 degrees to the wall height (a hairpin's
+  // reaches out to its outer arm)
   const zw = Math.min(C.zw, top);
   const A = ANCHOR, fall = Math.max(0.2, Math.min(A - 1.2, top - zw)); // (a top facing up: any slope prints)
   const aProf = roundCS(poly([[-A, 0], [0.02, 0], [0.02, top], [-0.8, top], [-0.8 - fall, zw], [-A, zw]], 'NonZero'), 0.5).add(rect2(-0.5, 0, 0.02, top)); // (square where it meets the leaf)
-  const anchor = unionMF([sweepT(aProf, -gw, -H.gap), box(-A, -gw, 0, 0.02, st.edgeIn + 1.0, C.frame ? C.rimH : C.base)]);
-  // the leaf: inner face straight, outer face tapering (constant stress) to tMin, then the lip's thickness
-  const pts: V2[] = [[0, face]];
-  for (let i = 0; i <= 24; i++) { const s = (L * i) / 24; pts.push([s, face - leafT(f, s)]); }
-  pts.reverse();
-  pts.push([L, face]);
-  const leafCS = roundCS(poly(pts, 'NonZero'), Math.min(0.25, f.tMin / 2 - 0.05));
-  // root fillet: close the corner between the leaf and the anchor's end with a generous radius
-  const rootCS = rect2(-1.5, -gw, 0.02, -H.gap);
-  const r = 1.2;
-  const planCS = leafCS.add(rootCS).offset(r, 'Round').offset(-r, 'Round').intersect(rect2(-1.5, -gw - 1, L + 1, face + 0.001)).add(leafCS);
-  const leaf = ext(planCS, 0, top);
+  const tOut = f.u ? face - 2 * foldOf(f).Ro : -gw;
+  const anchor = unionMF([sweepT(aProf, tOut, -H.gap), box(-A, -gw, 0, 0.02, st.edgeIn + 1.0, C.frame ? C.rimH : C.base)]);
+  const leaf = ext(leafPlan(f, face, gw, H.gap), 0, top);
   C.late.push(placeLeaf(anchor, st), placeLeaf(leaf, st));
   C.blocked.push({ poly: st.zone, why: 'spring clip' });
-  feat(C, 'spring', st.zone, 0, top + 1, refs);
+  feat(C, 'spring', st.zone, 0, top + 1, refs, at);
+}
+
+/** A fixed ledge: how far it reaches over the board's edge, and how wide it is (the widest that fits is tried first). */
+const LEDGE = { reach: 0.8, widths: [8, 6, 4] };
+
+/**
+ * A fixed ledge in its local frame: a block on the wall, along the edge, with a flat ledge over the board's top edge
+ * (0.15 to 0.35 mm clear of it, a layer boundary) and a 45 degree roof back to the wall, so it prints without support.
+ * The board goes in tilted, its edge under the ledge, and the spring clips on the far side press it down.
+ */
+function ledgeBody(C: Ctx, st: LeafSite, zRet: number) {
+  const H = C.H, gw = H.gap + H.wall, R = LEDGE.reach, W = st.L;
+  const zTop = zRet + 0.35 + R + H.gap;
+  const prof = poly([[-gw, 0], [-H.gap, 0], [-H.gap, zRet], [R - 0.15, zRet], [R, zRet + 0.15], [R, zRet + 0.35], [-H.gap, zTop], [-gw, zTop]], 'NonZero');
+  C.late.push(placeLeaf(sweepS(prof, 0, W), st));
+  C.blocked.push({ poly: st.zone, why: 'fixed ledge' });
+  feat(C, 'spring', st.zone, 0, zTop + 1, ['ledge'], { p: st.p, n: st.nu });
+  return zTop;
 }
 
 /**
  * Spring clips, and anti-rattle springs, round the board. Returns the clips' zones (0 or 1 clip does not hold a
- * board: the caller turns to snap pins or warns).
+ * board: the caller warns).
+ *
+ * Clips are the only way a holder grips its board: the board's size and weight decide how long a leaf, how deep a
+ * catch, how hard a push and how many (grip.ts); where a stretch of edge is short (between plugs) the leaf is a hairpin.
+ * Together they must surround the board's middle, so it can't tip out over any side: two facing each other, or three or
+ * more round it. Where plugs take the edges, a fixed ledge (a block on the wall with a lip over the board's edge, the
+ * board sliding under it) does for one side, needing only a short stretch of straight edge, and clips go on the far side.
+ * More clips are added along the outline, where there is room, until none is far from the next and they hold the board's
+ * weight against a shake.
+ * `ends`: towards the ends of their edges rather than the middle, to leave a wall free for the label.
  */
-function clips(C: Ctx, mode: ReturnType<typeof holdOf>): Loop[] {
+function clips(C: Ctx, ends = false): Loop[] {
   const H = C.H, mat = MATERIALS[H.material];
-  if (mode === 'pins') return [];
-  const bb = bbox(C.b.outline), cen = centroid(C.b.outline);
-  const small = Math.min(bb.x1 - bb.x0, bb.y1 - bb.y0) < 30;
+  const bb = bbox(C.b.outline);
   const pinHoles = C.b.holes.filter((h) => isMountHole(h) && h.use !== 'none');
-  const pinsCanHold = C.b.holes.filter((h) => isMountHole(h) && (h.use === 'auto' || h.use === 'snap') && h.d >= 1.8).length >= 2;
   // how far the board can shift towards a clip: to its guards, or less when pins sit in its holes
   const play = pinHoles.length ? Math.min(H.gap, H.pinClear + 0.05) : H.gap;
   const zRet = onLayer(C.zt + 0.15); // the ledge that holds the board down, a layer or so over it
   const firm = (H.grip ?? 'firm') === 'firm';
   // heights: the lip's ledge, a land, then the entry ramp up to the leaf's top
   const lipTop = (tip: number, face: number) => zRet + 0.35 + (tip - face) / Math.tan(rad(RAMP));
-  const lipLenOf = (L: number) => Math.min(5, Math.max(3, 0.38 * L));
-  // two clips hold when they face apart and the line between them splits the board, with a good share of it either
-  // side (it can't tip out about that line: one side would have to go down through its seats). 0 = through the middle.
-  const offLine = (a: LeafSite, b: LeafSite) => {
-    const ax = b.p[0] - a.p[0], ay = b.p[1] - a.p[1], L = Math.hypot(ax, ay) || 1;
-    const dist = Math.abs((cen[0] - a.p[0]) * ay - (cen[1] - a.p[1]) * ax) / L;
-    const nx = -ay / L, ny = ax / L;
-    const across = Math.max(...C.b.outline.map((v) => v[0] * nx + v[1] * ny)) - Math.min(...C.b.outline.map((v) => v[0] * nx + v[1] * ny));
-    return dist / across;
-  };
   const extent = Math.max(bb.x1 - bb.x0, bb.y1 - bb.y0);
-  const pickPair = (lengths: number[], taken: Loop[]): LeafSite[] => {
-    for (const L of lengths) {
-      const sites = leafSites(C, L, lipLenOf(L), taken);
-      let best: { s: number; a: LeafSite; b: LeafSite } | null = null;
-      for (let i = 0; i < sites.length; i++) for (let j = i + 1; j < sites.length; j++) {
-        const a = sites[i], b = sites[j], facing = a.nu[0] * b.nu[0] + a.nu[1] * b.nu[1];
-        if (facing > -0.3 || polysOverlap(a.zone, b.zone)) continue;
-        const off = offLine(a, b);
-        if (off > 0.35) continue;
-        const s = (a.pref + b.pref) / extent - 3 * off - 2 * (facing + 1);
-        if (!best || s > best.s) best = { s, a, b };
+  // ---- what the board asks of its clips: its size and weight ----
+  const pcbArea = Math.abs(area(C.b.outline)) - C.b.cutouts.reduce((a, c) => a + Math.abs(area(c)), 0);
+  const load: BoardLoad = { mass: boardMass(pcbArea, C.b.thickness, holderParts(C.b).filter((cc) => !cc.hidden && cc.h > 0).map((cc) => ({ area: Math.abs(area(compRect(cc))), h: cc.h }))), long: extent, short: Math.min(bb.x1 - bb.x0, bb.y1 - bb.y0), thick: C.b.thickness };
+  const face = -(H.gap + FACE), tipI = tipFor(load), h0 = lipTop(tipI, face);
+  const ask = (L: number, want: number) => ({ L, h: h0, mat, gap: H.gap, play, tip: tipI, want });
+  const lens: number[] = [];
+  for (let L = spanFor(load); L >= 8; L -= L > 12 ? 2 : 1) lens.push(L); // (in 1 mm steps once a stretch is short)
+  const specs = new Map(lens.map((L) => [L, bestClip(ask(L, pushTarget(load, firm, 4)))] as const));
+  const why: Record<string, number> = {};
+  const sitesOf = (L: number, taken: Loop[] = []) => { const sp = specs.get(L)!; return leafSites(C, L, sp.leaf.lipLen, taken, { kind: sp.kind, reach: sp.tip + 0.1, step: 2, why }); };
+  // ---- where: so the board can't tip out over any side ----
+  // A board rests on its seats (posts under its edge, all round), so it can only tip about a line along the seats' edge,
+  // the side towards the middle lifting. A clip on that side, well back from the line, stops it: it lifts only a
+  // fraction of a millimetre before the ledge is against it. So for every direction the board could tip towards, some
+  // clip must stand well back from the seats' edge that way: clips on two opposite edges do, three round the board do;
+  // two on the same edge don't (the board hinges up about them).
+  const thin = <T>(l: T[], n: number) => (l.length <= n ? l : l.filter((_, i) => i % Math.ceil(l.length / n) === 0));
+  const frame = tipFrame(C.b.outline);
+  const cover = (s: LeafSite) => tipCover(frame, s.p);
+  const FULL = TIP_FULL;
+  const bits = (m: number) => { let c = 0; for (; m; m &= m - 1) c++; return c; };
+  const quality = (s: LeafSite) => (ends ? -s.pref : s.pref) / extent + (0.1 * s.L) / 16; // (`ends`: towards the ends of an edge, not its middle)
+  const masks = new Map<LeafSite, number>();
+  const maskOf = (s: LeafSite) => { let m = masks.get(s); if (m === undefined) { m = cover(s); masks.set(s, m); } return m; };
+  // grow from each of several well-placed clips, adding the one that covers most of what is still open
+  const surround = (sites: LeafSite[]): LeafSite[] => {
+    let best: { set: LeafSite[]; score: number } | null = null;
+    for (const first of thin([...sites].sort((a, b) => quality(b) - quality(a)), 16)) {
+      const set = [first];
+      let m = maskOf(first);
+      while ((m !== FULL || set.length < 2) && set.length < 4) {
+        let pick: LeafSite | undefined, pickScore = -Infinity;
+        for (const s of sites) {
+          if (set.some((z) => polysOverlap(s.zone, z.zone))) continue;
+          const gain = bits(maskOf(s) & ~m);
+          // (one clip alone never holds a board: a second goes as far from the first as it can, if nothing is left open)
+          const sc = gain > 0 ? gain + 0.5 * quality(s) : m === FULL ? Math.hypot(s.p[0] - first.p[0], s.p[1] - first.p[1]) / extent + 0.5 * quality(s) - 1 : -Infinity;
+          if (sc > pickScore) { pick = s; pickScore = sc; }
+        }
+        if (!pick) break;
+        set.push(pick);
+        m |= maskOf(pick);
       }
-      if (best) return [best.a, best.b];
+      if (m !== FULL) continue;
+      const score = -set.length * 10 + set.reduce((a, s) => a + quality(s), 0);
+      if (!best || score > best.score) best = { set, score };
     }
-    return [];
+    return best ? best.set : [];
   };
-  const full = small ? [12, 10] : [14, 12];
-  let chosen = pickPair(full, []);
-  let short = false;
-  if (chosen.length < 2) {
-    // short clips in the gaps between plugs; left to the pins, when they can hold it, if they'd be strained
-    chosen = pickPair([10], []);
-    short = chosen.length === 2;
-    if (short && mode === 'auto' && pinsCanHold && designClip({ L: 10, h: 9, mat, gap: H.gap, play, firm }).eps > 0.6 * mat.strainAllow) chosen = [];
+  // the longest leaves first, then shorter (hairpins between plugs); then every length together
+  let chosen: LeafSite[] = [];
+  const pools = new Map<number, LeafSite[]>();
+  for (const L of lens) {
+    const sites = sitesOf(L);
+    pools.set(L, sites);
+    chosen = surround(thin(sites, 300));
+    if (chosen.length) break;
   }
-  // big boards: a second pair across the other way
-  if (chosen.length === 2 && Math.min(bb.x1 - bb.x0, bb.y1 - bb.y0) > 60) {
-    const more = pickPair(full, chosen.map((c) => c.zone)).filter((c) => Math.abs(c.nu[0] * chosen[0].nu[0] + c.nu[1] * chosen[0].nu[1]) < 0.5);
-    if (more.length === 2) chosen.push(...more);
-  }
+  const all = lens.flatMap((L) => pools.get(L) ?? sitesOf(L));
+  if (chosen.length < 2) chosen = surround(thin(all, 400));
+  // ---- crowded edges: a fixed ledge on one side (the board slides under it, tilted) and clips on the far side ----
+  // A ledge needs only a short stretch of straight edge and no slits, so it fits beside plugs where a clip does not. It
+  // can't hold the board by itself, but with clips well away on the other side the board can't tip out over any side;
+  // and it goes in: tilted, its edge under the ledge, then the far side pressed down past the clips (which have to be in
+  // the far half of the board, so the near half, going in level under the ledge, meets no lip on its way).
+  const widthAlong = (m: V2) => { const v = C.b.outline.map((q) => q[0] * m[0] + q[1] * m[1]); return Math.max(...v) - Math.min(...v); };
+  const beyond = (a: LeafSite, c: LeafSite) => ((c.p[0] - a.p[0]) * a.nu[0] + (c.p[1] - a.p[1]) * a.nu[1]) >= 0.45 * widthAlong(a.nu);
+  const ledges = LEDGE.widths.flatMap((W) => leafSites(C, W, W, [], { kind: 'ledge', reach: LEDGE.reach + 0.1, step: 2, why }));
+  const withLedges = (): LeafSite[] => {
+    let best: { set: LeafSite[]; score: number } | null = null;
+    // (candidates for the first ledge: the best few on every side that has any, not the best few overall)
+    const bySide = new Map<string, LeafSite[]>();
+    for (const l of ledges) { const k = `${l.nu[0].toFixed(1)},${l.nu[1].toFixed(1)}`; bySide.set(k, [...(bySide.get(k) ?? []), l]); }
+    const firsts = [...bySide.values()].flatMap((l) => thin(l.sort((a, b) => quality(b) - quality(a)), 12));
+    for (const first of firsts) {
+      const far = all.filter((c) => beyond(first, c)), same = ledges.filter((l) => l.nu[0] * first.nu[0] + l.nu[1] * first.nu[1] >= 0.9);
+      const set = [first];
+      let m = maskOf(first);
+      while ((m !== FULL || !set.some((x) => x.kind !== 'ledge')) && set.length < 4) {
+        let pick: LeafSite | undefined, pickScore = -Infinity;
+        for (const s of [...far, ...same]) {
+          if (set.some((z) => polysOverlap(s.zone, z.zone))) continue;
+          const gain = bits(maskOf(s) & ~m), isClip = s.kind !== 'ledge';
+          const sc = gain > 0 ? gain + 0.5 * quality(s) + (isClip ? 0.1 : 0) : m === FULL && isClip ? Math.hypot(s.p[0] - first.p[0], s.p[1] - first.p[1]) / extent + 0.5 * quality(s) - 1 : -Infinity;
+          if (sc > pickScore) { pick = s; pickScore = sc; }
+        }
+        if (!pick) break;
+        set.push(pick);
+        m |= maskOf(pick);
+      }
+      if (m !== FULL || !set.some((x) => x.kind !== 'ledge')) continue;
+      const score = -set.length * 10 + set.reduce((a, x) => a + quality(x), 0);
+      if (!best || score > best.score) best = { set, score };
+    }
+    return best ? best.set : [];
+  };
+  if (chosen.length < 2) chosen = withLedges();
   if (chosen.length < 2) {
-    const why = `plugs${C.job.dock ? ', the dock' : ''}${C.blocked.some((b) => b.why === 'label') ? ' and the label' : ''} take the free edges`;
-    if (pinsCanHold) C.checks.push({ group: 'Board', name: 'Spring clips', value: chosen.length ? 'only one fits' : 'no room', status: 'info', detail: `${why}, even for short clips; snap pins in the mounting holes hold the board instead` });
+    const top = Object.entries(why).sort((a, b) => b[1] - a[1]).map(([k]) => k).filter((k) => k !== 'taken by another clip').slice(0, 3);
+    const side = (l: LeafSite[]) => [...new Set(l.map((x) => { const nx = -x.nu[0], ny = -x.nu[1]; return Math.abs(nx) > Math.abs(ny) ? (nx > 0 ? 'right' : 'left') : ny > 0 ? 'top' : 'bottom'; }))].join(', ') || 'none';
+    const reason = all.length + ledges.length ? `the free stretches of edge (clips: ${side(all)}; ledges: ${side(ledges)}) are all on the same sides of the board, so clips there could not keep it from tipping out` : `no stretch of edge is clear and straight for a clip or a ledge (${top.join('; ') || 'none'})`;
+    C.checks.push({ group: 'Board', name: 'Spring clips', value: all.length + ledges.length ? 'only one side' : 'no room', status: 'warn', detail: reason });
     return [];
+  }
+  const ledgeSet = chosen.filter((x) => x.kind === 'ledge');
+  // ---- more, along the outline: none far from the next, and enough to hold the board's weight against a shake ----
+  const perim = C.b.outline.reduce((a, v, i) => a + Math.hypot(C.b.outline[(i + 1) % C.b.outline.length][0] - v[0], C.b.outline[(i + 1) % C.b.outline.length][1] - v[1]), 0);
+  const SMAX = 130; // longest stretch of outline left without a clip, mm
+  const holdOfSite = (s: LeafSite) => (s.kind === 'ledge' ? 0 : specs.get(s.L)!.hold); // (a ledge holds nothing of the far side's lift)
+  const circ = (a: number, b: number) => { const d = Math.abs(a - b) % perim; return Math.min(d, perim - d); };
+  while (chosen.length < 14) {
+    const arcs = chosen.map((c) => c.arc).sort((x, y) => x - y);
+    const gaps = arcs.map((v, i) => ({ from: v, gap: i + 1 < arcs.length ? arcs[i + 1] - v : arcs[0] + perim - v })).sort((a, b) => b.gap - a.gap);
+    const short = chosen.reduce((a, s) => a + holdOfSite(s), 0) < HOLD_SHARE * holdNeed(load.mass);
+    let added: LeafSite | undefined;
+    for (const g of gaps) {
+      if (g.gap <= SMAX && !short) break;
+      const mid = (g.from + g.gap / 2) % perim;
+      added = all.filter((s) => chosen.every((z) => !polysOverlap(s.zone, z.zone)) && ledgeSet.every((l) => beyond(l, s)) && circ(s.arc, mid) <= Math.max(12, 0.3 * g.gap) && circ(s.arc, g.from) > 8 && circ(s.arc, g.from + g.gap) > 8)
+        .sort((a, b) => circ(a.arc, mid) - 0.5 * a.L - (circ(b.arc, mid) - 0.5 * b.L))[0];
+      if (added) break;
+    }
+    if (!added) break;
+    chosen.push(added);
   }
   // ---- the clips ----
-  const designs: ClipDesign[] = [];
+  const n = chosen.length - ledgeSet.length, want = pushTarget(load, firm, n);
+  const designs: ClipSpec[] = [];
   for (const st of chosen) {
-    const h0 = lipTop(0.6, -(H.gap + FACE));
-    const dz = designClip({ L: st.L, h: h0, mat, gap: H.gap, play, firm });
+    if (st.kind === 'ledge') { ledgeBody(C, st, zRet); continue; }
+    const dz = sizeClip({ ...ask(st.L, want), kind: st.kind });
     designs.push(dz);
     const top = lipTop(dz.tip, dz.face);
-    leafBody(C, st, dz.leaf, dz.face, top);
+    leafBody(C, st, dz.leaf, dz.face, top, undefined, { p: st.p, n: st.nu });
     const { tip, face } = dz, f = dz.leaf;
     // lip: flat ledge (the only overhang: tip - face, about 1 mm), chamfered tip, a land, the entry ramp
     const prof = poly([[face - 0.4, zRet], [tip - 0.15, zRet], [tip, zRet + 0.15], [tip, zRet + 0.35], [face, top], [face - 0.4, top]], 'NonZero');
-    const s1 = f.L - 0.3, s0 = s1 - f.lipLen, w = tip - face;
+    const s0 = f.u ? U_FREE + 0.3 : f.L - 0.3 - f.lipLen, s1 = s0 + f.lipLen, w = tip - face;
     const ends = poly([[s0, face - 0.5], [s1, face - 0.5], [s1, face], [s1 - w, tip + 0.01], [s0 + w, tip + 0.01], [s0, face]], 'NonZero'); // 45 degree ends in plan
     const lip = sweepS(prof, s0, s1).intersect(ext(ends, zRet - 1, top + 1));
     // pull tab: an ear on the free end, over the leaf, to hook with a fingernail and pull the clip back
-    const ear = sweepT(roundCS(rect2(f.L - 2.3, top - 0.6, f.L - 0.1, top + 1.0), 0.7), face - f.tMin, face);
+    const ear = sweepT(roundCS(f.u ? rect2(U_FREE + 0.1, top - 0.6, U_FREE + 2.3, top + 1.0) : rect2(f.L - 2.3, top - 0.6, f.L - 0.1, top + 1.0), 0.7), face - f.tMin, face);
     C.late.push(placeLeaf(unionMF([lip, ear]), st));
   }
   // ---- anti-rattle springs: one pushing across the clips, one along them, where they fit ----
@@ -1064,19 +1175,26 @@ function clips(C: Ctx, mode: ReturnType<typeof holdOf>): Loop[] {
     }
   }
   // ---- what the report says ----
-  const n = designs.length, worst = designs.reduce((a, x) => (x.eps > a.eps ? x : a));
+  const worst = designs.reduce((a, x) => (x.eps > a.eps ? x : a));
   const allow = mat.strainAllow;
   const pct = (x: number, dp = 2) => `${(x * 100).toFixed(dp)}%`;
+  const kinds = [...new Map(designs.map((x) => [`${x.kind}${x.leaf.L}${x.leaf.t0}`, x] as const)).values()];
+  const count = (x: ClipSpec) => designs.filter((y) => y.kind === x.kind && y.leaf.L === x.leaf.L && y.leaf.t0 === x.leaf.t0).length;
+  const sizes = kinds.map((x) => `${count(x)} × ${x.leaf.L} mm ${x.kind === 'u' ? `hairpin (arms ${round(x.leaf.t0, 2)} mm at the fold, ${x.leaf.tMin} at the lip)` : `tapered leaf (${round(x.leaf.t0, 2)} to ${round(x.leaf.tMin, 2)} mm)`}`).join(', ');
+  const holdSum = designs.reduce((a, x) => a + x.hold, 0);
+  const range = (v: number[]) => { const a = round(Math.min(...v), 1), b = round(Math.max(...v), 1); return a === b ? `${a}` : `${a} to ${b}`; };
   C.checks.push({ group: 'Board', name: `Spring clips (${n})`, value: `${pct(worst.eps)} going in`, status: strainStatus(C, worst.eps),
-    detail: `${n} ${short ? 'short ' : ''}clips, ${designs.map((x) => x.leaf.L).filter((x, i, a) => a.indexOf(x) === i).join(' and ')} mm tapered leaves (${round(worst.leaf.t0, 2)} to ${round(worst.leaf.tMin, 2)} mm), ${firm ? 'firm' : 'gentle'}; the lip reaches ${round(worst.tip, 2)} mm over the board's edge. Worst case going in (the board hard against that side): pushed ${round(worst.delta, 2)} mm aside, ${pct(worst.eps)} strain, ${round(allow / worst.eps, 1)}× under the ${H.material} limit of ${pct(allow, 1)}. They bend within the layers.` });
+    detail: `${n} clips for a board of about ${Math.round(load.mass)} g, ${round(perim, 0)} mm round: ${sizes}, ${firm ? 'firm' : 'gentle'}; the lip reaches ${round(designs[0].tip, 2)} mm over the board's edge. Worst case going in (the board hard against that side): pushed ${round(worst.delta, 2)} mm aside, ${pct(worst.eps)} strain, ${round(allow / worst.eps, 1)}× under the ${H.material} limit of ${pct(allow, 1)}, ${round(worst.fatigue, 1)}× margin for many presses. Each takes about ${range(designs.map((x) => x.release))} N pulled at its ear to free the board, and together they hold a lift of ${Math.round(holdSum)} N against the ${round(holdNeed(load.mass), 1)} N a 9 g shake asks. They bend within the layers.` });
   const restMax = bows.length ? Math.max(...bows.map((b) => b.dz.epsRestMax)) : 0;
-  C.checks.push({ group: 'Board', name: 'Grip at rest', value: bows.length ? `clips 0 · springs ${pct(bows[0].dz.epsRest)}` : 'no load', status: restMax <= 0.003 ? 'ok' : 'warn',
+  C.checks.push({ group: 'Board', name: 'Grip at rest', value: bows.length ? `clips 0 · springs ${pct(bows[0].dz.epsRest)}` : 'no load', status: restMax <= 0.002 ? 'ok' : 'warn',
     detail: `once the board is in, the clips' lips clear its top by ${round(zRet - C.zt, 2)} mm and their leaves stand ${FACE} mm off its edge, so they carry nothing and can't creep or take a set. ${bows.length ? `${bows.length} anti-rattle spring${bows.length > 1 ? 's' : ''} press${bows.length > 1 ? '' : 'es'} the board across and down (45 degree face on its top edge) with about ${round(bows[0].dz.F, 2)} N each, pushed ${bows[0].dz.preload} mm aside: ${pct(bows[0].dz.epsRest)} strain (${pct(restMax)} with the board ${bows[0].dz.tol} mm bigger); so low that creep only relaxes the push a little over the years.` : `There was no free edge for an anti-rattle spring: the board has ${round(play, 2)} mm of play each way.`}` });
   const push = designs.reduce((a, x) => a + x.push, 0) + bows.reduce((a, b) => a + b.dz.push, 0);
   C.checks.push({ group: 'Board', name: 'Press-in force', value: `about ${Math.max(1, Math.round(push))} N`, status: 'info',
-    detail: `to press the board straight down past ${n} clip${n > 1 ? 's' : ''}${bows.length ? ` and ${bows.length} spring${bows.length > 1 ? 's' : ''}` : ''} (${round(designs[0].F, 1)} N to push each clip aside, ${RAMP} degree ramps, friction ${MU}); tipping it in under one side first takes less. Rough beam sums: a print will tell the real feel. To take it out, pull a clip's ear back with a fingernail and lift that side.` });
+    detail: `to press the board straight down past ${n} clip${n > 1 ? 's' : ''}${bows.length ? ` and ${bows.length} spring${bows.length > 1 ? 's' : ''}` : ''} (${range(designs.map((x) => x.F))} N to push each clip aside, ${RAMP} degree ramps, friction ${MU}); tipping it in under one side first takes less. Rough beam sums: a print will tell the real feel. To take it out, pull a clip's ear back with a fingernail and lift that side.` });
+  if (ledgeSet.length) C.checks.push({ group: 'Board', name: `Fixed ledges (${ledgeSet.length})`, value: `${ledgeSet.map((l) => l.L).join(' + ')} mm`, status: 'ok',
+    detail: `plugs take the edges a clip needs, so ${ledgeSet.length > 1 ? 'these ledges take' : 'this ledge takes'} one side: a block on the wall with a flat ledge ${LEDGE.reach} mm over the board's top edge, ${round(zRet - C.zt, 2)} mm clear of it. The board goes in tilted, its edge under the ledge${ledgeSet.length > 1 ? 's' : ''}, and the ${n} spring clip${n > 1 ? 's' : ''} on the far side press${n > 1 ? '' : 'es'} it down: with those ${ledgeSet.length > 1 ? 'they' : 'it'} keep the board from tipping out over any side. A ledge carries nothing until the board is pulled up, and adds nothing to the press-in force.` });
   C.checks.push({ group: 'Print', name: 'Clips print', value: 'no supports', status: 'ok',
-    detail: `every leaf stands straight up from the bed, cut free by ${SLIT} mm slits; the only overhang is each lip's flat ledge, ${round(worst.ledge, 2)} mm out from its leaf. The Check step slices every part to confirm.` });
+    detail: `every leaf${designs.some((x) => x.kind === 'u') ? ' (and both arms of a hairpin)' : ''}${ledgeSet.length ? ' and every fixed ledge (its roof runs back at 45 degrees)' : ''} stands straight up from the bed, cut free by ${SLIT} mm slits; the only overhang is each lip's flat ledge, ${round(worst.ledge, 2)} mm out from its leaf. The Check step slices every part to confirm.` });
   return chosen.map((c) => c.zone);
 }
 
@@ -1125,46 +1243,6 @@ function frameBody(C: Ctx) {
 }
 
 /**
- * A slot for a thin probe: it slides in from its open end (the end its plugs are on, which in a dock points up, away
- * from the rail) down to a stop, under a lip along each side, and rests on a rim. Nothing to strap, snap or screw:
- * lift it out the way it went in.
- */
-function slotBody(C: Ctx) {
-  const { H, O, outer, zb, zt } = C;
-  const ol = C.b.outline, gw = H.gap + H.wall;
-  // the open end: away from the dock, else the side most of its plugs are on
-  let open: V2 = C.dock ? [-C.dock.n[0], -C.dock.n[1]] : [0, 0];
-  if (!C.dock) {
-    for (const c of C.b.comps) if (c.conn?.entry === 'edge' && !c.hidden) { const d = dirOf(c.conn.angle); open = [open[0] + d[0], open[1] + d[1]]; }
-    const L = Math.hypot(open[0], open[1]);
-    open = L > 0.3 ? [open[0] / L, open[1] / L] : [0, 1];
-  }
-  const side = left(open);
-  const u = (q: V2) => q[0] * open[0] + q[1] * open[1], t = (q: V2) => q[0] * side[0] + q[1] * side[1];
-  const u0 = Math.min(...ol.map(u)), u1 = Math.max(...ol.map(u)), t0 = Math.min(...ol.map(t)), t1 = Math.max(...ol.map(t));
-  const LIP = 1.6, FLAT = 0.5, zL = zt + 0.3, zTop = zL + (LIP - FLAT) + 0.7; // lip: FLAT mm flat over the probe, then a 45 degree underside to its tip
-  // the rim it rests on
-  C.pos.push(extCh(outer.subtract(O.offset(-RIM_IN - 1, 'Round')), 0, zb, H.chamfer ? 0.4 : 0, 0));
-  // a channel along each side: the wall, and the lip over the probe's edge
-  for (const [tE, sg] of [[t1, 1], [t0, -1]] as const) {
-    const w0 = tE + sg * H.gap, w1 = tE + sg * gw;
-    C.pos.push(orientedBox([0, 0], open, u0 - gw, u1, Math.min(w0, w1), Math.max(w0, w1), 0, zTop));
-    const l0 = tE - sg * LIP, l1 = tE + sg * (H.gap + 0.01);
-    // the lip's underside: flat for FLAT mm past the gap, then rising at 45 degrees to the tip (so it prints)
-    const lipProf = (back: number, up: number) => poly([[l1, zL + up], [tE - sg * (FLAT - back), zL + up], [l0 + sg * back, zL + up + LIP - FLAT], [l0 + sg * back, zTop], [l1, zTop]], 'NonZero');
-    C.pos.push(sweepTZ([0, 0], open, lipProf(0, 0), u0 - gw, u1 - 1.5));
-    // a lead-in at the open end: the lip starts 1.5 mm in, set back and raised
-    C.pos.push(sweepTZ([0, 0], open, lipProf(0.8, 0.4), u1 - 1.5, u1));
-    feat(C, 'rim', orientedRect([0, 0], open, u0 - gw, u1, Math.min(w1, l0), Math.max(w1, l0)), 0, zTop, ['slot']);
-  }
-  // the stop at the closed end
-  C.pos.push(orientedBox([0, 0], open, u0 - gw, u0 - H.gap, t0 - gw, t1 + gw, 0, zTop));
-  // no lip over a part standing at an edge (an adapter's USB socket, its pins): the slot is open there
-  for (const c of C.b.comps) if (!c.hidden && c.side === 'top' && c.h > 0.5) C.neg.push(ext(poly(compRect(c, 0.6)), zt + 0.05, zTop + 2));
-  C.checks.push({ group: 'Holder', name: 'Slot', value: `${round(zt - zb, 1)} mm, open ${Math.abs(open[1]) > 0.7 ? (open[1] > 0 ? 'at the back' : 'at the front') : open[0] > 0 ? 'at the right' : 'at the left'}`, status: 'info', detail: `the probe slides in from its open end (plugs out), under a ${LIP} mm lip along each side, down to the stop; ${C.dock ? 'in the dock the open end points up, so it stays put' : 'friction holds it'}. Set its thickness under Box (Height) to match yours. Not print-tested yet.` });
-}
-
-/**
  * Seat posts under the board edge carry it where no pin is near (both styles): at the corners and along long
  * edges, never on a part or lead under the board.
  */
@@ -1180,7 +1258,7 @@ function seats(C: Ctx) {
     for (let t = (25 - run) % 25; t < L; t += 25) cand.push([a[0] + ((c[0] - a[0]) * t) / L, a[1] + ((c[1] - a[1]) * t) / L]);
     run = (run + L) % 25;
   }
-  const clear = (q: V2) => !C.keepouts.some((k) => rectDist(q, k.rect) < 3.2) && !b.comps.some((c) => !c.hidden && c.side === 'bottom' && inside(q, compRect(c, 3)));
+  const clear = (q: V2) => !C.keepouts.some((k) => rectDist(q, k.rect) < 3.2) && !holderParts(b).some((c) => !c.hidden && c.side === 'bottom' && inside(q, compRect(c, 3)));
   const band = C.O.offset(-0.02, 'Round').subtract(C.O.offset(-RIM_IN - 1.0, 'Round'));
   const pads: CS[] = [];
   for (const q of cand) {
@@ -1561,10 +1639,10 @@ function clipEnvelope(clip: MF, d: ReturnType<typeof clipDims>, W: number): Mesh
 
 function clipChecks(C: Ctx, d: ReturnType<typeof clipDims>, tabExt: number) {
   if (C.job.dock) return;
-  const L = d.uF + d.plateT + 0.1 + 0.35 - 10.0;
-  const eps = (3 * 1.0 * 0.65) / (2 * L * L);
-  C.checks.push({ group: 'DIN clip', name: 'Holder snap hooks', value: `${(eps * 100).toFixed(2)}% strain`, status: strainStatus(C, eps), detail: `${round(L, 1)} mm hooks, 0.55 mm catch; click the holder on in any of 4 orientations` });
-  C.checks.push({ group: 'DIN clip', name: 'Release', value: 'pull the tab toward you', status: 'info', detail: `lip engagement ${d.eL} mm, travel stop after ~1.9 mm. Run the clip FEA in the Check tab for forces and strain.${tabExt > 0 ? ` Tab lengthened by ${round(tabExt, 1)} mm so it reaches past the holder edge.` : ''}` });
+  // the holder's hooks and the jaw's leaf, from the 2D FEA on the profile (tests/clip.test.ts, tests/flexures.test.ts hold these numbers)
+  const hk = hookMove();
+  C.checks.push({ group: 'DIN clip', name: 'Holder snap hooks', value: `${(HOOK_FEA * 100).toFixed(2)}% strain`, status: strainStatus(C, HOOK_FEA), detail: `four beams ${round(d.uF + d.plateT + 0.1 - HOOK.root, 1)} mm long, ${HOOK.tRoot} mm thick at their root inside the back plate and ${HOOK.tTip} mm at the barb, slits ending in full rounds; each moves ${round(hk.move, 2)} mm to click through the plate's slot and stands ${round(hk.catch, 2)} mm behind its edge once it is on, pressing on nothing; click the holder on in any of 4 orientations` });
+  C.checks.push({ group: 'DIN clip', name: 'Release', value: 'pull the tab toward you', status: 'info', detail: `lip engagement ${d.eL} mm, the lip drops ${d.travel} mm to let go, on a ${round(d.leafV[1] - d.leafV[0], 0)} mm leaf (${(JAW_FEA * 100).toFixed(1)}% strain releasing, ${(JAW_STOP_FEA * 100).toFixed(2)}% at the travel stop after ${round(d.legU - d.barEnd, 1)} mm of bar travel). Run the clip FEA in the Check tab for forces and strain.${tabExt > 0 ? ` Tab lengthened by ${round(tabExt, 1)} mm so it reaches past the holder edge.` : ''}` });
   // the rail grip: a 2D FEA of the fork gives about 0.46 N per mm of clip width in PETG, 1.1% peak (0.6% for 99%)
   const eR = MATERIALS[C.H.material].E / MATERIALS.PETG.E, Fg = 0.46 * (C.job.mount ?? C.p.mount).clipWidth * eR;
   C.checks.push({ group: 'DIN clip', name: 'Rail grip', value: `${round(Fg, 1)} N preload`, status: strainStatus(C, 0.011), detail: `a sprung pad in the rail's channel presses the rail's top wall and holds the clip down on the top flange, so it doesn't slide along the rail by itself: pushing it along takes about ${round(0.6 * Fg, 1)} N (friction 0.3). Before, it only sat on the rail, with 0.65 mm of play up and down and nothing pressing. A screw head in the rail that reaches under the grip (4.5 mm or more from the rail's middle) must be under 4.8 mm tall.` });
@@ -1757,6 +1835,47 @@ function pegSocket(q: V2): MF {
   return hole;
 }
 
+/**
+ * A slot for a small board in a column that has no room for spring clips (an adapter with plugs on both ends): it
+ * slides in from its open end (away from the dock, up the column) down to a stop, under a lip along each side, and
+ * rests on a rim. The holder above keeps it in (the top one: the release button over it); lift it out the way it
+ * went in.
+ */
+function slotBody(C: Ctx) {
+  const { H, O, outer, zb, zt } = C;
+  const ol = C.b.outline, gw = H.gap + H.wall;
+  // the open end: away from the dock, else the side most of its plugs are on
+  let open: V2 = C.dock ? [-C.dock.n[0], -C.dock.n[1]] : [0, 0];
+  if (!C.dock) {
+    for (const c of C.b.comps) if (c.conn?.entry === 'edge' && !c.hidden) { const d = dirOf(c.conn.angle); open = [open[0] + d[0], open[1] + d[1]]; }
+    const L = Math.hypot(open[0], open[1]);
+    open = L > 0.3 ? [open[0] / L, open[1] / L] : [0, 1];
+  }
+  const side = left(open);
+  const u = (q: V2) => q[0] * open[0] + q[1] * open[1], t = (q: V2) => q[0] * side[0] + q[1] * side[1];
+  const u0 = Math.min(...ol.map(u)), u1 = Math.max(...ol.map(u)), t0 = Math.min(...ol.map(t)), t1 = Math.max(...ol.map(t));
+  const LIP = 1.6, FLAT = 0.5, zL = zt + 0.3, zTop = zL + (LIP - FLAT) + 0.7; // lip: FLAT mm flat over the board, then a 45 degree underside to its tip
+  // the rim it rests on
+  C.pos.push(extCh(outer.subtract(O.offset(-RIM_IN - 1, 'Round')), 0, zb, H.chamfer ? 0.4 : 0, 0));
+  // a channel along each side: the wall, and the lip over the probe's edge
+  for (const [tE, sg] of [[t1, 1], [t0, -1]] as const) {
+    const w0 = tE + sg * H.gap, w1 = tE + sg * gw;
+    C.pos.push(orientedBox([0, 0], open, u0 - gw, u1, Math.min(w0, w1), Math.max(w0, w1), 0, zTop));
+    const l0 = tE - sg * LIP, l1 = tE + sg * (H.gap + 0.01);
+    // the lip's underside: flat for FLAT mm past the gap, then rising at 45 degrees to the tip (so it prints)
+    const lipProf = (back: number, up: number) => poly([[l1, zL + up], [tE - sg * (FLAT - back), zL + up], [l0 + sg * back, zL + up + LIP - FLAT], [l0 + sg * back, zTop], [l1, zTop]], 'NonZero');
+    C.pos.push(sweepTZ([0, 0], open, lipProf(0, 0), u0 - gw, u1 - 1.5));
+    // a lead-in at the open end: the lip starts 1.5 mm in, set back and raised
+    C.pos.push(sweepTZ([0, 0], open, lipProf(0.8, 0.4), u1 - 1.5, u1));
+    feat(C, 'rim', orientedRect([0, 0], open, u0 - gw, u1, Math.min(w1, l0), Math.max(w1, l0)), 0, zTop, ['slot']);
+  }
+  // the stop at the closed end
+  C.pos.push(orientedBox([0, 0], open, u0 - gw, u0 - H.gap, t0 - gw, t1 + gw, 0, zTop));
+  // no lip over a part standing at an edge (an adapter's USB socket, its pins): the slot is open there
+  for (const c of holderParts(C.b)) if (!c.hidden && c.side === 'top' && c.h > 0.5) C.neg.push(ext(poly(compRect(c, 0.6)), zt + 0.05, zTop + 2));
+  C.checks.push({ group: 'Holder', name: 'Slot', value: `${round(zt - zb, 1)} mm, open ${Math.abs(open[1]) > 0.7 ? (open[1] > 0 ? 'at the back' : 'at the front') : open[0] > 0 ? 'at the right' : 'at the left'}`, status: 'info', detail: `the board slides in from the open end, under a lip along each side, down onto its rim: there is no room for spring clips on it. In its column the holder above keeps it in (the top one: the release button over it). Not printed and tried yet.` });
+}
+
 // ------------------------------- multi-board arrangement features --------------------------------
 function arrangeFeatures(C: Ctx) {
   const A = C.job.hooks;
@@ -1804,6 +1923,9 @@ function arrangeFeatures(C: Ctx) {
 const tsPoly = (s: DockSite, t0: number, t1: number, s0: number, s1: number): Loop =>
   [[t0, s0], [t1, s0], [t1, s1], [t0, s1]].map(([t, d]) => [s.e[0] * t + s.n[0] * (s.L0 - d), s.e[1] * t + s.n[1] * (s.L0 - d)] as V2);
 
+/** The dock check's words on how the latch holds and how the tongue fits (numbers from the dock FEA, Check › Dock FEA, PETG). */
+const TONGUE_FIT_TEXT = `the latch's nose reaches ${LATCH.engage} mm into the tongue's groove and its holding face is undercut ${LATCH.hook}°, so a pull on the holder draws the nose in instead of levering it out: it holds a 20 N pull with the nose moving under 0.5 mm. It goes in with about 4 N and the button frees it with about 2.5 N (PETG: the push scales with the material's modulus); the beam is a long taper that strains under 1% at full deflection and nothing at rest. The tongue is a slip fit (0.2 mm a side, ${LATCH.play} mm of lift before the hook), and two crush ribs on its front corners take a little of that up: the first push in crushes their crests to the socket's size (about 24 N more, once) and the holder is snug after. From the model, not print-tested.`;
+
 function dockBlocks(C: Ctx, s: DockSite) {
   C.blocked.push({ poly: tsPoly(s, s.tc - 12, s.tc + 12, -3, 6), why: 'dock' });
   const [g0, g1] = gripSpan(s.side);
@@ -1814,15 +1936,25 @@ function dockBlocks(C: Ctx, s: DockSite) {
 function dockFeatures(C: Ctx, s: DockSite) {
   const H = C.H, mat = MATERIALS[H.material];
   const D = inv(dockFrame(s.edge, s.tc, s.L0)); // socket-local -> holder
-  const f = holderDock(s.far, s.ped, s.side, C.job.dock?.fit ?? 0);
+  const col = C.job.dock?.column;
+  const f = holderDock(s.far, s.ped, s.side, C.job.dock?.fit ?? 0, col && col.of > 1 ? { foot: col.level > 0, landing: !col.top } : undefined);
   // (beside a board that sits low, the pedestal would reach in over the board's corner: it stops at the board, which
   // drops in past it from above)
   C.pos.push(f.add.transform(D as any).subtract(ext(C.inner, C.zb - 0.2, C.zt + 60)));
   C.neg.push(f.cut.transform(D as any));
   C.hard.push(f.tunnel.transform(D as any));
   C.keep.push(poly(tsPoly(s, s.tc - HD.spineHx - 1.2, s.tc + HD.spineHx + 1.2, -1, s.far + 1)), poly(tsPoly(s, s.tc - HD.base.hx - 1.2, s.tc + HD.base.hx + 1.2, -1, s.ped + 1.5)));
-  const r = rod(f.zg1, s.side);
-  C.parts.push(part('rod', 'Release rod + button', r.m.transform(D as any), ID, '#ff5d6c', 1, { kind: 'rod', module: C.mid }, { seq: 3.5, dir: [-s.n[0], -s.n[1], 0] }));
+  // one rod for a column, from the top holder's button down through every holder under it to the socket
+  const r = !col || col.top ? rod(f.zg1, s.side, col?.drop ?? 0) : null;
+  if (r) {
+    C.parts.push(part('rod', col && col.of > 1 ? 'Release rod + button (down the column)' : 'Release rod + button', r.m.transform(D as any), ID, '#ff5d6c', 1, { kind: 'rod', module: C.mid }, { seq: 3.5, dir: [-s.n[0], -s.n[1], 0] }));
+    const bed = Math.max(...C.p.printer.bed);
+    if (r.len > bed - 4) C.checks.push({ group: 'Dock', name: 'Release rod length', value: `${round(r.len, 0)} mm`, status: 'bad', detail: `the rod runs down the whole column and is longer than your printer's ${bed} mm bed: take a board off the column (Rails › Stacks)` });
+  }
+  if (col && col.of > 1) {
+    const where = col.level === 0 ? 'in the dock, the next holder on pegs on its landing' : col.top ? 'on top, on two pegs in the landing of the holder below; its button frees the whole column' : 'on two pegs in the landing of the holder below, the next on pegs on its own landing';
+    C.checks.push({ group: 'Dock', name: 'Column', value: `${col.level + 1} of ${col.of}`, status: 'info', detail: `stands on its long edge ${where}. Each holder lifts straight off the one below (the top one with the rod); the rod runs down through every holder to the socket's latch. Not printed and tried yet: the peg fit and the long rod are from the model.` });
+  }
   feat(C, 'dock', tsPoly(s, s.tc - HD.base.hx, s.tc + HD.base.hx, -14, s.ped + 1), 0, HD.spineY1);
   (C as any).spine = { a: tsPoly(s, s.tc, s.tc, 0, 0)[0], b: tsPoly(s, s.tc, s.tc, s.far, s.far)[0], hx: HD.spineHx };
   if (s.conflicts.length) C.warnings.push(`Dock on the ${s.edge} edge: ${s.conflicts.join(', ')} ${s.conflicts.length > 1 ? 'are' : 'is'} in the way. Pick another dock edge in the Rails step.`);
@@ -1831,9 +1963,12 @@ function dockFeatures(C: Ctx, s: DockSite) {
     detail: rl.want !== 'auto' && rl.want !== rl.got ? `${rl.want === 'side' ? 'beside the board' : 'centred'} would block ${rl.blocked.join(', ') || 'a plug'}, so it went ${rl.got === 'centre' ? 'in the middle' : 'beside the board'}` : rl.got === 'centre' ? 'the spine runs under the board' : 'the spine runs beside the board, which sits lower' });
   const eRatio = mat.E / MATERIALS.PETG.E;
   // tongue root at the socket mouth, bending under an out-of-plane push on the far edge
-  const tb = 2 * TONGUE.hx, th = TONGUE.y1 - TONGUE.y0, F = 20, Mo = F * s.far, sig = Mo / ((tb * th * th) / 6);
-  C.checks.push({ group: 'Dock', name: 'Release', value: `press the button, ${HD.stroke} mm`, status: 'info', detail: `thumb on the button at the ${({ bottom: 'top', top: 'bottom', left: 'right', right: 'left' } as Record<EdgeName, string>)[s.edge]} edge, two fingers under the grip bar, squeeze and lift. About ${(4.0 * eRatio).toFixed(1)} N (${H.material}); the latch spring returns the button. Rod: ${round(r.len, 0)} mm, printed flat; push it into its tunnel until it clicks, and it can't slide back out.` });
-  C.checks.push({ group: 'Dock', name: `Tongue root, ${F} N push on the far edge`, value: `${round(sig, 0)} MPa`, status: sig < 0.4 * mat.yield ? 'ok' : sig < 0.8 * mat.yield ? 'warn' : 'bad', detail: `${round(s.far, 0)} mm lever onto the ${tb} × ${th} mm tongue (${H.material} yields at ~${mat.yield} MPa). Hold the holder while plugging in stiff cables at the far end${sig >= 0.8 * mat.yield ? ` (this is ${sig >= 0.9 * mat.yield ? 'within 10% of' : 'near'} where it yields: try laying this board flat on its dock, Rails step, and compare this check, or print it in a stronger material)` : ''}.` });
+  // (the bottom of a column levers on the tongue with the whole column's height)
+  const lever = col && col.of > 1 ? col.height : s.far;
+  const tb = 2 * TONGUE.hx, th = TONGUE.y1 - TONGUE.y0, F = 20, Mo = F * lever, sig = Mo / ((tb * th * th) / 6);
+  if (!col || col.top) C.checks.push({ group: 'Dock', name: 'Release', value: `press the button, ${HD.stroke} mm`, status: 'info', detail: `thumb on the button at the ${({ bottom: 'top', top: 'bottom', left: 'right', right: 'left' } as Record<EdgeName, string>)[s.edge]} edge, two fingers under the grip bar, squeeze and lift. About ${(4.0 * eRatio).toFixed(1)} N (${H.material}); the latch spring returns the button. Rod: ${round(r!.len, 0)} mm, printed flat; push it into its tunnel until it clicks, and it can't slide back out.` });
+  if (!col || col.of <= 1 || col.level === 0) C.checks.push({ group: 'Dock', name: 'Latch and tongue fit', value: 'undercut hook, 2 crush ribs', status: 'info', detail: TONGUE_FIT_TEXT });
+  if (!col || col.level === 0) C.checks.push({ group: 'Dock', name: `Tongue root, ${F} N push on the far edge`, value: `${round(sig, 0)} MPa`, status: sig < 0.4 * mat.yield ? 'ok' : sig < 0.8 * mat.yield ? 'warn' : 'bad', detail: `${round(lever, 0)} mm lever${col && col.of > 1 ? " (the whole column)" : ""} onto the ${tb} × ${th} mm tongue (${H.material} yields at ~${mat.yield} MPa). Hold the holder while plugging in stiff cables at the far end${sig >= 0.8 * mat.yield ? ` (this is ${sig >= 0.9 * mat.yield ? 'within 10% of' : 'near'} where it yields: try laying this board flat on its dock, Rails step, and compare this check, or print it in a stronger material)` : ''}.` });
   if (s.under && C.zb > DOCK_MIN_ZB - 0.2) C.checks.push({ group: 'Dock', name: 'Board raised over the rod spine', value: `${round(C.zb, 1)} mm`, status: 'info', detail: 'the release-rod spine runs under the board' });
 }
 
@@ -1865,8 +2000,9 @@ function earFeatures(C: Ctx, s: EarSite) {
   if (s.conflicts.length) C.warnings.push(`Dock ear on the ${s.edge} edge: ${s.conflicts.join(', ')} ${s.conflicts.length > 1 ? 'are' : 'is'} in the way. Pick another dock edge in the Rails step.`);
   C.checks.push({ group: 'Dock', name: 'Lying flat', value: `ear on the ${s.edge} edge`, status: 'info', detail: `the holder lies top face up on its dock by a tab on its ${s.edge} edge, with the same tongue and socket as a standing one: so it takes the same shoe and socket, and a J-Link or adapter can stand behind it in the socket's other half.` });
   const eRatio = mat.E / MATERIALS.PETG.E;
-  C.checks.push({ group: 'Dock', name: 'Release', value: `press the button, ${HD.stroke} mm`, status: 'info', detail: `thumb on the button on the tab, fingers under the tab, squeeze and lift the holder straight up. About ${(4.0 * eRatio).toFixed(1)} N (${H.material}); the latch spring returns the button. Rod: ${round(r.len, 0)} mm, printed flat; push it in until it clicks, and it can't slide back out.` });
-  C.checks.push({ group: 'Dock', name: 'Dock key', value: 'slides in under the tab', status: 'info', detail: `the tongue is a small key of its own, printed on its side so its layers run along it (as a standing holder's tongue does). Slide its dovetail into the groove under the tab from the tab's tip, then push the release rod in from the top until it clicks: the rod through both locks the key in, and a barb under a ledge at the top of its tunnel keeps the rod in. Dovetail ${2 * EAR.dove.root}–${2 * EAR.dove.top} mm, ${EAR.dove.gap} mm clearance a side: not print-tested yet.` });
+  C.checks.push({ group: 'Dock', name: 'Release', value: `press the button, ${HD.stroke} mm`, status: 'info', detail: `thumb on the button on the tab, fingers under the tab, squeeze and lift the holder straight up. About ${(4.0 * eRatio).toFixed(1)} N (${H.material}); the latch spring returns the button. Rod: ${round(r!.len, 0)} mm, printed flat; push it in until it clicks, and it can't slide back out.` });
+  C.checks.push({ group: 'Dock', name: 'Latch and tongue fit', value: 'undercut hook, 2 crush ribs', status: 'info', detail: TONGUE_FIT_TEXT });
+  C.checks.push({ group: 'Dock', name: 'Dock key', value: 'slides in under the tab', status: 'info', detail: `the tongue is a small key of its own, printed on its side so its layers run along it (as a standing holder's tongue does). Slide its dovetail into the groove under the tab from the tab's tip, then push the release rod in from the top until it clicks: the rod through both locks the key in, and two barbs under a gate at the top of its tunnel keep the rod in (its tunnel has 0.4 mm each side, with lead-in chamfers). Dovetail ${2 * EAR.dove.root}–${2 * EAR.dove.top} mm, ${EAR.dove.gap} mm clearance a side: not print-tested yet.` });
   // a press on the far side of the holder (plugging in from above) bends the tongue at the socket mouth the same way
   // a push on a standing holder's far edge does
   const tb = 2 * TONGUE.hx, th = TONGUE.y1 - TONGUE.y0, F = 20, lever = s.far - (TONGUE.y0 + TONGUE.y1) / 2, sig = (F * lever) / ((tb * th * th) / 6);

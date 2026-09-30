@@ -4,7 +4,7 @@
 export type V2 = [number, number];
 export type Loop = V2[];
 export type Side = 'top' | 'bottom';
-export type HoleUse = 'auto' | 'snap' | 'pin' | 'none'; // auto: locating pin, or snap pin when the wall fingers can't hold the board
+export type HoleUse = 'auto' | 'pin' | 'none'; // auto and pin: a locating pin through the hole (it grips nothing: spring clips hold the board); none: left clear
 /**
  * What a hole is for (hole wizard). Only mounting holes get holder pins; the others are kept clear underneath:
  * plug = a connector's pegs or shell tabs, lead = a part's pins, standoff = hardware for a board stacked on top.
@@ -90,6 +90,7 @@ export interface BoxPortGroup {
   across?: number; // a top row: its centre, mm from the front edge (unset: by near)
   amps?: number; // power out: what each port gives, A (unset: typical for its type)
   volts?: number; // DC out: its output voltage
+  poe?: boolean; // Ethernet ports: they give power over Ethernet (PoE); the box's `poe` says how much in all
   turn?: 0 | 90 | 180 | 270; // a side face: the socket turned, clockwise looking at it: 90 or 270 on its side (upright), 180 upside down
 }
 export interface BoxSpec {
@@ -99,6 +100,7 @@ export interface BoxSpec {
   corner?: number; // its corners seen from above: radius (or chamfer size), mm; unset: min(4, width / 6)
   chamfer?: boolean; // corners cut straight across instead of rounded
   pack?: { lead: number; own?: string }; // a plug pack: it plugs straight into an outlet (or the wall), off the rack; lead: its own output lead, mm; own: the box it came with (module id), so it isn't bought
+  poe?: number; // a PoE switch: what all its PoE ports give together, W (unset: a typical figure)
   rating?: number; // a powerboard: what it may carry in all, A at mains voltage (unset: a typical figure for its outlets)
 }
 
@@ -116,7 +118,9 @@ export interface Board {
   box?: BoxSpec; // box: its size and ports, from which outline, thickness and port parts are generated
   color?: string; // box colour in the 3D view
   draw?: number; // A at 5 V it may take from its supply (unset: estimated from what it is)
-  role?: 'probe' | 'adapter'; // a board drawn or imported that serves another one: a debug probe, a USB-serial adapter (slides into a slot behind it)
+  poe?: boolean; // a PoE HAT is fitted: it takes its power over Ethernet from a PoE port (see model/poe.ts), no supply of its own
+  ribbon?: number; // a probe's ribbon length, mm (unset: a typical J-Link cable's 200)
+  role?: 'probe' | 'adapter'; // a board that serves another one: a debug probe (J-Link), a USB-serial adapter; docked like any board, in a column beside the board it serves
   dims?: Dim[]; // dimensions put on it in the board editor (measured on the real board with calipers)
   photo?: { url: string; x: number; y: number; w: number; h: number; opacity?: number }; // a photo of the real board under it in the editor, to trace over (board mm)
   traces?: { a: V2; b: V2; w: number; side: Side }[]; // copper tracks (read from KiCad), for the 3D view
@@ -143,10 +147,8 @@ export interface HolderSettings {
   pattern: 'hex' | 'slots' | 'circles' | 'none';
   cell: number; // pattern pitch
   rib: number; // pattern rib width
-  tabs: 'auto' | 'on' | 'off'; // older projects: wall fingers (auto / always / off); read through holdOf() when hold is unset
   tabLip: number; // (older projects; the spring clips size their own lip)
-  hold?: 'auto' | 'clips' | 'pins' | 'both'; // what holds the board in: spring clips at its edges, snap pins in its holes, or both; auto picks what fits
-  grip?: 'gentle' | 'firm'; // spring clip strength (unset: firm): gentle is a thinner leaf, under half the force
+  grip?: 'gentle' | 'firm'; // spring clip strength (unset: firm): gentle presses the board in with less force
   notches: boolean; // finger notches to lift the board out
   label: string;
   chamfer: boolean;
@@ -198,6 +200,7 @@ export interface PrinterSettings {
   maxZ?: number; // build height
   gcodeStart?: string; // start/end G-code typed in for in-app slicing; empty uses the printer's profile
   gcodeEnd?: string;
+  gcodeOk?: string[]; // the notes from src/slice/startcheck.ts (checkPlainCode) the user read and accepted for that code (ids; blocking ones can't be)
   // a Bambu Lab printer's own start, end and layer-change code, in Bambu Studio's template language, read from the
   // user's own Bambu Studio or OrcaSlicer (BoardDock doesn't ship it): filled in for every print
   // `ok`: the notes from src/slice/startcheck.ts the user read and accepted for this code (ids; blocking ones can't be)
@@ -213,7 +216,7 @@ export interface Module {
   holder: HolderSettings;
   original?: Board; // the board as imported, for "revert to import"
   on?: string | null; // stacked on top of this module
-  onMode?: 'bolted' | 'towers'; // bolted: screwed to the board below on standoffs (HAT, shield); towers: its own printed layer
+  onMode?: 'bolted' | 'towers' | 'column'; // bolted: screwed to the board below on standoffs (HAT, shield); towers: its own printed layer; column: a small board (J-Link, adapter) standing on its long edge on the holder below, on pegs
   onGap?: number;
   clip?: { off?: boolean; tab?: 'down' | 'up' }; // loose holders: this one's DIN clip left off, or its release tab the other way (the rail's direction is the rack's) // bolted: gap between the boards (standoff length), mm
   revision?: { at: string; from: string; to: string; changes: string[] }; // the last new version swapped in: files and what changed
@@ -257,6 +260,27 @@ export interface RailMount {
   turn: Turn; // dock: socket turn about the panel normal; flat: board rotation on the panel
   slots: Slot[];
   lever?: 'auto' | 'pos' | 'neg'; // dock: side of the rail the shoe's release lever is on (auto = the more open side)
+  row?: number; // auto layout: the row (rail) the planner put it on; a new row starts where it changes, or when the rail is full
+}
+
+/**
+ * What Auto-arrange is asked to do, beyond keeping every plug reachable. Each option is a weight or a constraint on the
+ * one score the layout planner minimises (see dockplan.ts), never a separate way of laying out. Unset: the default.
+ */
+export interface ArrangeOpts {
+  plan?: 'smart' | 'classic'; // smart (default): the planner scores and improves the layout; classic: pack the boards in the order their cables give
+  goal?: 'balanced' | 'compact' | 'cables' | 'reach'; // what matters most: shortest rails and smallest rack, shortest cables and fewest crossings, or parts easy to reach
+  probes?: 'beside' | 'free'; // a J-Link or adapter docks right beside the board it is cabled to (default), or wherever suits the cables
+  stack?: boolean; // a board's probes and adapters go in one column, up to what the tongue takes (Auto-arrange restacks them)
+  group?: boolean; // alike boards sit in a row, all turned the same way
+  mains?: 'auto' | 'left' | 'right' | 'bottom' | 'off'; // mains items (powerboard, plug packs, chargers) at one end or side, away from the low-voltage boards
+  hosts?: boolean; // hubs, a Pi Zero and probes stay close to their host, by cable count (default on)
+  spare?: number; // free slots to leave on each rail for boards added later
+  stock?: boolean; // prefer layouts where every cable fits a stock length
+  heat?: boolean; // spread the hot boards apart, and to the top of a standing rack
+  fewParts?: boolean; // fewer docks and rails when the cables cost about the same
+  pick?: number; // which of the planner's best candidates the real router chose (0: the first)
+  avoid?: string[]; // "moduleA|moduleB": boards whose cable ran into something in a build, kept apart (set by the build's own retries, never by hand)
 }
 
 export interface PanelSettings {
@@ -272,6 +296,7 @@ export interface PanelSettings {
   cableTags?: boolean; // numbered clip-on tags for every cable, two each (default on)
   rails: Rail[]; // manual layout
   mounts: RailMount[];
+  opts?: ArrangeOpts; // auto: options for Auto-arrange
 }
 
 /** A cable between two plugs (connectors on two boards, or a board and a box such as a hub). */
@@ -294,11 +319,21 @@ export interface Built {
   mounts?: Record<string, { rail: string; at: number }>; // dock id -> the rail it was clipped on and where (mm from its start)
 }
 
+/** What is locked in the layout: all of it, or some docks and rails by id. Automatic changes leave these alone. */
+export interface Locks { all?: boolean; docks?: string[]; rails?: string[] }
+/** What an automatic change did, in a line: "Auto-arrange moved Pi 4 #2 from rail 1 to rail 2". */
+export interface Receipt { at: string; what: string; text: string }
+
 export interface Project {
   version: 3;
   name?: string; // what the user calls this rack (file names, the header); unset: made from the boards
   built?: Built;
+  locks?: Locks; // layout lock: docks and rails that Auto-arrange and other automatic changes leave alone (model/locks.ts)
+  receipts?: Receipt[]; // a line for each automatic change to the rack, newest last
+  ticks?: string[]; // the checklist's ticked lines (their keys; see model/checklist.ts)
+  oneNetLength?: boolean; // buy every routed Ethernet lead at one length: the longest route, rounded up to a stock length
   links?: Link[]; // cables between boards
+  cablesOff?: boolean; // no cables in the app: holders, cradles and caps only (the links are kept, so switching cables back on restores them)
   wiring?: { pos?: Record<string, [number, number]> }; // the Wiring view: where each board's card was put (module id -> x, y)
   modules: Module[];
   active: number; // module being edited
@@ -372,7 +407,7 @@ export interface Ghost {
   opacity: number;
   tag?: PickTag;
   anim?: Anim;
-  mat?: 'mask' | 'gold' | 'metal' | 'black' | 'chip' | 'white' | 'silk' | 'led' | 'passive' | 'blue' | 'plug' | 'cable' | 'copper' | 'trace' | 'tin' | 'box' | 'red';
+  mat?: 'mask' | 'gold' | 'metal' | 'black' | 'chip' | 'white' | 'silk' | 'led' | 'passive' | 'blue' | 'plug' | 'cable' | 'copper' | 'trace' | 'tin' | 'box' | 'red' | 'yellow';
   smooth?: boolean; // round things (plugs, cables): smooth shading, no outline edges
   // the 3D view's live touches: lights that glow and blink (dark: the board has no power), data running along a cable
   fx?: { lights?: Light[]; dark?: boolean; flow?: { pts: number[][]; r: number; colour: string; on: boolean; slow?: boolean }; fade?: { p: number[]; d: number[]; len: number; dash: number; label?: string; colour: string } };
@@ -383,6 +418,8 @@ export interface Feature {
   kind: 'cradle' | 'cap' | 'guard' | 'tie' | 'spring' | 'label' | 'pin' | 'seat' | 'dock' | 'tower' | 'stand' | 'notch' | 'rim';
   module: string;
   refs?: string[]; // connector refs or hole ids
+  at?: V2; // a spring clip or fixed ledge: where its lip grips the board's edge,
+  n?: V2; // and the way in from the edge there (into the board)
   box: [number, number, number, number, number, number];
 }
 
@@ -395,6 +432,9 @@ export interface Check {
   module?: string; // the board it is about, when it is about one
 }
 
+/** Where mains sits: a mains board's footprint (panel frame, mm) with its margin, and how high the box stands. */
+export interface MainsZone { module: string; name: string; rect: [number, number, number, number]; z: [number, number]; what: string }
+
 export interface GenReport {
   warnings: string[];
   checks: Check[];
@@ -404,6 +444,7 @@ export interface GenReport {
   /** clip frame -> assembly, for the "as installed" view */
   clipFrame: number[] | null;
   panel?: PanelReport | null;
+  zones?: MainsZone[]; // where mains sits on the rack (set after the build: model/zones.ts)
   features?: Feature[];
   frames?: Record<string, number[]>; // module id -> holder frame to assembly
   cables?: { id: string; a: string; b: string; ends?: string; kind: NonNullable<Link['kind']>; length: number; buy: number; clash?: string; no?: number; label?: string; mid?: number[]; ribbon?: number; wires?: string }[]; // ends: "module/ref|module/ref"; no: cable number; label: what it is for; mid: where its number shows (assembly frame); ribbon: a probe's own ribbon (mm), nothing to buy; wires: a serial cable's loose ends, which pin each goes on

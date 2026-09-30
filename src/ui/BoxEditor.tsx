@@ -1,4 +1,4 @@
-// Boxes (hubs, chargers, powerboards, probes, adapters) made to match yours: the Box tab (size, corners, colour, and a
+// Boxes (hubs, chargers, powerboards) made to match yours: the Box tab (size, corners, colour, and a
 // card for every row of ports: how many, what, which face, where along it, how high, which way up), a live sketch of
 // the box from above and of each face as you look at it, and "Build your own box" for the Start page.
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -8,11 +8,14 @@ import { connById } from '../model/library';
 import { plugName, plugRole } from '../model/links';
 import { isProbe } from '../model/probes';
 import { poweredHub, supplyOf, watts } from '../model/powerdata';
+import { poeTotal } from '../model/poe';
 import { MAINS_RATING } from '../model/power';
 import { activeModule, editMod, store, toast, uniqueName, useApp } from '../state';
 import { Check, Num, Pick, Section, Seg, Text } from './controls';
 import { Icon, I } from './icons';
 import { uid } from '../geom/poly';
+import { normDeg } from '../geom/angle';
+import { RotateBox } from './RotateBox';
 
 /** What each role is drawn in, in the sketch (theme colours). */
 const TONE: Record<string, string> = { 'hub-down': 'var(--muted)', host: 'var(--muted)', 'hub-up': 'var(--accent)', device: 'var(--accent)', 'power-out': 'var(--bad)', 'power-in': 'var(--warn)', net: 'var(--info)', debug: 'var(--subtle)', uart: 'var(--good)', 'mains-out': 'var(--copper)', 'mains-in': 'var(--copper)', other: 'var(--warn)' };
@@ -102,7 +105,7 @@ export function BoxEditor() {
       <div className="row3" style={{ marginTop: 10 }}>
         <Num label="Length" value={spec.l} min={10} max={800} step={1} onChange={(v) => set((s) => { s.l = v; })} hint="Along its front: the long side." />
         <Num label="Width" value={spec.w} min={8} max={300} step={1} onChange={(v) => set((s) => { s.w = v; })} hint="Front to back." />
-        <Num label="Height" value={spec.h} min={1} max={150} step={0.1} onChange={(v) => set((s) => { s.h = v; })} hint="Under 5 mm it is a bare board (a probe, an adapter): its ports stand on its top face." />
+        <Num label="Height" value={spec.h} min={1} max={150} step={0.1} onChange={(v) => set((s) => { s.h = v; })} hint="Under 5 mm it is drawn as a bare circuit board: its ports stand on its top face." />
       </div>
       <div className="boxshape">
         <div className="field"><span>Corners, from above</span>
@@ -128,6 +131,7 @@ export function BoxEditor() {
         );
       })()}
       {spec.groups.some((g) => g.type.startsWith('ac_')) && <div className="row" style={{ marginTop: 8, alignItems: 'end' }}><Num label={`Rating${spec.rating ? '' : ' (typical)'}`} unit="A" value={spec.rating ?? MAINS_RATING[spec.groups.find((g) => g.type.startsWith('ac_'))!.type] ?? 10} min={1} max={20} step={0.5} onChange={(v) => set((s) => { s.rating = v; })} hint="What the powerboard may carry in all: it is on its label or plug." /><small className="hint" style={{ margin: 0 }}>{spec.rating ? '' : 'A typical figure for its outlets: check the label on yours.'}</small></div>}
+      {spec.groups.some((g) => g.poe) && <div className="row" style={{ marginTop: 8, alignItems: 'end' }}><Num label={`PoE budget${spec.poe ? '' : ' (typical)'}`} unit="W" value={spec.poe ?? poeTotal(b).total} min={5} max={1000} step={5} onChange={(v) => set((s) => { s.poe = v; })} hint="What all its PoE ports give together (its label's PoE budget): boards on them are counted against it." /></div>}
       {spec.pack && <div className="row" style={{ marginTop: 8 }}><Num label="Its own lead" unit="mm" value={spec.pack.lead} min={100} max={5000} step={50} onChange={(v) => set((s) => { s.pack = { ...(s.pack ?? { lead: 1500 }), lead: v }; })} hint="A plug pack sits in an outlet: its lead has to reach the board it powers." /></div>}
       {spec.groups.some((g) => g.role === 'debug') && <div className="row" style={{ marginTop: 8 }}><Num label="Ribbon length" value={spec.ribbon ?? 200} min={50} max={2000} step={10} onChange={(v) => set((s) => { s.ribbon = v; })} hint="The ribbon it came with: the rack checks that it reaches the board." /></div>}
       <BoxSketch spec={spec} focus={focus} onPick={setFocus} />
@@ -143,7 +147,7 @@ export function BoxEditor() {
           {tightFaces(spec).slice(0, 1).map((t) => <button key={t.face} className="btn small soft" style={{ marginTop: 6 }} onClick={() => set((s) => { s[t.dim] = Math.max(s[t.dim], ...tightFaces(s).filter((x) => x.dim === t.dim).map((x) => x.need)); })}>Make the box {Math.max(...tightFaces(spec).filter((x) => x.dim === t.dim).map((x) => x.need))} mm {t.dim === 'l' ? 'long' : 'wide'}</button>)}
         </div>
       )}
-      <p className="hint">{isProbe(m) ? 'It slides down into a slot in the back of its board\'s dock and stays there; the next probe or adapter for that board gets the next slot, on corner towers. Height is its thickness.' : spec.groups.some((x) => x.type.startsWith('ac_')) ? 'A powerboard lies on its base in its holder, strapped down between the outlets. Outlets spread evenly along the top; turn them 45° if your chargers are plug packs. Its own lead goes to the wall: never into another powerboard.' : 'Front and back are the long sides; the box lies on its base in its holder, strapped down. Ports on top are fine: the strap loops move to miss them.'} {bare ? '' : 'To copy your own: measure each port with calipers from the end of the box, or drag it in the editor to where it is on a photo. '}Cables to ports you remove are removed too.</p>
+      <p className="hint">{isProbe(m) ? 'A J-Link or USB-serial adapter is better as a board (the library has both): a board stands on its long edge in a column beside the board it serves, where a box lies flat like a hub.' : spec.groups.some((x) => x.type.startsWith('ac_')) ? 'A powerboard lies on its base in its holder, strapped down between the outlets. Outlets spread evenly along the top; turn them 45° if your chargers are plug packs. Its own lead goes to the wall: never into another powerboard.' : 'Front and back are the long sides; the box lies on its base in its holder, strapped down. Ports on top are fine: the strap loops move to miss them.'} {bare ? '' : 'To copy your own: measure each port with calipers from the end of the box, or drag it in the editor to where it is on a photo. '}Cables to ports you remove are removed too.</p>
     </Section>
   );
 }
@@ -194,10 +198,11 @@ function GroupCard({ spec, g, i, lay, focus, setFocus, open, setOpen, set }: { s
       {(g.role === 'power-out' || g.role === 'dc-out') && (
               <div className="row" style={{ marginTop: 6, alignItems: 'end' }}>
                 <Num label={`Each port gives${g.amps ? '' : ' (typical)'}`} unit="A" value={g.amps ?? (g.type === 'usb_c' ? 3 : g.type.startsWith('usb_a') ? 2.4 : 2)} min={0.5} max={10} step={0.1} onChange={(v) => G((x) => { x.amps = v; })} hint={g.type === 'usb_c' ? 'A 27 W USB-C PD port gives 5 A (what a Pi 5 wants); most give 3 A.' : 'From its label.'} />
-                {g.role === 'dc-out' && <Num label="At" unit="V" value={g.volts ?? 12} min={3} max={48} step={0.5} onChange={(v) => G((x) => { x.volts = v; })} hint="Its label's output voltage. BoardDock can't check polarity." />}
+                {g.role === 'dc-out' && <Num label="At" unit="V" value={g.volts ?? 12} min={3} max={60} step={0.5} onChange={(v) => G((x) => { x.volts = v; })} hint="Its label's output voltage. BoardDock can't check polarity." />}
               </div>
       )}
-      {g.role === 'power-in-dc' && <div className="row" style={{ marginTop: 6 }}><Num label="Takes" unit="V" value={g.volts ?? 12} min={3} max={48} step={0.5} onChange={(v) => G((x) => { x.volts = v; })} hint="What its supply's label says it puts out: its own supply is made to match. BoardDock can't check polarity." /></div>}
+      {g.role === 'power-in-dc' && <div className="row" style={{ marginTop: 6 }}><Num label="Takes" unit="V" value={g.volts ?? 12} min={3} max={60} step={0.5} onChange={(v) => G((x) => { x.volts = v; })} hint="What its supply's label says it puts out: its own supply is made to match. BoardDock can't check polarity." /></div>}
+      {g.type === 'rj45' && <Check label="Gives power over Ethernet (PoE)" value={!!g.poe} onChange={(v) => G((x) => { x.poe = v || undefined; })} hint="A Pi with a PoE HAT on one of these ports needs no supply of its own." />}
       {g.face === 'top' && g.type.startsWith('ac_') && <Check label="A switch by each" value={!!g.switched} onChange={(v) => G((x) => { x.switched = v || undefined; })} />}
       <button className="bg-more" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? '▾' : '▸'} Where they are{side && !bare ? ', how high' : ''}{g.face === 'top' ? ', turned' : ''}</button>
       {open && (
@@ -230,9 +235,9 @@ function GroupCard({ spec, g, i, lay, focus, setFocus, open, setOpen, set }: { s
             </div>
           )}
           {g.face === 'top' && (
-            <div className="row" style={{ marginTop: 6, alignItems: 'end' }}>
-              <Num label="Turned" unit="°" value={g.rot ?? 0} min={-180} max={360} step={15} onChange={(v) => G((x) => { const d = ((v % 360) + 360) % 360; x.rot = d || undefined; })} hint="0: their width along the box; 90: across it; 180: the other way round. 45 lets plug packs sit side by side." />
-              <Seg value={[0, 45, 90, 180].includes(g.rot ?? 0) ? g.rot ?? 0 : -1} options={[[0, '0°'], [45, '45°'], [90, '90°'], [180, '180°']]} onChange={(v) => G((x) => { x.rot = v || undefined; })} />
+            <div style={{ marginTop: 6 }}>
+              <RotateBox label="Turned" value={g.rot ?? 0} onTurn={(by) => G((x) => { const d = normDeg((x.rot ?? 0) + by); x.rot = d || undefined; })} />
+              <p className="hint" style={{ margin: '4px 0 0' }}>0: their width along the box; 90: across it; 180: the other way round. 45 lets plug packs sit side by side.</p>
             </div>
           )}
         </div>
@@ -365,7 +370,7 @@ export function DrawBox({ put }: { put: (b: Board) => void }) {
         <div className="row3" style={{ marginTop: 8 }}>
           <Num label="Length" value={l} min={10} max={800} step={1} onChange={(v) => put3(0, v)} hint="Along its front: the long side." />
           <Num label="Width" value={w} min={8} max={300} step={1} onChange={(v) => put3(1, v)} hint="Front to back." />
-          <Num label="Height" value={h} min={1} max={150} step={0.1} onChange={(v) => put3(2, v)} hint="Under 5 mm it is a bare board (a probe, an adapter)." />
+          <Num label="Height" value={h} min={1} max={150} step={0.1} onChange={(v) => put3(2, v)} hint="Under 5 mm it is drawn as a bare circuit board." />
         </div>
         <div className="field" style={{ marginTop: 8 }}><span>Colour</span>
           <div className="swatches">

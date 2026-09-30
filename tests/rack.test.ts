@@ -236,10 +236,15 @@ describe('cable clashes', () => {
     const { RACKS } = await import('./collide/racks');
     const { initKernel } = await import('../src/cad/kernel');
     await initKernel();
-    const warns = (name: string) => generate(RACKS.find((r) => r.name === name)!.make()).report.warnings.filter((w) => /runs into/.test(w));
+    const warns = (name: string, classic = false) => {
+      const p = RACKS.find((r) => r.name === name)!.make();
+      // (the classic packing: the rack Auto-arrange used to make, with the clash this test is about)
+      if (classic) p.panel.opts = { plan: 'classic' };
+      return generate(p).report.warnings.filter((w) => /runs into/.test(w));
+    };
     // (the route check uses bounding boxes: this one was only a close shave, the cable clear of the charger's holder)
     expect(warns('rows of rails')).toEqual([]);
-    // and this one is real: the Mega's cable goes into the Nano's plug
-    expect(warns('rails along (columns)')).toEqual(['The Arduino Mega 2560 USB to Raspberry Pi 5 USB3 upper cable runs into the Arduino Nano USB plug. Move or turn one of the boards, or connect it to another plug.']);
+    // and the Mega's cable no longer goes into the Nano's plug beside it: it settles clear of a plug and its lead
+    expect(warns('rails along (columns)')).toEqual([]);
   }, 300_000);
 });

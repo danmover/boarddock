@@ -4,7 +4,8 @@
 // with no power cable stays dark. Real LED parts come from the board's own parts; boards made from a template get
 // the LEDs the real board has, drawn only (they are not parts: nothing is printed round them). Pure.
 import type { Board, Comp, Light, LightPattern, Project, V2 } from './types';
-import { plugRole } from './links';
+import { findModule, plugRole } from './links';
+import { poeFedIds } from './poe';
 import { bbox, compRect, inside } from '../geom/poly';
 
 export const LED_COLOUR = { red: '#ff3b30', green: '#38e05a', blue: '#3d8bff', yellow: '#ffd23f', amber: '#ffa126', white: '#f4f7ff' } as const;
@@ -114,12 +115,17 @@ export function boxLight(b: Board): Pick<Light, 'colour' | 'pattern'> {
 export function poweredBoards(p: Project): Set<string> {
   const out = new Set<string>();
   const byId = new Map(p.modules.map((m) => [m.id, m]));
-  const role = (mod: string, ref: string) => { const m = byId.get(mod), c = m?.board.comps.find((x) => x.ref === ref.replace(/:2$/, '')); return m && c ? plugRole(m, c) : 'other'; };
+  const role = (mod: string, ref: string) => { const m = byId.get(mod) ?? findModule(p, mod), c = m?.board.comps.find((x) => x.ref === ref.replace(/:2$/, '')); const r = m && c ? plugRole(m, c) : 'other';
+    // a barrel jack on a board that also has USB, with a lead on it, is what powers it
+    return r === 'other' && c?.conn?.type === 'barrel' && m?.board.kind !== 'box' ? 'power-in-dc' : r;
+  };
   const takes = new Set(['power-in', 'power-in-dc', 'device', 'hub-up', 'mains-in']);
   for (const l of p.links ?? []) {
     if (takes.has(role(l.a.module, l.a.ref))) out.add(l.a.module);
     if (takes.has(role(l.b.module, l.b.ref))) out.add(l.b.module);
   }
+  // a board on a PoE port takes its power from the switch: no cable of its own says so
+  for (const id of poeFedIds(p)) out.add(id);
   for (const m of p.modules) {
     if (m.board.kind !== 'box') continue;
     const supply = m.board.comps.filter((c) => c.conn && !c.hidden && ['mains-in', 'power-in-dc', 'other'].includes(plugRole(m, c)));

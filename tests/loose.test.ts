@@ -112,11 +112,37 @@ describe('loose holders', () => {
     for (const g of leads) {
       const b = boxOf(g);
       expect(Math.max(b.hi[0] - b.lo[0], b.hi[1] - b.lo[1], b.hi[2] - b.lo[2])).toBeLessThan(60);
-      expect(g.fx?.fade?.label).toBeTruthy();
     }
-    // the powerboard's own lead: to the wall; a cable between two boards: to the other one
+    // the powerboard's own lead: to the wall; a cable between two boards: to the other one ("→ Powerboard")
     expect(leads.find((g) => g.tag?.module === p.modules[2].id)?.fx?.fade?.label).toBe('to the wall');
-    expect(leads.some((g) => /^to the /.test(g.fx!.fade!.label!) && g.fx!.fade!.label !== 'to the wall')).toBe(true);
+    expect(leads.some((g) => /^→ /.test(g.fx!.fade!.label!))).toBe(true);
+    // a label only where there is a real lead: one for a cable in the app, the wall, an off-rack link
+    const links = p.links ?? [];
+    for (const g of leads.filter((x) => x.fx?.fade?.label)) {
+      const ref = g.tag!.refs![0];
+      expect(links.some((l) => [l.a, l.b].some((e) => e.module === g.tag!.module && e.ref.replace(/:2$/, '') === ref)) || g.fx!.fade!.label === 'to the wall').toBe(true);
+    }
+  }, 300_000);
+
+  it('gives a plug pack no holder and no strap step: it goes into its outlet, as on the rails', () => {
+    const p = newProject(T('rpi5'));
+    setLayout(p, 'loose');
+    p.modules.push(newModule(T('psu_pi5')), newModule(T('pb4ang')));
+    p.arrange.mode = 'side';
+    p.links = numberLinks(autoLinks(p));
+    const pack = p.modules[1];
+    expect(p.links.some((l) => [l.a, l.b].some((e) => e.module === pack.id))).toBe(true);
+    const r = generate(p);
+    expect(r.parts.some((x) => x.tag?.module === pack.id || x.id.includes(pack.id))).toBe(false);
+    expect([...new Set(r.parts.filter((x) => x.tag?.kind === 'holder').map((x) => x.tag!.module))].sort()).toEqual([p.modules[0].id, p.modules[2].id].sort()); // the Pi 5's and the powerboard's
+    expect(r.steps?.some((s) => /strap|holder/.test(s.text) && s.text.includes(pack.board.name) && !/^Plug in the cables/.test(s.text))).toBe(false);
+    expect(r.steps?.some((s) => /Push each plug pack into its outlet/.test(s.text) && s.text.includes(pack.board.name))).toBe(true);
+    // its lead out of the Pi still says where it goes
+    expect(r.ghosts.find((g) => g.name.startsWith('off-rack cable') && g.tag?.module === p.modules[0].id)?.fx?.fade?.label).toBe('to its power supply');
+    // in a stack, the pack is not a layer either
+    p.arrange.mode = 'stack';
+    const r2 = generate(p);
+    expect(r2.parts.some((x) => x.tag?.module === pack.id)).toBe(false);
   }, 300_000);
 });
 
@@ -155,7 +181,8 @@ describe('plugs and leads in 3D', () => {
     expect(av.map((g) => g.tag?.refs?.[0]).sort()).toEqual(['AUDIO', 'HDMI0', 'HDMI1']);
     for (const g of pis) expect(boxOf(g).lo[2]).toBeGreaterThan(20); // up by the board, not down on the table
     expect(av.map((g) => g.fx?.fade?.label).sort()).toEqual(['to a screen', 'to a screen', 'to speakers']);
-    for (const g of pis.filter((x) => x.tag?.refs?.[0] === 'J_PWR')) expect(g.fx?.fade?.label).toBe('to its power supply');
+    // (its power socket, with no cable in the app to it: a stub, but no words that call it a lead)
+    for (const g of pis.filter((x) => x.tag?.refs?.[0] === 'J_PWR')) expect(g.fx?.fade?.label).toBe('');
     // the powerboard's lead: to the wall
     expect(leads.find((g) => g.tag?.module === p.modules[2].id)?.fx?.fade?.label).toBe('to the wall');
 

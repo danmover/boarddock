@@ -2,7 +2,7 @@
 // multi-selection picked in the 3D view (a cradle here, a cap there, a whole dock) goes in one ⌘Z.
 import type { Feature, Project } from '../model/types';
 import { ROLE_INFO } from '../model/holes';
-import { cableNumbers, findModule, KIND_COLOR, KIND_NAME, refText } from '../model/links';
+import { baseRef, cableNumbers, findModule, KIND_COLOR, KIND_NAME, plugName, refText } from '../model/links';
 import { mountLabels } from '../model/built';
 import { dropModule, edit, select, store, toast, type SelItem } from '../state';
 import { materialise } from './panelOps';
@@ -20,7 +20,7 @@ export function featureItem(f: Pick<Feature, 'module' | 'refs'> & { kind: NonNul
 }
 
 /** Human description: a title, a context line and a colour. */
-export function describe(p: Project, it: SelItem): { title: string; sub: string; color: string; removable: string | null } {
+export function describe(p: Project, it: SelItem): { title: string; sub: string; color: string; removable: string | null; note?: string } {
   const mod = (id?: string) => p.modules.find((m) => m.id === id);
   const idx = (id?: string) => p.modules.findIndex((m) => m.id === id);
   const rep = store.get().result?.report.panel;
@@ -42,7 +42,14 @@ export function describe(p: Project, it: SelItem): { title: string; sub: string;
       const l = (p.links ?? []).find((x) => x.id === it.id);
       const c = store.get().result?.report.cables?.find((x) => x.id === it.id);
       const nm = (r?: { module: string; ref: string }) => (r ? `${findModule(p, r.module)?.board.name ?? '?'} ${refText(findModule(p, r.module), r.ref)}` : '?');
-      return { title: `${l ? KIND_NAME[l.kind ?? 'usb'] : ''} cable`, sub: `${nm(l?.a)} to ${nm(l?.b)}${c ? ` · ${Math.round(c.length / 10)} cm, buy ${c.buy} m` : ''}`, color: l ? KIND_COLOR[l.kind ?? 'usb'] : 'var(--muted)', removable: 'Remove cable' };
+      // a mains cable: its length, the plugs at each end, which outlet, and the rule for plugging in
+      let note: string | undefined;
+      if (l?.kind === 'mains') {
+        const type = (r: { module: string; ref: string }) => findModule(p, r.module)?.board.comps.find((x) => x.ref === baseRef(r.ref))?.conn?.type ?? '';
+        const outlet = [l.a, l.b].find((r) => type(r).startsWith('ac_')), other = outlet === l.a ? l.b : l.a;
+        note = `${c ? `${Math.round(c.length / 10)} cm, buy ${c.buy} m. ` : ''}${plugName(type(other)).replace(/^./, (x) => x.toUpperCase())} plugs into ${outlet ? `${plugName(type(outlet))} ${nm(outlet)}` : 'an outlet'}. Switch the powerboard off before plugging in.`;
+      }
+      return { title: `${l ? KIND_NAME[l.kind ?? 'usb'] : ''} cable`, sub: `${nm(l?.a)} to ${nm(l?.b)}${c ? ` · ${Math.round(c.length / 10)} cm, buy ${c.buy} m` : ''}`, color: l ? KIND_COLOR[l.kind ?? 'usb'] : 'var(--muted)', removable: 'Remove cable', note };
     }
     case 'railstand': {
       const all = rep?.stands ?? [], s = all.find((x) => `s${x.station}` === it.id);
@@ -60,10 +67,10 @@ export function describe(p: Project, it: SelItem): { title: string; sub: string;
       const m = mod(it.module);
       const name = FEATURE_NAME[it.fkind ?? 'rim'];
       const refs = it.fkind === 'pin' ? (it.refs ?? []).map((id) => `hole ${(m?.board.holes.findIndex((h) => h.id === id) ?? -1) + 1}`).join(', ') : (it.refs ?? []).join(' + ');
-      const all: Partial<Record<string, string>> = { spring: 'Hold it with snap pins instead', notch: 'Remove the finger notches', label: 'Remove the label', stand: 'Remove the stand', clip: 'Remove the DIN clip' };
+      const all: Partial<Record<string, string>> = { notch: 'Remove the finger notches', label: 'Remove the label', stand: 'Remove the stand', clip: 'Remove the DIN clip' };
       const removable = it.fkind === 'seat' || it.fkind === 'rim' ? null : it.fkind === 'dock' ? 'Take off the panel' : it.fkind === 'tower' ? 'Unstack' : it.fkind === 'plug' ? 'Ignore this connector' : it.fkind === 'pin' ? 'Remove this pin (hole left free)' : all[it.fkind ?? ''] ?? `Remove this ${name}`;
       // (an anti-rattle spring is tagged as one, and is no clip)
-      if (it.fkind === 'spring' && it.refs?.includes('anti-rattle')) return { title: 'anti-rattle spring', sub: `${m?.board.name ?? ''}${p.modules.length > 1 ? ` · board ${idx(it.module) + 1}` : ''}`, color: 'var(--accent)', removable: 'Hold it with snap pins instead' };
+      if (it.fkind === 'spring' && it.refs?.includes('anti-rattle')) return { title: 'anti-rattle spring', sub: `${m?.board.name ?? ''}${p.modules.length > 1 ? ` · board ${idx(it.module) + 1}` : ''}`, color: 'var(--accent)', removable: null };
       return { title: `${refs ? refs + ' ' : ''}${name}`, sub: `${m?.board.name ?? ''}${p.modules.length > 1 ? ` · board ${idx(it.module) + 1}` : ''}`, color: it.fkind === 'cap' ? '#f2c94c' : it.fkind === 'plug' ? 'var(--copper)' : 'var(--accent)', removable };
     }
   }
@@ -109,7 +116,6 @@ export function removeItems(items: SelItem[]) {
           case 'tie': for (const c of comps(it.refs)) if (c.conn) c.conn.tie = false; break;
           case 'plug': for (const c of comps(it.refs)) c.hidden = true; break;
           case 'pin': for (const h of m.board.holes) if (it.refs?.includes(h.id)) { h.role = 'free'; h.why = 'switched off in the 3D view'; } break;
-          case 'spring': H.hold = 'pins'; break;
           case 'label': H.label = ''; break;
           case 'notch': H.notches = false; break;
           case 'stand': p.stand.enabled = false; break;

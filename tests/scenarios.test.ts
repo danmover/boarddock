@@ -6,11 +6,13 @@ import { newModule, newProject } from '../src/model/library';
 import { autoLinks, portBudget, refText } from '../src/model/links';
 import { powerBudget } from '../src/model/power';
 import { needOf } from '../src/model/powerdata';
-import { autoAssign, byBoxes } from '../src/cad/dockplan';
+import { autoAssignClassic, byBoxes } from '../src/cad/dockplan';
 import { describeChange, kindName, rackName, sameKind } from '../src/model/diff';
 import { delta, seatLabels, snapshot } from '../src/model/built';
 import { niceName } from '../src/import';
 import { putBoards, loadProject, store, uniqueName, undo } from '../src/state';
+import { generate } from '../src/cad/assembly';
+import { initKernel } from '../src/cad/kernel';
 import type { GenResult, Project } from '../src/model/types';
 
 const T = (id: string) => TEMPLATES.find((t) => t.id === id)!.make();
@@ -73,12 +75,85 @@ describe('layout', () => {
     // the charger goes after the two Pis; the hub (on a Pi) after the Picos it feeds
     expect(names.some((n) => /Raspberry Pi 4B.*\| USB charger/.test(n))).toBe(true);
     expect(names.some((n) => /Pico.*Pico.*\| USB hub/.test(n))).toBe(true);
-    const order = autoAssign(p).map((m) => m.kind);
+    // (the classic order: the planner puts boxes wherever its cables are shortest; see the planner test below)
+    const order = autoAssignClassic(p).map((m) => m.kind);
     expect(order.filter((k) => k === 'flat').length).toBe(2);
     expect(order.indexOf('flat')).toBeLessThan(order.lastIndexOf('dock'));
     // not at the end of its boards: a dock on either side of each box
     for (let i = 0; i < order.length; i++) if (order[i] === 'flat' && order.filter((k) => k === 'dock').length >= 2) expect(order.slice(0, i).includes('dock')).toBe(true);
   });
+});
+
+describe('layout of cabled boards', () => {
+  it('docks a hub right after its host and the boards on the hub right after the hub', () => {
+    // the hub is on the Pi 5; a Zero and an Uno are on the hub; nothing else in the list is near them
+    const p = rack(['rpi5', 'pico', 'rpi_zero', 'usb_hub', 'uno', 'pico', 'rpi4', 'nano']);
+    p.links = autoLinks(p);
+    const order = autoAssignClassic(p).map((m) => m.slots.filter((s) => s.module).map((s) => s.module)); // (the classic order)
+    const at = (i: number) => order.findIndex((u) => u.includes(p.modules[i].id));
+    const [pi5, zero, hub, uno] = [at(0), at(2), at(3), at(4)];
+    expect(Math.abs(hub - pi5)).toBe(1);
+    expect(Math.abs(uno - hub)).toBe(1);
+    expect(Math.abs(zero - hub)).toBeLessThanOrEqual(1); // (in the Pi 5's dock, back to back)
+  });
+
+  it('the planner feeds boxes and hubs with cables no longer than the classic order does', async () => {
+    await initKernel();
+    const total = (ids: string[], classic: boolean) => {
+      const p = rack(ids);
+      p.links = autoLinks(p);
+      if (classic) p.panel.opts = { ...p.panel.opts, plan: 'classic' };
+      return (generate(p).report.cables ?? []).reduce((s, c) => s + c.length, 0);
+    };
+    // a charger and a hub among Pis and Picos; a hub on a Pi 5 with a Zero and an Uno on it
+    for (const ids of [['rpi4', 'rpi4', 'usb_charger6', 'pico', 'pico', 'usb_hub'], ['rpi5', 'pico', 'rpi_zero', 'usb_hub', 'uno', 'pico', 'rpi4', 'nano']]) {
+      expect(total(ids, false), ids.join(',')).toBeLessThanOrEqual(total(ids, true));
+    }
+  }, 120_000);
+
+  it('lays a second rail out the other way round (the classic order), so the boards cabled across the break are side by side', async () => {
+    await initKernel();
+    const p = rack(['rpi4', 'uno', 'uno', 'uno', 'uno', 'uno']);
+    p.links = autoLinks(p);
+    p.panel.maxRail = 260;
+    // the snake is what panelgen does with docks in a plain order; the planner gives its rows (next test)
+    p.panel.opts = { ...p.panel.opts, plan: 'classic' };
+    const r = generate(p).report.panel!;
+    expect(r.rails.length).toBeGreaterThan(1);
+    expect(r.mounts.some((m) => m.row != null)).toBe(false);
+    // (the first rail runs left to right, the second right to left: its docks in order start at the far end)
+    const seq = (rail: string) => r.mounts.filter((m) => m.rail === rail).sort((a, b) => Number(a.id.split('.')[1]) - Number(b.id.split('.')[1])).map((m) => m.at);
+    expect(seq(r.rails[0].id)[0]).toBeLessThan(seq(r.rails[0].id)[seq(r.rails[0].id).length - 1]);
+    expect(seq(r.rails[1].id)[0]).toBeGreaterThan(seq(r.rails[1].id)[seq(r.rails[1].id).length - 1]);
+  }, 120_000);
+
+  it('the planner rows keep the boards cabled across the break side by side too, with cables no longer than the classic snake', async () => {
+    await initKernel();
+    const build = (classic: boolean) => {
+      const p = rack(['rpi4', 'uno', 'uno', 'uno', 'uno', 'uno']);
+      p.links = autoLinks(p);
+      p.panel.maxRail = 260;
+      if (classic) p.panel.opts = { ...p.panel.opts, plan: 'classic' };
+      const g = generate(p);
+      return { p, r: g.report.panel!, cables: g.report.cables ?? [] };
+    };
+    const { p, r, cables } = build(false);
+    expect(r.rails.length).toBeGreaterThan(1);
+    expect(r.mounts.every((m) => m.row != null)).toBe(true); // (the planner's rows: panelgen leaves them as they are)
+    const mountOf = (id: string) => r.mounts.find((m) => m.slots.some((s) => s.module === id))!;
+    const railLen = Math.max(...r.rails.map((rl) => rl.length ?? 0));
+    let across = 0;
+    for (const l of p.links ?? []) {
+      const a = mountOf(l.a.module), b = mountOf(l.b.module);
+      if (!a || !b || a.rail === b.rail) continue; // (off the rack: the Uno cabled to your computer)
+      across++;
+      // a cable between two rails runs across, not along: the docks are within half a rail's length of each other
+      expect(Math.abs(a.at - b.at), `${a.id} to ${b.id}`).toBeLessThan(railLen / 2);
+    }
+    expect(across).toBeGreaterThan(0);
+    const total = (cs: { length: number }[]) => cs.reduce((s, c) => s + c.length, 0);
+    expect(total(cables)).toBeLessThanOrEqual(total(build(true).cables));
+  }, 120_000);
 });
 
 describe('names and history', () => {

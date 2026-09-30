@@ -6,9 +6,10 @@
 import { MATERIALS } from './library';
 import { cableLines } from './cablelist';
 import { stackHardware, baseOf } from './holes';
-import { adapterFor, isProbe } from './probes';
+import { adapterFor, isDebugPort, isProbe } from './probes';
 import { isPlugPack } from './powerdata';
-import { baseRef, isAccessory } from './links';
+import { poeHats } from './poe';
+import { baseRef, findModule, isAccessory, plugName, viewOf } from './links';
 import { strapBoxes } from './built';
 import type { GenResult, Module, Project } from './types';
 
@@ -33,7 +34,8 @@ const kindName = (m: Module) => m.board.name.replace(/ #\d+$/, '');
 export const strapLength = (m: Module) => { const b = m.board.box; return b ? Math.ceil((2 * (b.w + b.h) + 80) / 50) * 5 : 30; };
 
 
-export function billOfMaterials(p: Project, res: GenResult): BomGroup[] {
+export function billOfMaterials(p0: Project, res: GenResult): BomGroup[] {
+  const p = viewOf(p0); // (no cables: none in the list)
   const out: BomGroup[] = [];
   const material = p.modules[0]?.holder.material ?? 'PETG', mat = MATERIALS[material] ?? MATERIALS.PETG;
   const count = <T>(xs: T[], key: (x: T) => string) => { const m = new Map<string, T[]>(); for (const x of xs) m.set(key(x), [...(m.get(key(x)) ?? []), x]); return [...m.entries()]; };
@@ -60,7 +62,9 @@ export function billOfMaterials(p: Project, res: GenResult): BomGroup[] {
   const boards = p.modules.filter((m) => !isAccessory(m.board)), probes = p.modules.filter((m) => isProbe(m)), boxes = p.modules.filter((m) => isAccessory(m.board) && !isProbe(m) && !own(m));
   if (boards.length) out.push({ head: 'Boards', rows: byKind(boards) });
   if (boxes.length) out.push({ head: 'Boxes and supplies', rows: byKind(boxes).map((r) => { const m = boxes.find((x) => kindName(x) === r.item)!; return isPlugPack(m.board) ? { ...r, note: 'plugs into an outlet' } : r; }), buy: true });
-  if (probes.length) out.push({ head: 'Debug probes and USB-serial adapters', rows: byKind(probes), buy: true });
+  // (a J-Link's connector says which one to buy: 10-pin Cortex-M, 20-pin Cortex or the JTAG box header)
+  const probeNote = (m: Module) => { const c = m.board.comps.find(isDebugPort); return c ? plugName(c.conn!.type) : undefined; };
+  if (probes.length) out.push({ head: 'Debug probes and USB-serial adapters', rows: byKind(probes).map((r) => { const m = probes.find((x) => kindName(x) === r.item)!; const note = probeNote(m); return note ? { ...r, note: `${note} connector` } : r; }), buy: true });
 
   // ---- rails ----
   const rails = res.report.panel?.rails ?? [];
@@ -81,6 +85,9 @@ export function billOfMaterials(p: Project, res: GenResult): BomGroup[] {
   // a zip tie through each cable-tie anchor (the loops of a box that takes ties instead of a strap count as anchors too)
   const ties = (res.report.features ?? []).filter((f) => f.kind === 'tie' && !f.refs?.includes('strap')).length;
   if (ties) hw.push({ qty: ties, item: 'zip tie, 2.5 to 3.6 mm wide, 100 mm or longer', note: 'one through each cable-tie anchor' });
+  // a 2.5 mm zip tie round each cable tag, in the groove of its saddle
+  const tagTies = res.parts.filter((x) => x.tag?.kind === 'cabletag').reduce((n, x) => n + x.qty, 0);
+  if (tagTies) hw.push({ qty: tagTies, item: 'zip tie, 2.5 mm wide, 100 mm or longer', note: 'one round each cable tag' });
   for (const m of p.modules) {
     const h = m.on && baseOf(p, m) !== m ? stackHardware(p, m) : null;
     if (!h) continue;
@@ -91,7 +98,7 @@ export function billOfMaterials(p: Project, res: GenResult): BomGroup[] {
   const adapters = new Map<string, string[]>();
   for (const l of p.links ?? []) {
     if (l.kind !== 'debug') continue;
-    const end = (r: typeof l.a) => { const m = p.modules.find((x) => x.id === r.module); return m && { m, c: m.board.comps.find((x) => x.ref === baseRef(r.ref)) }; };
+    const end = (r: typeof l.a) => { const m = findModule(p, r.module); return m && { m, c: m.board.comps.find((x) => x.ref === baseRef(r.ref)) }; };
     const A = end(l.a), B = end(l.b);
     if (!A?.c || !B?.c) continue;
     const [pr, bd] = isProbe(A.m) ? [A, B] : [B, A];
@@ -99,13 +106,14 @@ export function billOfMaterials(p: Project, res: GenResult): BomGroup[] {
     if (need) adapters.set(need, [...(adapters.get(need) ?? []), pr.m.board.name]);
   }
   for (const [item, who] of adapters) hw.push({ qty: who.length, item, note: who.join(', ') });
+  hw.push(...poeHats(p));
   if (hw.length) out.push({ head: 'Hardware', rows: hw, buy: true });
 
   // ---- filament and tools ----
   out.push({ head: 'Filament', buy: true, rows: [{ qty: 1, item: `${material}, about ${Math.round(grams)} g`, note: grams > 900 ? `${Math.ceil(grams / 1000)} spools of 1 kg` : 'a 1 kg spool is plenty' }] });
   const tools: BomRow[] = [{ qty: 1, item: 'a 3D printer', note: 'every part prints without supports' }];
   if (rails.length || (p.layout === 'loose' && p.mount.kind === 'din')) tools.push({ qty: 1, item: 'a hacksaw and a file', note: 'to cut the rail and take the burr off' });
-  if (ties) tools.push({ qty: 1, item: 'side cutters', note: 'to trim the zip ties' });
+  if (ties || tagTies) tools.push({ qty: 1, item: 'side cutters', note: 'to trim the zip ties' });
   if (hw.some((r) => / screw$/.test(r.item))) tools.push({ qty: 1, item: 'a small screwdriver', note: 'for the standoff screws of a board bolted on another (no printed part is screwed)' });
   out.push({ head: 'Tools', rows: tools });
   return out;

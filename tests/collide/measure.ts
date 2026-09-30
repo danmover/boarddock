@@ -6,9 +6,10 @@
 // rail). No bounding boxes are used for what is counted: they only pick which pairs to intersect.
 import { K, freeAll, type MF } from '../../src/cad/kernel';
 import { GRIP, SHOE_GRIP } from '../../src/cad/dockdims';
-import { compRect } from '../../src/geom/poly';
+import { compRect, extentAlong } from '../../src/geom/poly';
 import { mul as mulM } from '../../src/cad/assembly';
 import { stackLayers } from '../../src/model/holes';
+import { isPlugPack } from '../../src/model/powerdata';
 import type { Feature, GenResult, MeshData, PickTag, Project } from '../../src/model/types';
 
 /** What a solid is, for sorting what it meets. */
@@ -157,8 +158,10 @@ function allowed(p: Project, r: GenResult) {
       const a = (c.conn.angle * Math.PI) / 180, d = [Math.cos(a), Math.sin(a)], n = [-d[1], d[0]];
       const half = Math.max(c.w, c.l, c.conn.plug.w) / 2 + 1;
       const at = (s2: number, t: number): [number, number] => [c.x + d[0] * s2 + n[0] * t, c.y + d[1] * s2 + n[1] * t];
+      // (an edge plug's housing goes over the pins that stand out past the board's edge: they are in it on purpose)
+      const strip = [at(0, -half), at(extentAlong(c, c.conn.angle) + c.conn.plug.len + 1, -half), at(extentAlong(c, c.conn.angle) + c.conn.plug.len + 1, half), at(0, half)];
       const loop = box ? [at(-30, -half), at(30, -half), at(30, half), at(-30, half)] : compRect(c, 1);
-      const cs = new (K().CrossSection)([loop], 'Positive');
+      const cs = new (K().CrossSection)(box || c.conn.entry !== 'edge' ? [loop] : [loop, strip], 'Positive');
       made.push(cs);
       jack.set(`${m.id}/${c.ref}`, cs.extrude(400).translate([0, 0, -200]).transform(T as any));
     }
@@ -218,7 +221,10 @@ export function measure(p: Project, r: GenResult): Measured {
   const S = solids(r);
   const { jack, pins, cradles, springs } = allowed(p, r);
   const base = (ref: string) => ref.replace(/:2$/, '');
-  const links = new Map((p.links ?? []).map((l) => [l.id, [`${l.a.module}/${base(l.a.ref)}`, `${l.b.module}/${base(l.b.ref)}`]]));
+  // (a plug pack's own lead starts at the outlet it is plugged into: that outlet is its plug too)
+  const outletOf = new Map<string, string>();
+  for (const l of p.links ?? []) if (l.kind === 'mains') for (const [pk, o] of [[l.a, l.b], [l.b, l.a]]) if (p.modules.some((m) => m.id === pk.module && isPlugPack(m.board))) outletOf.set(pk.module, `${o.module}/${base(o.ref)}`);
+  const links = new Map((p.links ?? []).map((l) => [l.id, [`${l.a.module}/${base(l.a.ref)}`, `${l.b.module}/${base(l.b.ref)}`, ...[l.a, l.b].flatMap((r) => (l.kind !== 'mains' && outletOf.has(r.module) ? [outletOf.get(r.module)!] : []))]]));
   /** The plugs at a cable's ends: a routed cable's link, or the one plug an off-rack lead leaves. */
   const ownPlugs = (c: Solid) => (c.module ? [`${c.module}/${base(c.ref ?? '')}`] : links.get(c.ref ?? '') ?? []);
   const cats: Record<string, Totals> = Object.fromEntries(CATS.map((c) => [c, { vol: 0, depth: 0, n: 0 }]));
@@ -231,6 +237,9 @@ export function measure(p: Project, r: GenResult): Measured {
       // a rail shoe's or a DIN clip's rail grip: its pad is drawn as printed, pressed into the wall of its rail by its
       // preload and the play before the part sits on its hook (0.75 mm on a shoe, 0.55 on a clip), by design
       if (cat === 'rail/stand' && [a.cls, b.cls].includes('rail') && [a.kind, b.kind].some((k) => k === 'shoe' || k === 'clip') && q.depth < GRIP.pre + SHOE_GRIP.gap + 0.05) continue;
+      // a holder's crush ribs (on its tongue's front corners) pressed into the socket, under 0.6 mm deep, by design;
+      // a holder overlapping a socket any deeper is counted
+      if (cat === 'holder-holder' && [a.kind, b.kind].includes('socket') && [a.kind, b.kind].includes('holder') && q.depth < 0.6) continue;
       const t = cats[cat];
       t.vol += q.vol; t.depth = Math.max(t.depth, q.depth); t.n++;
       all.push({ cat, a: a.name, b: b.name, vol: q.vol, depth: q.depth, at: q.at });

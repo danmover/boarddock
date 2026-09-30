@@ -2,7 +2,7 @@
 // port part for every port are generated from that, and every port knows its role, so Auto-connect never has to
 // guess whether a USB-A socket on a box takes a device or gives power.
 import type { Board, BoxFace, BoxPortGroup, BoxSpec, Comp, ConnSetup, Module, V2 } from './types';
-import { connById, connSetup } from './library';
+import { bareToBoard, connById, connSetup } from './library';
 import { bbox, roundedRectLoop, round, uid } from '../geom/poly';
 
 export const BOX_PORT_TYPES = ['usb_a', 'usb_c', 'usb_micro_b', 'usb_b', 'barrel', 'iec_c7', 'rj45', 'hdmi_a', 'audio35', 'terminal', 'jtag20', 'swd10', 'pins_ra', 'ac_au', 'ac_uk', 'ac_us', 'ac_eu', 'mains_lead'] as const;
@@ -29,6 +29,7 @@ const ANGLE: Record<Exclude<BoxFace, 'top'>, number> = { front: -90, back: 90, l
 
 const g = (type: string, count: number, face: BoxFace, role: string): BoxPortGroup => ({ id: uid('pg'), type, count, face, role });
 const SWITCH = "A network switch: every board's Ethernet goes to one of its ports (Auto-connect does it). Its own supply (a plug pack) goes in a powerboard's outlet, its lead to the DC input at the back: the To do list's Add its supply puts it on the rack. Set its size, ports and input voltage under Box to match yours.";
+const SWITCH_POE = "A PoE switch: its ports give power over Ethernet (30 W a port, 120 W in all), so a Pi with a PoE HAT on one needs no supply of its own (Board › Power). Every other board's Ethernet goes to a port too (Auto-connect does it). Its own supply (a plug pack) goes in a powerboard's outlet, its lead to the DC input at the back. Set its ports, PoE budget and input voltage under Box to match yours.";
 const PACK = (what: string) => `A plug pack: it plugs straight into a powerboard's outlet (or the wall), so it stays off the rails, and its own lead goes to ${what}. Auto-connect plugs it in. Set its figures under Box to match the label on yours.`;
 const POWERBOARD = "A powerboard: set its outlets (AU, UK, US or EU), how many, their angle and its size under Box. Auto-connect plugs the chargers' mains leads into it; its own lead goes to the wall. Never plug one powerboard into another.";
 
@@ -44,6 +45,8 @@ export const BOX_PRESETS: Record<string, { name: string; color: string; spec: ()
   charger6: { name: 'USB charger (A + C)', color: '#e9e7e2', spec: () => ({ l: 110, w: 70, h: 30, groups: [g('usb_a', 4, 'back', 'power-out'), g('usb_c', 2, 'back', 'power-out'), g('iec_c7', 1, 'front', 'mains-in')] }) },
   // a desktop network switch: its Ethernet ports along the front, its power in at the back
   switch8: { name: 'Network switch, 8 ports', color: '#2b2f36', spec: () => ({ l: 158, w: 100, h: 27, groups: [g('rj45', 8, 'front', 'net'), { ...g('barrel', 1, 'back', 'power-in-dc'), volts: 12 }] }), note: SWITCH },
+  // a PoE switch: the same box with every port giving power (802.3at, 30 W a port, 120 W in all) and a 52 V supply
+  switch8poe: { name: 'Network switch, 8 ports, PoE', color: '#2b2f36', spec: () => ({ l: 158, w: 100, h: 27, poe: 120, groups: [{ ...g('rj45', 8, 'front', 'net'), poe: true }, { ...g('barrel', 1, 'back', 'power-in-dc'), volts: 52, amps: 2.5 }] }), note: SWITCH_POE },
   switch5: { name: 'Network switch, 5 ports', color: '#2b2f36', spec: () => ({ l: 100, w: 70, h: 25, groups: [g('rj45', 5, 'front', 'net'), { ...g('barrel', 1, 'back', 'power-in-dc'), volts: 12 }] }), note: SWITCH },
   // plug packs: a supply that plugs straight into an outlet, its own lead ending in its output plug. The Raspberry Pi
   // 27 W supply gives 5 A over USB-C PD (a Pi 5's full USB), the 15 W one 3 A; sizes and leads are typical, not measured
@@ -56,24 +59,46 @@ export const BOX_PRESETS: Record<string, { name: string; color: string; spec: ()
   pb4sw: { name: 'Powerboard, 4 switched outlets', color: '#f1f0eb', spec: () => ({ l: 330, w: 62, h: 42, groups: [{ ...g('ac_au', 4, 'top', 'mains-out'), switched: true }, g('mains_lead', 1, 'left', 'mains-in')] }), note: POWERBOARD },
   pb4ang: { name: 'Powerboard, 4 angled outlets', color: '#f1f0eb', spec: () => ({ l: 300, w: 66, h: 40, groups: [{ ...g('ac_au', 4, 'top', 'mains-out'), rot: 45 }, g('mains_lead', 1, 'left', 'mains-in')] }), note: POWERBOARD },
   pb4usb: { name: 'Powerboard, 4 outlets + USB', color: '#f1f0eb', spec: () => ({ l: 330, w: 58, h: 40, supply: 3.4, groups: [g('ac_au', 4, 'top', 'mains-out'), g('usb_a', 2, 'front', 'power-out'), g('mains_lead', 1, 'left', 'mains-in')] }), note: POWERBOARD },
-  // a debug probe: a slim board about 5 cm square and 3 mm thick, the 10-pin ribbon socket on its top face by one
-  // edge and the micro-USB on the edge opposite
+};
+
+/**
+ * Boards BoardDock makes that serve another board: a J-Link and a USB-serial adapter. They are ordinary boards (docked,
+ * cabled and edited like any other), laid out here by face as a box's ports are, then made boards by `makeCompanion`.
+ */
+export type CompanionKey = 'jlink' | 'jlink10' | 'jlinkjtag' | 'ftdi';
+/** A J-Link's microcontroller and crystal, the regulator, the power and activity LEDs, the passives. */
+const jlinkParts = () => [dp('U1', 'LQFP-64_10x10mm_P0.5mm', 27, 26, 12, 12, 1.6, 'generic', 'MCU'), dp('Y1', 'Crystal_SMD_3225', 38, 26, 3.2, 2.5, 0.8), dp('U2', 'SOT-223', 12, 29, 6.5, 7, 1.8, 'generic', 'LDO'),
+  dp('D1', 'LED_0805', 20, 35.5, 2, 1.25, 0.8, 'led', 'PWR'), dp('D2', 'LED_0805', 32, 35.5, 2, 1.25, 0.8, 'led', 'ACT'), dp('R1', 'R_0603', 20, 18, 1.6, 0.8, 0.5), dp('R2', 'R_0603', 36, 18, 1.6, 0.8, 0.5),
+  dp('C1', 'C_0603', 17, 24, 1.6, 0.8, 0.8), dp('C2', 'C_0603', 38, 31, 1.6, 0.8, 0.8), dp('C3', 'C_0805', 43, 35, 2, 1.25, 1), dp('R3', 'R_0603', 26, 33, 1.6, 0.8, 0.5)];
+/** A J-Link with this debug connector (all called J-Link: the connector says which) by one long edge (its ribbon plugs in from above) and the USB-B on one end. */
+const jlinkOf = (type: string, name: string, what: string) => ({ name, color: '#9c2b25', role: 'probe' as const, parts: jlinkParts,
+  spec: (): BoxSpec => ({ l: 65, w: 40, h: 1.6, groups: [{ ...g(type, 1, 'top', 'debug'), near: 'front' as const }, g('usb_b', 1, 'right', 'device')] }),
+  note: `${what}: its ribbon goes to a board's debug header, its USB to a hub. It stands on its long edge in a column beside the board it debugs, with that board's other J-Links and adapters. Set its size and connectors in the board editor to match yours.` });
+export const COMPANIONS: Record<CompanionKey, { name: string; color: string; role: 'probe' | 'adapter'; spec: () => BoxSpec; note: string; parts: () => Comp[] }> = {
+  // a J-Link: the 20-pin Cortex debug connector (2 x 10 at 1.27 mm, as on the boards it debugs, so one straight ribbon
+  // goes between them), or the 10-pin Cortex-M one (a J-Link Mini), or the classic 20-pin JTAG box header (2.54 mm)
+  jlink: jlinkOf('cortex20', 'J-Link', 'A J-Link with the 20-pin Cortex debug connector (1.27 mm)'),
+  jlink10: jlinkOf('swd10', 'J-Link', 'A J-Link with the 10-pin Cortex-M connector (1.27 mm), as on a J-Link Mini'),
+  jlinkjtag: jlinkOf('jtag20', 'J-Link', 'A J-Link with the 20-pin JTAG box header (2.54 mm)'),
   // a USB to TTL serial adapter (the red FT232RL board): mini-USB at one end, six right-angle pins at the other
-  ftdi: { name: 'USB-serial adapter', color: '#c8201e', spec: () => ({ l: 36, w: 18, h: 1.6, groups: [{ ...g('pins_ra', 1, 'left', 'uart'), pins: ['DTR', 'RXD', 'TXD', 'VCC', 'CTS', 'GND'] }, g('usb_mini_b', 1, 'right', 'device')] }),
+  ftdi: { name: 'USB-serial adapter', color: '#c8201e', role: 'adapter', spec: () => ({ l: 36, w: 18, h: 1.6, groups: [{ ...g('pins_ra', 1, 'left', 'uart'), pins: ['DTR', 'RXD', 'TXD', 'VCC', 'CTS', 'GND'] }, g('usb_mini_b', 1, 'right', 'device')] }),
     // the FT232RL itself, its TX and RX LEDs, the 3.3 / 5 V solder jumper, the passives round them
-    parts: () => [dp('U1', 'SSOP-28_5.3x10.2mm_P0.65mm', 17, 9, 10.2, 7.8, 1.6, 'generic', 'FT232RL'), dp('D1', 'LED_0805', 29, 3.2, 2, 1.25, 0.8, 'led', 'TX'), dp('D2', 'LED_0805', 29, 14.8, 2, 1.25, 0.8, 'led', 'RX'),
-      dp('JP1', 'SolderJumper-3_3V3_5V', 7.2, 9, 1.6, 4.2, 0.1, 'generic', '3V3/5V'), dp('R1', 'R_0603', 8, 3.4, 1.6, 0.8, 0.5), dp('R2', 'R_0603', 8, 14.6, 1.6, 0.8, 0.5), dp('C1', 'C_0603', 23.5, 3.4, 1.6, 0.8, 0.8), dp('C2', 'C_0603', 23.5, 14.6, 1.6, 0.8, 0.8), dp('C3', 'C_0805', 12, 14.6, 2, 1.25, 1)],
-    note: "A USB to TTL serial adapter (FT232RL): it slides into a slot behind its board, like a J-Link; jumper wires go from its pins to the board's UART header (GND to GND, its TXD to the board's RX, its RXD to the board's TX), its USB to a hub. Set its size, pins and their names under Box to match yours." },
-  jlink: { name: 'J-Link', color: '#9c2b25', spec: () => ({ l: 50, w: 50, h: 3, ribbon: 200, groups: [{ ...g('swd10', 1, 'top', 'debug'), near: 'front' }, g('usb_micro_b', 1, 'back', 'device')] }),
-    // its microcontroller and crystal, the regulator, the power and activity LEDs, the passives
-    parts: () => [dp('U1', 'LQFP-64_10x10mm_P0.5mm', 25, 27, 12, 12, 1.6, 'generic', 'MCU'), dp('Y1', 'Crystal_SMD_3225', 36, 27, 3.2, 2.5, 0.8), dp('U2', 'SOT-223', 12, 38, 6.5, 7, 1.8, 'generic', 'LDO'),
-      dp('D1', 'LED_0805', 19, 44, 2, 1.25, 0.8, 'led', 'PWR'), dp('D2', 'LED_0805', 31, 44, 2, 1.25, 0.8, 'led', 'ACT'), dp('R1', 'R_0603', 15, 18, 1.6, 0.8, 0.5), dp('R2', 'R_0603', 35, 18, 1.6, 0.8, 0.5),
-      dp('C1', 'C_0603', 15, 34, 1.6, 0.8, 0.8), dp('C2', 'C_0603', 36, 33, 1.6, 0.8, 0.8), dp('C3', 'C_0805', 40, 40, 2, 1.25, 1), dp('R3', 'R_0603', 25, 40, 1.6, 0.8, 0.5)],
-    note: "A debug probe: it slides down into a slot in the back of its board's dock, USB end up; its ribbon goes up over the dock to the board's debug header, its USB to a hub. Set its size, thickness (Height), ports and ribbon length under Box to match yours." },
+    parts: () => [dp('U1', 'SSOP-28_5.3x10.2mm_P0.65mm', 17, 9, 10.2, 7.8, 1.6, 'generic', 'FT232RL'), dp('D1', 'LED_0805', 27, 3.2, 2, 1.25, 0.8, 'led', 'TX'), dp('D2', 'LED_0805', 27, 14.8, 2, 1.25, 0.8, 'led', 'RX'),
+      dp('JP1', 'SolderJumper-3_3V3_5V', 9.5, 9, 1.6, 4.2, 0.1, 'generic', '3V3/5V'), dp('R1', 'R_0603', 10, 3.4, 1.6, 0.8, 0.5), dp('R2', 'R_0603', 10, 14.6, 1.6, 0.8, 0.5), dp('C1', 'C_0603', 23.5, 3.4, 1.6, 0.8, 0.8), dp('C2', 'C_0603', 23.5, 14.6, 1.6, 0.8, 0.8), dp('C3', 'C_0805', 13, 14.6, 2, 1.25, 1)],
+    note: "A USB to TTL serial adapter (FT232RL): jumper wires go from its pins to a board's UART header (GND to GND, its TXD to the board's RX, its RXD to the board's TX), its USB to a hub. It stands on its long edge in a column beside the board it serves. Set its size, pins and their names in the board editor to match yours." },
 };
 
 /** A bare board rather than a box: a probe or an adapter a few mm thick, its ports standing on it. */
 export const isBare = (s: BoxSpec) => s.h < 5;
+
+/** A J-Link or a USB-serial adapter as BoardDock makes them: an ordinary board with its parts and connectors. */
+export function makeCompanion(key: keyof typeof COMPANIONS, name?: string): Board {
+  const P = COMPANIONS[key];
+  const b: Board = { name: name ?? P.name, outline: [], cutouts: [], thickness: 1.6, holes: [], comps: [], source: 'library', notes: [P.note], color: P.color };
+  applyBox(b, P.spec());
+  b.comps.push(...P.parts());
+  return bareToBoard(b, P.role);
+}
 
 /** Round ports look the same any way up: they have no turn to set. */
 const ROUND = new Set(['barrel', 'audio35', 'mains_lead']);
@@ -404,13 +429,21 @@ export function ownSupply(box: Module): Board | null {
   return b;
 }
 
+/** A DC plug pack at this voltage (the 12 V one's shape, its output set), for a board whose DC jack takes less than 12 V. */
+export function dcPack(volts: number, amps = 1): Board {
+  const b = makeBox('dc_pack_12v', `DC plug pack, ${volts} V ${amps} A`);
+  const s = b.box!;
+  s.groups = s.groups.map((x) => (x.role === 'dc-out' ? { ...x, volts, amps } : x));
+  applyBox(b, s);
+  b.notes = [`A plug pack: it plugs straight into a powerboard's outlet (or the wall), its own lead goes to a board's ${volts} V DC jack (a barrel plug, 5.5 × 2.1 mm on most). BoardDock can't check polarity: check the labels match before you plug it in. Set its figures under Box to match the label on yours.`];
+  return b;
+}
+
 /** What you can build a box from scratch as, and what each starts with (a typical port or two, to change). */
-export const BOX_KINDS: Record<'hub' | 'charger' | 'supply' | 'probe' | 'adapter', { name: string; what: string; color: string; size: [number, number, number]; groups: () => BoxPortGroup[] }> = {
+export const BOX_KINDS: Record<'hub' | 'charger' | 'supply', { name: string; what: string; color: string; size: [number, number, number]; groups: () => BoxPortGroup[] }> = {
   hub: { name: 'USB hub', what: 'a hub: devices plug into it, it goes to a computer or a board', color: '#2b2f36', size: [100, 30, 22], groups: () => [g('usb_a', 4, 'front', 'hub-down'), g('usb_c', 1, 'left', 'hub-up')] },
   charger: { name: 'USB charger', what: 'a charger: it powers boards over USB, its mains lead goes to an outlet', color: '#e9e7e2', size: [90, 60, 28], groups: () => [g('usb_a', 2, 'back', 'power-out'), g('iec_c7', 1, 'front', 'mains-in')] },
   supply: { name: 'Power supply', what: 'a power supply: mains in, power out to a board', color: '#3a3f47', size: [80, 50, 30], groups: () => [g('usb_c', 1, 'right', 'power-out'), g('mains_lead', 1, 'left', 'mains-in')] },
-  probe: { name: 'Debug probe', what: "a debug probe: a slim board, a ribbon to a board's debug header, USB to a hub", color: '#9c2b25', size: [50, 50, 3], groups: () => [{ ...g('swd10', 1, 'top', 'debug'), near: 'front' }, g('usb_micro_b', 1, 'back', 'device')] },
-  adapter: { name: 'USB-serial adapter', what: "an adapter: jumper wires to a board's UART header, USB to a hub", color: '#c8201e', size: [36, 18, 1.6], groups: () => [{ ...g('pins_ra', 1, 'left', 'uart'), pins: ['GND', 'CTS', 'VCC', 'TXD', 'RXD', 'DTR'] }, g('usb_mini_b', 1, 'right', 'device')] },
 };
 
 /** A box built from scratch: a kind, a size (length, width, height) and a name; its ports are set under Box after. */
@@ -419,7 +452,7 @@ export function newBox(kind: keyof typeof BOX_KINDS, o: { l?: number; w?: number
   const low = K.name.startsWith('USB') ? K.name : K.name[0].toLowerCase() + K.name.slice(1);
   const b: Board = { name: o.name?.trim() || `My ${low}`, outline: [], cutouts: [], thickness: 1, holes: [], comps: [], source: 'built by hand', kind: 'box', color: o.color ?? K.color,
     notes: [`Built from scratch as a ${low}: measure yours and set its size and ports under Box, or drag a port in the editor to where it really is.`] };
-  applyBox(b, { l: o.l ?? K.size[0], w: o.w ?? K.size[1], h: o.h ?? K.size[2], groups: K.groups(), ...(kind === 'probe' ? { ribbon: 200 } : {}) });
+  applyBox(b, { l: o.l ?? K.size[0], w: o.w ?? K.size[1], h: o.h ?? K.size[2], groups: K.groups() });
   return b;
 }
 
