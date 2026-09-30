@@ -358,8 +358,10 @@ export function generatePanel(p: Project): GenResult {
     // it fits: their cables stay short
     // (the planner's rows: a new row where its hint changes, as well as where the rail is full)
     let hint: number | undefined;
+    // room to grow: a free slot's worth of rail (the average dock and its gap) kept at the end of each rail, per slot asked for
+    const spareMm = placed.length ? (P.opts?.spare ?? 0) * (placed.reduce((a, q) => a + q.hi - q.lo + gap, 0) / placed.length) : 0;
     for (const pl of placed) {
-      if (row.length && (cursor + (pl.hi - pl.lo) > P.maxRail - margin || (pl.mt.row != null && hint != null && pl.mt.row !== hint))) { rows.push(row); row = []; cursor = margin; }
+      if (row.length && (cursor + (pl.hi - pl.lo) > P.maxRail - margin - spareMm || (pl.mt.row != null && hint != null && pl.mt.row !== hint))) { rows.push(row); row = []; cursor = margin; }
       hint = pl.mt.row;
       pl.mt.at = cursor - pl.lo;
       cursor = pl.mt.at + pl.hi + gap;
@@ -369,7 +371,7 @@ export function generatePanel(p: Project): GenResult {
     let prev: { x: number; y: number; ylo: number; yhi: number } | null = null;
     rows.forEach((rw, k) => {
       const ylo = Math.min(...rw.map((q) => q.ylo)), yhi = Math.max(...rw.map((q) => q.yhi));
-      const len = Math.max(...rw.map((q) => q.mt.at! + q.hi - q.soft[1])) + margin;
+      const len = Math.max(...rw.map((q) => q.mt.at! + q.hi - q.soft[1])) + margin + spareMm;
       let x = 0, y = 0;
       if (prev) {
         if (P.rowDir === 'h') y = prev.y + prev.ylo - P.rowGap - yhi;

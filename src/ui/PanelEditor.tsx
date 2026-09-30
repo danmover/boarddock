@@ -7,6 +7,7 @@ import type { Access, PanelReport, Project, V2 } from '../model/types';
 import { shortName } from '../model/links';
 import { companionLabel, isProbe } from '../model/probes';
 import { isSel, select, store, useApp, type SelItem } from '../state';
+import { ArrangeOptions } from './ArrangeOptions';
 import { addDock, addRail, autoArrange, tidyUp, moveRail, nudge, placeMount, removeMounts, removeRails, seat, swapSlots, turnMounts } from './panelOps';
 
 export const PALETTE = ['#4c8dff', '#46d58b', '#f5c542', '#c084fc', '#2dd4bf', '#fb7185', '#a3e635', '#38bdf8'];
@@ -398,6 +399,7 @@ export function PanelEditor() {
 
       <div className="toolbar floating">
         <button className={`tbtn wide ${project.panel.auto ? 'on' : ''}`} onClick={autoArrange} title="Lay everything out automatically: orientations for plug access, back-to-back pairs, packing, new rows">⚡ Auto-arrange</button>
+        <ArrangeOptions project={project} />
         {!project.panel.auto && <button className="tbtn wide" onClick={tidyUp} title="Take out empty docks and slide overlapping docks apart along their rail; nothing else moves">Tidy up</button>}
         <span className="tsep" />
         <button className="tbtn wide" onClick={() => addRail('h')} title="Add a horizontal rail">+ Rail ⟷</button>

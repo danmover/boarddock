@@ -16,7 +16,7 @@ import { isProbe, ribbonOf } from '../model/probes';
 // ---------------------------------------------------------------- geometry
 
 /** A plug as the planner sees it: where its cable leaves it, mount centred at 0, and which way it points (0, 0: out of the front). */
-export interface PlugPt { u: number; v: number; du: number; dv: number }
+export interface PlugPt { u: number; v: number; du: number; dv: number; z?: number }
 /** Something you touch (an SD slot, a button, a USB port used for flashing) and the way it faces (`wall`: into the wall). */
 export interface Touch extends PlugPt { wall: boolean }
 
@@ -66,7 +66,7 @@ function addBoard(g: SeatGeo, m: Module, b: Board, M: number[], dx: number, dy: 
     }
     // (a plug in a port on the top face has a body drawn only on a box's ports and a debug header: the rest just end their cable there)
     if (cn.entry === 'edge' || b.kind === 'box' || isDebugPort(c)) cover(q);
-    g.plugs.set(`${m.id}/${baseRef(c.ref)}`, { u: q[0], v: q[1], du: d[0], dv: d[1] });
+    g.plugs.set(`${m.id}/${baseRef(c.ref)}`, { u: q[0], v: q[1], du: d[0], dv: d[1], z: q[2] });
     if (wanted?.(m, c)) g.touch.push({ u: q[0], v: q[1], du: d[0], dv: d[1], wall: d[2] < -0.7 });
   }
 }
@@ -75,8 +75,9 @@ function addBoard(g: SeatGeo, m: Module, b: Board, M: number[], dx: number, dy: 
  * Where everything of a board sits in a dock slot, standing (`lie` unset) or lying flat: the holder, the boards stacked
  * on it (their plugs too) and its column, each on its long edge.
  */
-export function seatGeo(p: Project, m: Module, slot: number, edge: EdgeName, turn: Turn, lie: 'flat' | undefined, railDir: 'h' | 'v', wanted?: Wanted): SeatGeo {
-  const g: SeatGeo = { plugs: new Map(), touch: [], ext: [-SHOE.u, SHOE.u, -SHOE.v, SHOE.v] };
+export function seatGeo(p: Project, m: Module, slot: number, edge: EdgeName, turn: Turn, lie: 'flat' | undefined, railDir: 'h' | 'v', wanted?: Wanted, shoe = true): SeatGeo {
+  // (`shoe`: the space includes the dock's own shoe and lever; without, only what the board itself takes)
+  const g: SeatGeo = { plugs: new Map(), touch: [], ext: shoe ? [-SHOE.u, SHOE.u, -SHOE.v, SHOE.v] : [Infinity, -Infinity, Infinity, -Infinity] };
   const H = m.holder, gw = H.gap + H.wall;
   const site = lie === 'flat' ? earSite(m.board, H, edge) : dockSite(m.board, H, edge);
   const M = slotMatrix(turn, slot, slotFrame(edge, site.tc, site.L0, lie));
@@ -119,7 +120,7 @@ export function flatGeo(m: Module, turn: number, wanted?: Wanted): SeatGeo {
       d = dir(R, [a[0], a[1], 0]);
     } else { q = centred(c.x, c.y); d = [0, 0, 1]; }
     cover(q);
-    g.plugs.set(`${m.id}/${baseRef(c.ref)}`, { u: q[0], v: q[1], du: d[0], dv: d[1] });
+    g.plugs.set(`${m.id}/${baseRef(c.ref)}`, { u: q[0], v: q[1], du: d[0], dv: d[1], z: m.board.thickness + 6 + (cn.entry === 'top' ? cn.plug.len + 0.6 : 0) });
     if (wanted?.(m, c)) g.touch.push({ u: q[0], v: q[1], du: d[0], dv: d[1], wall: false });
   }
   g.ext[2] -= FLAT_PAD_V; g.ext[3] += FLAT_PAD_V;
@@ -148,7 +149,7 @@ export function weightsFor(o: ArrangeOpts = {}): Weights {
   const w: Weights = { cable: 1, long: 0.5, cross: 60, under: 40, rail: 0.15, foot: 0.002, row: 30, dock: 8, access: 25, tol: 2, mains: 2, side: 0.3, group: 0, heat: 0, heatRow: 0, reach: 15, host: 1.5, stock: 0, spare: o.spare ?? 0, mainsAt: o.mains ?? 'auto' };
   Object.assign(w, GOALS[o.goal ?? 'balanced']);
   if (o.mains === 'off') w.mains = 0;
-  if (o.group) w.group = 80;
+  if (o.group) w.group = 250;
   if (o.heat) { w.heat = 1.5; w.heatRow = 60; }
   if (o.hosts === false) w.host = 1;
   if (o.stock) w.stock = 0.25;
@@ -161,17 +162,21 @@ export function weightsFor(o: ArrangeOpts = {}): Weights {
 interface PlaceOpt {
   turn: Turn; slots: Slot[]; loss: number;
   u0: number; u1: number; v0: number; v1: number;
-  pts: { e: number; u: number; v: number; du: number; dv: number }[]; // the linked plugs
+  pts: { e: number; u: number; v: number; du: number; dv: number; z?: number }[]; // the linked plugs
   touch: Touch[];
 }
 interface Def { kind: 'dock' | 'flat'; mods: string[]; opts: PlaceOpt[]; hot: boolean; mains: boolean; lv: boolean; group: string; probe: boolean; members?: [number, number] } // members: a pair's two boards, as defs of their own
 interface State { units: number[][]; brk: boolean[]; sel: number[] }
+/** What a layout comes to, by the planner's own measures (for the tests and `lastPlan`). */
+export interface Detail { rows: number[]; order: number[]; lens: number[]; reach: number; hot: number; hotRow: number; mains: number; alike: number; docks: number; railLen: number; blocked: number }
 
-export interface PlanStats { cost: number; classic: number; evals: number; ms: number; defs: number; candidates: number }
+export interface PlanStats { cost: number; classic: number; evals: number; ms: number; defs: number; candidates: number; detail: Detail }
 export let lastPlan: PlanStats | null = null;
 
 const MARGIN = 8, PAD = 3; // (panelgen's margin at a rail's ends, and a little slack on every width against the real holders' extra bulk)
-const VERT = 70; // a cable's climb out of one plug, down to its street and up into the other
+const KEEP_APART = 45; // (mm between two boards whose cable ran into something)
+const LANE = 7; // (a cable and the space it keeps from the next)
+const BLOCK = 30, RUNS_INTO = 170; // a cable needs this much room out of its plug; a holder nearer than that in its way costs about a clash
 
 const mulberry = (a: number) => () => {
   a = (a + 0x6d2b79f5) >>> 0;
@@ -191,16 +196,17 @@ class Model {
   lnear: boolean[] = []; // a ribbon or jumper wires: they go straight over the docks, not by a street
   lstock: number[] = []; // per link: the longest it may be before it needs another cable (a ribbon's own length)
   reserve = 0;
+  avoid: [string, string][] = []; // boards whose cable ran into something when built: keep them apart
   evals = 0;
   pairsOf = new Map<number, number[]>(); // a def of one board -> the defs of the pairs it can join
-  EU: Float64Array; EV: Float64Array; EDU: Float64Array; EDV: Float64Array; ER: Int16Array; EP: Uint8Array;
+  EU: Float64Array; EV: Float64Array; EZ: Float64Array; EDU: Float64Array; EDV: Float64Array; ER: Int16Array; EI: Int16Array; EP: Uint8Array;
   constructor(public W: Weights, public P: Project['panel'], public links: Link[]) {
     const n = links.length * 2;
-    this.EU = new Float64Array(n); this.EV = new Float64Array(n); this.EDU = new Float64Array(n); this.EDV = new Float64Array(n); this.ER = new Int16Array(n); this.EP = new Uint8Array(n);
+    this.EU = new Float64Array(n); this.EV = new Float64Array(n); this.EZ = new Float64Array(n); this.EDU = new Float64Array(n); this.EDV = new Float64Array(n); this.ER = new Int16Array(n); this.EI = new Int16Array(n); this.EP = new Uint8Array(n);
   }
 
   /** The cost of a layout: docks packed into rows the way the generator does, then the plugs where they land. */
-  evaluate(s: State, detail?: { rows: number[]; order: number[] }): number {
+  evaluate(s: State, detail?: Detail): number {
     this.evals++;
     const { defs, W, P } = this, cap = P.maxRail - MARGIN - this.reserve;
     const order: number[] = [], first: boolean[] = [], uidx: number[] = [];
@@ -223,13 +229,13 @@ class Model {
     for (let k = 0; k < n; k++) {
       const o = defs[order[k]].opts[s.sel[order[k]]];
       cost += W.access * o.loss;
-      for (const q of o.pts) { const e = q.e; this.EU[e] = U[k] + q.u; this.EV[e] = V[Rw[k]] + q.v; this.EDU[e] = q.du; this.EDV[e] = q.dv; this.ER[e] = Rw[k]; this.EP[e] = 1; }
+      for (const q of o.pts) { const e = q.e; this.EU[e] = U[k] + q.u; this.EV[e] = V[Rw[k]] + q.v; this.EZ[e] = q.z ?? 40; this.EDU[e] = q.du; this.EDV[e] = q.dv; this.ER[e] = Rw[k]; this.EI[e] = k; this.EP[e] = 1; }
     }
     // streets, as the router has them: between the rails' middles, and 45 mm beyond the outer two
     const streets: number[] = [V[rows - 1] - 45];
     for (let r = rows - 1; r > 0; r--) streets.push((V[r] + V[r - 1]) / 2);
     streets.push(V[0] + 45);
-    const nl = this.links.length;
+    const nl = this.links.length, load = new Int16Array(streets.length), zc = P.stands !== false ? -5 : 11; // (the streets run under the rails on table stands, else just over their lips)
     let sum = 0, longest = 0;
     for (let l = 0; l < nl; l++) {
       const a = 2 * l, b = a + 1;
@@ -238,12 +244,14 @@ class Model {
       let len: number, under = 0;
       if (this.lnear[l]) len = Math.hypot(du, va - vb) + 25;
       else {
-        let best = Infinity, bs = 0;
-        for (const st of streets) { const c = Math.abs(va - st) + Math.abs(vb - st); if (c < best) { best = c; bs = st; } }
-        len = du + best + VERT;
+        let best = Infinity, bs = 0, bi = 0;
+        streets.forEach((st, i) => { const c = Math.abs(va - st) + Math.abs(vb - st); if (c < best) { best = c; bs = st; bi = i; } });
+        // (down from each plug to the street under the rails, and up again)
+        len = du + best + (this.EZ[a] - zc) + (this.EZ[b] - zc);
         let street = true;
-        if (this.ER[a] === this.ER[b]) { const direct = Math.hypot(du, va - vb) + 30; if (direct < len) { len = direct; street = false; } }
+        if (this.ER[a] === this.ER[b]) { const direct = Math.hypot(du, va - vb, this.EZ[a] - this.EZ[b]) + 30; if (direct < len) { len = direct; street = false; } }
         if (street) {
+          load[bi]++;
           for (let r = 0; r < rows; r++) {
             if (r === this.ER[a] || r === this.ER[b]) continue;
             const y = V[r];
@@ -259,11 +267,31 @@ class Model {
         if (dot < -0.3) len += -dot * 28;
       }
       sum += this.lw[l] * len; longest = Math.max(longest, len);
+      if (detail) detail.lens[l] = len;
       cost += W.under * under;
       if (len > this.lstock[l]) cost += 150 + (len - this.lstock[l]);
       if (W.stock) cost += W.stock * cableToBuy(len * 1.05) * 1000;
     }
     cost += W.cable * sum + W.long * longest;
+    // between two rails a street is as wide as the row gap: only so many cables lie side by side in it
+    const lanes = Math.max(1, Math.floor((P.rowGap - 1) / LANE));
+    for (let i = 1; i < streets.length - 1; i++) if (load[i] > lanes) { cost += RUNS_INTO * (load[i] - lanes); if (detail) detail.blocked += load[i] - lanes; }
+    // a cable leaves its plug the way the plug points: a neighbour's holder close in that way is where it runs into
+    const RX0 = new Float64Array(n), RX1 = new Float64Array(n), RY0 = new Float64Array(n), RY1 = new Float64Array(n);
+    for (let k = 0; k < n; k++) { const o = defs[order[k]].opts[s.sel[order[k]]]; RX0[k] = U[k] + o.u0; RX1[k] = U[k] + o.u1; RY0[k] = V[Rw[k]] + o.v0; RY1[k] = V[Rw[k]] + o.v1; }
+    for (let e = 0; e < 2 * nl; e++) {
+      if (!this.EP[e] || this.lnear[e >> 1]) continue;
+      const dx = this.EDU[e], dy = this.EDV[e], dl = Math.hypot(dx, dy);
+      if (dl < 0.5) continue;
+      const ux = dx / dl, uy = dy / dl, ox = this.EU[e], oy = this.EV[e];
+      for (let k = 0; k < n; k++) {
+        if (k === this.EI[e]) continue;
+        let t0 = 0, t1 = BLOCK;
+        if (Math.abs(ux) < 1e-9) { if (ox < RX0[k] || ox > RX1[k]) continue; } else { const a = (RX0[k] - ox) / ux, b = (RX1[k] - ox) / ux; t0 = Math.max(t0, Math.min(a, b)); t1 = Math.min(t1, Math.max(a, b)); }
+        if (Math.abs(uy) < 1e-9) { if (oy < RY0[k] || oy > RY1[k]) continue; } else { const a = (RY0[k] - oy) / uy, b = (RY1[k] - oy) / uy; t0 = Math.max(t0, Math.min(a, b)); t1 = Math.min(t1, Math.max(a, b)); }
+        if (t0 <= t1) { cost += RUNS_INTO * (1 - t0 / BLOCK); if (detail) detail.blocked++; }
+      }
+    }
     // crossings of straight plug-to-plug lines
     let cross = 0;
     for (let l = 0; l < nl; l++) {
@@ -280,13 +308,13 @@ class Model {
       }
     }
     cost += W.cross * cross;
-    cost += this.extras(s, order, U, Rw, V, rows, rowU1);
-    if (detail) { detail.rows = Array.from(Rw); detail.order = order; }
+    cost += this.extras(s, order, U, Rw, V, rows, rowU1, detail);
+    if (detail) { detail.rows = Array.from(Rw); detail.order = order; detail.docks = n; detail.railLen = railLen; }
     return cost;
   }
 
   /** The terms that look at whole boards, not plugs: mains, likes, heat, and what you touch. */
-  extras(s: State, order: number[], U: Float64Array, Rw: Int16Array, V: Float64Array, rows: number, rowU1: number[]): number {
+  extras(s: State, order: number[], U: Float64Array, Rw: Int16Array, V: Float64Array, rows: number, rowU1: number[], detail?: Detail): number {
     const { defs, W } = this, n = order.length;
     let cost = 0;
     const o = (k: number) => defs[order[k]].opts[s.sel[order[k]]];
@@ -295,21 +323,32 @@ class Model {
     if (W.mains || W.mainsAt !== 'off') {
       for (let i = 0; i < n; i++) {
         if (!defs[order[i]].mains) continue;
-        if (W.mains) for (let j = 0; j < n; j++) if (j !== i && defs[order[j]].lv) { const g = gapBetween(i, j); if (g < 50) cost += W.mains * (50 - g); }
+        for (let j = 0; j < n; j++) if (j !== i && defs[order[j]].lv) { const g = gapBetween(i, j); if (g < 50) { cost += W.mains * (50 - g); if (detail) detail.mains++; } }
         if (W.mainsAt === 'left') cost += W.side * (x0(i) - MARGIN);
         else if (W.mainsAt === 'right') cost += W.side * (rowU1[Rw[i]] - x1(i));
         else if (W.mainsAt === 'bottom') cost += 150 * (rows - 1 - Rw[i]);
         else if (W.mainsAt === 'auto' && i > 0 && i < n - 1 && Rw[i - 1] === Rw[i] && Rw[i + 1] === Rw[i] && defs[order[i - 1]].lv && defs[order[i + 1]].lv) cost += 60; // between boards, not at an end
       }
     }
-    if (W.heat) {
+    if (this.avoid.length) {
+      const at = new Map<string, number>();
+      for (let k = 0; k < n; k++) for (const id of defs[order[k]].mods) at.set(id, k);
+      for (const [a, b] of this.avoid) {
+        const i = at.get(a), j = at.get(b);
+        if (i == null || j == null) continue;
+        const g = i === j ? 0 : gapBetween(i, j);
+        if (g < KEEP_APART) cost += RUNS_INTO * 1.5 * (1 - g / KEEP_APART);
+      }
+    }
+    if (W.heat || detail) {
       for (let i = 0; i < n; i++) {
         if (!defs[order[i]].hot) continue;
         cost += (W.heatRow * 2 * Rw[i]) / Math.max(1, rows - 1);
-        for (let j = i + 1; j < n; j++) if (defs[order[j]].hot) { const g = gapBetween(i, j); if (g < 60) cost += W.heat * (60 - g); }
+        if (detail) detail.hotRow += Rw[i];
+        for (let j = i + 1; j < n; j++) if (defs[order[j]].hot) { const g = gapBetween(i, j); if (g < 60) { cost += W.heat * (60 - g); if (detail) detail.hot++; } }
       }
     }
-    if (W.group) {
+    if (W.group || detail) {
       const seen = new Map<string, number[]>();
       for (let k = 0; k < n; k++) { const g = defs[order[k]].group; if (g) (seen.get(g) ?? seen.set(g, []).get(g)!).push(k); }
       const face = (k: number) => o(k).turn + '/' + o(k).slots.map((x) => x.edge).join();
@@ -317,17 +356,18 @@ class Model {
         if (ks.length < 2) continue;
         cost += W.group * (ks[ks.length - 1] - ks[0] + 1 - ks.length); // alike boards not side by side
         for (const k of ks) { if (face(k) !== face(ks[0])) cost += W.group * 0.75; if (Rw[k] !== Rw[ks[0]]) cost += W.group * 0.5; }
+        if (detail) detail.alike += ks[ks.length - 1] - ks[0] + 1 - ks.length + ks.filter((k) => face(k) !== face(ks[0])).length;
       }
     }
-    if (W.reach) {
+    if (W.reach || detail) {
       for (let k = 0; k < n; k++) for (const t of o(k).touch) {
-        if (t.wall) { cost += W.reach; continue; }
+        if (t.wall) { cost += W.reach; if (detail) detail.reach++; continue; }
         if (Math.abs(t.du) <= 0.6) continue;
         // facing a neighbour on its own rail, close
         const j = k + (t.du > 0 ? 1 : -1);
         if (j < 0 || j >= n || Rw[j] !== Rw[k]) continue;
         const clear = t.du > 0 ? x0(j) - (U[k] + t.u) : (U[k] + t.u) - x1(j);
-        if (clear < 40) cost += W.reach * (1 - Math.max(0, clear) / 40);
+        if (clear < 40) { cost += W.reach * (1 - Math.max(0, clear) / 40); if (detail && clear < 25) detail.reach++; }
       }
     }
     return cost;
@@ -344,7 +384,7 @@ const touchOf = (linked: Set<string>): Wanted => (m, c) => {
   return /^usb/.test(t) && !linked.has(`${m.id}/${baseRef(c.ref)}`);
 };
 
-export interface Plan { mounts: RailMount[]; cost: number }
+export interface Plan { mounts: RailMount[]; cost: number; detail: Detail }
 
 function buildModel(p: Project, classic: RailMount[], W: Weights): { model: Model; start: State } {
   const railDir = p.panel.rowDir;
@@ -607,11 +647,12 @@ export function planCandidates(p: Project, classic: RailMount[], count = 2): Pla
   const t0 = Date.now();
   const o = p.panel.opts ?? {};
   const { model, start } = buildModel(p, classic, weightsFor(o));
+  model.avoid = (o.avoid ?? []).map((x) => x.split('|') as [string, string]);
   const nD = model.defs.length;
   // room to grow: leave this many docks' width free at the end of each rail
   if (model.W.spare) model.reserve = model.W.spare * (model.defs.reduce((a, d) => a + d.opts[0].u1 - d.opts[0].u0 + PAD + p.panel.gap, 0) / Math.max(1, nD));
   const c0 = model.evaluate(start);
-  const rnd = mulberry(hash(`${p.modules.map((m) => m.board.name).join('|')}#${nLinks(p)}${JSON.stringify(o)}${p.panel.maxRail}`));
+  const rnd = mulberry(hash(`${p.modules.map((m) => m.board.name).join('|')}#${nLinks(p)}${JSON.stringify({ ...o, pick: undefined, plan: undefined, avoid: undefined })}${(o.avoid ?? []).join(';')}${p.panel.maxRail}`)); // (not `pick`: the best and the next best of one search)
   const iters = Math.min(9000, 1500 + 420 * nD);
   const found: { s: State; cost: number }[] = [{ s: start, cost: c0 }];
   [start, shuffled(start, rnd), shuffled(start, rnd)].forEach((s0, k) => {
@@ -626,22 +667,22 @@ export function planCandidates(p: Project, classic: RailMount[], count = 2): Pla
   for (const f of found) {
     if (seen.has(sig(f.s))) continue;
     seen.add(sig(f.s));
-    out.push({ mounts: emit(model, f.s, classic), cost: f.cost });
+    out.push({ ...emit(model, f.s, classic), cost: f.cost });
     if (out.length >= count) break;
   }
-  lastPlan = { cost: out[0].cost, classic: c0, evals: model.evals, ms: Date.now() - t0, defs: nD, candidates: out.length };
+  lastPlan = { cost: out[0].cost, classic: c0, evals: model.evals, ms: Date.now() - t0, defs: nD, candidates: out.length, detail: out[0].detail };
   return out;
 }
 
 /** A state as mounts in order, each with its turn and edges and the row it is on. */
-function emit(m: Model, s: State, classic: RailMount[]): RailMount[] {
-  const det = { rows: [] as number[], order: [] as number[] };
+function emit(m: Model, s: State, classic: RailMount[]): { mounts: RailMount[]; detail: Detail } {
+  const det: Detail = { rows: [], order: [], lens: [], reach: 0, hot: 0, hotRow: 0, mains: 0, alike: 0, docks: 0, railLen: 0, blocked: 0 };
   m.evaluate(s, det);
   void classic;
-  return det.order.map((d, k) => {
+  return { detail: det, mounts: det.order.map((d, k) => {
     const o = m.defs[d].opts[s.sel[d]];
     return { id: `auto${k}`, rail: '', at: null, kind: m.defs[d].kind, turn: o.turn, row: det.rows[k], slots: o.slots.map((x) => ({ ...x })) } as RailMount;
-  });
+  }) };
 }
 
 /** The layout Auto-arrange uses: the planner's pick (`opts.pick` of its best few), never one it scores worse than the classic order. */

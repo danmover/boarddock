@@ -279,6 +279,7 @@ export interface ArrangeOpts {
   heat?: boolean; // spread the hot boards apart, and to the top of a standing rack
   fewParts?: boolean; // fewer docks and rails when the cables cost about the same
   pick?: number; // which of the planner's best candidates the real router chose (0: the first)
+  avoid?: string[]; // "moduleA|moduleB": boards whose cable ran into something in a build, kept apart (set by the build's own retries, never by hand)
 }
 
 export interface PanelSettings {
