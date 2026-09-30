@@ -25,7 +25,7 @@ describe('dump', () => {
       lines.push('  hit ' + JSON.stringify(c.hit));
       lines.push('  path ' + c.path.filter((_: any, i: number) => i % 3 === 0).map(f).join(' | '));
     }
-    lines.push(...((globalThis as any).__dbgLog ?? []).slice(-40));
+    lines.push(...((globalThis as any).__tagLog ?? []).filter((x: string) => !/blocked=0$/.test(x)));
     writeFileSync(`${S}/dump.txt`, lines.join('\n'));
   }, 300000);
 });

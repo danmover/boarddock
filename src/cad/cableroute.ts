@@ -15,7 +15,7 @@ export interface Obstacle {
   module?: string; // the board it belongs to
   plug?: string; // "module/ref" when it is a plug
   stand?: boolean; // table stand piece: streets run through their combs
-  solid?: boolean; // a rail: fills its box (a cable may not brush it)
+  solid?: boolean; // a rail or stand piece: fills its box (the settled cable may not brush it; the router still allows the usual slack along a stand)
   src?: { mesh: MeshData; T: number[] }; // the part's own shape (and where it is), to confirm a clash with
 }
 
@@ -71,7 +71,7 @@ export function hits(r: Route, obs: Obstacle[], ends: CableEnd[], radius: number
       if (ob.plug && own.has(ob.plug)) continue;
       if (exitSeg && ob.module && mods.has(ob.module) && !ob.plug) continue;
       if (kind === 'street' && ob.stand) continue;
-      const t = segInBox(p, q, ob.box, radius - (ob.solid ? 0.1 : slack));
+      const t = segInBox(p, q, ob.box, radius - (ob.solid && !ob.stand ? 0.1 : slack));
       if (!t) continue;
       const depth = (t[1] - t[0]) * L;
       if (depth < 0.5) continue;
@@ -165,7 +165,10 @@ export function bestRoute(A: CableEnd, B: CableEnd, streets: number[], zc: numbe
       const route = assemble(ea, eb, c, zc);
       const len = routeLength(route);
       const h = hits(route, others.length ? [...obs, ...others] : obs, [A, B], radius);
-      const score = len + cost * 0.2 + h.length * 300 + h.reduce((s, x) => s + x.depth, 0) * 4;
+      // (its two columns close together: the cable would lie against itself, and no tag ring would go round one leg)
+      const ca = ea.pts[ea.pts.length - 1], cb = eb.pts[eb.pts.length - 1];
+      const close = Math.hypot(ca[0] - cb[0], ca[1] - cb[1]) < 2 * radius + 6 && Math.abs(ca[2] - cb[2]) < 1 ? 300 : 0;
+      const score = len + cost * 0.2 + h.length * 300 + h.reduce((s, x) => s + x.depth, 0) * 4 + close;
       if (!best || score < best.score) best = { route, street: k, hits: h, len, score, ea: ea === sa ? 'slope' : ea, eb: eb === sb ? 'slope' : eb };
     }
   }
@@ -300,15 +303,16 @@ export function spreadCrossings(items: { route: Route; d: number; zc: number }[]
   };
   // the slant that eases a run over to x: the column stays, the run starts a little way along
   const slant = (q: Run, x: number) => [x, q.vc + Math.sign(q.vl - q.vc) * Math.min(Math.abs(q.vl - q.vc) * 0.6, 1.2 * Math.abs(x - q.u) + 6), items[q.n].zc];
+  const STAND_ROOM = 12; // a run keeps this far from a stand piece: the cables that cross it there need room to go over each other
   // where a run may lie: at its height, clear of everything standing there along its stretch of v and along its slant
   const free = (q: Run, x: number) => {
     const zc = items[q.n].zc, s = slant(q, x), from = [q.u, q.vc, zc];
-    return !obs.some((o) => o.box[2] < zc + q.r - 0.2 && o.box[5] > zc - q.r && ((o.box[1] < hi(q) - 1 && o.box[4] > lo(q) + 1 && o.box[0] < x + q.r + 0.3 && o.box[3] > x - q.r - 0.3) || (x !== q.u && segInBox(from, s, o.box, q.r + 0.3))));
+    return !obs.some((o) => o.box[2] < zc + q.r - 0.2 && o.box[5] > zc - q.r && ((o.box[1] < hi(q) - 1 && o.box[4] > lo(q) + 1 && o.box[0] < x + q.r + (o.stand ? STAND_ROOM : 0.3) && o.box[3] > x - q.r - (o.stand ? STAND_ROOM : 0.3)) || (x !== q.u && segInBox(from, s, o.box, q.r + 0.3))));
   };
   const STEP = 0.5, REACH = 60;
   let moved = true;
   for (let pass = 0; pass < 3 && moved; pass++) for (const g of (moved = false, clusters()).values()) {
-    if (g.length < 2) continue;
+    if (g.length < 2 && free(runs[g[0]], runs[g[0]].x)) continue; // (a run on its own moves only if it lies in a stand block)
     const rs = g.map((k) => runs[k]).sort((p, q) => p.x - q.x || lo(p) - lo(q));
     // least total move with every neighbour a pitch apart, over the positions where the cable can lie
     const cand = rs.map((q) => { const c: number[] = []; for (let s = -REACH; s <= REACH; s += STEP) if (free(q, q.u + s)) c.push(q.u + s); return c; });

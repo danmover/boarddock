@@ -734,7 +734,7 @@ export function generatePanel(p: Project): GenResult {
       obs.push({ box: uvBox(b), label: labelOf(g.tag, g.name), module: g.tag?.module, plug: g.tag?.kind === 'plug' ? `${g.tag.module}/${g.tag.refs?.[0]}` : undefined, solid: g.tag?.kind === 'rail', src: { mesh: g.mesh, T: I4 } });
     }
     const pre = stands ? planStands(standRails, streets, []) : null;
-    if (pre) for (const sb of standBoxes(pre)) obs.push({ ...sb, stand: true });
+    if (pre) for (const sb of standBoxes(pre)) obs.push({ ...sb, stand: true, solid: true });
     const stations = pre?.stations ?? [];
     // each board's own envelope, to step clear of it
     const ownBox = new Map<string, number[]>();
@@ -870,7 +870,7 @@ export function generatePanel(p: Project): GenResult {
       if (!stands) return;
       const full = planStands(standRails, streets, lanes);
       for (let i = obs.length - 1; i >= 0; i--) if (obs[i].stand) obs.splice(i, 1);
-      for (const sb of standBoxes(full)) obs.push({ ...sb, stand: true });
+      for (const sb of standBoxes(full)) obs.push({ ...sb, stand: true, solid: true });
     };
     routeCables();
     orderLanes();
@@ -1003,8 +1003,9 @@ export function generatePanel(p: Project): GenResult {
       if (probe && ribbon != null && len > ribbon) warnings.push(`The ${probe.board.name} ribbon is ${ribbon} mm but has to run about ${Math.round(len)} mm to ${purpose.to === probe.board.name ? purpose.from : purpose.to}. Use a longer ribbon (set its length in Plugs, by the header), or put its column closer: in the back slot of that board's dock (Rails).`);
       // jumper wires past the usual 30 cm ones: the adapter is too far from its header
       if (kind === 'jumper' && len > 300) warnings.push(`The jumper wires from ${purpose.from} to ${purpose.to} have to run about ${Math.round(len)} mm, longer than the usual 30 cm ones. Put the adapter closer: in the back slot of that board's dock (drag it there in the Rails step).`);
-      // numbered tags, a hand-width from each plug: ring round the cable, flag standing up
-      if (P.cableTags !== false) {
+      // numbered tags, a hand-width from each plug: ring round the cable, flag standing up (a flat ribbon is too wide to
+      // snap a ring round: it has none)
+      if (P.cableTags !== false && !flat(l)) {
         // (round the whole bundle of jumper wires, side by side 1.5 mm apart: one wire's size put the ring through the
         // outer two)
         const td = kind === 'jumper' ? Math.max(d, (Math.max(1, l.wires?.length ?? 1) - 1) * 1.5 + 1.6) : d;
@@ -1059,6 +1060,7 @@ export function generatePanel(p: Project): GenResult {
             if (s < lo || s > hi) continue;
             for (let f = 0; f < 4; f++) { const n = blockedAt(s, f); if (n === 0) return { s, f }; if (n < best.n) best = { s, f, n }; }
           }
+          if ((globalThis as any).__dbgOn) ((globalThis as any).__tagLog ??= []).push(`tag ${no} ${l.kind ?? 'usb'} ${l.id.slice(-4)} len=${len.toFixed(0)} d=${d} s0=${s0.toFixed(0)} range ${lo.toFixed(0)}..${hi.toFixed(0)} blocked=${best.n}`);
           return best;
         };
         const spot = ({ s, f }: { s: number; f: number }) => {
@@ -1066,8 +1068,17 @@ export function generatePanel(p: Project): GenResult {
           for (const q of tagShape(o, t, x, y)) addTagPt(q);
           return basis(x, y, t, [o[0] - t[0] * 1.5, o[1] - t[1] * 1.5, o[2] - t[2] * 1.5]);
         };
+        // (target, from, to): mm along the cable from its first end
         const s1 = Math.min(90, len * 0.3), lo = Math.min(s1, lead(d / 2) + 12);
-        const T1 = spot(place(s1, lo, len / 2)), T2 = spot(place(len - s1, len / 2, len - lo));
+        let pa: [number, number, number] = [s1, lo, len / 2], pb: [number, number, number] = [len - s1, len / 2, len - lo];
+        if (kind === 'uart' && (EA.wires || EB.wires)) {
+          // a serial cable splits into loose wires a hand-width from its header (see above): both tags go on the round lead
+          const split = Math.max(len * 0.5, len - 110), u0 = Math.min(90, split * 0.3), uLo = Math.min(u0, lead(d / 2) + 12), uMid = split / 2, uHi = Math.max(uMid, split - 8);
+          const usb: [number, number, number] = EA.wires ? [len - u0, len - uMid, len - uLo] : [u0, uLo, uMid];
+          const hdr: [number, number, number] = EA.wires ? [len - split + 12, len - uHi, len - uMid] : [split - 12, uMid, uHi];
+          [pa, pb] = EA.wires ? [hdr, usb] : [usb, hdr];
+        }
+        const T1 = spot(place(...pa)), T2 = spot(place(...pb));
         parts.push({ id: `ctag_${no}`, name: `Cable tag ${no}`, qty: 2, mesh: tm.mesh, toAssembly: T1, instances: [T2], volume: tm.volume, size: tm.size, color: '#f4f1e8',
           tag: { kind: 'cabletag', refs: [l.id] }, tags: [{ kind: 'cabletag', refs: [l.id] }], anim: { seq: TAG_SEQ, dir: [T1[0], T1[1], T1[2]] as [number, number, number], dist: 25 }, anims: [{ seq: TAG_SEQ, dir: [T2[0], T2[1], T2[2]] as [number, number, number], dist: 25 }] });
       }
@@ -1246,7 +1257,7 @@ export function generatePanel(p: Project): GenResult {
   const packs = p.modules.filter((m) => isPlugPack(m.board) && (p.links ?? []).some((l) => l.a.module === m.id || l.b.module === m.id)).map((m) => packGoes(p, m));
   if (ghosts.some((g) => g.tag?.kind === 'plug' && g.anim?.seq === PLUG_SEQ)) steps.push({ seq: PLUG_SEQ, text: `Plug in the cables that leave the rack (supplies, screens, your computer).${packs.length ? ` Push each plug pack into its outlet and its lead into its board: ${packs.join('; ')}.` : ''} Nothing goes into the wall yet.` });
   if (parts.some((x) => x.tag?.kind === 'cap')) steps.push({ seq: CAP_SEQ, text: 'Snap the caps over the plugs to lock them in.' });
-  if (parts.some((x) => x.tag?.kind === 'cabletag')) steps.push({ seq: TAG_SEQ, text: 'Snap a numbered tag round each end of every cable, a hand-width from the plug: the numbers match the Wiring view and the shopping list.' });
+  if (parts.some((x) => x.tag?.kind === 'cabletag')) steps.push({ seq: TAG_SEQ, text: 'Snap a numbered tag round each end of every round cable, a hand-width from the plug (a flat ribbon takes none): the numbers match the Wiring view and the shopping list.' });
   // the wall, last of all: every terminal checked and every switch off first
   const wall = ghosts.filter((g) => g.tag?.kind === 'plug' && g.anim?.seq === WALL_SEQ).map((g) => mods.get(g.tag!.module!)?.m).filter((m, i, a) => m && a.indexOf(m) === i) as Module[];
   if (wall.length || cables.some((c) => c.kind === 'mains')) {
