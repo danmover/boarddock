@@ -10,7 +10,7 @@ import { baseRef, isAccessory } from '../model/links';
 import { isPlugPack } from '../model/powerdata';
 import { isProbe } from '../model/probes';
 import { bestDock, columnSeat, seatCompanion, TURNS, withRiders } from './dockplan';
-import { flatGeo, seatGeo, weightsFor, type SeatGeo } from './autoplan';
+import { flatGeo, LEG, LEG0, seatGeo, STREET, weightsFor, type SeatGeo } from './autoplan';
 
 type LocksLike = { all?: boolean; docks?: string[]; rails?: string[] };
 
@@ -51,7 +51,6 @@ export function packNew(p: Project, rep: PanelReport | null): Packed[] {
   const at = new Map<string, [number, number]>(); // "module/ref" -> plug
   const atz = new Map<string, number>(); // and how high each is
   for (const [k, q] of Object.entries(rep?.plugs ?? {})) { at.set(k, uv(q)); atz.set(k, q[2]); }
-  const zc = P.stands !== false ? -5 : 11; // (the streets run under the rails on table stands, else just over their lips)
   const boxes = new Map<string, [number, number, number, number]>(); // footprints by mount: u0, v0, u1, v1
   for (const m of rep?.mounts ?? []) {
     const f = m.foot, [a, b] = uv([f[0], f[1]]), [c, d] = uv([f[2], f[3]]);
@@ -81,7 +80,7 @@ export function packNew(p: Project, rep: PanelReport | null): Packed[] {
       let best = Infinity, bs = 0;
       for (const s of streets) { const c = Math.abs(a[1] - s) + Math.abs(o[1] - s); if (c < best) { best = c; bs = s; } }
       const oz = atz.get(`${other.module}/${baseRef(other.ref)}`) ?? 40;
-      const len = Math.abs(a[0] - o[0]) + (streets.length ? best : Math.abs(a[1] - o[1])) + ((q.z ?? 40) - zc) + (oz - zc);
+      const len = Math.abs(a[0] - o[0]) + STREET * (streets.length ? best : Math.abs(a[1] - o[1])) + LEG * ((q.z ?? 40) + oz) + LEG0;
       sum += len;
       for (const y of railV) if ((y > Math.min(a[1], bs) + 5 && y < Math.max(a[1], bs) - 5 && Math.abs(y - origin[1]) > 1) || (y > Math.min(o[1], bs) + 5 && y < Math.max(o[1], bs) - 5 && Math.abs(y - o[1]) > 60)) under++;
       segs.push([a, o]);

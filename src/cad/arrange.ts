@@ -1,14 +1,18 @@
 // Auto-arrange confirmed by the real router. The planner (autoplan.ts) scores layouts with a cheap stand-in for the
 // cables; this builds its best layout for real and, when the build has trouble (a cable running into a dock, docks
-// overlapping, a plug blocked, a failing Check), plans again keeping the boards whose cable ran into something apart,
-// and once more; failing that, the classic order. The build with least trouble wins. `deep` (a click on Auto-arrange):
-// also build the planner's second candidate and keep the cheapest of the real ones, cables and all. What was chosen is
-// remembered for the same rack, so an edit that doesn't change the layout doesn't build again.
+// overlapping, a plug blocked, a failing Check) or its cables lie inside something (measured exactly, overlap.ts: the
+// router lets a cable brush a box), tries the planner's next best, plans again keeping the boards whose cable ran into
+// something apart, and last builds the classic order. The build with least trouble, then least overlap, wins. `deep` (a
+// click on Auto-arrange): builds them all and takes the cheapest of the real ones, cables and all. What was chosen is
+// remembered for the same rack, so an edit that doesn't change the layout doesn't build (or measure) again.
 import type { ArrangeOpts, GenResult, Project } from '../model/types';
 import { baseRef } from '../model/links';
 import { generatePanel } from './panelgen';
+import { cableOverlap } from './overlap';
 
-export interface Trial { how: Choice; result: GenResult; trouble: number; cost: number }
+export interface Trial { how: Choice; result: GenResult; trouble: number; overlap: number; cost: number }
+/** Cables may lie this far inside things (mm³ in all) before another layout is tried: a brush of the router's own tolerance. */
+export const OVERLAP_OK = 1;
 type Choice = { plan: 'classic' } | { pick: number; avoid: string[] };
 
 /** What is wrong with a build: cables touching things, docks overlapping, plugs in use that are blocked, failing Checks. */
@@ -47,28 +51,31 @@ export function generateChecked(p: Project, deep = false): GenResult {
   const o = p.panel.opts;
   if (!p.panel.auto || o?.plan === 'classic' || o?.pick != null) return generatePanel(p);
   const sig = signature(p), known = chosen.get(sig);
-  const build = (how: Choice): Trial => {
+  const build = (how: Choice, measured = true): Trial => {
     const result = generatePanel('plan' in how ? withOpts(p, { plan: 'classic' }) : withOpts(p, { pick: how.pick, ...(how.avoid.length ? { avoid: how.avoid } : {}) }));
-    return { how, result, trouble: troubleOf(p, result), cost: realCost(result) };
+    const trouble = troubleOf(p, result);
+    return { how, result, trouble, overlap: measured ? cableOverlap(p, result) : 0, cost: realCost(result) };
   };
-  if (known && !deep) return build(known).result;
+  if (known && !deep) return build(known, false).result;
   const trials: Trial[] = [];
   const add = (how: Choice) => { const t = build(how); trials.push(t); return t; };
-  // the planner's best; when that has trouble its next best; then the best again with the boards whose cable ran into
-  // something kept apart (twice over); and last the classic order
+  const clean = (t: Trial) => t.trouble === 0 && t.overlap <= OVERLAP_OK;
+  // the planner's best; when that has trouble or cables inside things, its next best; then the best again with the boards
+  // whose cable ran into something kept apart (twice over); and last the classic order
   let avoid: string[] = [];
-  const first = add({ pick: 0, avoid });
-  let clear = first.trouble === 0;
-  if (!clear) clear = add({ pick: 1, avoid }).trouble === 0;
-  for (let round = 0; !clear && round < 2; round++) {
+  let ok = clean(add({ pick: 0, avoid }));
+  if (!ok) ok = clean(add({ pick: 1, avoid }));
+  for (let round = 0; !ok && round < 2; round++) {
     avoid = [...new Set([...avoid, ...trials.flatMap((t) => clashing(t.result))])];
     if (!avoid.length) break;
-    clear = add({ pick: 0, avoid }).trouble === 0;
+    ok = clean(add({ pick: 0, avoid }));
   }
-  if (deep && clear && trials.length === 1) add({ pick: 1, avoid });
-  if (!clear || deep) add({ plan: 'classic' });
-  // (least trouble; then, when asked, the real cost; then the planner's own order)
-  const best = trials.map((t, i) => ({ t, i })).sort((a, b) => a.t.trouble - b.t.trouble || (deep ? a.t.cost - b.t.cost : 0) || a.i - b.i)[0].t;
+  if (deep && trials.length === 1) add({ pick: 1, avoid });
+  if (!ok || deep) add({ plan: 'classic' });
+  // (least trouble, then least overlap, then, when asked, the real cost; the planner's own order when about equal)
+  const key = (t: Trial) => t.trouble * 1000 + t.overlap;
+  let best = trials[0];
+  for (const t of trials.slice(1)) if (key(t) < key(best) - 0.5 || (deep && Math.abs(key(t) - key(best)) <= 0.5 && t.cost < best.cost)) best = t;
   chosen.set(sig, best.how);
   if (chosen.size > 24) chosen.delete(chosen.keys().next().value!);
   return best.result;
