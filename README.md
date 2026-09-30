@@ -11,7 +11,7 @@ BoardDock turns a PCB design, or a few measurements, into 3D-printable holders:
 - The 3D view walks you through the assembly one step at a time, in the order you would really do it.
 - Come back later to add a board: the rest of the rack stays where it is, and Export gives you only the new parts, cables and rails.
 
-Everything is checked with FEA and packed onto as few print plates as possible. **None of it has been printed and tried yet:** print the test-fit kit first (30 to 40 minutes), and read [Honest limits](#honest-limits).
+Everything is checked with FEA and packed onto as few print plates as possible. **Only one rack has been printed so far** (from 3.0.0: the DIN rail clip worked; the release button, the snap pins, the socket latch and the tongue stoppers didn't, and 3.1.0 redesigns them, not yet reprinted). Print the test-fit kit first (30 to 40 minutes), and read [Honest limits](#honest-limits).
 
 ![A panel of boards on a DIN rail](docs/images/hero.png)
 
@@ -31,14 +31,14 @@ Everything is checked with FEA and packed onto as few print plates as possible. 
 
 | | |
 |---|---|
-| **Desktop app** | [Releases](https://github.com/danmover/boarddock/releases): Windows `BoardDock-3.0.0-win-x64-setup.exe` (installer) or `…-portable.exe` (no install), macOS `BoardDock-3.0.0-mac-….dmg`, Linux `BoardDock-3.0.0-linux-x86_64.AppImage` or `.deb` |
+| **Desktop app** | [Releases](https://github.com/danmover/boarddock/releases): Windows `BoardDock-3.1.0-win-x64-setup.exe` (installer) or `…-portable.exe` (no install), macOS (Apple Silicon) `BoardDock-3.1.0-mac-arm64.dmg`, Linux `BoardDock-3.1.0-linux-x86_64.AppImage` or `.deb` |
 | **Web app** | [danmover.github.io/boarddock](https://danmover.github.io/boarddock) (nothing is uploaded; all processing runs in your browser) |
 | **From source** | `npm install` then `npm run dev` (see [Development](#development)) |
 
 Installing the desktop app:
 - **Windows:** run the `…-setup.exe` (it lets you pick the folder), or the `…-portable.exe` with no install.
 - **macOS:** open the `.dmg` and drag BoardDock into Applications.
-- **Linux:** `chmod +x` the `.AppImage` and run it, or install the `.deb` with `sudo apt install ./BoardDock-3.0.0-linux-….deb`.
+- **Linux:** `chmod +x` the `.AppImage` and run it, or install the `.deb` with `sudo apt install ./BoardDock-3.1.0-linux-….deb`.
 
 The desktop builds are not code-signed yet:
 - On **macOS**, right-click the app and choose **Open** the first time.
@@ -659,7 +659,7 @@ PETG results (E = 2100 MPa, strain limit 2%):
 
 ## Honest limits
 
-- **Nothing BoardDock makes has been printed and tried yet.** Fits, snap forces, creep and fatigue all depend on your printer and filament. Least tested: the peg fit, the crush ribs, the long release rod through a column, the slot for a board nothing clips in, and the tongue under a tall column.
+- **One rack has been printed so far, from 3.0.0.** The DIN rail clip worked; the release button's tunnel was too tight, the snap pins broke, the socket latch let go too easily and the tongue stoppers snapped. 3.1.0 redesigns all four, but nothing from 3.1.0 has been reprinted. Fits, snap forces, creep and fatigue all depend on your printer and filament. Least tested: the peg fit, the crush ribs, the long release rod through a column, the slot for a board nothing clips in, and the tongue under a tall column.
 - The FEA is linear, 2D and idealised. It has no contact, friction or print anisotropy, and its peaks sit at pixel-mesh corners. Treat it as a comparison between designs, not a guarantee. The spring clips' numbers are beam sums with a textbook modulus: the feel of the click, how firmly a board is held, whether a lip's 0.9 mm ledge droops, and how the anti-rattle springs' push creeps over years in a warm cabinet are for a print to tell.
 - Template boards come from the manufacturers' drawings; check yours. Imported part heights are only as good as the source (IDF and STEP are best).
 - Some connector sizes are still typical ones, with no public datasheet drawing to check them against: M.2 sockets, PCIe slot depth, full-size DIMM, M12, RCA, DisplayPort, mini HDMI and Qwiic, and every connector's plug.
