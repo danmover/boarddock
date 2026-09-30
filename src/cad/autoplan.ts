@@ -150,7 +150,7 @@ export function weightsFor(o: ArrangeOpts = {}): Weights {
   Object.assign(w, GOALS[o.goal ?? 'balanced']);
   if (o.mains === 'off') w.mains = 0;
   if (o.group) w.group = 250;
-  if (o.heat) { w.heat = 1.5; w.heatRow = 60; }
+  if (o.heat) { w.heat = 5; w.heatRow = 200; }
   if (o.hosts === false) w.host = 1;
   if (o.stock) w.stock = 0.25;
   if (o.fewParts) { w.dock *= 6; w.row *= 3; }
@@ -242,15 +242,15 @@ class Model {
       if (!this.EP[a] || !this.EP[b]) continue;
       const du = Math.abs(this.EU[a] - this.EU[b]), va = this.EV[a], vb = this.EV[b];
       let len: number, under = 0;
-      if (this.lnear[l]) len = Math.hypot(du, va - vb) + 25;
+      // (a ribbon or jumper wires go over the docks, round the body of the dock they leave: about 85 per cent of the way there by the three axes and a hand's width more, and much more once another dock is between; measured on real builds)
+      if (this.lnear[l]) { const m = du + Math.abs(va - vb) + Math.abs(this.EZ[a] - this.EZ[b]); len = 105 + 0.85 * Math.min(m, 100) + 1.5 * Math.max(0, m - 100); }
       else {
         let best = Infinity, bs = 0, bi = 0;
         streets.forEach((st, i) => { const c = Math.abs(va - st) + Math.abs(vb - st); if (c < best) { best = c; bs = st; bi = i; } });
         // (down from each plug to the street under the rails, and up again)
         len = du + best + (this.EZ[a] - zc) + (this.EZ[b] - zc);
-        let street = true;
-        if (this.ER[a] === this.ER[b]) { const direct = Math.hypot(du, va - vb, this.EZ[a] - this.EZ[b]) + 30; if (direct < len) { len = direct; street = false; } }
-        if (street) {
+        // (every cable goes by a street, a cable between two plugs on one rail too: measured on real builds, 26 mm out on average, none out by a bias)
+        {
           load[bi]++;
           for (let r = 0; r < rows; r++) {
             if (r === this.ER[a] || r === this.ER[b]) continue;
@@ -260,7 +260,7 @@ class Model {
         }
       }
       // a plug pointing away from where its cable goes has to loop back
-      for (const [x, y] of [[a, b], [b, a]]) {
+      for (const [x, y] of this.lnear[l] ? [] : [[a, b], [b, a]]) {
         const dx = this.EDU[x], dy = this.EDV[x], dl = Math.hypot(dx, dy);
         if (dl < 0.5) continue;
         const tx = this.EU[y] - this.EU[x], ty = this.EV[y] - this.EV[x], dot = (dx * tx + dy * ty) / (dl * (Math.hypot(tx, ty) || 1));
@@ -269,7 +269,9 @@ class Model {
       sum += this.lw[l] * len; longest = Math.max(longest, len);
       if (detail) detail.lens[l] = len;
       cost += W.under * under;
-      if (len > this.lstock[l]) cost += 150 + (len - this.lstock[l]);
+      // (a ribbon or jumper wires that reach no further than they come: their length is not ours to choose, so leave a margin for what the estimate misses)
+      if (this.lnear[l]) { if (len > 0.9 * this.lstock[l]) cost += 500 + 5 * (len - 0.9 * this.lstock[l]); }
+      else if (len > this.lstock[l]) cost += 150 + (len - this.lstock[l]);
       if (W.stock) cost += W.stock * cableToBuy(len * 1.05) * 1000;
     }
     cost += W.cable * sum + W.long * longest;
@@ -575,9 +577,9 @@ function move(s: State, m: Model, rnd: () => number): State | null {
     const d = cand[pick(cand.length)];
     let o = pick(m.defs[d].opts.length - 1); if (o >= t.sel[d]) o++;
     t.sel[d] = o;
-  } else if (r < 0.94) {
+  } else if (r < 0.92) {
     const i = pick(nU); t.brk[i] = !t.brk[i];
-  } else if (r < 0.97 && m.pairsOf.size) {
+  } else if (r < 0.98 && m.pairsOf.size) {
     // two boards share a dock back to back, or a pair comes apart (the second board's dock right after the first's)
     const pairs = t.units.map((u, k) => (u.length === 1 && m.defs[u[0]].members ? k : -1)).filter((k) => k >= 0);
     if (pairs.length && rnd() < 0.5) {
@@ -615,6 +617,26 @@ function anneal(m: Model, start: State, iters: number, rnd: () => number): { bes
   return { best, cost: bc };
 }
 
+/** Every layout one pairing away: two single docks made a pair (at the place of either), or a pair taken apart. */
+function pairings(m: Model, s: State): State[] {
+  const out: State[] = [];
+  s.units.forEach((u, k) => {
+    if (u.length !== 1) return;
+    const d = u[0], mem = m.defs[d].members;
+    if (mem) { const t = clone(s); t.units.splice(k, 1, [mem[0]], [mem[1]]); t.brk.splice(k + 1, 0, false); out.push(t); return; }
+    for (const pd of m.pairsOf.get(d) ?? []) {
+      const [x, y] = m.defs[pd].members!, o = x === d ? y : x, j = s.units.findIndex((v) => v.length === 1 && v[0] === o);
+      if (j < 0 || j < k) continue; // (once for each two)
+      for (const at of [k, j]) {
+        const t = clone(s);
+        t.units[at] = [pd]; t.units.splice(at === k ? j : k, 1); t.brk.splice(at === k ? j : k, 1);
+        out.push(t);
+      }
+    }
+  });
+  return out;
+}
+
 /** Improve by single moves until none helps (a few passes). */
 function polish(m: Model, s: State): { best: State; cost: number } {
   let best = s, bc = m.evaluate(s);
@@ -629,6 +651,8 @@ function polish(m: Model, s: State): { best: State; cost: number } {
     }
     m.defs.forEach((d, k) => d.opts.forEach((_, o) => { if (o !== best.sel[k]) { const t = clone(best); t.sel[k] = o; if (tryIt(t)) improved = true; } }));
     for (let i = 0; i < best.brk.length; i++) { const t = clone(best); t.brk[i] = !t.brk[i]; if (tryIt(t)) improved = true; }
+    // two boards in one dock back to back, or a pair taken apart
+    for (const t of pairings(m, best)) if (tryIt(t)) { improved = true; break; }
     if (!improved) break;
   }
   return { best, cost: bc };

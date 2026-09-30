@@ -24,7 +24,7 @@ export function lockSets(p: Project): { docks: Set<string>; rails: Set<string> }
 
 export interface Packed { module: string; where: 'slot' | 'gap' | 'end' | 'rail' | 'beside'; mount: string; rail: string | null }
 
-const MARGIN = 8, PAD = 10, PAD_SLOT = 0; // (PAD: room kept round a new dock beyond what is worked out for it: the real holders are a little bulkier)
+const MARGIN = 8, PAD = 10, PAD_SLOT = 0, GROW = 8; // (PAD: room kept round a new dock beyond what is worked out for it: the real holders are a little bulkier)
 
 /**
  * Place every board that is on no rail. `rep`: the last build's layout, to know where everything is (without it a board
@@ -51,9 +51,6 @@ export function packNew(p: Project, rep: PanelReport | null): Packed[] {
   const at = new Map<string, [number, number]>(); // "module/ref" -> plug
   const atz = new Map<string, number>(); // and how high each is
   for (const [k, q] of Object.entries(rep?.plugs ?? {})) { at.set(k, uv(q)); atz.set(k, q[2]); }
-  // which rail (its across coordinate) every board is on: a cable between boards on one rail goes straight, not by a street
-  const rowOf = new Map<string, number>();
-  for (const x of rep?.modules ?? []) { const mt = rep!.mounts.find((q) => q.id === x.mount), r = mt && rails.find((q) => q.id === mt.rail); if (r) rowOf.set(x.id, acrossOf(r)); }
   const zc = P.stands !== false ? -5 : 11; // (the streets run under the rails on table stands, else just over their lips)
   const boxes = new Map<string, [number, number, number, number]>(); // footprints by mount: u0, v0, u1, v1
   for (const m of rep?.mounts ?? []) {
@@ -84,8 +81,7 @@ export function packNew(p: Project, rep: PanelReport | null): Packed[] {
       let best = Infinity, bs = 0;
       for (const s of streets) { const c = Math.abs(a[1] - s) + Math.abs(o[1] - s); if (c < best) { best = c; bs = s; } }
       const oz = atz.get(`${other.module}/${baseRef(other.ref)}`) ?? 40;
-      let len = Math.abs(a[0] - o[0]) + (streets.length ? best : Math.abs(a[1] - o[1])) + ((q.z ?? 40) - zc) + (oz - zc);
-      if (Math.abs((rowOf.get(other.module) ?? 1e9) - origin[1]) < 1) len = Math.min(len, Math.hypot(a[0] - o[0], a[1] - o[1], (q.z ?? 40) - oz) + 30);
+      const len = Math.abs(a[0] - o[0]) + (streets.length ? best : Math.abs(a[1] - o[1])) + ((q.z ?? 40) - zc) + (oz - zc);
       sum += len;
       for (const y of railV) if ((y > Math.min(a[1], bs) + 5 && y < Math.max(a[1], bs) - 5 && Math.abs(y - origin[1]) > 1) || (y > Math.min(o[1], bs) + 5 && y < Math.max(o[1], bs) - 5 && Math.abs(y - o[1]) > 60)) under++;
       segs.push([a, o]);
@@ -109,7 +105,8 @@ export function packNew(p: Project, rep: PanelReport | null): Packed[] {
     }
     return W.cable * sum + W.cross * cross + W.under * under + W.access * loss + W.rail * extra + 170 * blocked;
   };
-  const free = (r: [number, number, number, number], skip = '') => ![...boxes].some(([id, b]) => id !== skip && r[0] < b[2] - 0.3 && b[0] < r[2] - 0.3 && r[1] < b[3] - 0.3 && b[1] < r[3] - 0.3);
+  // (`tol`: how far into another box it may reach: what the work-out of a board's space may be out by)
+  const free = (r: [number, number, number, number], skip = '', tol = 0.3) => ![...boxes].some(([id, b]) => id !== skip && r[0] < b[2] - tol && b[0] < r[2] - tol && r[1] < b[3] - tol && b[1] < r[3] - tol);
   const STAND_END = 20; // (the table stand's end block: nothing within this of a rail's end)
   const end0 = P.stands !== false ? STAND_END : MARGIN;
 
@@ -120,7 +117,7 @@ export function packNew(p: Project, rep: PanelReport | null): Packed[] {
     const isBox = m.board.kind === 'box';
     type Cand = { c: number; make: () => Undoable };
     let best: Cand | null = null;
-    const offer = (c: number, make: () => Undoable, why = '') => { (globalThis as { __pk?: string[] }).__pk?.push(`${m.board.name} ${why} ${c.toFixed(0)}`); if (!best || c < best.c - 1e-9) best = { c, make }; };
+    const offer = (c: number, make: () => Undoable) => { if (!best || c < best.c - 1e-9) best = { c, make }; };
     const merged = withRiders(p, m);
     // a box lies flat on a clip, as in an automatic layout; a board stands in a dock
     const ways = (r: Rail, k: number, turns: readonly Turn[] = TURNS) => turns.map((t) => (isBox
@@ -141,16 +138,18 @@ export function packNew(p: Project, rep: PanelReport | null): Packed[] {
         const ext = seatGeo(p, m, k, w.edge as 'top', w.t, undefined, railDir(r), undefined, false).ext;
         // (it may stand out past the dock's own footprint: not into a neighbour)
         const me: [number, number, number, number] = [origin[0] + ext[0] - PAD_SLOT, origin[1] + ext[2], origin[0] + ext[1] + PAD_SLOT, origin[1] + ext[3]];
-        if (!free(me, mt.id)) continue;
+        if (!free(me, mt.id, 6)) continue;
         offer(cost(m, w.g, origin, w.loss, 0, mt.id) - 40, () => {
           const was = { slot: mt.slots[k], box: boxes.get(mt.id), info: { ...rm } };
           mt.slots[k] = { module: m.id, edge: 'auto' };
           guess.set(m.id, w.edge);
           // (the dock takes as much room as the two boards)
-          if (was.box) boxes.set(mt.id, [Math.min(was.box[0], me[0]), Math.min(was.box[1], me[1]), Math.max(was.box[2], me[2]), Math.max(was.box[3], me[3])]);
-          rm.a0 = Math.min(rm.a0, me[0]); rm.a1 = Math.max(rm.a1, me[2]);
+          // (with room to spare on each side: the second board's own space is only worked out, and the dock is not to grow into what comes next)
+          const grown: [number, number, number, number] = [me[0] - GROW, me[1] - GROW, me[2] + GROW, me[3] + GROW];
+          if (was.box) boxes.set(mt.id, [Math.min(was.box[0], grown[0]), Math.min(was.box[1], grown[1]), Math.max(was.box[2], grown[2]), Math.max(was.box[3], grown[3])]);
+          rm.a0 = Math.min(rm.a0, grown[0]); rm.a1 = Math.max(rm.a1, grown[2]);
           return { module: m.id, where: 'slot', mount: mt.id, rail: mt.rail, undo: () => { mt.slots[k] = was.slot; if (was.box) boxes.set(mt.id, was.box); Object.assign(rm, was.info); } };
-        }, `slot ${mt.id} t${w.t}`);
+        });
       }
     }
     // 2. a dock of its own in a gap on a rail, on the end of one, or on a rail of its own
@@ -180,7 +179,7 @@ export function packNew(p: Project, rep: PanelReport | null): Packed[] {
             boxes.set(mt.id, me);
             info.set(mt.id, { rail: r.id, at: atPos, a0: origin[0] + u0, a1: origin[0] + u1 });
             return { module: m.id, where, mount: mt.id, rail: r.id, undo: () => { P.mounts.splice(P.mounts.indexOf(mt), 1); boxes.delete(mt.id); info.delete(mt.id); r.length = was; } };
-          }, `${r.id}@${atPos.toFixed(0)} t${w.t} loss${w.loss.toFixed(1)}`);
+          });
         }
       }
     }
@@ -210,7 +209,6 @@ export function packNew(p: Project, rep: PanelReport | null): Packed[] {
     if (mt.kind !== 'flat' && (edge as string) === 'auto') return [];
     const g = mt.kind === 'flat' ? flatGeo(m, mt.turn) : seatGeo(p, m, k, edge, mt.turn, mt.slots[k].lie, r.dir);
     for (const [key, q] of g.plugs) { at.set(key, [alongOf(r) + mt.at + q.u, acrossOf(r) + q.v]); atz.set(key, q.z ?? 40); }
-    rowOf.set(m.id, acrossOf(r));
     return [...g.plugs.keys()];
   };
   const done = new Map<string, { res: Undoable; keys: string[] }>();
