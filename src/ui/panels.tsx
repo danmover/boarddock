@@ -1020,7 +1020,7 @@ function HolderFeatures() {
           </Row>
           <div className="featsub">
             {hold !== 'pins' && <div className="featrow"><div className="featrow-l"><b>Clip strength</b><small>{clipsC && nClips ? `${clipsC.value}; ${check(/^Press-in force$/)?.value ?? ''} to press in` : '…'}</small></div><div className="featrow-r"><Seg value={H.grip ?? 'firm'} options={[['firm', 'Firm'], ['gentle', 'Gentle']]} onChange={(v) => set((h) => { h.grip = v; })} /></div></div>}
-            <p className="hint">Spring clips stand up round the board's edges and bend sideways, within the print layers; once the board is in they carry no load. Snap pins grip it by its mounting holes. Auto uses clips where two fit facing each other, snap pins where they don't.</p>
+            <p className="hint">Spring clips stand up round the board's edges and bend sideways, within the print layers; once the board is in they carry no load. Snap pins grip it by its mounting holes. Auto puts clips on the board's edges, as many and as long as its size and weight ask (a hairpin where a stretch of edge is short), and uses snap pins only where the edges leave no room for clips that keep it from tipping out.</p>
           </div>
           {!frame && <Row title="Finger notches" status={st(H.notches, count('notch'), 'notch', 'no free wall')}>{toggle(H.notches, (v) => set((h) => { h.notches = v; }))}</Row>}
           <Row title="Engraved label" status={!res || building ? '…' : !H.label.trim() ? 'off' : lab ? lab.value : '…'} why={lab && lab.value === 'left off' ? lab.detail : lab?.detail?.includes('did not fit') ? 'the full name did not fit' : undefined}>

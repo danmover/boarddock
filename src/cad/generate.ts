@@ -9,7 +9,7 @@ import { baseRef, isBox } from '../model/links';
 import { DEFAULT_FEATURES, MATERIALS } from '../model/library';
 import { holderParts } from '../model/cards';
 import { usedRefs } from '../model/portuse';
-import { bbox, centroid, compRect, extentAlong, inside, rad, rayExit, round, segDist } from '../geom/poly';
+import { area, bbox, centroid, compRect, extentAlong, inside, rad, rayExit, round, segDist } from '../geom/poly';
 import type { CS, MF } from './kernel';
 import { box, circle2, csLoops, cyl, ext, extCh, freeAll, K, orientedBox, poly, rect2, roundCS, sweepTZ, toMesh, unionCS, unionMF } from './kernel';
 import { buildClip, clipDims, clipSlots, hookOffset4, RAIL, railProfile } from './dinclip';
@@ -21,7 +21,8 @@ import { EAR, TONGUE } from './dockdims';
 import { dockFrame, dockSite, earSite, flatFrame, type DockSite, type EarSite } from './dockplan';
 import { dir as dirM, inv, mul, type M4 } from '../geom/mat';
 import { rectSection, roundSection, solveFrame, type FElem, type FNode } from '../fea/frame3d';
-import { designBow, designClip, FACE, holdOf, leafT, MU, onLayer, RAMP, SLIT, type BowDesign, type ClipDesign, type Leaf } from './grip';
+import { bestClip, boardMass, designBow, FACE, HOLD_SHARE, holdNeed, holdOf, MU, onLayer, pushTarget, RAMP, sizeClip, SLIT, spanFor, tipFor, U_ARMS, U_FREE, foldOf, type BoardLoad, type BowDesign, type ClipSpec, type Leaf } from './grip';
+import { leafPlan } from './leafplan';
 import { progress } from './progress';
 
 const ID = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
@@ -301,7 +302,13 @@ function build(job: Job): ModuleOut {
     const first = clips(C, mode);
     if (first.length > held.length) {
       held = first;
-      label(C); // where it still fits
+      if (!label(C)) {
+        // (clips towards the ends of their edges leave the middle of a wall free for it)
+        reset();
+        held = clips(C, mode, true);
+        if (held.length < 2) { reset(); held = clips(C, mode); }
+        label(C);
+      }
     } else {
       reset();
       label(C);
@@ -422,7 +429,7 @@ function standoffs(C: Ctx, clipsHold: boolean, mode: ReturnType<typeof holdOf>) 
   if (pinCheck) C.checks.push({ ...pinCheck, name: `Snap pins (${snaps}, ${pinCheck.name.slice(11)}` });
   if (!clipsHold && snaps < 2 && !isBox(b) && !C.job.dock?.column?.slot) {
     const holes = b.holes.filter(isMountHole).length;
-    C.warnings.push(`Nothing clips this board in: ${mode === 'pins' ? `${holes ? `only ${snaps} of its holes can take a snap pin` : 'it has no mounting holes for snap pins'}. Set Holder › Hold the board with to Auto or Spring clips` : `${snaps === 1 ? 'one snap pin' : holes ? 'no hole big enough for a snap pin' : 'no mounting holes for snap pins'}${b.holes.some((h) => h.role === 'standoff') ? ' (the others carry the standoffs of the board on top)' : ''} and no free edges for two spring clips facing each other. Free an edge (turn off a plug cradle or the label)${C.job.dock && C.job.dock.lie !== 'flat' ? ', lay it flat in its dock (Layout)' : ''}, or set two holes to "mount" in the hole wizard`}.`);
+    C.warnings.push(`Nothing clips this board in: ${mode === 'pins' ? `${holes ? `only ${snaps} of its holes can take a snap pin` : 'it has no mounting holes for snap pins'}. Set Holder › Hold the board with to Auto or Spring clips` : `${snaps === 1 ? 'one snap pin' : holes ? 'no hole big enough for a snap pin' : 'no mounting holes for snap pins'}${b.holes.some((h) => h.role === 'standoff') ? ' (the others carry the standoffs of the board on top)' : ''} and no free stretches of edge for spring clips that would keep it from tipping out. Free an edge (turn off a plug cradle or the label)${C.job.dock && C.job.dock.lie !== 'flat' ? ', lay it flat in its dock (Layout)' : ''}, or set two holes to "mount" in the hole wizard`}.`);
   }
 }
 
@@ -858,12 +865,12 @@ function reserve(C: Ctx) {
 }
 
 /** A place for a leaf along the board's edge: root at q, running along `dir`, the board on the `nu` side. */
-interface LeafSite { q: V2; dir: V2; nu: V2; p: V2; L: number; pref: number; zone: Loop; edgeIn: number }
+interface LeafSite { q: V2; dir: V2; nu: V2; p: V2; L: number; pref: number; zone: Loop; edgeIn: number; kind: 'straight' | 'u'; out: number; arc: number } // (arc: how far round the outline the lip is)
 
 const ANCHOR = 3; // wall block the leaf grows out of, root to its far end
 
 /** Points round the board outline every `step` mm, anticlockwise, each with its tangent there (over ±2 mm). */
-function perimeter(ol: Loop, step: number): { p: V2; d: V2 }[] {
+function perimeter(ol: Loop, step: number): { p: V2; d: V2; s: number }[] {
   let area = 0;
   for (let i = 0; i < ol.length; i++) { const a = ol[i], b = ol[(i + 1) % ol.length]; area += a[0] * b[1] - b[0] * a[1]; }
   const loop = area < 0 ? [...ol].reverse() : ol;
@@ -886,23 +893,28 @@ function perimeter(ol: Loop, step: number): { p: V2; d: V2 }[] {
   };
   return pts.map((p, i) => {
     const a = at(cum[i] - 2), b = at(cum[i] + 2), L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
-    return { p, d: [(b[0] - a[0]) / L, (b[1] - a[1]) / L] as V2 };
+    return { p, d: [(b[0] - a[0]) / L, (b[1] - a[1]) / L] as V2, s: cum[i] };
   });
 }
 
 /**
  * Every place a leaf of length L fits: straight (or gently curved, convex) edge the whole way, the board's edge right
  * under the lip, the anchor along the edge, and nothing else there (plugs, the dock, the label, parts at the edge).
+ * `kind` sets where the lip stands on the leaf (the far end of a straight one, the near end of a hairpin) and how far out
+ * the leaf reaches; `reach` is how far the lip's ledge goes over the board (parts standing on the board keep clear of
+ * it); `step` the spacing of the places tried; `why` counts the places turned down and why.
  */
-function leafSites(C: Ctx, L: number, lipLen: number, taken: Loop[]): LeafSite[] {
-  const H = C.H, gw = H.gap + H.wall;
-  const ring = perimeter(C.b.outline, 1);
+function leafSites(C: Ctx, L: number, lipLen: number, taken: Loop[], o: { kind?: 'straight' | 'u'; reach?: number; step?: number; why?: Record<string, number> } = {}): LeafSite[] {
+  const H = C.H, gw = H.gap + H.wall, kind = o.kind ?? 'straight', reach = o.reach ?? 0.7;
+  const out = kind === 'u' ? Math.max(gw + 1, H.gap + FACE + U_ARMS + 0.05) : gw + 1;
+  const ring = perimeter(C.b.outline, o.step ?? 1);
   const dense = perimeter(C.b.outline, 0.5).map((x) => x.p);
   const cen = centroid(C.b.outline);
-  const sc = L - 0.3 - lipLen / 2;
-  const tops = holderParts(C.b).filter((cc) => cc.side === 'top' && !cc.hidden && cc.h > 0).map((cc) => compRect(cc, 0.3));
-  const out: LeafSite[] = [];
-  for (const { p, d } of ring) {
+  const sc = kind === 'u' ? U_FREE + 0.3 + lipLen / 2 : L - 0.3 - lipLen / 2;
+  const tops = holderParts(C.b).filter((cc) => cc.side === 'top' && !cc.hidden && cc.h > 0).map((cc) => compRect(cc, 0.1));
+  const no = (k: string) => { if (o.why) o.why[k] = (o.why[k] ?? 0) + 1; };
+  const sites: LeafSite[] = [];
+  for (const { p, d, s: arc } of ring) {
     const nu: V2 = [-d[1], d[0]]; // into the board
     for (const dir of [d, [-d[0], -d[1]] as V2]) {
       const q = add(p, dir, -sc);
@@ -918,14 +930,21 @@ function leafSites(C: Ctx, L: number, lipLen: number, taken: Loop[]): LeafSite[]
         if (Math.abs(s) < 0.8) near[1] = Math.min(near[1], t);
       }
       // the lip reaches over the board edge, and the anchor stands by it
-      if (!ok || lip > 0.25 || near[0] > 4 || near[1] > 4) continue; // (on a curved edge the anchor's foot reaches in to the rim)
+      if (!ok) { no('the edge is not straight'); continue; }
+      if (lip > 0.25 || near[0] > 4 || near[1] > 4) { no('the edge is not straight'); continue; } // (on a curved edge the anchor's foot reaches in to the rim)
       const at = (s: number, t: number) => add(add(q, dir, s), nu, t);
-      const zone: Loop = [at(-ANCHOR, -(gw + 1)), at(L + SLIT + 0.3, -(gw + 1)), at(L + SLIT + 0.3, 1.2), at(-ANCHOR, 1.2)];
-      if (C.blocked.some((bl) => polysOverlap(zone, bl.poly)) || taken.some((z) => polysOverlap(zone, z)) || tops.some((r) => polysOverlap(zone, r))) continue;
-      out.push({ q, dir, nu, p, L, pref: -Math.abs((p[0] - cen[0]) * d[0] + (p[1] - cen[1]) * d[1]), zone, edgeIn: Math.max(0, near[0], near[1]) });
+      const zone: Loop = [at(-ANCHOR, -out), at(L + SLIT + 0.3, -out), at(L + SLIT + 0.3, 1.2), at(-ANCHOR, 1.2)];
+      const bl = C.blocked.find((x) => polysOverlap(zone, x.poly));
+      if (bl) { no(`blocked by ${bl.why.replace(/^blocked:/, '')}`); continue; }
+      if (taken.some((z) => polysOverlap(zone, z))) { no('taken by another clip'); continue; }
+      // (a part standing on the board only meets the lip, over the board's edge, and whatever hangs past the edge)
+      const back: Loop = [at(-ANCHOR, -out), at(L + SLIT + 0.3, -out), at(L + SLIT + 0.3, 0.05), at(-ANCHOR, 0.05)];
+      const lipZone: Loop = [at(sc - lipLen / 2 - 0.3, -0.5), at(sc + lipLen / 2 + 0.3, -0.5), at(sc + lipLen / 2 + 0.3, reach + 0.15), at(sc - lipLen / 2 - 0.3, reach + 0.15)];
+      if (tops.some((r) => polysOverlap(back, r) || polysOverlap(lipZone, r))) { no('a part on the board'); continue; }
+      sites.push({ q, dir, nu, p, L, pref: -Math.abs((p[0] - cen[0]) * d[0] + (p[1] - cen[1]) * d[1]), zone, edgeIn: Math.max(0, near[0], near[1]), kind, out, arc });
     }
   }
-  return out;
+  return sites;
 }
 
 /** Local frame of a leaf: s along it from the root, t into the board, z up (mirrored when it runs clockwise). */
@@ -939,29 +958,21 @@ const sweepS = (prof: CS, s0: number, s1: number) => prof.extrude(s1 - s0).trans
 const sweepT = (prof: CS, t0: number, t1: number) => prof.extrude(t1 - t0).transform([1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, t1, 0, 1] as any);
 
 /**
- * Build one leaf in its local frame: cut its zone clear, add the anchor and the tapered leaf (root fillet, rounded
- * tip), and hand back the heights for the lip, which the caller adds.
+ * Build one leaf in its local frame: cut its zone clear, add the anchor and the leaf (a taper with a root fillet, or a
+ * hairpin: leafplan.ts), and hand back the heights for the lip, which the caller adds.
  */
 function leafBody(C: Ctx, st: LeafSite, f: Leaf, face: number, top: number, refs?: string[]) {
   const H = C.H, gw = H.gap + H.wall, L = f.L;
   // the zone: everything outside the inner slit, from the anchor's root to past the tip, bed to sky
   C.neg.push(placeLeaf(box(0, -(gw + 4), -1, L + SLIT, face + SLIT, top + 30), st));
-  // anchor: a short wall block, as tall as the leaf at its root, falling at 45 degrees to the wall height
+  // anchor: a short wall block, as tall as the leaf at its root, falling at 45 degrees to the wall height (a hairpin's
+  // reaches out to its outer arm)
   const zw = Math.min(C.zw, top);
   const A = ANCHOR, fall = Math.max(0.2, Math.min(A - 1.2, top - zw)); // (a top facing up: any slope prints)
   const aProf = roundCS(poly([[-A, 0], [0.02, 0], [0.02, top], [-0.8, top], [-0.8 - fall, zw], [-A, zw]], 'NonZero'), 0.5).add(rect2(-0.5, 0, 0.02, top)); // (square where it meets the leaf)
-  const anchor = unionMF([sweepT(aProf, -gw, -H.gap), box(-A, -gw, 0, 0.02, st.edgeIn + 1.0, C.frame ? C.rimH : C.base)]);
-  // the leaf: inner face straight, outer face tapering (constant stress) to tMin, then the lip's thickness
-  const pts: V2[] = [[0, face]];
-  for (let i = 0; i <= 24; i++) { const s = (L * i) / 24; pts.push([s, face - leafT(f, s)]); }
-  pts.reverse();
-  pts.push([L, face]);
-  const leafCS = roundCS(poly(pts, 'NonZero'), Math.min(0.25, f.tMin / 2 - 0.05));
-  // root fillet: close the corner between the leaf and the anchor's end with a generous radius
-  const rootCS = rect2(-1.5, -gw, 0.02, -H.gap);
-  const r = 1.2;
-  const planCS = leafCS.add(rootCS).offset(r, 'Round').offset(-r, 'Round').intersect(rect2(-1.5, -gw - 1, L + 1, face + 0.001)).add(leafCS);
-  const leaf = ext(planCS, 0, top);
+  const tOut = f.u ? face - 2 * foldOf(f).Ro : -gw;
+  const anchor = unionMF([sweepT(aProf, tOut, -H.gap), box(-A, -gw, 0, 0.02, st.edgeIn + 1.0, C.frame ? C.rimH : C.base)]);
+  const leaf = ext(leafPlan(f, face, gw, H.gap), 0, top);
   C.late.push(placeLeaf(anchor, st), placeLeaf(leaf, st));
   C.blocked.push({ poly: st.zone, why: 'spring clip' });
   feat(C, 'spring', st.zone, 0, top + 1, refs);
@@ -970,12 +981,18 @@ function leafBody(C: Ctx, st: LeafSite, f: Leaf, face: number, top: number, refs
 /**
  * Spring clips, and anti-rattle springs, round the board. Returns the clips' zones (0 or 1 clip does not hold a
  * board: the caller turns to snap pins or warns).
+ *
+ * Clips are the way a holder grips its board unless the board has no edge to give them (Auto puts pins only there): the
+ * board's size and weight decide how long a leaf, how deep a catch, how hard a push and how many (grip.ts); where a
+ * stretch of edge is short (between plugs) the leaf is a hairpin. Together they must surround the board's middle, so
+ * it can't tip out over any side: two facing each other, or three or more round it. More are added along the
+ * outline, where there is room, until none is far from the next and they hold the board's weight against a shake.
+ * `ends`: towards the ends of their edges rather than the middle, to leave a wall free for the label.
  */
-function clips(C: Ctx, mode: ReturnType<typeof holdOf>): Loop[] {
+function clips(C: Ctx, mode: ReturnType<typeof holdOf>, ends = false): Loop[] {
   const H = C.H, mat = MATERIALS[H.material];
   if (mode === 'pins') return [];
-  const bb = bbox(C.b.outline), cen = centroid(C.b.outline);
-  const small = Math.min(bb.x1 - bb.x0, bb.y1 - bb.y0) < 30;
+  const bb = bbox(C.b.outline);
   const pinHoles = C.b.holes.filter((h) => isMountHole(h) && h.use !== 'none');
   const pinsCanHold = C.b.holes.filter((h) => isMountHole(h) && (h.use === 'auto' || h.use === 'snap') && h.d >= 1.8).length >= 2;
   // how far the board can shift towards a clip: to its guards, or less when pins sit in its holes
@@ -984,68 +1001,112 @@ function clips(C: Ctx, mode: ReturnType<typeof holdOf>): Loop[] {
   const firm = (H.grip ?? 'firm') === 'firm';
   // heights: the lip's ledge, a land, then the entry ramp up to the leaf's top
   const lipTop = (tip: number, face: number) => zRet + 0.35 + (tip - face) / Math.tan(rad(RAMP));
-  const lipLenOf = (L: number) => Math.min(5, Math.max(3, 0.38 * L));
-  // two clips hold when they face apart and the line between them splits the board, with a good share of it either
-  // side (it can't tip out about that line: one side would have to go down through its seats). 0 = through the middle.
-  const offLine = (a: LeafSite, b: LeafSite) => {
-    const ax = b.p[0] - a.p[0], ay = b.p[1] - a.p[1], L = Math.hypot(ax, ay) || 1;
-    const dist = Math.abs((cen[0] - a.p[0]) * ay - (cen[1] - a.p[1]) * ax) / L;
-    const nx = -ay / L, ny = ax / L;
-    const across = Math.max(...C.b.outline.map((v) => v[0] * nx + v[1] * ny)) - Math.min(...C.b.outline.map((v) => v[0] * nx + v[1] * ny));
-    return dist / across;
-  };
   const extent = Math.max(bb.x1 - bb.x0, bb.y1 - bb.y0);
-  const pickPair = (lengths: number[], taken: Loop[]): LeafSite[] => {
-    for (const L of lengths) {
-      const sites = leafSites(C, L, lipLenOf(L), taken);
-      let best: { s: number; a: LeafSite; b: LeafSite } | null = null;
-      for (let i = 0; i < sites.length; i++) for (let j = i + 1; j < sites.length; j++) {
-        const a = sites[i], b = sites[j], facing = a.nu[0] * b.nu[0] + a.nu[1] * b.nu[1];
-        if (facing > -0.3 || polysOverlap(a.zone, b.zone)) continue;
-        const off = offLine(a, b);
-        if (off > 0.35) continue;
-        const s = (a.pref + b.pref) / extent - 3 * off - 2 * (facing + 1);
-        if (!best || s > best.s) best = { s, a, b };
+  // ---- what the board asks of its clips: its size and weight ----
+  const pcbArea = Math.abs(area(C.b.outline)) - C.b.cutouts.reduce((a, c) => a + Math.abs(area(c)), 0);
+  const load: BoardLoad = { mass: boardMass(pcbArea, C.b.thickness, holderParts(C.b).filter((cc) => !cc.hidden && cc.h > 0).map((cc) => ({ area: Math.abs(area(compRect(cc))), h: cc.h }))), long: extent, short: Math.min(bb.x1 - bb.x0, bb.y1 - bb.y0), thick: C.b.thickness };
+  const face = -(H.gap + FACE), tipI = tipFor(load), h0 = lipTop(tipI, face);
+  const ask = (L: number, want: number) => ({ L, h: h0, mat, gap: H.gap, play, tip: tipI, want });
+  const lens: number[] = [];
+  for (let L = spanFor(load); L >= 8; L -= 2) lens.push(L);
+  const specs = new Map(lens.map((L) => [L, bestClip(ask(L, pushTarget(load, firm, 4)))] as const));
+  const why: Record<string, number> = {};
+  const sitesOf = (L: number, taken: Loop[] = []) => { const sp = specs.get(L)!; return leafSites(C, L, sp.leaf.lipLen, taken, { kind: sp.kind, reach: sp.tip + 0.1, step: 2, why }); };
+  // ---- where: so the board can't tip out over any side ----
+  // A board rests on its seats (posts under its edge, all round), so it can only tip about a line along the seats' edge,
+  // the side towards the middle lifting. A clip on that side, well back from the line, stops it: it lifts only a
+  // fraction of a millimetre before the ledge is against it. So for every direction the board could tip towards, some
+  // clip must stand well back from the seats' edge that way: clips on two opposite edges do, three round the board do;
+  // two on the same edge don't (the board hinges up about them).
+  const thin = <T>(l: T[], n: number) => (l.length <= n ? l : l.filter((_, i) => i % Math.ceil(l.length / n) === 0));
+  const N_DIR = 24, SEAT_IN = 3.5;
+  const dirs = Array.from({ length: N_DIR }, (_, k) => [Math.cos((2 * Math.PI * k) / N_DIR), Math.sin((2 * Math.PI * k) / N_DIR)] as V2);
+  const proj = C.b.outline.map((v) => dirs.map((d) => v[0] * d[0] + v[1] * d[1]));
+  const hi = dirs.map((_, k) => Math.max(...proj.map((r) => r[k]))), lo = dirs.map((_, k) => Math.min(...proj.map((r) => r[k])));
+  const cover = (s: LeafSite) => { let m = 0; for (let k = 0; k < N_DIR; k++) if (hi[k] - SEAT_IN - (s.p[0] * dirs[k][0] + s.p[1] * dirs[k][1]) >= Math.max(4, 0.12 * (hi[k] - lo[k]))) m |= 1 << k; return m; };
+  const FULL = (1 << N_DIR) - 1;
+  const bits = (m: number) => { let c = 0; for (; m; m &= m - 1) c++; return c; };
+  const quality = (s: LeafSite) => (ends ? -s.pref : s.pref) / extent + (0.1 * s.L) / 16; // (`ends`: towards the ends of an edge, not its middle)
+  const masks = new Map<LeafSite, number>();
+  const maskOf = (s: LeafSite) => { let m = masks.get(s); if (m === undefined) { m = cover(s); masks.set(s, m); } return m; };
+  // grow from each of several well-placed clips, adding the one that covers most of what is still open
+  const surround = (sites: LeafSite[]): LeafSite[] => {
+    let best: { set: LeafSite[]; score: number } | null = null;
+    for (const first of thin([...sites].sort((a, b) => quality(b) - quality(a)), 16)) {
+      const set = [first];
+      let m = maskOf(first);
+      while ((m !== FULL || set.length < 2) && set.length < 4) {
+        let pick: LeafSite | undefined, pickScore = -Infinity;
+        for (const s of sites) {
+          if (set.some((z) => polysOverlap(s.zone, z.zone))) continue;
+          const gain = bits(maskOf(s) & ~m);
+          // (one clip alone never holds a board: a second goes as far from the first as it can, if nothing is left open)
+          const sc = gain > 0 ? gain + 0.5 * quality(s) : m === FULL ? Math.hypot(s.p[0] - first.p[0], s.p[1] - first.p[1]) / extent + 0.5 * quality(s) - 1 : -Infinity;
+          if (sc > pickScore) { pick = s; pickScore = sc; }
+        }
+        if (!pick) break;
+        set.push(pick);
+        m |= maskOf(pick);
       }
-      if (best) return [best.a, best.b];
+      if (m !== FULL) continue;
+      const score = -set.length * 10 + set.reduce((a, s) => a + quality(s), 0);
+      if (!best || score > best.score) best = { set, score };
     }
-    return [];
+    return best ? best.set : [];
   };
-  const full = small ? [12, 10] : [14, 12];
-  let chosen = pickPair(full, []);
-  let short = false;
-  if (chosen.length < 2) {
-    // short clips in the gaps between plugs; left to the pins, when they can hold it, if they'd be strained
-    chosen = pickPair([10], []);
-    short = chosen.length === 2;
-    if (short && mode === 'auto' && pinsCanHold && designClip({ L: 10, h: 9, mat, gap: H.gap, play, firm }).eps > 0.6 * mat.strainAllow) chosen = [];
+  // the longest leaves first, then shorter (hairpins between plugs); then every length together
+  let chosen: LeafSite[] = [];
+  const pools = new Map<number, LeafSite[]>();
+  for (const L of lens) {
+    const sites = sitesOf(L);
+    pools.set(L, sites);
+    chosen = surround(thin(sites, 300));
+    if (chosen.length) break;
   }
-  // big boards: a second pair across the other way
-  if (chosen.length === 2 && Math.min(bb.x1 - bb.x0, bb.y1 - bb.y0) > 60) {
-    const more = pickPair(full, chosen.map((c) => c.zone)).filter((c) => Math.abs(c.nu[0] * chosen[0].nu[0] + c.nu[1] * chosen[0].nu[1]) < 0.5);
-    if (more.length === 2) chosen.push(...more);
-  }
+  const all = lens.flatMap((L) => pools.get(L) ?? sitesOf(L));
+  if (chosen.length < 2) chosen = surround(thin(all, 400));
   if (chosen.length < 2) {
-    const why = `plugs${C.job.dock ? ', the dock' : ''}${C.blocked.some((b) => b.why === 'label') ? ' and the label' : ''} take the free edges`;
-    if (pinsCanHold) C.checks.push({ group: 'Board', name: 'Spring clips', value: chosen.length ? 'only one fits' : 'no room', status: 'info', detail: `${why}, even for short clips; snap pins in the mounting holes hold the board instead` });
+    const top = Object.entries(why).sort((a, b) => b[1] - a[1]).map(([k]) => k).filter((k) => k !== 'taken by another clip').slice(0, 3);
+    const reason = all.length ? 'the free stretches of edge are all on the same sides of the board, so clips there could not keep it from tipping out' : `no stretch of edge is clear and straight for a clip (${top.join('; ') || 'none'})`;
+    if (pinsCanHold) C.checks.push({ group: 'Board', name: 'Spring clips', value: all.length ? 'only one side' : 'no room', status: 'info', detail: `${reason}; snap pins in the mounting holes hold the board instead` });
     return [];
+  }
+  // ---- more, along the outline: none far from the next, and enough to hold the board's weight against a shake ----
+  const perim = C.b.outline.reduce((a, v, i) => a + Math.hypot(C.b.outline[(i + 1) % C.b.outline.length][0] - v[0], C.b.outline[(i + 1) % C.b.outline.length][1] - v[1]), 0);
+  const SMAX = 130; // longest stretch of outline left without a clip, mm
+  const holdOfSite = (s: LeafSite) => specs.get(s.L)!.hold;
+  const circ = (a: number, b: number) => { const d = Math.abs(a - b) % perim; return Math.min(d, perim - d); };
+  while (chosen.length < 14) {
+    const arcs = chosen.map((c) => c.arc).sort((x, y) => x - y);
+    const gaps = arcs.map((v, i) => ({ from: v, gap: i + 1 < arcs.length ? arcs[i + 1] - v : arcs[0] + perim - v })).sort((a, b) => b.gap - a.gap);
+    const short = chosen.reduce((a, s) => a + holdOfSite(s), 0) < HOLD_SHARE * holdNeed(load.mass);
+    let added: LeafSite | undefined;
+    for (const g of gaps) {
+      if (g.gap <= SMAX && !short) break;
+      const mid = (g.from + g.gap / 2) % perim;
+      added = all.filter((s) => chosen.every((z) => !polysOverlap(s.zone, z.zone)) && circ(s.arc, mid) <= Math.max(12, 0.3 * g.gap) && circ(s.arc, g.from) > 8 && circ(s.arc, g.from + g.gap) > 8)
+        .sort((a, b) => circ(a.arc, mid) - 0.5 * a.L - (circ(b.arc, mid) - 0.5 * b.L))[0];
+      if (added) break;
+    }
+    if (!added) break;
+    chosen.push(added);
   }
   // ---- the clips ----
-  const designs: ClipDesign[] = [];
+  const n = chosen.length, want = pushTarget(load, firm, n);
+  const designs: ClipSpec[] = [];
   for (const st of chosen) {
-    const h0 = lipTop(0.6, -(H.gap + FACE));
-    const dz = designClip({ L: st.L, h: h0, mat, gap: H.gap, play, firm });
+    const dz = sizeClip({ ...ask(st.L, want), kind: st.kind });
     designs.push(dz);
     const top = lipTop(dz.tip, dz.face);
     leafBody(C, st, dz.leaf, dz.face, top);
     const { tip, face } = dz, f = dz.leaf;
     // lip: flat ledge (the only overhang: tip - face, about 1 mm), chamfered tip, a land, the entry ramp
     const prof = poly([[face - 0.4, zRet], [tip - 0.15, zRet], [tip, zRet + 0.15], [tip, zRet + 0.35], [face, top], [face - 0.4, top]], 'NonZero');
-    const s1 = f.L - 0.3, s0 = s1 - f.lipLen, w = tip - face;
+    const s0 = f.u ? U_FREE + 0.3 : f.L - 0.3 - f.lipLen, s1 = s0 + f.lipLen, w = tip - face;
     const ends = poly([[s0, face - 0.5], [s1, face - 0.5], [s1, face], [s1 - w, tip + 0.01], [s0 + w, tip + 0.01], [s0, face]], 'NonZero'); // 45 degree ends in plan
     const lip = sweepS(prof, s0, s1).intersect(ext(ends, zRet - 1, top + 1));
     // pull tab: an ear on the free end, over the leaf, to hook with a fingernail and pull the clip back
-    const ear = sweepT(roundCS(rect2(f.L - 2.3, top - 0.6, f.L - 0.1, top + 1.0), 0.7), face - f.tMin, face);
+    const ear = sweepT(roundCS(f.u ? rect2(U_FREE + 0.1, top - 0.6, U_FREE + 2.3, top + 1.0) : rect2(f.L - 2.3, top - 0.6, f.L - 0.1, top + 1.0), 0.7), face - f.tMin, face);
     C.late.push(placeLeaf(unionMF([lip, ear]), st));
   }
   // ---- anti-rattle springs: one pushing across the clips, one along them, where they fit ----
@@ -1076,19 +1137,24 @@ function clips(C: Ctx, mode: ReturnType<typeof holdOf>): Loop[] {
     }
   }
   // ---- what the report says ----
-  const n = designs.length, worst = designs.reduce((a, x) => (x.eps > a.eps ? x : a));
+  const worst = designs.reduce((a, x) => (x.eps > a.eps ? x : a));
   const allow = mat.strainAllow;
   const pct = (x: number, dp = 2) => `${(x * 100).toFixed(dp)}%`;
+  const kinds = [...new Map(designs.map((x) => [`${x.kind}${x.leaf.L}${x.leaf.t0}`, x] as const)).values()];
+  const count = (x: ClipSpec) => designs.filter((y) => y.kind === x.kind && y.leaf.L === x.leaf.L && y.leaf.t0 === x.leaf.t0).length;
+  const sizes = kinds.map((x) => `${count(x)} × ${x.leaf.L} mm ${x.kind === 'u' ? `hairpin (arms ${round(x.leaf.t0, 2)} mm at the fold, ${x.leaf.tMin} at the lip)` : `tapered leaf (${round(x.leaf.t0, 2)} to ${round(x.leaf.tMin, 2)} mm)`}`).join(', ');
+  const holdSum = designs.reduce((a, x) => a + x.hold, 0);
+  const range = (v: number[]) => { const a = round(Math.min(...v), 1), b = round(Math.max(...v), 1); return a === b ? `${a}` : `${a} to ${b}`; };
   C.checks.push({ group: 'Board', name: `Spring clips (${n})`, value: `${pct(worst.eps)} going in`, status: strainStatus(C, worst.eps),
-    detail: `${n} ${short ? 'short ' : ''}clips, ${designs.map((x) => x.leaf.L).filter((x, i, a) => a.indexOf(x) === i).join(' and ')} mm tapered leaves (${round(worst.leaf.t0, 2)} to ${round(worst.leaf.tMin, 2)} mm), ${firm ? 'firm' : 'gentle'}; the lip reaches ${round(worst.tip, 2)} mm over the board's edge. Worst case going in (the board hard against that side): pushed ${round(worst.delta, 2)} mm aside, ${pct(worst.eps)} strain, ${round(allow / worst.eps, 1)}× under the ${H.material} limit of ${pct(allow, 1)}. They bend within the layers.` });
+    detail: `${n} clips for a board of about ${Math.round(load.mass)} g, ${round(perim, 0)} mm round: ${sizes}, ${firm ? 'firm' : 'gentle'}; the lip reaches ${round(designs[0].tip, 2)} mm over the board's edge. Worst case going in (the board hard against that side): pushed ${round(worst.delta, 2)} mm aside, ${pct(worst.eps)} strain, ${round(allow / worst.eps, 1)}× under the ${H.material} limit of ${pct(allow, 1)}, ${round(worst.fatigue, 1)}× margin for many presses. Each takes about ${range(designs.map((x) => x.release))} N pulled at its ear to free the board, and together they hold a lift of ${Math.round(holdSum)} N against the ${round(holdNeed(load.mass), 1)} N a 9 g shake asks. They bend within the layers.` });
   const restMax = bows.length ? Math.max(...bows.map((b) => b.dz.epsRestMax)) : 0;
   C.checks.push({ group: 'Board', name: 'Grip at rest', value: bows.length ? `clips 0 · springs ${pct(bows[0].dz.epsRest)}` : 'no load', status: restMax <= 0.003 ? 'ok' : 'warn',
     detail: `once the board is in, the clips' lips clear its top by ${round(zRet - C.zt, 2)} mm and their leaves stand ${FACE} mm off its edge, so they carry nothing and can't creep or take a set. ${bows.length ? `${bows.length} anti-rattle spring${bows.length > 1 ? 's' : ''} press${bows.length > 1 ? '' : 'es'} the board across and down (45 degree face on its top edge) with about ${round(bows[0].dz.F, 2)} N each, pushed ${bows[0].dz.preload} mm aside: ${pct(bows[0].dz.epsRest)} strain (${pct(restMax)} with the board ${bows[0].dz.tol} mm bigger); so low that creep only relaxes the push a little over the years.` : `There was no free edge for an anti-rattle spring: the board has ${round(play, 2)} mm of play each way.`}` });
   const push = designs.reduce((a, x) => a + x.push, 0) + bows.reduce((a, b) => a + b.dz.push, 0);
   C.checks.push({ group: 'Board', name: 'Press-in force', value: `about ${Math.max(1, Math.round(push))} N`, status: 'info',
-    detail: `to press the board straight down past ${n} clip${n > 1 ? 's' : ''}${bows.length ? ` and ${bows.length} spring${bows.length > 1 ? 's' : ''}` : ''} (${round(designs[0].F, 1)} N to push each clip aside, ${RAMP} degree ramps, friction ${MU}); tipping it in under one side first takes less. Rough beam sums: a print will tell the real feel. To take it out, pull a clip's ear back with a fingernail and lift that side.` });
+    detail: `to press the board straight down past ${n} clip${n > 1 ? 's' : ''}${bows.length ? ` and ${bows.length} spring${bows.length > 1 ? 's' : ''}` : ''} (${range(designs.map((x) => x.F))} N to push each clip aside, ${RAMP} degree ramps, friction ${MU}); tipping it in under one side first takes less. Rough beam sums: a print will tell the real feel. To take it out, pull a clip's ear back with a fingernail and lift that side.` });
   C.checks.push({ group: 'Print', name: 'Clips print', value: 'no supports', status: 'ok',
-    detail: `every leaf stands straight up from the bed, cut free by ${SLIT} mm slits; the only overhang is each lip's flat ledge, ${round(worst.ledge, 2)} mm out from its leaf. The Check step slices every part to confirm.` });
+    detail: `every leaf${designs.some((x) => x.kind === 'u') ? ' (and both arms of a hairpin)' : ''} stands straight up from the bed, cut free by ${SLIT} mm slits; the only overhang is each lip's flat ledge, ${round(worst.ledge, 2)} mm out from its leaf. The Check step slices every part to confirm.` });
   return chosen.map((c) => c.zone);
 }
 
