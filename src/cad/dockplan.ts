@@ -550,8 +550,10 @@ function docksFor<T extends Module>(p: Project, mods: T[], railDir: 'h' | 'v', o
   };
   // each board standing up or lying flat, as the rack's setting asks (or whichever suits it, on auto); a J-Link or
   // adapter with no column to join stands on its long edge whatever the setting, as it would at the bottom of one
+  // (a board with a column on it stands on a long edge too, the way the rest of its column does, and not with a plug
+  // up the column: that plug and its cradle would be where the holder above sits)
   const alone = (m: T) => isAccessory(m.board) && isSmall(m.board);
-  const best = mods.map((m) => (alone(m) ? columnSeat(m, railDir, 0, false) : bestSeat(m, railDir, p.panel.lie, 0)));
+  const best = mods.map((m) => (tall(m) ? columnSeat(m, railDir, 0, true) : alone(m) ? columnSeat(m, railDir, 0, false) : bestSeat(m, railDir, p.panel.lie, 0)));
   const lieOf = (o: Orientation) => (o.lie ? { lie: o.lie } : {});
   const used = new Set<number>();
   mods.forEach((m, i) => {

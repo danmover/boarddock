@@ -1953,6 +1953,13 @@ function dockFeatures(C: Ctx, s: DockSite) {
   }
   if (col && col.of > 1) {
     const where = col.level === 0 ? 'in the dock, the next holder on pegs on its landing' : col.top ? 'on top, on two pegs in the landing of the holder below; its button frees the whole column' : 'on two pegs in the landing of the holder below, the next on pegs on its own landing';
+    // below the top, a plug on the far edge points up the column: it and its cradle are where the holder above stands
+    const up = col.top ? [] : C.b.comps.filter((c) => c.conn?.entry === 'edge' && !c.hidden && Math.cos(rad(c.conn.angle)) * s.n[0] + Math.sin(rad(c.conn.angle)) * s.n[1] < -0.7).map((c) => c.ref);
+    if (up.length) {
+      const what = `${up.join(', ')} on ${C.b.name} ${up.length > 1 ? 'point' : 'points'} up the column, into the holder above: ${up.length > 1 ? 'their plugs and cradles are' : 'its plug and cradle are'} where that holder has to stand`;
+      C.warnings.push(`${what}. Put ${C.b.name} at the top of its column (Rails › Stacks), or stand it on its other long edge.`);
+      C.checks.push({ group: 'Dock', name: 'Plug up the column', value: up.join(', '), status: 'bad', detail: `${what}, so the column can't be put together. Put ${C.b.name} at the top of its column (Rails › Stacks), or stand it on its other long edge in the Rails step.` });
+    }
     C.checks.push({ group: 'Dock', name: 'Column', value: `${col.level + 1} of ${col.of}`, status: 'info', detail: `stands on its long edge ${where}. Each holder lifts straight off the one below (the top one with the rod); the rod runs down through every holder to the socket's latch. Not printed and tried yet: the peg fit and the long rod are from the model.` });
   }
   feat(C, 'dock', tsPoly(s, s.tc - HD.base.hx, s.tc + HD.base.hx, -14, s.ped + 1), 0, HD.spineY1);
