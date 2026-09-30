@@ -8,6 +8,8 @@ import { textStrokes, textWidth } from './font';
 import { headerPins } from '../model/probes';
 import { kkPitch, nameCircuits, wtbPitch } from '../model/library';
 import { isSocket } from '../model/links';
+import { contribLook } from '../model/contributed';
+import { drawLook } from './lookdraw';
 import { boardCopper } from '../model/copper';
 import { box, circle2, cyl, ext, poly, toMesh, unionCS, unionMF, type MF } from './kernel';
 import { K } from './kernel';
@@ -347,6 +349,9 @@ function partDetail(bin: Bin, c: Comp, zt: number, zb: number) {
     for (const sx of [-1, 1]) bin.add('gold', tf(cylY(sx * 3.6 * s, zc, 1.9 * s, hy - depth, hy - 1).subtract(cylY(sx * 3.6 * s, zc, 1.35 * s, hy - depth + 1, hy)), T));
     return;
   }
+  // a contributed connector with a look of its own (parts/type-*.json): drawn from that (a part plugged from above in its own frame, w along x)
+  const own = contribLook(type);
+  if (own) { if (own.entry === 'top') drawLook(bin, frameOf(c, z0, below), c.w, c.l, h, own.look); else drawLook(bin, T, w, l, h, own.look); return; }
   if (c.conn?.entry === 'edge' || c.kind === 'connector') {
     const metalShell = /usb|hdmi|microsd|sma|rj45|^(dp|sd)$/.test(type) || /usb|hdmi|sd/i.test(name);
     if ((type === 'sma' || type === 'xlr' || type === 'm12' || type === 'minidin') && Math.min(w, h) > 3 && l > 4) {

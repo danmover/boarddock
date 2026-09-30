@@ -1,0 +1,15 @@
+[
+  {
+    "type": "rj45",
+    "names": ["ACME-ETH-1A1", "ACME-ETHJ-*"],
+    "weak": ["Acme jack"],
+    "source": "Made-up part numbers for this worked example: Acme does not exist."
+  },
+  {
+    "type": "wtb_side",
+    "names": ["ACME-SIDE-06"],
+    "pins": 6,
+    "pitch": 2.5,
+    "note": "Six contacts at 2.5 mm, so the body is as wide as that."
+  }
+]
