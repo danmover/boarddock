@@ -41,21 +41,21 @@ describe('grams and print time of a J-Link and adapter column', () => {
     const density = MATERIALS[p.modules[0].holder.material].density;
     let g = 0, min = 0;
     for (const pt of parts) { const e = estimate(pt, density); g += e.grams; min += e.minutes; }
-    // (13.72 g and 33.0 min before; the landing is 1.6 mm thinner and the peg holes lost their drill cones)
+    // (13.72 g and 33.0 min before; the landing is 1.2 mm thinner and the peg holes lost their drill cones)
     expect(g).toBeLessThan(sum('g') - 0.15);
     expect(min).toBeLessThan(sum('min'));
-    // and the rod down the column is shorter by the landing's 1.6 mm
+    // and the rod down the column is shorter by the landing's 1.2 mm
     const rod = parts.find((x) => /^Release rod/.test(x.name))!;
     expect(rod.size[1]).toBeLessThan(95);
-    expect(LANDING.t).toBe(6.4);
+    expect(LANDING.t).toBe(6.8);
   }, 120_000);
 });
 
 describe('a second J-Link: its own column or the first one\'s, its ribbon is long either way', () => {
-  it('two J-Links stand 94.8 mm over the socket, more than the PETG tongue takes (84.5), so each has a column and a dock', () => {
+  it('two J-Links stand 95.2 mm over the socket, more than the PETG tongue takes (84.5), so each has a column and a dock', () => {
     const p = dual('PETG');
     const js = p.modules.filter((m) => /^J-Link/.test(m.board.name));
-    expect(columnHeight(js)).toBeCloseTo(94.8, 1);
+    expect(columnHeight(js)).toBeCloseTo(95.2, 1);
     expect(columnLimit(p.modules[0].holder)).toBeCloseTo(84.5, 1);
     expect(js.some((m) => m.on)).toBe(false); // (none stacked on the other)
     const r = generatePanel(p);

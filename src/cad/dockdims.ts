@@ -28,12 +28,12 @@ export const HD = {
  * A column of small boards (J-Links, adapters), each holder standing on its long edge on the one below: the landing on
  * a lower holder's far wall that the next one stands on (`gap` over the wall, `t` thick, `hx` half its width), and the
  * two pegs under the next one's pedestal that press into it (x either side of the rod's tunnel, y across the spine;
- * the same Ø4 pegs and crush-rib sockets as a stack's towers).
+ * Ø4 pegs in crush-rib holes, made to print lying on their side: see column.ts).
  */
-export const LANDING = { gap: 0, t: 6.4, hx: 12 };
+export const LANDING = { gap: 0, t: 6.8, hx: 12 };
 // (printed lying flat, a peg lies on its side: `flare` is a 45 degree cone at its root that holds its underside, and
-// the hole in the landing has the same countersink; `depth`: how deep the hole is, a flat bottom 1.8 mm under the
-// peg's tip; see column.ts)
+// the hole in the landing has the same countersink; `depth`: how deep the hole is, a flat bottom 0.6 mm past the
+// peg's tip; the landing is 6.8 mm thick, was 8: 1.2 mm less column height and material; see column.ts)
 export const PEG = { x: [-6.5, 6.5], y: 5.25, r: 2.0, len: 3.4, tip: 0.6, flare: 1.8, depth: 4.6 };
 
 /** Holder frame height (above the bed) of the spine top: the board must sit above it. */

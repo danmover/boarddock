@@ -9,7 +9,7 @@
 //    on its floor and two crush ribs at its sides that centre the peg (none at the crown; a rib at the very bottom
 //    would leave two slivers of hole too narrow to print open).
 import { box, circle2, ext, K, poly, rect2, unionCS, unionMF, type MF } from './kernel';
-import { HD, LANDING, PEG } from './dockdims';
+import { HD, PEG } from './dockdims';
 
 /** A column holder's peg, standing down from its pedestal (z = 0 its underside). */
 export function peg(x: number): MF {
@@ -32,6 +32,3 @@ export function pegHole(x: number, top: number): MF {
   for (const a of [60, 300]) hole = hole.subtract(box(-0.35, 1.85, top - depth + 0.1, 0.35, 2.3, top - cs).rotate([0, 0, a]).translate([x, y, 0]));
   return hole;
 }
-
-/** How far the landing's thickness is used: the deepest thing in it is the hole. */
-export const landingFloor = LANDING.t - PEG.depth;
