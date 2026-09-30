@@ -46,6 +46,8 @@ export function mergeNotes(warnings: string[], names: string[]): string[] {
 
 export function generate(p: Project): GenResult {
   const r = p.layout === 'panel' ? generatePanel(p) : generateLoose(p);
+  // a plug pack goes into an outlet and never gets a holder: a rack of nothing else has nothing to print, so say so
+  if (p.modules.length && p.modules.every((m) => isPlugPack(m.board))) r.report.warnings.push(...p.modules.map((m) => `${m.board.name}: a plug pack goes straight into an outlet and gets no holder, so there is nothing to print. Add the board it powers.`));
   r.report.warnings = mergeNotes(r.report.warnings, p.modules.map((m) => m.board.name));
   // printability of every distinct part, in its print pose (cached with the mesh)
   const seen = new Set<string>();

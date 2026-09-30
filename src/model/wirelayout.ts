@@ -167,6 +167,8 @@ function shelves(groups: { ids: string[]; rail: boolean }[], c: number, share: b
   let x = 20, y = 20, used = 0, tall = 0;
   for (const { ids, rail } of groups) {
     const lines = Math.ceil(ids.length / c), per = Math.ceil(ids.length / lines);
+    // (what is off the rails, alone on a line under its rail, closes that line: a rail sharing it would look like its neighbour)
+    const alone = !rail && (!used || used + per > c);
     if (used && ((rail && !share) || used + per > c)) { y += tall + GY + GROUP; x = 20; used = 0; tall = 0; }
     let ly = y, wide = 0;
     for (let i = 0; i < ids.length; i += per) {
@@ -177,7 +179,7 @@ function shelves(groups: { ids: string[]; rail: boolean }[], c: number, share: b
     }
     tall = Math.max(tall, ly - GY - y);
     x += wide + GX + GROUP;
-    used += per;
+    used = alone ? Math.max(used + per, c) : used + per;
   }
   return pos;
 }
