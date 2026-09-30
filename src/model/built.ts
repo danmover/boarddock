@@ -5,7 +5,7 @@ import type { Built, GenResult, Link, Module, PanelReport, PartOut, PlugRef, Pro
 import { baseOf, stackMode } from './holes';
 import { isProbe } from './probes';
 import { isPlugPack } from './powerdata';
-import { baseRef, findModule } from './links';
+import { baseRef, findModule, viewOf } from './links';
 
 /**
  * The boxes that need a hook-and-loop strap: those in a holder with strap loops. A J-Link or adapter is a board, a
@@ -56,7 +56,8 @@ type Cable = NonNullable<GenResult['report']['cables']>[number];
 /** A cable is the same cable while it joins the same two plugs with the same kind and length (renaming a board doesn't change it). */
 export const cableSig = (c: Cable) => `${(c.ends ?? `${c.a}|${c.b}`).split('|').sort().join(' | ')}|${c.kind}|${c.buy}`;
 
-export function snapshot(p: Project, res: GenResult): Built {
+export function snapshot(p0: Project, res: GenResult): Built {
+  const p: Project = viewOf(p0);
   const parts: Record<string, number> = {}, places: Record<string, number[][]> = {};
   for (const pt of res.parts) {
     const sig = partSig(pt);
@@ -176,7 +177,8 @@ function planOf(p: Project, res: GenResult, b: Built, d: Omit<Delta, 'plan' | 'a
 }
 
 /** What is new since the rack was built. */
-export function delta(p: Project, res: GenResult): Delta | null {
+export function delta(p0: Project, res: GenResult): Delta | null {
+  const p: Project = viewOf(p0);
   const b = p.built;
   if (!b) return null;
   const left = { ...b.parts };

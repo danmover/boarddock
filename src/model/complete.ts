@@ -2,7 +2,7 @@
 // for each Pi, outlets for everything that plugs into the wall against the powerboards' size, a switch when two or
 // more boards have Ethernet, and the switch's uplink to your router.
 import type { Project } from './types';
-import { isAccessory, isSwitch, linkOf, plugsOf, powerShort, ROUTER } from './links';
+import { cablesOn, isAccessory, isSwitch, linkOf, plugsOf, powerShort, ROUTER } from './links';
 import { isPlugPack, minOf } from './powerdata';
 
 /** One thing missing: what to say, and what goes on the rack for it (library template ids). `own`: the new switch also brings its own supply. */
@@ -17,6 +17,7 @@ function powerboardsFor(n: number): string[] {
 
 export function completeRack(p: Project): Gap[] {
   const gaps: Gap[] = [];
+  if (!cablesOn(p)) return gaps; // (supplies, a switch, an uplink: all cables)
   // a supply for each Pi with no power: its own (27 W for a Pi 5, 15 W for a Pi 4), each a plug pack that needs an outlet
   const pis = powerShort(p).unserved.filter((w) => /^raspberry pi/i.test(w.plug.module.board.name) && !isAccessory(w.plug.module.board));
   const supplies = pis.map((w) => (minOf(w.need) > 3 || w.need.peak > 3 ? 'psu_pi5' : 'psu_pi4'));

@@ -3,7 +3,7 @@
 // are listed apart and never bought; jumper wires are bought by the wire; a cable to your computer is a 2 m one.
 import { buyText, SOCKET } from './cablebuy';
 import type { GenReport, Link, PlugRef, Project } from './types';
-import { baseRef, cableNumbers, findModule, isAccessory, isSocket, PC, plugName, plugRole, ROUTER, shortName } from './links';
+import { baseRef, cableNumbers, cablesOn, findModule, isAccessory, isSocket, PC, plugName, plugRole, ROUTER, shortName } from './links';
 import { isPlugPack } from './powerdata';
 import { oneNetBuy } from './netlength';
 import { poeFeeds } from './poe';
@@ -17,7 +17,7 @@ export interface CableLines { buy: string[]; comes: string[] }
  * added from the project's links: all of them, or on a built rack (`onlyNew`) the ones not bought then.
  */
 export function cableLines(p: Project, cables: CableOut[], onlyNew = false): CableLines {
-  const links = p.links ?? [];
+  const links = cablesOn(p) ? p.links ?? [] : [];
   const nos = cableNumbers(links);
   const end = (r: PlugRef) => { const m = findModule(p, r.module); const c = m?.board.comps.find((x) => x.ref === baseRef(r.ref)); return { m, c, type: c?.conn?.type ?? '', role: m && c ? plugRole(m, c) : 'other' }; };
   /** The plug's name at a cable's end (a header that is a pin socket says so: its wire needs a male end). */

@@ -5,7 +5,7 @@
 // a probe). You can also say a port stays empty.
 // Everything else is left bare: its opening in the wall is still there to plug into later. Pure.
 import type { Comp, Module, Project } from './types';
-import { plugRole } from './links';
+import { cablesOn, plugRole } from './links';
 
 export type PortUse = 'auto' | 'yes' | 'no';
 export type UseWhy = 'cable' | 'yours' | 'power' | 'supply' | 'main' | 'probe' | 'unused' | 'off';
@@ -20,7 +20,9 @@ const base = (r: string) => r.replace(/:2$/, '');
 /** Whether each plug of a board will be used, and why. */
 export function portUses(p: Project, m: Module): Map<string, UseWhy> {
   const out = new Map<string, UseWhy>();
-  const cabled = new Set((p.links ?? []).flatMap((l) => [l.a, l.b].filter((e) => e.module === m.id).map((e) => base(e.ref))));
+  // (with cables off nothing is cabled and nothing is assumed: a port has a plug in it when you say so)
+  const cablesUp = cablesOn(p);
+  const cabled = new Set((cablesUp ? p.links ?? [] : []).flatMap((l) => [l.a, l.b].filter((e) => e.module === m.id).map((e) => base(e.ref))));
   const plugs = m.board.comps.filter((c) => c.conn && !c.hidden);
   const role = (c: Comp) => plugRole(m, c);
   const box = m.board.kind === 'box';
@@ -28,13 +30,14 @@ export function portUses(p: Project, m: Module): Map<string, UseWhy> {
   const powerIns = plugs.filter((c) => role(c) === 'power-in' || (!box && role(c) === 'power-in-dc'));
   // (a lead on an Arduino's barrel jack doesn't stop its USB being the way in: it is still how you program it)
   const jacks = new Set(plugs.filter((c) => !box && c.conn!.type === 'barrel' && role(c) === 'other').map((c) => c.ref));
-  const main = ![...cabled].some((r) => !jacks.has(r)) && !powerIns.length ? plugs.find((c) => role(c) === 'device' || role(c) === 'hub-up') : undefined;
+  const main = !cablesUp ? undefined : ![...cabled].some((r) => !jacks.has(r)) && !powerIns.length ? plugs.find((c) => role(c) === 'device' || role(c) === 'hub-up') : undefined;
   for (const c of plugs) {
     const use = c.conn!.use ?? 'auto';
     let why: UseWhy;
     if (use === 'no') why = 'off';
     else if (cabled.has(c.ref)) why = 'cable';
     else if (use === 'yes') why = 'yours';
+    else if (!cablesUp) why = 'unused';
     else if (box && ['mains-in', 'other', 'power-in-dc'].includes(role(c))) why = 'supply';
     else if (powerIns[0] === c && !plugs.some((x) => x !== c && cabled.has(x.ref) && ['power-in', 'power-in-dc', 'device'].includes(role(x)))) why = 'power';
     else if (main === c) why = 'main';

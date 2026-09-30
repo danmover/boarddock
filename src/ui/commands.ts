@@ -3,7 +3,7 @@
 // few things that live inside App (going to a step, saving, the camera) come in through `CmdCtx`.
 import type { Step, State } from '../state';
 import { redo, select, store, undo } from '../state';
-import { addLinks, rebalancePower, rewire } from './linkOps';
+import { addLinks, rebalancePower, rewire, setCables } from './linkOps';
 import { addDock, addRail, autoArrange, markBuilt, quickLayout, tidyUp, unmarkBuilt } from './panelOps';
 import { describe, removeItems } from './pickOps';
 import { leaveFocus, setZones, toggleFocus, view3d } from './view3d';
@@ -46,7 +46,7 @@ export function buildCommands(s: State, c: CmdCtx): Command[] {
 
   c.steps.forEach((st, i) => add('Steps', `Go to ${st.label}`, () => c.goStep(st.id), { id: `step:${st.id}`, hint: st.title, keys: String(i + 1), words: `step ${i + 1} ${st.text}`, ok: has || st.id === 'import', why: need }));
 
-  const views: [State['view'], string, string, boolean][] = [['assembly', '3D view', 'model rack', true], ['panel', 'Rails view', 'docks layout top', panel], ['wiring', 'Wiring view', 'cables connections graph', true], ['print', 'Plates view', 'print bed plates', true], ['editor', 'Board editor', 'holes parts draw', true]];
+  const views: [State['view'], string, string, boolean][] = [['assembly', '3D view', 'model rack', true], ['panel', 'Rails view', 'docks layout top', panel], ['wiring', 'Wiring view', 'cables connections graph', !p?.cablesOff], ['print', 'Plates view', 'print bed plates', true], ['editor', 'Board editor', 'holes parts draw', true]];
   for (const [v, t, w, ok] of views) if (ok) add('Views', `Show the ${t}`, () => store.set({ view: v }), { id: `view:${v}`, words: w, ok: has, why: need });
 
   add('Rack', 'Add a board', () => store.set({ addSheet: true }), { keys: 'A', ok: has, why: need, words: 'import new hub charger accessory' });
@@ -61,9 +61,11 @@ export function buildCommands(s: State, c: CmdCtx): Command[] {
   add('Rack', 'Mark the rack as built', markBuilt, { ok: has && !!s.result && !p!.built, why: p?.built ? 'It is marked as built already' : 'Wait for the build to finish', hint: 'Export then lists only what is new', words: 'printed done' });
   add('Rack', 'Forget that the rack is built', unmarkBuilt, { ok: !!p?.built, why: 'The rack is not marked as built' });
 
-  add('Cables', 'Auto-connect the cables', () => addLinks(), { ok: has, why: need, hint: 'Connect every plug that has a partner', words: 'wire link usb power' });
-  add('Cables', 'Rewire the auto-connected cables', rewire, { ok: has, why: need, hint: 'Choose them again for the rack as it is laid out now' });
-  add('Cables', 'Move boards to stronger power ports', rebalancePower, { ok: has, why: need, words: 'charger supply' });
+  const off = !!p?.cablesOff, offWhy = 'Cables are off for this rack';
+  add('Cables', off ? 'Cables: in the app' : 'Cables: off (holders and plug covers only)', () => setCables(off), { id: 'cables:switch', ok: has, why: need, hint: off ? 'Route, list and buy cables again: the ones you had come back' : 'No routing, cable lists, tags or Auto-connect: cradles and caps on the ports you choose', words: 'wire link usb power no cables holders only plug covers caps cradles' });
+  add('Cables', 'Auto-connect the cables', () => addLinks(), { ok: has && !off, why: off ? offWhy : need, hint: 'Connect every plug that has a partner', words: 'wire link usb power' });
+  add('Cables', 'Rewire the auto-connected cables', rewire, { ok: has && !off, why: off ? offWhy : need, hint: 'Choose them again for the rack as it is laid out now' });
+  add('Cables', 'Move boards to stronger power ports', rebalancePower, { ok: has && !off, why: off ? offWhy : need, words: 'charger supply' });
 
   add('3D view', 'Isolate the selection', () => { in3d(); toggleFocus('isolate'); }, { id: 'focus:isolate', ok: has && (sel.length > 0 || !!f.focus), why: 'Pick something in the 3D view first', hint: 'Show only what is picked (Esc leaves)', words: 'only hide' });
   add('3D view', 'X-ray the selection', () => { in3d(); toggleFocus('xray'); }, { id: 'focus:xray', ok: has && (sel.length > 0 || !!f.focus), why: 'Pick something in the 3D view first', hint: 'Everything else see-through (Esc leaves)', words: 'transparent ghost' });

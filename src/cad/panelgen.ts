@@ -17,7 +17,7 @@ import { basis, dir, I4, inv, mul, pt as ptM, rotZ, tr, type M4 } from '../geom/
 import { filletPath, leadStub, moveFx, powerFx, ribbonMesh, sphereMesh, tubeMesh } from './boardviz';
 import { poweredBoards } from '../model/lights';
 import { inUse, portUses, type UseWhy } from '../model/portuse';
-import { baseRef, cableFlow, flowGlow, cableNumbers, cablePurpose, cableToBuy, findModule, KIND_COLOR, KIND_NAME, offRackModule, offRackTo, packGoes, plugRole, plugsOf, refText, shortName, type PlugRole } from '../model/links';
+import { baseRef, cablesOn, cableFlow, flowGlow, viewOf, cableNumbers, cablePurpose, cableToBuy, findModule, KIND_COLOR, KIND_NAME, offRackModule, offRackTo, packGoes, plugRole, plugsOf, refText, shortName, type PlugRole } from '../model/links';
 import { isPlugPack } from '../model/powerdata';
 import { cableTag, TAG } from './cabletag';
 import { KIND_GLOW } from '../model/cablekinds';
@@ -154,6 +154,7 @@ function toPanel(r: Rail, at: number, b: number[]): [number, number, number, num
 }
 
 export function generatePanel(p: Project): GenResult {
+  if (p.cablesOff && p.links?.length) return generatePanel(viewOf(p));
   const t0 = Date.now();
   const P = p.panel;
   const warnings: string[] = [], checks: Check[] = [];
@@ -675,7 +676,7 @@ export function generatePanel(p: Project): GenResult {
               const shown = pair
                 ? linked.has(k2) || toOffExact.has(k2) || (!/upper/.test(g.name) && !linked.has(mate) && !toOffExact.has(mate) && offRack(g.tag.module!, g.tag.refs?.[0] ?? ''))
                 : linked.has(k2) || linked.has(`${key}:2`) || offRack(g.tag.module!, g.tag.refs?.[0] ?? '');
-              if (!shown) continue;
+              if (!shown || !cablesOn(p)) continue; // (no cables: no plugs drawn in the ports either)
               if (pair ? !linked.has(k2) : !linked.has(k2) && !linked.has(`${key}:2`)) hang.add(k2);
             }
             const own = moveAnim(g.anim, L.T);
@@ -1176,6 +1177,7 @@ export function generatePanel(p: Project): GenResult {
     if (cables.length) checks.push({ group: 'Panel', name: 'Cables', value: `${cables.length}, ${round(cables.reduce((a, c) => a + c.length, 0) / 1000, 1)} m`, status: 'info', detail: cables.map((c) => `${KIND_NAME[c.kind]} ${c.a} to ${c.b}: ${round(c.length / 10, 0)} cm (${c.ribbon != null ? 'comes with the probe' : `buy ${c.buy} m`})`).join('; ') });
   }
 
+  if (cablesOn(p)) {
   // ---- mains and supplies: what BoardDock can and can't check ----
   // a powerboard plugged into another powerboard: the first one carries both loads through one outlet. BoardDock
   // never makes one, and refuses to; one from an older rack fails Check
@@ -1197,6 +1199,7 @@ export function generatePanel(p: Project): GenResult {
   if ((p.links ?? []).some((l) => l.kind === 'mains') || p.modules.some((m) => m.board.comps.some((c) => c.conn?.type.startsWith('ac_'))))
     checks.push({ group: 'Power', name: 'Mains: what BoardDock checks', value: 'plugs and outlets only', status: 'info',
       detail: "BoardDock checks which mains plug goes into which outlet, never a powerboard into another, and adds up the load it knows about. It can't check your powerboard, its lead or earth, or the wall socket, and it doesn't model mains wiring through screw terminals or relays: that belongs in a proper enclosure, wired by someone qualified to. Plug the powerboards into the wall last, with their switches off." });
+  }
 
   // ---- cables that leave the rack (to a screen, a supply, the mains): out of the plug, a bend down, along the table ----
   // (each drawn out of its plug only as far as it is clear of everything but its own board: a supply lead out of a
@@ -1205,7 +1208,7 @@ export function generatePanel(p: Project): GenResult {
     ...parts.flatMap((pt) => [pt.toAssembly, ...(pt.instances ?? [])].map((T, j) => { const b = emptyBox(); boxOf(boxMesh(pt).pos, T, b); return { b, module: (j ? pt.tags?.[j - 1] ?? pt.tag : pt.tag)?.module }; })),
     ...ghosts.filter((g) => g.tag && g.tag.kind !== 'cable' && g.mat !== 'cable').map((g) => { const b = emptyBox(); boxOf(g.mesh.pos, I4, b); return { b, module: g.tag?.module }; }),
   ] : [];
-  for (const k of hang) {
+  if (cablesOn(p)) for (const k of hang) {
     const e = ends.get(k);
     if (!e) continue;
     const i = k.indexOf('/'), module = k.slice(0, i), ref = k.slice(i + 1), m = mods.get(module)?.m, c = m?.board.comps.find((x) => x.ref === baseRef(ref));

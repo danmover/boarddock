@@ -10,7 +10,7 @@ import { generateChecked } from './arrange';
 import { leadStub, moveFx, powerFx } from './boardviz';
 import { poweredBoards } from '../model/lights';
 import { inUse, portUses } from '../model/portuse';
-import { offRackTo, packGoes, plugRole, shortName } from '../model/links';
+import { offRackTo, packGoes, plugRole, shortName, viewOf } from '../model/links';
 import { isPlugPack } from '../model/powerdata';
 import { dir as dirM, pt as ptM } from '../geom/mat';
 import { printability } from './export';
@@ -46,6 +46,7 @@ export function mergeNotes(warnings: string[], names: string[]): string[] {
 }
 
 export function generate(p: Project): GenResult {
+  if (p.cablesOff && p.links?.length) return generate(viewOf(p)); // (no cables: none are routed, drawn, tagged or bought, and the layout is not bent to them)
   const r = p.layout === 'panel' ? generateChecked(p) : generateLoose(p);
   // a plug pack goes into an outlet and never gets a holder: a rack of nothing else has nothing to print, so say so
   if (p.modules.length && p.modules.every((m) => isPlugPack(m.board))) r.report.warnings.push(...p.modules.map((m) => `${m.board.name}: a plug pack goes straight into an outlet and gets no holder, so there is nothing to print. Add the board it powers.`));

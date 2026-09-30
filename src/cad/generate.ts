@@ -240,7 +240,8 @@ function build(job: Job): ModuleOut {
   const { p, b } = job;
   const M0 = job.mount ?? p.mount;
   const H = holderFor(job.H, b, !!job.din && M0.kind === 'din' && M0.mode === 'flat');
-  const warnings: string[] = [...b.notes];
+  // (a box's note is about its cables and Auto-connect: none with cables off)
+  const warnings: string[] = [...(p.cablesOff && b.kind === 'box' ? [] : b.notes)];
   const checks: Check[] = [];
   const mat = MATERIALS[H.material];
   if (b.box) for (const x of boxProblems(b.box)) checks.push({ group: 'Board', name: 'Box ports', value: "don't fit", status: 'bad', detail: `${x} Make the box bigger under Board › Box, or put fewer ports on that side.` });
