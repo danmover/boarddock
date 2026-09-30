@@ -36,7 +36,9 @@ Nothing BoardDock makes has been printed and tried yet, so anything below about 
 
 Each: how bad (1 to 5), what's wrong, where, and how it was seen.
 
-- 2 · The DIN clip's shoe pull-off: PETG reaches 2 % strain at about 120 N centred and 80 N off-centre, first at the hook beams' roots by their slits (`src/fea/dockfea.ts`). Fillets there are being added.
+- 2 · The DIN clip's shoe pull-off: with the slit roots rounded, PETG reaches 2 % strain at about 130 N centred and 87 N on one hook; the fixed hook's finger is now first, at the edge of the rigid support the model holds it by, so the reading may be the model's (`src/fea/dockfea.ts`, `docs/din-clip-review.md`).
+- 1 · The Nano's 8 mm hairpin pair (docked, and lying flat) reads 0.85 fatigue margin in the FEA, a little under 1 (`src/fea/springfea.ts`).
+- 1 · A Pi Zero stays on snap pins: three of its edges are plugs and the SD socket, and one edge can't stop it tipping out.
 - 2 · KiCad "New version": a 0.8 mm connector move on the example board caused an overlap; the warning shows, but why the imported bodies overlap was never found.
 - 1 · `npm test` takes about 6 minutes, most of it building holders and racks.
 - 1 · The printed guide's pictures have no cable numbers: the numbers are drawn over the 3D view, not in it (`src/ui/Viewer3D.tsx` stepPictures).
