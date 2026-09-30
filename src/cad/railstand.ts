@@ -213,15 +213,26 @@ export function pieceMesh(pc: StandPiece) {
 /** Bounding boxes of the stand pieces in the rack frame (for cable routing), from the plan alone. */
 export function standBoxes(plan: StandPlan): { box: number[]; label: string }[] {
   const w = STAND.half;
-  return plan.pieces.map((pc) => {
+  const out: { box: number[]; label: string }[] = [];
+  for (const pc of plan.pieces) {
     const [x0, x1] = pc.kind === 'end' || pc.kind === 'saddle' ? [-w, w] : [w, pc.to != null ? pc.to - w : pc.reach];
     const [y0, y1] = [-STAND.H, pc.kind === 'end' ? TOP : pc.kind === 'saddle' ? 2.4 : -2.5];
     const zl = pc.kind === 'end' || pc.kind === 'saddle' ? STAND.len : STAND.spacerT;
-    const b = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
-    for (const x of [x0, x1]) for (const y of [y0, y1]) for (const z of [0, zl]) {
-      const M = pc.M, q = [M[0] * x + M[4] * y + M[8] * z + M[12], M[1] * x + M[5] * y + M[9] * z + M[13], M[2] * x + M[6] * y + M[10] * z + M[14]];
-      for (let k = 0; k < 3; k++) { b[k] = Math.min(b[k], q[k]); b[k + 3] = Math.max(b[k + 3], q[k]); }
+    const box = (xa: number, xb: number, ya: number, yb: number) => {
+      const b = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+      for (const x of [xa, xb]) for (const y of [ya, yb]) for (const z of [0, zl]) {
+        const M = pc.M, q = [M[0] * x + M[4] * y + M[8] * z + M[12], M[1] * x + M[5] * y + M[9] * z + M[13], M[2] * x + M[6] * y + M[10] * z + M[14]];
+        for (let k = 0; k < 3; k++) { b[k] = Math.min(b[k], q[k]); b[k + 3] = Math.max(b[k + 3], q[k]); }
+      }
+      return b;
+    };
+    const label = `table stand ${pc.station + 1}`;
+    out.push({ box: box(x0, x1, y0, y1), label });
+    // the comb stands up from the bar over the lanes it holds: what isn't in a slot goes over it
+    if (pc.lanes.length && pc.kind !== 'end' && pc.kind !== 'saddle') {
+      const cy0 = Math.max(x0, Math.min(...pc.lanes.map((l) => l.y - l.d / 2)) - 3.2), cy1 = Math.min(x1, Math.max(...pc.lanes.map((l) => l.y + l.d / 2)) + 3.2);
+      if (cy1 > cy0) out.push({ box: box(cy0, cy1, y0, combTop(pc.lanes)), label });
     }
-    return { box: b, label: `table stand ${pc.station + 1}` };
-  });
+  }
+  return out;
 }

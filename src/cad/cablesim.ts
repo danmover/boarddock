@@ -16,6 +16,7 @@ export interface SimCable {
   r: number; // radius
   pin: [number, number]; // mm at each end held straight in its plug
   fixed?: boolean; // doesn't move (a ribbon): the others settle round it
+  free?: boolean; // settles wherever it lies best (loose jumper wires): no pull back to the laid line
   mods?: string[]; // the boards at its ends: their own holders don't push it within `own` mm of that end
   plugs?: string[]; // its own plugs: never push it
   grip?: number[][]; // where a comb or clip holds it (it stays in the slot there)
@@ -33,6 +34,7 @@ const brush = (o: SimObstacle) => (o.plug || o.solid ? BRUSH_SOLID : BRUSH);
 const SLACK = 0.03; // cables are a few per cent longer than the shortest way: they lie, not stretch
 const SAG = 0.8; // how far weight pulls a free bead down each round (mm)
 const BEND = 3; // tightest bend, in cable diameters
+const KEEP = 0.05; // how firmly every bead keeps to where it was laid, all along (the plan spread the crossings and lanes: settling only resolves what touches, it must not cut the corners)
 
 const sub = (a: number[], b: number[]) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const len = (a: number[]) => Math.hypot(a[0], a[1], a[2]);
@@ -59,12 +61,24 @@ export function resample(pts: number[][], step = STEP): number[][] {
  * Let the cables settle. `rounds`: how many passes (more: calmer). Returns each cable's settled path, the pairs still
  * touching afterwards and the cables still inside something, for the report.
  */
-export function settleCables(cables: SimCable[], obs: SimObstacle[], rounds = 60): SimResult {
+/** A stretch where a cable keeps to the line it was laid on across: under a rail (the two cables that cross there
+ * must not drift into each other), plus a margin so that any turn starts outside. `k`: the axis across the band. */
+export interface Band { k: number; lo: number; hi: number; e0: number; e1: number }
+
+export function settleCables(cables: SimCable[], obs: SimObstacle[], rounds = 60, bands: Band[] = []): SimResult {
   const beads = cables.map((c) => resample(c.pts));
   const plan = beads.map((b) => b.map((q) => q.slice())); // where each bead was laid: the side of anything it is pushed back to
   // arc length of every bead from each end, and which are held in their plugs
   const arc = beads.map((b) => { const s = [0]; for (let i = 1; i < b.length; i++) s.push(s[i - 1] + len(sub(b[i], b[i - 1]))); return s; });
   const held = cables.map((c, k) => { const s = arc[k], L = s[s.length - 1]; return s.map((x) => c.fixed || x <= c.pin[0] || L - x <= c.pin[1]); });
+  // beads laid across a band stay on their line across it (to within a little play): the crossings were spread
+  const lat = cables.map((C, k) => beads[k].map((q) => {
+    if (C.fixed || q[2] > (C.floor ?? q[2]) + 2) return null;
+    const b = bands.find((x) => q[x.k] > x.lo && q[x.k] < x.hi && q[1 - x.k] > x.e0 && q[1 - x.k] < x.e1);
+    return b ? { o: 1 - b.k, at: q[1 - b.k] } : null;
+  }));
+  const PLAY = 0.4;
+  const pinLat = () => beads.forEach((b, c) => b.forEach((q, i) => { const p = lat[c][i]; if (p) q[p.o] = Math.max(p.at - PLAY, Math.min(p.at + PLAY, q[p.o])); }));
   // a comb holds the cable in its slot: the bead nearest it goes into the slot, and it and the one each side are held
   cables.forEach((C, k) => { for (const g of C.grip ?? []) { let bi = -1, bd = 4; beads[k].forEach((q, i) => { const dd = len(sub(q, g)); if (dd < bd) { bd = dd; bi = i; } }); if (bi < 0) continue; beads[k][bi] = g.slice(); plan[k][bi] = g.slice(); for (const j of [bi - 1, bi, bi + 1]) if (j >= 0 && j < beads[k].length) held[k][j] = true; } });
   // rest lengths: the free stretch a few per cent longer than laid (the held ends are exactly as laid, so their share
@@ -74,7 +88,7 @@ export function settleCables(cables: SimCable[], obs: SimObstacle[], rounds = 60
   // how much of its weight each bead hangs on (none by the plugs, all from a few diameters out)
   const carry = cables.map((C, k) => { const S = arc[k], L = S[S.length - 1], ramp = 40; return S.map((x) => { const e = Math.min(x - C.pin[0] - (C.stiff?.[0] ?? 12 * C.r), L - x - C.pin[1] - (C.stiff?.[1] ?? 12 * C.r)); return Math.max(0, Math.min(1, e / ramp)); }); });
   // and how firmly each keeps to where it was laid (its stiff stretches out of the plugs, easing off beyond them)
-  const keep = cables.map((C, k) => { const S = arc[k], L = S[S.length - 1]; return S.map((x) => { const e = Math.min(x - C.pin[0] - (C.stiff?.[0] ?? 0), L - x - C.pin[1] - (C.stiff?.[1] ?? 0)); return C.stiff ? 0.12 * Math.max(0, Math.min(1, 1 - e / 20)) : 0; }); });
+  const keep = cables.map((C, k) => { const S = arc[k], L = S[S.length - 1]; return S.map((x) => { const e = Math.min(x - C.pin[0] - (C.stiff?.[0] ?? 0), L - x - C.pin[1] - (C.stiff?.[1] ?? 0)); return C.stiff ? Math.max(C.free ? 0 : KEEP, 0.12 * Math.max(0, Math.min(1, 1 - e / 20))) : 0; }); });
   const rMax = Math.max(1, ...cables.map((c) => c.r));
 
   // obstacles on a coarse grid, so each bead only looks at the few near it
@@ -203,6 +217,7 @@ export function settleCables(cables: SimCable[], obs: SimObstacle[], rounds = 60
       }
       b.forEach((_, i) => { if (!held[c][i]) pushOut(c, i); });
     });
+    pinLat();
   }
   const shape = beads.map((b) => b.map((q) => q.slice()));
 
@@ -259,10 +274,12 @@ export function settleCables(cables: SimCable[], obs: SimObstacle[], rounds = 60
     // 2. then what touches: cables push apart, and out of holders, docks and plugs, never below where it was laid
     pushApart();
     beads.forEach((b, c) => b.forEach((_, i) => { if (!held[c][i]) pushOut(c, i); }));
+    pinLat();
   }
   // a last push apart and out of everything, so nothing ends up inside a holder or another cable
   pushApart();
   beads.forEach((b, c) => b.forEach((_, i) => { if (!held[c][i]) pushOut(c, i); }));
+  pinLat();
 
   // 3. last, the ripples out: every free bead eased towards its neighbours a few times over, each step kept only
   // where it leaves the bead clear of everything (holders, plugs, other cables), so a cable over a box's edge drapes
@@ -291,6 +308,7 @@ export function settleCables(cables: SimCable[], obs: SimObstacle[], rounds = 60
         if (clear(c, i, nq)) b[i] = nq;
       }
     });
+    pinLat();
   }
 
   // what still touches, for the report

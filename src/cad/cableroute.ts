@@ -149,10 +149,11 @@ export function slope(e: CableEnd, lane: number, zc: number): Route | null {
 export interface Choice { route: Route; street: number; hits: Hit[]; len: number; score: number; ea: Route | 'slope'; eb: Route | 'slope'; direct?: boolean } // direct: straight across, no street (street = -1)
 
 /**
- * Best route for one cable over the given streets (v of each). Score: length, plus 300 per obstacle hit and 4 per
+ * Best route for one cable over the given streets (v of each). `others`: where the cables routed before it drop and rise
+ * (each one's own place in the air). Score: length, plus 300 per obstacle hit and 4 per
  * millimetre inside one, plus a small charge for streets on the far side of a sideways plug.
  */
-export function bestRoute(A: CableEnd, B: CableEnd, streets: number[], zc: number, radius: number, obs: Obstacle[], ownA: Box | null, ownB: Box | null, stations: number[]): Choice | null {
+export function bestRoute(A: CableEnd, B: CableEnd, streets: number[], zc: number, radius: number, obs: Obstacle[], ownA: Box | null, ownB: Box | null, stations: number[], others: Obstacle[] = []): Choice | null {
   const escA = escapes(A, ownA, zc, radius, stations), escB = escapes(B, ownB, zc, radius, stations);
   const a1 = add(A.p, A.d, 14), b1 = add(B.p, B.d, 14);
   const behind = (p: number[], d: number[], c: number) => (Math.abs(d[1]) > 0.5 && (c - p[1]) * d[1] < -5 ? 60 : 0);
@@ -163,7 +164,7 @@ export function bestRoute(A: CableEnd, B: CableEnd, streets: number[], zc: numbe
     for (const ea of sa ? [sa, ...escA] : escA) for (const eb of sb ? [sb, ...escB] : escB) {
       const route = assemble(ea, eb, c, zc);
       const len = routeLength(route);
-      const h = hits(route, obs, [A, B], radius);
+      const h = hits(route, others.length ? [...obs, ...others] : obs, [A, B], radius);
       const score = len + cost * 0.2 + h.length * 300 + h.reduce((s, x) => s + x.depth, 0) * 4;
       if (!best || score < best.score) best = { route, street: k, hits: h, len, score, ea: ea === sa ? 'slope' : ea, eb: eb === sb ? 'slope' : eb };
     }
@@ -293,14 +294,20 @@ export function spreadCrossings(items: { route: Route; d: number; zc: number }[]
   }
   const groups = new Map<number, number[]>();
   runs.forEach((_, k) => { const g = find(k); (groups.get(g) ?? groups.set(g, []).get(g)!).push(k); });
-  // where a run may lie: at its height, clear of everything standing there along its stretch of v
-  const free = (q: Run, x: number) => !obs.some((o) => o.box[2] < items[q.n].zc + q.r - 0.2 && o.box[5] > items[q.n].zc - q.r && o.box[1] < hi(q) - 1 && o.box[4] > lo(q) + 1 && o.box[0] < x + q.r + 0.3 && o.box[3] > x - q.r - 0.3);
+  // the slant that eases a run over to x: the column stays, the run starts a little way along
+  const slant = (q: Run, x: number) => [x, q.vc + Math.sign(q.vl - q.vc) * Math.min(Math.abs(q.vl - q.vc) * 0.6, 1.2 * Math.abs(x - q.u) + 6), items[q.n].zc];
+  // where a run may lie: at its height, clear of everything standing there along its stretch of v and along its slant
+  const free = (q: Run, x: number) => {
+    const zc = items[q.n].zc, s = slant(q, x), from = [q.u, q.vc, zc];
+    return !obs.some((o) => o.box[2] < zc + q.r - 0.2 && o.box[5] > zc - q.r && ((o.box[1] < hi(q) - 1 && o.box[4] > lo(q) + 1 && o.box[0] < x + q.r + 0.3 && o.box[3] > x - q.r - 0.3) || (x !== q.u && segInBox(from, s, o.box, q.r + 0.3))));
+  };
   const STEP = 0.5, REACH = 60;
   for (const g of groups.values()) {
     if (g.length < 2) continue;
     const rs = g.map((k) => runs[k]).sort((p, q) => p.u - q.u || lo(p) - lo(q));
     // least total move with every neighbour a pitch apart, over the positions where the cable can lie
     const cand = rs.map((q) => { const c: number[] = []; for (let s = -REACH; s <= REACH; s += STEP) if (free(q, q.u + s)) c.push(q.u + s); return c; });
+    if ((globalThis as any).__dbgOn) ((globalThis as any).__dbgLog ??= []).push(`group ${rs.map((q) => `n${q.n}${q.head ? 'H' : 'T'} u=${q.u.toFixed(1)} v=${lo(q).toFixed(0)}..${hi(q).toFixed(0)} cand=${cand[rs.indexOf(q)].length}`).join(' | ')}`);
     if (cand.some((c) => !c.length)) continue;
     const cost = cand.map((c) => c.map(() => Infinity)), from = cand.map((c) => c.map(() => -1));
     cand[0].forEach((x, a) => { cost[0][a] = Math.abs(x - rs[0].u); });
@@ -315,22 +322,22 @@ export function spreadCrossings(items: { route: Route; d: number; zc: number }[]
     let a = -1;
     const last = rs.length - 1;
     cost[last].forEach((c, k) => { if (c < Infinity && (a < 0 || c < cost[last][a])) a = k; });
-    if (a < 0) continue;
+    if (a < 0) { if ((globalThis as any).__dbgOn) (globalThis as any).__dbgLog.push('  infeasible'); continue; }
     for (let k = last; k >= 0; k--) { rs[k].x = cand[k][a]; a = from[k][a]; }
+    if ((globalThis as any).__dbgOn) (globalThis as any).__dbgLog.push('  -> ' + rs.map((q) => q.x.toFixed(1)).join(' '));
   }
   // the moved runs: the column stays, a slant eases over to the new line, the run goes along it
   const edits = new Map<number, Map<number, Run>>();
   for (const q of runs) if (Math.abs(q.x - q.u) > 0.4) (edits.get(q.n) ?? edits.set(q.n, new Map()).get(q.n)!).set(q.i, q);
   for (const [n, es] of edits) {
     const { route, zc } = items[n], P = route.pts, K = route.kinds, pts: number[][] = [], kinds: SegKind[] = [];
-    const slant = (q: Run) => [q.x, q.vc + Math.sign(q.vl - q.vc) * Math.min(Math.abs(q.vl - q.vc) * 0.6, 1.2 * Math.abs(q.x - q.u) + 6), zc];
     const push = (p: number[], k: SegKind | null) => { if (pts.length && k) kinds.push(k); pts.push(p); };
     P.forEach((p0, i) => {
       const before = es.get(i - 1), here = es.get(i);
       let p = p0;
       if ((before && before.head) || (here && !here.head)) { const q = (before && before.head ? before : here)!; p = [q.x, q.vl, zc]; }
-      if (before && !before.head) { push(slant(before), K[i - 1]); push(p, 'cross'); } else push(p, i ? K[i - 1] : null);
-      if (here && here.head) push(slant(here), 'cross');
+      if (before && !before.head) { push(slant(before, before.x), K[i - 1]); push(p, 'cross'); } else push(p, i ? K[i - 1] : null);
+      if (here && here.head) push(slant(here, here.x), 'cross');
     });
     route.pts = pts;
     route.kinds = kinds;

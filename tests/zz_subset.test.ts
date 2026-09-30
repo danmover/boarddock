@@ -6,7 +6,7 @@ import { runRack } from './collide/run';
 
 // a quick subset of the collision matrix: SUBSET="name1|name2" (default: the five below); WORST=n overlaps per rack
 const S = '/tmp/claude-0/-home-user-boarddock/9f8d8d26-36fa-584d-87d3-c19a32c74ffd/scratchpad';
-const names = (process.env.SUBSET ?? 'Pi cluster|boxes|busy mixed rack|probes and adapters|rails along (columns)').split('|');
+const names = (process.env.SUBSET ?? 'Pi cluster,boxes,busy mixed rack,probes and adapters,rails along (columns)').split(',');
 describe('subset', () => {
   beforeAll(async () => { await initKernel(); });
   for (const name of names) {

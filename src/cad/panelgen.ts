@@ -786,6 +786,7 @@ export function generatePanel(p: Project): GenResult {
     const nRibbons = routes.length; // ribbons and jumper wires are laid once
     const routeCables = () => {
       routes.length = nRibbons;
+      const cols: Obstacle[] = [];
       for (const l of p.links ?? []) {
         if (near(l)) continue;
         const e = endsOf(l);
@@ -794,8 +795,15 @@ export function generatePanel(p: Project): GenResult {
         const d = 2 * Math.max(1.4, Math.max(EA.cable, EB.cable) / 2);
         // on stands the streets run under the rails; without them just over the rail lips
         const zc = stands ? STAND.floor + d / 2 + 0.25 : 8.5 + d / 2;
-        const ch = bestRoute(A, B, streets, zc, d / 2, obs, ownBox.get(l.a.module) ?? null, ownBox.get(l.b.module) ?? null, stations);
-        if (ch) routes.push({ l, A, B, ch, d, zc });
+        const ch = bestRoute(A, B, streets, zc, d / 2, obs, ownBox.get(l.a.module) ?? null, ownBox.get(l.b.module) ?? null, stations, cols);
+        if (!ch) continue;
+        routes.push({ l, A, B, ch, d, zc });
+        // where this one drops and rises: the cables after it keep their own columns off it
+        for (const e of [ch.ea, ch.eb]) {
+          if (e === 'slope' || e.pts.length < 3) continue;
+          const c = e.pts[e.pts.length - 1], top = e.pts[e.pts.length - 2], rr = d / 2 + 1;
+          cols.push({ box: [c[0] - rr, c[1] - rr, zc - d / 2, c[0] + rr, c[1] + rr, Math.max(top[2], zc + d)], label: 'another cable' });
+        }
       }
     };
     const laneOf = new Map<string, number>();
@@ -873,6 +881,7 @@ export function generatePanel(p: Project): GenResult {
     if (stands) { const h = planned.map((q) => q.hit); planned = lay().map((q, i) => ({ ...q, hit: h[i] })); }
     // then they settle together, as real ones do: where two cross one lies over the other, where they run together
     // they lie side by side, nothing goes through a holder, a dock, a plug or a ribbon, and the ends stay in their plugs
+    const railBoxes = obs.filter((o) => o.solid);
     const simIn = routes.map((q, i) => {
       const { l, A, B, d } = q, kind = l.kind ?? 'usb';
       const r = flat(l) ? Math.min(3, Math.min(ribbonWidth(l.a), ribbonWidth(l.b)) / 2) : kind === 'jumper' ? Math.max(1, (l.wires?.length ?? 1) * 0.8) : d / 2;
@@ -881,10 +890,11 @@ export function generatePanel(p: Project): GenResult {
       const hold = lead(d / 2) + 1.6 * Math.min(25, Math.max(10, 4 * d));
       // where its street passes through a stand's comb, the comb holds it
       const rt = planned[i].route, grip = rt.kinds.flatMap((k, j) => (k === 'street' ? stations.filter((u) => u > Math.min(rt.pts[j][0], rt.pts[j + 1][0]) + bendR(q) + 2 && u < Math.max(rt.pts[j][0], rt.pts[j + 1][0]) - bendR(q) - 2).map((u) => [u, rt.pts[j][1], rt.pts[j][2]]) : []));
-      return { id: l.id, pts: planned[i].path, r, grip, pin: [10, 10] as [number, number], stiff: [hold - 10, hold - 10] as [number, number], fixed: flat(l), mods: [l.a.module, l.b.module], plugs: [A.plug, B.plug], floor: q.zc };
+      return { id: l.id, pts: planned[i].path, r, grip, free: kind === 'jumper', pin: [10, 10] as [number, number], stiff: [hold - 10, hold - 10] as [number, number], fixed: flat(l), mods: [l.a.module, l.b.module], plugs: [A.plug, B.plug], floor: q.zc };
     });
     const laidOut = settleCables(simIn, obs, 0).touching.length; // where the planned routes met, before settling
-    const sim = settleCables(simIn, obs);
+    const bands = railBoxes.map((o) => { const k = o.box[3] - o.box[0] > o.box[4] - o.box[1] ? 1 : 0; return { k, lo: o.box[k] - 8, hi: o.box[k + 3] + 8, e0: o.box[1 - k] - 2, e1: o.box[4 - k] + 2 }; });
+    const sim = settleCables(simIn, obs, 60, bands);
     const nameOfLink = (id: string) => { const l = routes.find((q) => q.l.id === id)?.l; return l ? `${nameOf2(l.a.module)} ${l.a.ref}` : id; };
     if (sim.touching.length) warnings.push(`${sim.touching.length} pair${sim.touching.length > 1 ? 's' : ''} of cables still press on each other after settling (${sim.touching.slice(0, 3).map(([a, b]) => `${nameOfLink(a)} and ${nameOfLink(b)}`).join('; ')}): give them more room, or connect other plugs.`);
     if (routes.length) checks.push({ group: 'Panel', name: 'Cables settled', value: sim.touching.length ? `${sim.touching.length} pair${sim.touching.length > 1 ? 's' : ''} pressing` : 'none through another', status: sim.touching.length ? 'warn' : 'ok', detail: `every cable was let settle with the others${laidOut ? ` (their planned routes met in ${laidOut} place${laidOut > 1 ? 's' : ''})` : ''}: where two cross one lies over the other, where they run together they lie side by side, each keeps its length and stays in its plugs, runs straight out of them before it bends, sags a little where it hangs free and sits in the stands' combs. Ribbons stay where they were laid and the rest settle round them.${sim.kinked.length ? ` ${sim.kinked.length} still bend${sim.kinked.length > 1 ? '' : 's'} tighter than a cable likes somewhere (squeezed between plugs close together): ${sim.kinked.slice(0, 3).map(nameOfLink).join('; ')}.` : ''}` });
