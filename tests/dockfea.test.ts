@@ -1,6 +1,6 @@
 import { it, expect } from 'vitest';
 import { initKernel, csLoops } from '../src/cad/kernel';
-import { latchProfile, noseProfile, shoeFeaProfiles, shoe, socket } from '../src/cad/dock';
+import { holdFeaProfiles, latchProfile, noseProfile, shoeFeaProfiles, shoe, socket } from '../src/cad/dock';
 import { dockFea, type DockFeaResult } from '../src/fea/dockfea';
 import { assemble2D, meshPolygons, pcg, q6Element } from '../src/fea/fea2d';
 
@@ -11,10 +11,10 @@ it('dock parts are single solids and the 2D FEA runs', async () => {
     expect(m.decompose().length).toBe(n === 'shoe' ? 2 : 1); // the shoe's release lever is printed in place
   }
   const latch = csLoops(latchProfile().add(noseProfile()));
-  const sp = shoeFeaProfiles(), sh = csLoops(sp.jaw), gr = csLoops(sp.grip);
+  const sp = shoeFeaProfiles(), sh = csLoops(sp.jaw), gr = csLoops(sp.grip), hp = holdFeaProfiles(), hold = { side: csLoops(hp.side), lift: csLoops(hp.lift) };
   let petg: DockFeaResult | undefined;
   for (const [mat, E] of [['PETG', 2100], ['PLA', 3500]] as const) {
-    const r = dockFea(latch, sh, E, 0.38, Number(process.env.H ?? 0.1), undefined, gr);
+    const r = dockFea(latch, sh, E, 0.38, Number(process.env.H ?? 0.1), undefined, gr, undefined, hold);
     if (E < 3000) petg = r;
     for (const c of r.cases) console.log(mat, c.name, c.force.toFixed(2), 'N', (c.peakStrain * 100).toFixed(2) + '%', (c.p99Strain * 100).toFixed(2) + '%', c.notes.join('; '));
     console.log('elements', r.mesh.elements);
@@ -29,6 +29,13 @@ it('dock parts are single solids and the 2D FEA runs', async () => {
     if (E < 3000) { expect(g.force).toBeGreaterThan(7); expect(g.force).toBeLessThan(13); }
     expect(g.p99Strain).toBeLessThan(0.008);
     expect(g.peakStrain).toBeLessThan(0.015);
+    // the anti-rattle leaves: about 1 N each at rest (the tongue's two press it back onto its divider, the pedestal's two
+    // hold it up on the latch's catch), inside the strain limit at rest, at the stop and pressed home
+    const sl = r.cases.find((c) => /side leaf/.test(c.name))!, ll = r.cases.find((c) => /lift leaf/.test(c.name))!;
+    if (E < 3000) { expect(sl.force).toBeGreaterThan(0.6); expect(sl.force).toBeLessThan(2); expect(ll.force).toBeGreaterThan(0.8); expect(ll.force).toBeLessThan(2.2); }
+    expect(sl.peakStrain).toBeLessThan(0.01);
+    expect(ll.peakStrain).toBeLessThan(0.0155);
+    expect(Number(/knock that closes the slot \(0\.5 mm\): ([\d.]+)% peak/.exec(sl.notes[1])![1])).toBeLessThan(2);
     // the whole shoe pulled off the rail, not only its jaw: the fixed hook's finger, the floor and the hook beams with
     // the slit walls carry it too. PETG reaches its limit at about 80 N pulling on one hook (120 N on both): the socket's
     // hook beams first, then the fixed hook's finger; the hinge is not the weakest part
@@ -38,13 +45,13 @@ it('dock parts are single solids and the 2D FEA runs', async () => {
     if (E < 3000) { expect(both.peakStrain).toBeLessThan(0.02); expect(one.peakStrain).toBeLessThan(0.03); expect(one.peakStrain).toBeGreaterThan(both.peakStrain); }
   }
   // the pixel grid's origin no longer moves the results: half a pixel over in both directions, every force and peak
-  // stays within a few percent (a third for forces and 10 to 20% for peaks before)
-  const moved = dockFea(latch, sh, 2100, 0.38, Number(process.env.H ?? 0.1), undefined, gr, [0.5, 0.5]);
+  // stays within a few percent (a third for forces and 10 to 20% for peaks before; the thin leaves' peaks a bit more)
+  const moved = dockFea(latch, sh, 2100, 0.38, Number(process.env.H ?? 0.1), undefined, gr, [0.5, 0.5], hold);
   moved.cases.forEach((c, i) => {
     const a = petg!.cases[i];
     console.log(c.name, 'force', (c.force / a.force).toFixed(3), 'peak', (c.peakStrain / a.peakStrain).toFixed(3), 'p99', (c.p99Strain / a.p99Strain).toFixed(3));
     expect(Math.abs(c.force / a.force - 1), `${c.name}: force`).toBeLessThan(0.05);
-    expect(Math.abs(c.peakStrain / a.peakStrain - 1), `${c.name}: peak`).toBeLessThan(0.08);
+    expect(Math.abs(c.peakStrain / a.peakStrain - 1), `${c.name}: peak`).toBeLessThan(0.12);
     expect(Math.abs(c.p99Strain / a.p99Strain - 1), `${c.name}: 99%`).toBeLessThan(0.12);
   });
 }, 900000);
@@ -89,9 +96,10 @@ it('test-fit kit: four single-piece parts, no supports needed', async () => {
 
 it('the 14 x 4.5 mm tongue seats in the socket, the latch nose in its groove', async () => {
   await initKernel();
-  const { tongue } = await import('../src/cad/dock');
+  const { tongue, holdBumps } = await import('../src/cad/dock');
   const { box } = await import('../src/cad/kernel');
-  const s = socket(), t = tongue(0.2, 0);
+  // (the corner bumps of its anti-rattle leaves are pressed into the socket's corners on purpose: dockhold.test.ts)
+  const s = socket(), t = tongue(0.2, 0).subtract(holdBumps(0).all);
   // nothing of the tongue is inside the socket's plastic
   expect(s.intersect(t).volume()).toBeLessThan(0.05);
   // take the nose (its window is at z -8.15..-5.05, y 3.95..6.65) out of the picture: the rest of the socket still

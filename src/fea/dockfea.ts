@@ -3,9 +3,9 @@
 // Linear, small displacement: each case is solved for a unit load and scaled to the travel it must reach.
 import type { Loop } from '../model/types';
 import { assemble2D, elementStrain, meshPolygons, nearestNode, pcg, q6Element, smoothStrain, type Mesh2D } from './fea2d';
-import { GRIP, NOSE_TIP, SHOE_GRIP } from '../cad/dockdims';
+import { GRIP, HOLD, NOSE_TIP, SHOE_GRIP } from '../cad/dockdims';
 
-export interface DockFeaCase { part: 'latch' | 'shoe'; name: string; force: number; target: string; peakStrain: number; p99Strain: number; notes: string[] }
+export interface DockFeaCase { part: 'latch' | 'shoe' | 'holder'; name: string; force: number; target: string; peakStrain: number; p99Strain: number; notes: string[] }
 export interface DockField { name: string; x0: number; y0: number; h: number; nx: number; ny: number; elems: Int32Array; strain: Float32Array }
 export interface DockFeaResult { cases: DockFeaCase[]; fields: DockField[]; mesh: { h: number; elements: number } }
 
@@ -49,9 +49,11 @@ function stats(m: Mesh2D, u: Float64Array, R: Float64Array, k: number) {
 const field = (name: string, m: Mesh2D, h: number, eps: Float64Array): DockField => ({ name, x0: m.x0, y0: m.y0, h, nx: m.nx, ny: m.ny, elems: m.elems, strain: Float32Array.from(eps) });
 
 /** latchLoops: latch + nose + stop post, (y, z) socket-local. shoeLoops: shoe profile, (y, z) hub. */
-/** gripLoops: the shoe's rail grip with a strip of the floor it hangs from (shoeFeaProfiles in dock.ts). */
+/** gripLoops: the shoe's rail grip with a strip of the floor it hangs from (shoeFeaProfiles in dock.ts). holdLoops: the
+ * holder's anti-rattle leaves, (x, z) sections of a side leaf on the tongue and a lift leaf under the pedestal
+ * (holdFeaProfiles in dock.ts). */
 /** `phase`: shifts the pixel grid by that fraction of a pixel (to test how little the results depend on it). */
-export function dockFea(latchLoops: Loop[], shoeLoops: Loop[], E: number, nu: number, h = 0.1, onProgress?: (s: string) => void, gripLoops?: Loop[], phase?: [number, number]): DockFeaResult {
+export function dockFea(latchLoops: Loop[], shoeLoops: Loop[], E: number, nu: number, h = 0.1, onProgress?: (s: string) => void, gripLoops?: Loop[], phase?: [number, number], holdLoops?: { side: Loop[]; lift: Loop[] }): DockFeaResult {
   const cases: DockFeaCase[] = [];
   const fields: DockField[] = [];
   let elements = 0;
@@ -183,6 +185,33 @@ export function dockFea(latchLoops: Loop[], shoeLoops: Loop[], E: number, nu: nu
     s = stats(G.m, ug, G.R, Fg);
     cases.push({ part: 'shoe', name: `Rail shoe: rail grip pressed ${GRIP.pre} mm by the rail wall`, force: Fg, target: `slides along the rail at about ${(2 * MU * Fg).toFixed(1)} N (friction 0.3 on the pad and on the fixed hook; ${(2 * 0.2 * Fg).toFixed(1)} N at 0.2): it no longer only locates`, peakStrain: s.peak, p99Strain: s.p99, notes: [`${kg.toFixed(0)} N per mm, so ${(kg * 0.2).toFixed(1)} to ${(kg * 0.5).toFixed(1)} N for a pad pressed 0.2 to 0.5 mm (print and rail tolerance)`, `knocked across the rail, a tooth meets the wall at ${(GRIP.pre + GRIP.stop).toFixed(2)} mm: ${(s.peak * knock * 100).toFixed(2)}% peak, ${(s.p99 * knock * 100).toFixed(2)}% for 99%`, s.where] });
     fields.push(field('Rail shoe, rail grip', G.m, hs, s.eps));
+  }
+  // ---- the holder's anti-rattle leaves: the force each holds at rest, and its strain when a knock or the seat presses it ----
+  if (holdLoops) {
+    const push = (M: ReturnType<typeof model>, sel: (x: number, y: number) => boolean, dir: [number, number]) => {
+      const u = solve(M, sel, dir), ids: number[] = [];
+      for (let i = 0; i < M.m.nNodes; i++) if (!(M.fixed[2 * i] && M.fixed[2 * i + 1]) && sel(M.m.nodeXY[2 * i], M.m.nodeXY[2 * i + 1])) ids.push(i);
+      const d = ids.reduce((a, i) => a + (u[2 * i] * dir[0] + u[2 * i + 1] * dir[1]), 0) / ids.length; // mm per N
+      return { u, k: 1 / d };
+    };
+    onProgress?.('Solving: anti-rattle side leaf');
+    const sd = HOLD.side, ty = 3.2; // (the tongue is about 3.2 mm deep in y under the leaf)
+    const Ms = model(holdLoops.side, hs, E, nu, ty, (_x, y) => y > sd.root + 0.6, undefined, phase);
+    elements += Ms.m.elems.length;
+    const bs = push(Ms, (x, y) => x > 6.85 && x < 7.15 && y > sd.bz[0] + 0.3 && y < sd.bz[3] - 0.3, [-1, 0]);
+    const dRest = 0.22; // the leaf's x travel from rest with the tongue against its stops (measured on the geometry: tests/dockhold.test.ts)
+    const Fs = bs.k * dRest, ss = stats(Ms.m, bs.u, Ms.R, bs.k * dRest), sk = stats(Ms.m, bs.u, Ms.R, bs.k * sd.slot);
+    cases.push({ part: 'holder', name: 'Holder: tongue side leaf, one of two (anti-rattle)', force: Fs, target: `the two leaves press the tongue back onto its divider with ${(2 * Fs).toFixed(1)} N and to the middle, at the 45° corner faces`, peakStrain: ss.peak, p99Strain: ss.p99, notes: [`${bs.k.toFixed(1)} N per mm, ${Fs.toFixed(2)} N at rest (${dRest} mm pressed), so ${(bs.k * 0.1).toFixed(1)} to ${(bs.k * 0.4).toFixed(1)} N for 0.1 to 0.4 mm (print tolerance)`, `a knock that closes the slot (${sd.slot} mm): ${(sk.peak * 100).toFixed(2)}% peak, ${(sk.p99 * 100).toFixed(2)}% for 99%`, ss.where] });
+    fields.push(field('Tongue side leaf, at its stop', Ms.m, hs, sk.eps));
+    onProgress?.('Solving: anti-rattle lift leaf');
+    const lf = HOLD.lift, tl = lf.y1 - 0.5;
+    const Ml = model(holdLoops.lift, hs, E, nu, tl, (x) => x < 1.0, undefined, phase);
+    elements += Ml.m.elems.length;
+    const bl = push(Ml, (x, y) => x > lf.bx[1] + 0.05 && x < lf.bx[2] - 0.05 && y < -lf.bump + 0.12, [0, 1]);
+    const zRest = lf.bump - 0.3; // the latch nose's catch is 0.3 mm above the seat: the holder rises that far, and the bump is still pressed this much
+    const Fl = bl.k * zRest, sl = stats(Ml.m, bl.u, Ml.R, bl.k * lf.bump);
+    cases.push({ part: 'holder', name: 'Holder: pedestal lift leaf, one of two (anti-rattle)', force: Fl, target: `the two leaves hold the holder up on the latch's catch with ${(2 * Fl).toFixed(1)} N`, peakStrain: sl.peak, p99Strain: sl.p99, notes: [`${bl.k.toFixed(1)} N per mm, ${Fl.toFixed(2)} N at rest (${zRest.toFixed(2)} mm pressed)`, `strain shown with the holder pressed right home (${lf.bump} mm), when the two leaves push back with ${(2 * bl.k * lf.bump).toFixed(0)} N`, `the latch's click takes about ${(2 * Fl + 2 * MU * Math.SQRT2 * Fs).toFixed(1)} N more push than without the leaves (their lift, and friction of the corner bumps)`, sl.where] });
+    fields.push(field('Pedestal lift leaf, pressed home', Ml.m, hs, sl.eps));
   }
   return { cases, fields, mesh: { h, elements } };
 }

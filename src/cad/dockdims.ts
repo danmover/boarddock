@@ -71,3 +71,22 @@ export const GRIP = { t: 0.9, s0: 0.3, arm: [5.8, 6.7] as V2, knee: 1.5, root: 6
 /** The shoe's rail grip: the -y wall's inner face, and how far the shoe moves off it before its fixed hook meets the
  * flange edge (the hook's inside at -17.9, the flange edge at -17.5). */
 export const SHOE_GRIP = { wall: -12.5, gap: 0.4 };
+
+/**
+ * Anti-rattle leaves (dock.ts `holdLeaves`): a holder in its socket had 0.32 mm of lift before the latch nose caught,
+ * +-0.16 across (between the divider and the front wall) and +-0.22 sideways, and nothing pressed it. Now the tongue and
+ * its pedestal press the socket with leaves that flex within the print layers (the holder prints on its back, so the
+ * tongue's x-z section is a layer):
+ *  - `lift`: under each side of the pedestal a leaf (root at x `x0`, `t0` thick tapering to `t`, a `slot` above it to
+ *    flex into, over y up to `y1`) with a bump `bump` proud of the pedestal's underside on the socket top's side
+ *    margin (x `bx`). Seated, the bump is pressed flush; the latch's play lets the holder rise 0.3 mm, and the leaf
+ *    holds it up on the nose's catch with `bump` less that play still pressed.
+ *  - `side`: at each front corner of the tongue a leaf (a `slot` behind it, hanging from z `root` to the tongue's
+ *    tip, `t0` thick at the root and `t` from `taper` mm down) with a bump on the corner's 45 degree face (`bump`
+ *    proud, `bz` along z). The socket's matching face pushes the tongue back onto its divider and to the middle;
+ *    the slot closes at `slot`, which stops a knock.
+ */
+export const HOLD = {
+  lift: { x0: 1.6, t0: 1.6, t: 0.9, slot: 0.5, y1: 4.0, bump: 0.4, bx: [7.65, 8.1, 8.7, 9.15] },
+  side: { t: 0.9, t0: 1.1, taper: 3.5, slot: 0.5, root: -6.0, bump: 0.53, bz: [-13.9, -13.3, -11.5, -10.9], face: [0.08, 0.28, 0.9, 1.18] },
+};

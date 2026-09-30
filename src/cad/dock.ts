@@ -9,7 +9,7 @@
 //  socket-local: same axes, Z = 0 at the socket top; tongues plug in along -Z; holder A faces +Y
 import type { V2 } from '../model/types';
 import { box, circle2, ext, extCh, K, poly, rect2, roundCS, unionCS, unionMF, type CS, type MF } from './kernel';
-import { EAR, gripSpan, HD, headSpan, LANDING, LEN_X, NOSE_TIP, PEG, SHOE_GRIP, TONGUE } from './dockdims';
+import { EAR, gripSpan, HD, HOLD, headSpan, LANDING, LEN_X, NOSE_TIP, PEG, SHOE_GRIP, TONGUE } from './dockdims';
 import { railGrip } from './dinclip';
 export { gripSpan, headSpan };
 
@@ -251,7 +251,68 @@ export function tongue(into = 0.2, fit = 0): MF {
   const f = Math.max(0, Math.min(0.4, fit)), { hx, y0, y1 } = TONGUE;
   let t = ext(P([[-hx + f, y0], [hx - f, y0], [hx - f, y1 - 2 - f * 0.4], [hx - 2 - f * 0.6, y1 - f], [-hx + 2 + f * 0.6, y1 - f], [-hx + f, y1 - 2 - f * 0.4]]), -14, into);
   t = t.subtract(box(-10, NOSE_TIP - 0.15, -8.25, 10, y1 + 1.5, -4.8)); // latch groove
-  return t.subtract(extYZ(P([[y1 - 0.6, -14.1], [y1 + 0.1, -14.1], [y1 + 0.1, -13.3]]), 10));
+  t = t.subtract(extYZ(P([[y1 - 0.6, -14.1], [y1 + 0.1, -14.1], [y1 + 0.1, -13.3]]), 10));
+  // the anti-rattle leaves at its two front corners
+  const { cut, add } = sideLeaves(f);
+  return unionMF([t.subtract(cut), add]);
+}
+
+/**
+ * The tongue's side leaves (socket-local, holder A): at each front corner a leaf 0.9 mm thick hangs from z `root` to the
+ * tongue's tip, cut free by a 0.6 mm slot (through the tongue, so it is a slot in each print layer), and carries a
+ * bump on the corner's 45 degree face. The socket's matching face pushes the bump back and in: the tongue goes back onto
+ * the divider and to the middle, and the leaf's slot closes on a hard knock. `cut` goes out of the tongue, `add` on it.
+ */
+function sideLeaves(f: number): { cut: MF; add: MF } {
+  const { bump, bz, face } = HOLD.side, { hx, y0, y1 } = TONGUE, xo = hx - f;
+  const sl = sideSlot(xo);
+  const P1: V2 = [xo, y1 - 2 - f * 0.4], P2: V2 = [hx - 2 - f * 0.6, y1 - f], L = Math.hypot(P2[0] - P1[0], P2[1] - P1[1]);
+  const tv = [(P2[0] - P1[0]) / L, (P2[1] - P1[1]) / L], nv = [tv[1], -tv[0]];
+  const at = (a: number, h: number): V2 => [P1[0] + tv[0] * a + nv[0] * h, P1[1] + tv[1] * a + nv[1] * h];
+  const [a0, a1, a2, a3] = face;
+  const crest = P([at(a0, -0.05), at(a1, bump), at(a2, bump), at(a3, -0.05)]), foot = P([at(a0, -0.05), at(a0 + 0.1, 0.05), at(a3 - 0.1, 0.05), at(a3, -0.05)]);
+  // the bump's ends run out to the face in 45 degree ramps, so it goes in and out of the socket without catching
+  const b = hull([ext(crest, bz[1], bz[2]), ext(foot, bz[0], bz[0] + 0.02), ext(foot, bz[3] - 0.02, bz[3])]);
+  const c = extXZ(sl, y0 - 0.2, y1 + 0.2);
+  return { cut: unionMF([c, c.mirror([1, 0, 0])]), add: unionMF([b, b.mirror([1, 0, 0])]) };
+}
+
+/** (x, z) slot behind a side leaf whose outer face is at x = xo: 0.5 mm wide, bent so the leaf is thicker at its root. */
+function sideSlot(xo: number): CS {
+  const { t, t0, taper, slot, root } = HOLD.side;
+  return P([[xo - t0 - slot, root], [xo - t0, root], [xo - t, root - taper], [xo - t, -14.5], [xo - t - slot, -14.5], [xo - t - slot, root - taper]]).add(circle2(xo - t0 - slot / 2, root, slot / 2, 24));
+}
+
+/**
+ * The pedestal's lift leaves (socket-local): under each side of the pedestal a leaf (x, z section, y from the back to
+ * `y1`; it stands on the bed as it prints) with a slot above it to flex into and a bump under it on the socket top's
+ * side margin. The holder's wall runs on past the pedestal, so the leaf is cut free of it at its tip, and above it
+ * (y over `y1`) a void with a 45 degree roof, so nothing overhangs but the roof. `cut` goes out of the pedestal and the
+ * wall round it, `add` under the pedestal.
+ */
+function liftLeaves(): { cut: MF; add: MF } {
+  const { x0, t0, t, slot, y1, bump, bx } = HOLD.lift, hx = HD.base.hx, xt = 8.4, xs = HD.spineHx, xe = hx + 0.6, yt = HD.base.y1 + 0.1, zt = t0 + slot;
+  const bumpCS = P([[bx[0], 0.01], [bx[1], -bump], [bx[2], -bump], [bx[3], 0.01]]);
+  const slotCS = roundCS(P([[x0, t0], [xt, t], [xe, t], [xe, t + slot], [xt, t + slot], [x0, t0 + slot]]), 0.2);
+  const bp = extXZ(bumpCS, HD.backY, y1);
+  // (the void over the leaf: its roof slopes up and out from the spine at 45 degrees, to the pedestal's top)
+  const c = unionMF([extXZ(slotCS, HD.backY - 0.1, y1), box(hx, HD.backY - 0.1, -0.3, xe, y1, zt), ext(P([[xs, y1], [xe, y1], [xe, yt], [xs + (yt - y1), yt]]), -0.3, zt)]);
+  return { cut: unionMF([c, c.mirror([1, 0, 0])]), add: unionMF([bp, bp.mirror([1, 0, 0])]) };
+}
+
+/** The anti-rattle bumps of a holder's dock end alone (for measuring: the dock end without them is the rigid part). */
+export function holdBumps(fit = 0): { lift: MF; side: MF; all: MF } {
+  const lift = liftLeaves().add, side = sideLeaves(Math.max(0, Math.min(0.4, fit))).add;
+  return { lift, side, all: unionMF([lift, side]) };
+}
+
+/** The (x, z) sections the 2D FEA takes of one side leaf and one lift leaf (the +x one; the load goes on the bump). */
+export function holdFeaProfiles(): { side: CS; lift: CS } {
+  const xo = TONGUE.hx;
+  const side = rect2(0, -14, xo, 0).subtract(sideSlot(xo));
+  const { x0, t0, t: tl, slot: sl, bump, bx } = HOLD.lift, hx = HD.base.hx, xt = 8.4;
+  const lift = rect2(0, 0, hx, HD.base.t).subtract(roundCS(P([[x0, t0], [xt, tl], [hx + 1, tl], [hx + 1, tl + sl], [xt, tl + sl], [x0, t0 + sl]]), 0.2)).add(P([[bx[0], 0.01], [bx[1], -bump], [bx[2], -bump], [bx[3], 0.01]]));
+  return { side, lift };
 }
 
 /**
@@ -265,9 +326,11 @@ export function holderDock(far: number, pedestal: number, side = 0, fit = 0, col
   // in a column of holders, one below the top carries the next on a landing on its far wall instead of a grip bar
   const zg0 = col?.landing ? far + LANDING.gap : far + grip.gap, zg1 = zg0 + (col?.landing ? LANDING.t : grip.t);
   const [g0, g1] = gripSpan(side);
+  const lift = col?.foot ? null : liftLeaves(); // (on pegs, the pedestal stands on a landing, not the socket)
   const add = unionMF([
     // the bottom of a column (or a holder on its own) plugs into the socket; one higher up stands on pegs
     col?.foot ? unionMF(PEG.x.map((x) => peg(x))) : tongue(Math.min(1.0, pedestal), fit),
+    ...(lift ? [lift.add] : []),
     extXZ(rect2(-HD.base.hx, 0, HD.base.hx, Math.max(HD.base.t, pedestal)), HD.backY, HD.base.y1), // pedestal on the socket top (or on the landing below)
     box(-spineHx, HD.backY, 0, spineHx, spineY1, zg1), // spine, dock face to grip bar
     col?.landing
@@ -281,6 +344,7 @@ export function holderDock(far: number, pedestal: number, side = 0, fit = 0, col
     tunnel,
     box(-HD.voidHx, HD.backY - 0.1, Math.max(HD.base.t, pedestal) + 1.5, HD.voidHx, HD.voidY1, zg0 - 1.5), // back channel (saves filament)
     ...(col?.landing ? PEG.x.map((x) => pegHole(x, zg1)) : []),
+    ...(lift ? [lift.cut] : []),
   ]);
   return { add, cut, tunnel, zg0, zg1 };
 }
@@ -312,11 +376,13 @@ export function flatHolderDock(reach: number, fit = 0) {
   const dove = (g: number) => P([[-root - g, EAR.ped - 0.02], [root + g, EAR.ped - 0.02], [dt + g, EAR.ped + dh + g], [-dt - g, EAR.ped + dh + g]]);
   const tunnel = rodTunnel(top);
   const cut = unionMF([extXZ(dove(gap), HD.backY - 1, HD.base.y1 + gap), tunnel]); // (open at the tip, where the key slides in)
+  const lift = liftLeaves();
   const key = unionMF([
     tongue(Math.min(1.0, EAR.ped), fit),
     extXZ(rect2(-HD.base.hx, 0, HD.base.hx, EAR.ped), HD.backY, HD.base.y1), // pedestal on the socket top
     extXZ(dove(0), HD.backY, HD.base.y1),
-  ]).subtract(tunnel);
+    lift.add,
+  ]).subtract(lift.cut).subtract(tunnel);
   return { add: ear, cut, tunnel, key, top };
 }
 
