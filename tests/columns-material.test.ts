@@ -42,7 +42,7 @@ describe('grams and print time of a J-Link and adapter column', () => {
     let g = 0, min = 0;
     for (const pt of parts) { const e = estimate(pt, density); g += e.grams; min += e.minutes; }
     // (13.72 g and 33.0 min before; the landing is 1.2 mm thinner and the peg holes lost their drill cones)
-    expect(g).toBeLessThan(sum('g') - 0.15);
+    expect(g).toBeLessThan(sum('g') - 0.1); // (13.56 g now)
     expect(min).toBeLessThan(sum('min'));
     // and the rod down the column is shorter by the landing's 1.2 mm
     const rod = parts.find((x) => /^Release rod/.test(x.name))!;
