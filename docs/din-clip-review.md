@@ -45,7 +45,7 @@ The kinematic sweep, with the rigid jaw:
 - **21.5°:** the lip is 1.7 mm out, clear of the flange. The pad has gone down **5.0 mm** (13.6 mm from the pin).
 - **23.5°:** the jaw meets its stop (the post on the body's shelf) at about 2.0 mm of lip travel. The FEA puts the stop at 2.16 mm.
 - **37.5°:** the lever's own travel would end here (the hub's opening meets the neck), so it never limits the release.
-- Upwards, the lever can lift 13.5° from rest before its hub meets the neck.
+- Upwards, the lever could lift 13.5° from rest before its hub met the neck (6.5° now: see the end).
 
 With the grip (section 3) the shoe sits on its fixed hook, 0.4 mm toward that side. The lip then engages only 1.3 mm, so it is clear a little sooner.
 
@@ -228,9 +228,17 @@ Already done before this review: a box on a flat clip now stands 2.3 mm up, clea
 - **The hinge leaf's bridged upper half** (8.7 mm): how much it sags.
 - **The tongue's 0.3 mm rattle** in the socket, and whether it matters on a board you plug into.
 
-## Seen along the way, not changed
+## Seen along the way, and since dealt with
 
-- The holder's tongue can lift 0.3 mm in its socket before the nose catches, and move ±0.16 / ±0.22 mm across. Nothing preloads it, so a holder can rattle. An anti-rattle spring on the pedestal (like the holders' board springs) would take it up.
-- The Check step's narrow-slot test ignores slivers under 0.15 mm² a layer. That is how the lever's 0.09 mm gap at the neck went unseen. A check of the smallest gap between separate islands of a print-in-place part would catch it (the review test does this for the lever).
-- The pull-off FEA holds the whole body of the shoe and looks only at the jaw side. The fixed hook's side (its floor, and the 1 mm wall between the window and the socket's hook slit) isn't analysed for pull-off.
-- The dock FEA's peaks move by about 7% when the pixel grid's origin moves: adding geometry anywhere below the hook changed the pull-off limit from 121 to 113 N until the grip got its own model.
+Four things the review left open, measured and changed afterwards (`tests/dockhold.test.ts`, `tests/dockfea.test.ts`, `tests/dinclip-review.test.ts`). Still none of it printed.
+
+- **The rattle.** The rigid dock end, slid in the socket the review's way, has 0.30 mm of lift before the nose catches, 0.14 mm either way across and 0.20 mm sideways. Now two kinds of leaf, both flexing within the print layers (the holder prints on its back, so the tongue's x-z section is a layer):
+  - *Under the pedestal*, a leaf each side (root 1.6 mm from the middle, 1.6 mm thick tapering to 0.9, a 0.5 mm slot over it to flex into) with a 0.4 mm bump on the socket top's side margin. The holder rests up on the nose's catch with the bumps still 0.10 mm pressed: about 1.4 N a leaf (14 N per mm), 3 N up in all. Pressed right home a leaf reaches 1.5% strain (the 3 x 3 pixel peak) and the two push back with 11 N; at the click they add about 4 N to the push (the latch's 9 N stays).
+  - *At the tongue's two front corners*, a leaf 0.9 mm thick (1.1 at its root, 0.5 mm slot, hanging from 6 mm down to the tip) with a bump on the 45° corner face. The socket's matching face pushes the tongue back onto its divider and to the middle: 1.2 N a leaf at rest (5.4 N per mm), 0.7% strain; a knock that closes the slot reaches 1.6%.
+  - So at rest the holder sits held up on the catch, back on the divider and centred, with the pedestal's bumps pressed 0.10 mm and each corner bump 0.16 mm along its face's normal (0.22 mm as the leaf sees it), and the rigid part touching nothing. Only the bumps overlap the socket (0.4 mm deep at most): the collision test allows a holder's bumps in its socket. `Tongue fit` (looser +) takes the bumps in with the faces.
+  - Not done: the pedestal's leaves are cut out of the holder's own wall (a slot over each, a 45° roofed void beside it), so a thin-walled holder has 0.6 mm left over them.
+- **The lever's lift.** Its hub meets the neck after 6.5° up (the pad 1.5 mm), not 13.5° (3 mm): the hub's neck-side edge is slanted, 0.35 mm off the neck at the pin and closer at the ring's rim (`SHOE_LEVER.open`, `SHOE_LEVER.stop`). A print gap of 0.35 mm at a 3.55 mm ring is 5.7° at the least.
+- **The pull-off FEA** now holds the shoe only where the rail does (under the fixed hook's finger and the jaw's lip) and pulls on the socket's two hooks. Sharing: the fixed hook takes about 56% of a central pull. PETG reaches its 2% limit at about 120 N on both hooks and 80 N on one (a holder pulled off-centre), first in the hook beams' roots at their slits, then the fixed hook's finger; the hinge is not the weakest part (175 N with the jaw alone, before). Not changed.
+- **The pixel grid.** It sits on multiples of the pixel now, a cut pixel keeps the share the outline covers as its stiffness, and the dock's peaks are 3 x 3 pixel averages: half a pixel of shift moves forces and peaks by under 5% and 12% (a third for forces before). The peaks read lower than the corner peaks the numbers above used (about a quarter), so the strains in this note before this section are the old kind. The solver has an incomplete Cholesky preconditioner (a free shoe took 16,000 Jacobi iterations).
+
+Still open from the review: the Check step's narrow-slot test ignores slivers under 0.15 mm² a layer. That is how the lever's 0.09 mm gap at the neck went unseen. A check of the smallest gap between separate islands of a print-in-place part would catch it (the review test does this for the lever).

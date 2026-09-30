@@ -37,6 +37,16 @@ describe('the rail shoe\'s release lever', () => {
     freeAll();
   });
 
+  it('can\'t lift far past rest: its hub meets the neck after a few degrees (it lifted 13.5°, its pad 3 mm, before)', () => {
+    const { body, lever } = split(), pv = SHOE_LEVER.pivot;
+    let lift = 0;
+    for (let d = 0; d <= 20; d += 0.25) if (turn(lever, d, pv).intersect(body).area() > 1e-3) { lift = d; break; }
+    console.log(`lever: hub meets the neck at ${lift}° up, the pad ${(13.6 * Math.sin((lift * Math.PI) / 180)).toFixed(1)} mm`);
+    expect(lift).toBeGreaterThan(4); // (the 0.35 mm print gap at the hub's edge is 5.6° at the least)
+    expect(13.6 * Math.sin((lift * Math.PI) / 180)).toBeLessThan(1.8);
+    freeAll();
+  });
+
   it('can\'t slide off its pin: a bead round the pin\'s middle runs in a groove in the hub (it could slide the whole 21 mm)', () => {
     const b = shoeBody(), l = shoeLever();
     expect(b.intersect(l).volume()).toBeLessThan(1e-3);
