@@ -1,7 +1,9 @@
 import { describe, it, beforeAll } from 'vitest';
 import { writeFileSync } from 'node:fs';
 import { initKernel } from '../src/cad/kernel';
-import { RACKS } from './collide/racks';
+import { RACKS as MATRIX } from './collide/racks';
+import { EXTRA_RACKS } from './zz_racks';
+const RACKS = [...MATRIX, ...EXTRA_RACKS];
 import { runRack } from './collide/run';
 
 // a quick subset of the collision matrix: SUBSET="name1|name2" (default: the five below); WORST=n overlaps per rack

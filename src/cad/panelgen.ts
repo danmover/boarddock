@@ -777,10 +777,15 @@ export function generatePanel(p: Project): GenResult {
       ch.route.pts.forEach((q, i) => {
         if (!i) return;
         const o = ch.route.pts[i - 1], h = rw / 2 + 0.5;
-        const bx: Box = [Math.min(o[0], q[0]) - h, Math.min(o[1], q[1]) - h, Math.min(o[2], q[2]) - 0.5, Math.max(o[0], q[0]) + h, Math.max(o[1], q[1]) + h, Math.max(o[2], q[2]) + 0.5];
-        laid.push(bx);
-        // where it crosses between the boards it is in the way of other cables (lying on a board, a cable just drapes over it)
-        if (ch.route.kinds[i - 1] === 'escape') obs.push({ box: bx, label: jump ? 'jumper wires' : 'a debug ribbon', plug: A.plug });
+        // (a slanting run in pieces: one box round the whole of it would take in half the rack)
+        const n = Math.max(1, Math.ceil(Math.hypot(q[0] - o[0], q[1] - o[1], q[2] - o[2]) / 10));
+        for (let k = 0; k < n; k++) {
+          const a = o.map((v, j) => v + ((q[j] - v) * k) / n), b = o.map((v, j) => v + ((q[j] - v) * (k + 1)) / n);
+          const bx: Box = [Math.min(a[0], b[0]) - h, Math.min(a[1], b[1]) - h, Math.min(a[2], b[2]) - 0.5, Math.max(a[0], b[0]) + h, Math.max(a[1], b[1]) + h, Math.max(a[2], b[2]) + 0.5];
+          laid.push(bx);
+          // where it runs it is in the way of other cables (its own ends, lying on its board, are its own business)
+          if (ch.route.kinds[i - 1] === 'escape' || !(o[2] < 0)) obs.push({ box: bx, label: jump ? 'jumper wires' : 'a debug ribbon', plug: A.plug });
+        }
       });
     }
     const nRibbons = routes.length; // ribbons and jumper wires are laid once
@@ -798,11 +803,17 @@ export function generatePanel(p: Project): GenResult {
         const ch = bestRoute(A, B, streets, zc, d / 2, obs, ownBox.get(l.a.module) ?? null, ownBox.get(l.b.module) ?? null, stations, cols);
         if (!ch) continue;
         routes.push({ l, A, B, ch, d, zc });
-        // where this one drops and rises: the cables after it keep their own columns off it
+        // where this one leaves its plugs and drops and rises: the cables after it keep their own ways off it (so plugs
+        // side by side that bend the same way nest their bends, one further out, not on top of each other)
         for (const e of [ch.ea, ch.eb]) {
-          if (e === 'slope' || e.pts.length < 3) continue;
-          const c = e.pts[e.pts.length - 1], top = e.pts[e.pts.length - 2], rr = d / 2 + 1;
-          cols.push({ box: [c[0] - rr, c[1] - rr, zc - d / 2, c[0] + rr, c[1] + rr, Math.max(top[2], zc + d)], label: 'another cable' });
+          if (e === 'slope') continue;
+          const rr = d / 2 + 1;
+          e.pts.forEach((c, i) => {
+            if (i < 1 || (i === 1 && e.kinds[0] === 'exit' && e.pts.length > 2)) return;
+            const o = e.pts[i - 1];
+            if (Math.hypot(c[0] - o[0], c[1] - o[1], c[2] - o[2]) < 1) return;
+            cols.push({ box: [Math.min(o[0], c[0]) - rr, Math.min(o[1], c[1]) - rr, Math.min(o[2], c[2]) - d / 2, Math.max(o[0], c[0]) + rr, Math.max(o[1], c[1]) + rr, Math.max(o[2], c[2], zc + d)], label: 'another cable' });
+          });
         }
       }
     };
@@ -1084,7 +1095,7 @@ export function generatePanel(p: Project): GenResult {
       }
     }
     // DBG-BEGIN
-    if ((globalThis as any).__dbgOn) (globalThis as any).__dbg = { vert, streets, obs: obs.map((o) => ({ box: o.box, label: o.label, module: o.module, plug: o.plug, stand: o.stand })), cables: routes.map((q, qi) => ({ id: q.l.id, kind: q.l.kind, d: q.d, street: q.ch.street, A: q.A, B: q.B, route: planned[qi].route, path: sim.paths[qi], hit: planned[qi].hit.map((h) => ({ l: h.ob.label, at: h.at, depth: h.depth })) })), tags: parts.filter((x) => x.tag?.kind === 'cabletag').map((x) => ({ id: x.tag!.refs![0], T: [x.toAssembly, ...(x.instances ?? [])] })) };
+    if ((globalThis as any).__dbgOn) (globalThis as any).__dbg = { vert, streets, obs: obs.map((o) => ({ box: o.box, label: o.label, module: o.module, plug: o.plug, stand: o.stand })), cables: routes.map((q, qi) => ({ id: q.l.id, kind: q.l.kind, d: q.d, street: q.ch.street, A: q.A, B: q.B, route: planned[qi].route, plan: planned[qi].path, path: sim.paths[qi], hit: planned[qi].hit.map((h) => ({ l: h.ob.label, at: h.at, depth: h.depth })) })), tags: parts.filter((x) => x.tag?.kind === 'cabletag').map((x) => ({ id: x.tag!.refs![0], T: [x.toAssembly, ...(x.instances ?? [])] })) };
     // DBG-END
     const clashing = cables.filter((c) => c.clash);
     for (const c of clashing) warnings.push(`The ${c.a} to ${c.b} cable runs into ${c.clash}. Move or turn one of the boards, or connect it to another plug.`);

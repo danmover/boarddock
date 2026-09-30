@@ -204,7 +204,7 @@ export function ribbonRoute(A: RibbonEnd, B: RibbonEnd, t: number, rw: number, o
     let x = unit(cross(e.d, e.w));
     const k = pref ? x[0] * pref[0] + x[1] * pref[1] + x[2] * pref[2] : 0;
     if (pref && Math.abs(k) > 0.3 ? k < 0 : Math.abs(x[2]) > 0.3 ? x[2] < 0 : (other[0] - e.p[0]) * x[0] + (other[1] - e.p[1]) * x[1] < 0) x = x.map((q) => -q);
-    const base = add(e.p, e.d, t / 2 - 0.6); // on the socket's cable clamp
+    const base = add(e.p, e.d, t / 2 - 0.25); // on the socket's cable clamp (its underside on the board's face, not sunk in it)
     return { x, S: add(base, x, -e.span / 2), E: add(base, x, e.span / 2 + 2) }; // S: its cut end, at the socket's far side
   };
   const cands: { pts: number[][]; iA: number; iB: number }[] = [];

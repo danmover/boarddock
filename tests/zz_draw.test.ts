@@ -3,7 +3,9 @@ import { writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { initKernel } from '../src/cad/kernel';
 import { generatePanel } from '../src/cad/panelgen';
-import { RACKS } from './collide/racks';
+import { RACKS as MATRIX } from './collide/racks';
+import { EXTRA_RACKS } from './zz_racks';
+const RACKS = [...MATRIX, ...EXTRA_RACKS];
 
 // draws a rack's top view (u right, v down) with its cables to a PNG: RACK="name" [CLIP="u0,v0,u1,v1"] [ONLY="id1,id2"]
 const S = '/tmp/claude-0/-home-user-boarddock/9f8d8d26-36fa-584d-87d3-c19a32c74ffd/scratchpad';
