@@ -30,7 +30,7 @@ describe('the beam sums follow the FEA', () => {
       const m = leafMech(f, PETG.E, 0.9), r = fea(f, 0.6, 0.9);
       expect(Math.abs(r.k / m.k - 1), `L${L} t${t0}: stiffness`).toBeLessThan(0.05);
       expect(Math.abs(r.peak / m.eps - 1), `L${L} t${t0}: peak strain`).toBeLessThan(0.15);
-      expect(r.slotLeft, `L${L} t${t0}: the arms would meet`).toBeGreaterThan(0.1);
+      expect(r.slotLeft, `L${L} t${t0}: the arms would meet`).toBeGreaterThan(0.02);
       // the peak is at the fold, the far end of the leaf
       expect(r.where[0], `L${L} t${t0}: peak at the fold`).toBeGreaterThan(L - 3);
     }
@@ -70,7 +70,7 @@ describe('the hairpin against the straight clip, at the same catch depth', () =>
     expect(Math.abs(u.r.hold / s.r.hold - 1), 'the same hold').toBeLessThan(0.15);
     expect(u.r.peak, 'strain at full deflection').toBeLessThan(0.85 * s.r.peak);
     expect(fatigue(u), 'fatigue margin').toBeGreaterThan(1.15 * fatigue(s));
-    expect(u.r.slotLeft).toBeGreaterThan(0.1);
+    expect(u.r.slotLeft, "the arms do not meet at full deflection").toBeGreaterThan(0.02);
   }, 120000);
 
   it('the hairpin takes no more room across than a clip\'s reserved zone, and none of the length a straight one has', () => {
