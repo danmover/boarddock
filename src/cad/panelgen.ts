@@ -818,8 +818,8 @@ export function generatePanel(p: Project): GenResult {
           const a = o.map((v, j) => v + ((q[j] - v) * k) / n), b = o.map((v, j) => v + ((q[j] - v) * (k + 1)) / n);
           const bx: Box = [Math.min(a[0], b[0]) - h, Math.min(a[1], b[1]) - h, Math.min(a[2], b[2]) - 0.5, Math.max(a[0], b[0]) + h, Math.max(a[1], b[1]) + h, Math.max(a[2], b[2]) + 0.5];
           laid.push(bx);
-          // where it runs it is in the way of other cables (its own ends, lying on its board, are its own business)
-          if (ch.route.kinds[i - 1] === 'escape' || !(o[2] < 0)) obs.push({ box: bx, label: jump ? 'jumper wires' : 'a debug ribbon', plug: A.plug });
+          // where it crosses between the boards it is in the way of other cables (lying on a board, a cable just drapes over it)
+          if (ch.route.kinds[i - 1] === 'escape') obs.push({ box: bx, label: jump ? 'jumper wires' : 'a debug ribbon', plug: A.plug });
         }
       });
     }

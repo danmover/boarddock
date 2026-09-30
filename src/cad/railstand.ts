@@ -155,11 +155,18 @@ export function planStands(rails: StandRail[], streets: number[], lanes: StandLa
     return all.some((l) => l.u0 - 2 <= u && u <= l.u1 + 2) ? all.map((l) => ({ y: +(l.y - vFrom).toFixed(2), d: l.d })) : [];
   };
   const key = (ls: { y: number; d: number }[]) => ls.map((l) => `${l.y}/${l.d}`).join(',');
+  // (stations a few mm apart, from rails whose ends nearly meet: the blocks and bars of one would lie in the other's)
+  const blocks = new Map<string, number[]>(), bars = new Map<string, number>();
+  const clashBar = (k: string, u: number) => { const last = bars.get(k); if (last != null && Math.abs(u - last) < STAND.spacerT + 2) return true; bars.set(k, u); return false; };
   stations.forEach((u, si) => {
     const on = rails.filter((r) => r.u0 - 0.5 <= u && u <= r.u1 + 0.5).sort((a, b) => a.v - b.v);
     const isEnd = on.some((r) => Math.abs(u - r.u0) < 0.6 || Math.abs(u - r.u1) < 0.6);
     for (const r of on) {
       const kind: PieceKind = Math.abs(u - r.u0) < 0.6 ? 'end' : Math.abs(u - r.u1) < 0.6 ? 'end' : 'saddle';
+      // (a saddle under a rail's own end block, or another saddle, has no room: the block holds the rail there)
+      const near = [...(blocks.get(r.id) ?? []), r.u0 + STAND.len / 2, r.u1 - STAND.len / 2].some((bu) => Math.abs(bu - u) < STAND.len + 1);
+      if (kind === 'saddle' && near) continue;
+      (blocks.get(r.id) ?? blocks.set(r.id, []).get(r.id)!).push(u);
       const M = kind === 'saddle' ? basis([0, 1, 0], [0, 0, 1], [1, 0, 0], [u - STAND.len / 2, r.v, 0])
         : Math.abs(u - r.u0) < 0.6 ? basis([0, 1, 0], [0, 0, 1], [1, 0, 0], [u - STAND.back, r.v, 0])
         : basis([0, -1, 0], [0, 0, 1], [-1, 0, 0], [u + STAND.back, r.v, 0]);
@@ -172,6 +179,7 @@ export function planStands(rails: StandRail[], streets: number[], lanes: StandLa
       const ls = streets.flatMap((v, st) => (v > a.v + w && v < b.v - w ? lanesAt(u, st, a.v) : [])).sort((x, y) => x.y - y.y);
       // between the ends a saddle stands on its own under its rail: a spacer only goes in to carry a comb
       if (!ls.length && !isEnd) continue;
+      if (clashBar(`${a.id}|${b.id}`, u)) continue;
       if (ls.some((l) => l.y - l.d / 2 < w + 2.5 || l.y + l.d / 2 > dv - w - 2.5)) warnings.push(`Too many cables run between rails ${a.id.replace(/^r/, '')} and ${b.id.replace(/^r/, '')} for their comb; space the rails further apart.`);
       pieces.push({ kind: 'spacer', key: `spacer ${Math.round(dv * 10) / 10} ${key(ls)}`, station: si, M: basis([0, 1, 0], [0, 0, 1], [1, 0, 0], [u - s3, a.v, 0]), lanes: ls, to: dv, reach: 0 });
     }
@@ -182,6 +190,7 @@ export function planStands(rails: StandRail[], streets: number[], lanes: StandLa
       // every street beyond the outer rail, out to the outer one (a street between rails that end short is crossed too)
       const ls = streets.flatMap((v, st) => (side > 0 ? v > r.v : v < r.v) ? lanesAt(u, st, r.v).map((l) => ({ y: +(side * l.y).toFixed(2), d: l.d })) : []).sort((x, y) => x.y - y.y);
       if (!ls.length && (on.length > 1 || !isEnd)) continue;
+      if (clashBar(`out${side}`, u)) continue;
       const reach = ls.length ? Math.max(...ls.map((l) => l.y + l.d / 2)) + 9 : w + 18;
       const M = side > 0 ? basis([0, 1, 0], [0, 0, 1], [1, 0, 0], [u - s3, r.v, 0]) : basis([0, -1, 0], [0, 0, 1], [-1, 0, 0], [u + s3, r.v, 0]);
       pieces.push({ kind: 'outrigger', key: `outrigger ${Math.round(reach * 10) / 10} ${key(ls)}`, station: si, M, lanes: ls, to: null, reach });

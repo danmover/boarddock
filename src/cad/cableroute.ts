@@ -84,7 +84,7 @@ export function hits(r: Route, obs: Obstacle[], ends: CableEnd[], radius: number
 }
 
 /** Ways out of a plug to the street level zc: each ends with the drop column reaching zc. */
-export function escapes(e: CableEnd, own: Box | null, zc: number, radius: number, stations: number[] = []): Route[] {
+export function escapes(e: CableEnd, own: Box | null, zc: number, radius: number, stations: number[] = [], tight = false): Route[] {
   const p1 = add(e.p, e.d, lead(radius));
   const out: Route[] = [];
   const drop = (pts: number[][]): Route => {
@@ -98,6 +98,8 @@ export function escapes(e: CableEnd, own: Box | null, zc: number, radius: number
     // a plug facing something close (the next dock along the rail): out a little, then off to one side and down
     const h = Math.hypot(e.d[0], e.d[1]) || 1, side = [-e.d[1] / h, e.d[0] / h, 0], p0 = add(e.p, e.d, Math.max(5, lead(radius) / 2));
     for (const s of [1, -1]) for (const k of [14, 28, 44]) out.push(drop([p0, add(p0, side, s * k)]));
+    // (with something a hand-width in front of the plug, a dock beside it: off to one side almost at once, a tight bend, but through nothing)
+    if (tight) { const p00 = add(e.p, e.d, 6); for (const s of [1, -1]) for (const k of [14, 28, 44]) out.push(drop([p00, add(p00, side, s * k)])); }
   } else {
     // a plug pointing up or down: go straight, or step off the board sideways at the plug's height first (just
     // clear of it, or a little further, past what stands off its face: a probe's ribbon socket)
@@ -153,8 +155,8 @@ export interface Choice { route: Route; street: number; hits: Hit[]; len: number
  * (each one's own place in the air). Score: length, plus 300 per obstacle hit and 4 per
  * millimetre inside one, plus a small charge for streets on the far side of a sideways plug.
  */
-export function bestRoute(A: CableEnd, B: CableEnd, streets: number[], zc: number, radius: number, obs: Obstacle[], ownA: Box | null, ownB: Box | null, stations: number[], others: Obstacle[] = []): Choice | null {
-  const escA = escapes(A, ownA, zc, radius, stations), escB = escapes(B, ownB, zc, radius, stations);
+function bestRouteWith(A: CableEnd, B: CableEnd, streets: number[], zc: number, radius: number, obs: Obstacle[], ownA: Box | null, ownB: Box | null, stations: number[], others: Obstacle[] = [], tight = false): Choice | null {
+  const escA = escapes(A, ownA, zc, radius, stations, tight), escB = escapes(B, ownB, zc, radius, stations, tight);
   const a1 = add(A.p, A.d, 14), b1 = add(B.p, B.d, 14);
   const behind = (p: number[], d: number[], c: number) => (Math.abs(d[1]) > 0.5 && (c - p[1]) * d[1] < -5 ? 60 : 0);
   const order = streets.map((c, k) => ({ k, c, cost: Math.abs(a1[1] - c) + Math.abs(b1[1] - c) + behind(a1, A.d, c) + behind(b1, B.d, c) })).sort((x, y) => x.cost - y.cost).slice(0, 3);
@@ -173,6 +175,14 @@ export function bestRoute(A: CableEnd, B: CableEnd, streets: number[], zc: numbe
     }
   }
   return best;
+}
+
+/** Best route, and where every way out hits something, the ways that bend tight at once as well. */
+export function bestRoute(A: CableEnd, B: CableEnd, streets: number[], zc: number, radius: number, obs: Obstacle[], ownA: Box | null, ownB: Box | null, stations: number[], others: Obstacle[] = []): Choice | null {
+  const first = bestRouteWith(A, B, streets, zc, radius, obs, ownA, ownB, stations, others);
+  if (!first || !first.hits.length) return first;
+  const again = bestRouteWith(A, B, streets, zc, radius, obs, ownA, ownB, stations, others, true);
+  return again && again.score < first.score ? again : first;
 }
 
 /** A ribbon's end: a cable end, plus its socket's long side (the ribbon's width lies along it) and its depth across.
