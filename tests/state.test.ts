@@ -61,6 +61,16 @@ describe('project edits', () => {
     expect(p.modules.length).toBe(7);
   });
 
+  it('several boards into a new rack with stay leave Start open; one board, or no stay, opens the first', () => {
+    store.set({ project: null, past: [], future: [], sel: [], step: 'import', view: 'library' });
+    putBoards([T('rpi4'), T('uno')], false, { stay: true });
+    expect(store.get().project!.modules.length).toBe(2);
+    expect([store.get().step, store.get().view]).toEqual(['import', 'library']);
+    store.set({ project: null, past: [], future: [], sel: [] });
+    putBoards([T('rpi4'), T('uno')], false);
+    expect([store.get().step, store.get().view]).toEqual(['board', 'editor']);
+  });
+
   it('opening a project file can be undone', () => {
     loadProject(newProject(T('rpi4')));
     edit((p) => { p.modules[0].board.name = 'Mine'; });

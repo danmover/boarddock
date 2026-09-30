@@ -9,7 +9,7 @@ import { generatePanel, moveAnim } from './panelgen';
 import { leadStub, moveFx, powerFx } from './boardviz';
 import { poweredBoards } from '../model/lights';
 import { inUse, portUses } from '../model/portuse';
-import { offRackTo, packGoes, plugRole } from '../model/links';
+import { offRackTo, packGoes, plugRole, shortName } from '../model/links';
 import { isPlugPack } from '../model/powerdata';
 import { dir as dirM, pt as ptM } from '../geom/mat';
 import { printability } from './export';
@@ -236,7 +236,11 @@ function generateLoose(p0: Project): GenResult {
     const ref = h.ref.replace(/:2$/, ''), m = mods.find((x) => x.id === h.module), c = m?.board.comps.find((x) => x.ref === ref);
     const l = (p.links ?? []).find((q) => [q.a, q.b].some((e) => e.module === h.module && e.ref === h.ref));
     const other = l ? (l.a.module === h.module && l.a.ref === h.ref ? l.b : l.a) : null, om = other && mods.find((x) => x.id === other.module); // (not findModule: your computer or a plug pack has no holder here, so the lead says where it goes)
-    const label = om ? `to the ${om.board.name} ${other!.ref.replace(/:2$/, '')}` : m && c ? offRackTo(m, c) : 'off the rack';
+    // a label only for a real lead: a cable in the app (the other holder, or off the rack), a lead you said goes there, a
+    // box's own supply or mains lead. A port that is only assumed to be in use (a lone board's USB) gets a stub, no words.
+    const why = m ? portUses(p, m).get(h.ref.replace(/:2$/, '')) : undefined;
+    const real = !!l || why === 'yours' || why === 'supply' || (!!m && !!c && plugRole(m, c) === 'mains-in');
+    const label = !real ? '' : om ? `→ ${shortName(om.board.name)}` : m && c ? offRackTo(m, c) : 'off the rack';
     ghosts.push(leadStub(`off-rack cable ${h.module}/${h.ref}`, h.p, h.d, h.cable, label, { kind: 'plug', module: h.module, refs: [ref] }, { seq: 1e6 + 90, dir: [0, 0, 1], dist: 0, grow: true }));
   }
 

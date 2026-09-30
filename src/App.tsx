@@ -4,6 +4,9 @@ import { generateProject } from './worker/client';
 import { AddBoardSheet } from './ui/AddBoard';
 import { ChecklistSheet } from './ui/Checklist';
 import { Viewer3D } from './ui/Viewer3D';
+import { BuildStatus } from './ui/BuildStatus';
+import { delta } from './model/built';
+import type { GenResult } from './model/types';
 import { BoardEditor, type Tool } from './ui/BoardEditor';
 import { StartStage } from './ui/Start';
 import { PanelEditor } from './ui/PanelEditor';
@@ -78,16 +81,30 @@ export function App() {
   const buildKey = useMemo(() => (project ? JSON.stringify({ ...project, name: undefined, wiring: undefined, built: undefined, ticks: undefined, oneNetLength: undefined, locks: undefined, receipts: undefined }) : ''), [project]);
   const latestProject = useRef(project);
   latestProject.current = project;
+  // the last few builds, by what they were built from: going back to a layout you had (Stand up, Lie flat, and back) or
+  // undoing shows it at once instead of building it again
+  const built = useRef(new Map<string, GenResult>());
   useEffect(() => {
     const project = latestProject.current;
     if (!project) return;
+    const hit = built.current.get(buildKey);
+    if (hit) {
+      built.current.delete(buildKey);
+      built.current.set(buildKey, hit);
+      store.set({ result: hit, building: false, error: null, buildNote: null });
+      return;
+    }
     store.set({ building: true });
     const t = setTimeout(async () => {
       try {
-        const r = await generateProject(project);
-        if (r) store.set({ result: r, building: false, error: null });
+        const r = await generateProject(project, (note) => store.set({ buildNote: note }));
+        if (r) {
+          built.current.set(buildKey, r);
+          while (built.current.size > 3) built.current.delete(built.current.keys().next().value!);
+          store.set({ result: r, building: false, error: null, buildNote: null });
+        }
       } catch (e: any) {
-        store.set({ building: false, error: e.message ?? String(e) });
+        store.set({ building: false, error: e.message ?? String(e), buildNote: null });
       }
     }, 120);
     return () => clearTimeout(t);
@@ -140,6 +157,12 @@ export function App() {
 
   // the print view's parts: one object per change, so the 3D view doesn't rebuild on every render of the app
   const shown = useMemo(() => (printParts && result ? { ...result, parts: printParts } : result), [printParts, result]);
+
+  // a built rack with things added since: what is new, for the 3D view's "Only what's new" steps
+  const onlyNew = useMemo(() => {
+    const b = project?.built, d = b && result && view === 'assembly' ? delta(project!, result) : null;
+    return d?.any ? { parts: d.parts, cables: new Set(d.cables.map((c) => c.id)), boards: new Set(project!.modules.filter((m) => !b!.boards.includes(m.id)).map((m) => m.id)) } : null;
+  }, [project?.built, result, view]);
 
   const panel = { import: <ImportPanel />, board: <BoardPanel />, plugs: <PlugsPanel />, holder: <HolderPanel />, mount: <MountPanel />, check: <CheckPanel />, export: <ExportPanel /> }[step];
   // one count everywhere (Start, the step bar, the stats and Check): failing checks, and what to look at
@@ -232,7 +255,7 @@ export function App() {
               <div className="tabs"><div className="seg">{views.map(([k, l]) => <button key={k} className={view === k ? 'on' : ''} onClick={() => store.set({ view: k })}>{l}</button>)}</div></div>
               {view === 'library' ? <StartStage /> : view === 'editor' ? <BoardEditor tool={tool} setTool={setTool} /> : view === 'wiring' ? <WiringView /> : view === 'panel' && project.layout === 'panel' ? <PanelEditor /> : (
                 <>
-                  <Viewer3D result={view === 'print' ? shown : result} mode={view === 'print' ? 'print' : 'assembly'} bed={project.printer.bed} spacing={project.printer.spacing} theme={theme} camera={cam} overhangs={view === 'print' && overhangs}
+                  <Viewer3D result={view === 'print' ? shown : result} mode={view === 'print' ? 'print' : 'assembly'} bed={project.printer.bed} spacing={project.printer.spacing} theme={theme} camera={cam} overhangs={view === 'print' && overhangs} only={onlyNew}
                     layers={layers} sel={sel} onPick={(it, add) => (it ? select([it], add ? 'toggle' : 'set') : !add && select([]))} label={(it) => describe(store.get().project!, it)} />
                   <div className="tools">
                     <div className="tgroup floating">
@@ -264,6 +287,7 @@ export function App() {
                   )}
                   {error && <div className="floating err" style={{ position: 'absolute', left: '50%', top: 60, transform: 'translateX(-50%)', zIndex: 7 }}>{error}</div>}
                   {building && <div className="buildbar" title="Building" />}
+                  <BuildStatus />
                 </>
               )}
             </>
@@ -312,6 +336,7 @@ function SelPanel({ items }: { items: SelItem[] }) {
           <button className="btn small ghost icon" onClick={() => select([])} title="Clear (Esc)"><Icon d={I.x} /></button>
         </div>
       </div>
+      {one && ds[0].d.note && <p className="hint selnote">{ds[0].d.note}</p>}
       {one && <MountQuick item={one} />}
       {!one && (
         <div className="picks">

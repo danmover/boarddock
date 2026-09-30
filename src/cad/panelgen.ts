@@ -32,6 +32,7 @@ import { capStress, pieceMesh, planStands, railI, standBoxes, STAND, type StandL
 import { assemble, bendRadius, bestRoute, escapes, hits, lead, ribbonRoute, segInBox, slope, type Box, type CableEnd, type Choice, type Hit, type Obstacle, type RibbonEnd, type Route } from './cableroute';
 import { settleCables } from './cablesim';
 import { isDebugPort, isProbe, isSmall, isUartPort, jumperToBuy, jumperWiring, ribbonOf, uartWiring } from '../model/probes';
+import { progress } from './progress';
 
 const SHOE_BOX = { x: [-LEN_X / 2, LEN_X / 2], y: [-29, 29], z: [0, 42.8] };
 
@@ -350,6 +351,7 @@ export function generatePanel(p: Project): GenResult {
   if (failed.length) warnings.push(...failed);
 
   // ---- positions along the rails ----
+  progress('Laying the rails out');
   const margin = 8, gap = P.gap;
   if (P.auto) {
     let row: Placed[] = [];
@@ -364,6 +366,17 @@ export function generatePanel(p: Project): GenResult {
       row.push(pl);
     }
     if (row.length) rows.push(row);
+    // with cables, every second rail is laid out the other way round (a snake): the last dock of one rail is beside the
+    // first of the next, so boards cabled across the break are not at opposite ends of two rails
+    if ((p.links ?? []).length && rows.length > 1) {
+      rows.forEach((rw, k) => {
+        if (k % 2 === 0) return;
+        const before = Math.max(...rows[k - 1].map((q) => q.mt.at! + q.hi));
+        const first = Math.min(...rw.map((q) => q.mt.at! + q.lo)), last = Math.max(...rw.map((q) => q.mt.at! + q.hi));
+        const shift = Math.max(0, before - last);
+        for (const q of rw) q.mt.at = first + last - (q.mt.at! + q.hi) - q.lo + shift;
+      });
+    }
     let prev: { x: number; y: number; ylo: number; yhi: number } | null = null;
     rows.forEach((rw, k) => {
       const ylo = Math.min(...rw.map((q) => q.ylo)), yhi = Math.max(...rw.map((q) => q.yhi));
@@ -689,6 +702,7 @@ export function generatePanel(p: Project): GenResult {
     freeAll();
   }
 
+  progress('Routing the cables');
   // ---- cables: out of each plug, down to a street between (or beside) the rails, along it, and up to the other
   // plug. On table stands the streets run under the rails' level, through a comb slot in every sleeper they cross;
   // each cable gets its own lane in its street.
@@ -1106,7 +1120,10 @@ export function generatePanel(p: Project): GenResult {
     const r = Math.max(1.1, e.cable / 2), far = e.p.map((v, j) => v + e.d[j] * 60);
     let clear = 60;
     for (const sd of solid) { if (sd.module === module) continue; const t = segInBox(e.p, far, sd.b, r); if (t) clear = Math.min(clear, t[0] * 60 - 1); }
-    ghosts.push(leadStub(`off-rack cable ${k}`, e.p, e.d, e.cable, m && c ? offRackTo(m, c) : 'off the rack', { kind: 'plug', module, refs: [baseRef(ref)] }, { seq: toWall(module, ref) ? WALL_SEQ : PLUG_SEQ, dir: [0, 0, 1], dist: 0, grow: true }, clear));
+    // (words only for a real lead: a cable in the app, a lead you said goes there, a box's supply or mains lead)
+    const why = m ? (uses.get(module) ?? portUses(p, m)).get(baseRef(ref)) : undefined;
+    const real = toOff.has(`${module}/${baseRef(ref)}`) || why === 'yours' || why === 'supply' || (!!m && !!c && plugRole(m, c) === 'mains-in');
+    ghosts.push(leadStub(`off-rack cable ${k}`, e.p, e.d, e.cable, !real ? '' : m && c ? offRackTo(m, c) : 'off the rack', { kind: 'plug', module, refs: [baseRef(ref)] }, { seq: toWall(module, ref) ? WALL_SEQ : PLUG_SEQ, dir: [0, 0, 1], dist: 0, grow: true }, clear));
   }
 
 
@@ -1157,6 +1174,7 @@ export function generatePanel(p: Project): GenResult {
     }
   }
 
+  progress('Checking it');
   // ---- checks ----
   const eR = mat.E / MATERIALS.PETG.E;
   const allow = mat.strainAllow;

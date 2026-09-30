@@ -153,6 +153,40 @@ describe('labels where off-rack leads go', () => {
     expect(keepApart(ls)).toEqual([false, true, false, true]);
     expect(keepApart([ls[0], ls[1]])).toEqual([true, true]);
   });
+
+  it('fade as the view goes out: all while the rack is whole in view, none once it is far off', async () => {
+    const { labelFade } = await import('../src/ui/liveFx');
+    expect(labelFade(3.5)).toBe(1);
+    expect(labelFade(5)).toBe(1);
+    expect(labelFade(6.5)).toBeCloseTo(0.5, 5);
+    expect(labelFade(8)).toBe(0);
+    expect(labelFade(20)).toBe(0);
+  });
+});
+
+describe('framing a box with the camera', () => {
+  it('backs off far enough for a long row seen from the front, in a wide and in a tall window', async () => {
+    const THREE = await import('three');
+    const { cornerDist } = await import('../src/ui/frame');
+    const row = new THREE.Box3(new THREE.Vector3(0, 0, 0), new THREE.Vector3(700, 60, 30));
+    for (const aspect of [1.7, 0.5]) {
+      const cam = new THREE.PerspectiveCamera(32, aspect);
+      const d = new THREE.Vector3(0, -1, 0.22).normalize();
+      const dist = cornerDist(cam, row, d, 1.3);
+      // put the camera there: all 8 corners land inside the picture
+      cam.up.set(0, 0, 1);
+      const ctr = row.getCenter(new THREE.Vector3());
+      cam.position.copy(ctr).addScaledVector(d, dist);
+      cam.lookAt(ctr);
+      cam.updateMatrixWorld(true);
+      cam.updateProjectionMatrix();
+      for (let i = 0; i < 8; i++) {
+        const q = new THREE.Vector3(i & 1 ? 700 : 0, i & 2 ? 60 : 0, i & 4 ? 30 : 0).project(cam);
+        expect(Math.abs(q.x)).toBeLessThan(1);
+        expect(Math.abs(q.y)).toBeLessThan(1);
+      }
+    }
+  });
 });
 
 describe("an empty port's protection", () => {
@@ -167,5 +201,14 @@ describe("an empty port's protection", () => {
     await act(async () => { tick.querySelector('input')!.click(); });
     const p1 = store.get().project!, c1 = p1.modules[0].board.comps.find((c) => c.id === dc.id)!;
     expect([c1.conn!.guard, c1.conn!.use, portUses(p1, p1.modules[0]).get(dc.ref)]).toEqual([true, 'yes', 'yours']);
+  });
+});
+
+describe('wording for the way in', () => {
+  it('says tap and press and hold on a touch screen, and leaves a mouse alone', async () => {
+    const { say } = await import('../src/ui/touch');
+    expect(say('Click a picture, or drop its files.', true)).toBe('Tap a picture, or drop its files.');
+    expect(say('click the first corner · double-click to close · the name shows on hover', true)).toBe('tap the first corner · double-tap to close · the name shows on press and hold');
+    expect(say('Click a picture', false)).toBe('Click a picture');
   });
 });

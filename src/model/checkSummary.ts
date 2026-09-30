@@ -35,6 +35,29 @@ export function summarizeChecks(p: Project | null, report: GenReport | null | un
   return { passing: checks.filter((c) => c.status === 'ok'), failing: checks.filter((c) => c.status === 'bad'), look, warnings, reminders, nLook: look.length + warnings.length };
 }
 
+/**
+ * A "to look at" item's verdict: "OK to print" when it is about using the rack (holding a holder while you plug in,
+ * cables touching, PLA's brittleness) and printing now wastes nothing; "worth a look" when it may change what you
+ * print or how the rack is laid out.
+ */
+const PRINT_OK = [/^Material$/, /^Tongue root/, /^Cables settled/, /^Cable routes/, /^Debug ribbons/];
+export const verdictOf = (name: string): 'OK to print' | 'worth a look' => (PRINT_OK.some((r) => r.test(name)) ? 'OK to print' : 'worth a look');
+
+/** Checks with the same name (a Tongue root line for each of ten boards) as one row: how many, which boards, the worst. */
+export interface CheckRow { c: Check; n: number; modules: string[] }
+export function collapseChecks(list: Check[]): CheckRow[] {
+  const rows = new Map<string, CheckRow>();
+  const num = (c: Check) => parseFloat(c.value) || 0;
+  for (const c of list) {
+    const r = rows.get(c.name);
+    if (!r) { rows.set(c.name, { c, n: 1, modules: c.module ? [c.module] : [] }); continue; }
+    r.n++;
+    if (c.module && !r.modules.includes(c.module)) r.modules.push(c.module);
+    if (num(c) > num(r.c)) r.c = c; // (the worst one speaks for the row)
+  }
+  return [...rows.values()];
+}
+
 /** Tick a board note off (or put it back): kept on the board, so it travels with the project file. */
 export function ackNote(p: Project, moduleIds: string[], note: string, done = true) {
   for (const m of p.modules) {
