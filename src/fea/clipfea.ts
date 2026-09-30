@@ -13,9 +13,12 @@ export interface ClipFeaCase {
   name: string;
   force: number; // N needed to reach the target
   target: string;
-  peakStrain: number; // max principal strain (fraction)
+  peakStrain: number; // max principal strain over the whole profile (fraction; includes the point loads' corners)
   p99Strain: number;
+  flexPeak: number; // peak over the flexures only (the jaw leaf, the holder hooks)
+  flexP99: number;
   lipMove: [number, number]; // du, dv of the lip retention face at the target
+  barMove: number; // how far the jaw bar moves (towards the travel stop) at the target
   notes: string[];
 }
 
@@ -27,9 +30,11 @@ export interface ClipFeaResult {
   lipAtStop: number;
   barMoveAtRelease: number;
   tongueMoveAtRelease: number;
+  /** Leaf strain with the jaw held by its travel stop (the stop is the full deflection: a yank goes no further). */
+  stopStrain: number;
 }
 
-export function clipFea(loops: Loop[], d: Dims, W: number, E: number, nu: number, h = 0.2, onProgress?: (s: string) => void): ClipFeaResult {
+export function clipFea(loops: Loop[], d: Dims, W: number, E: number, nu: number, h = 0.1, onProgress?: (s: string) => void): ClipFeaResult {
   const m = meshPolygons(loops, h);
   const { Ke, R } = q6Element(h, E, nu, W);
   const S = assemble2D(m, Ke);
@@ -40,6 +45,8 @@ export function clipFea(loops: Loop[], d: Dims, W: number, E: number, nu: number
   const bar = nearestNode(m, d.barEnd, d.barV[0]);
   const tongue = nearestNode(m, d.tongueU, -16.2);
   const cases: ClipFeaCase[] = [];
+  // the jaw leaf, with its root and tip fillets
+  const inLeaf = (ge: number) => { const x = m.x0 + ((ge % m.nx) + 0.5) * h, y = m.y0 + (Math.floor(ge / m.nx) + 0.5) * h; return x > d.leafU - 0.3 && x < d.leafU + Math.max(d.leafT, d.leafTop) + 1.8 && y > d.leafV[0] - 0.4 && y < d.leafV[1] + 1.9; };
 
   const run = (name: string, sel: (x: number, y: number) => boolean, dir: [number, number], targetDv: number, target: string) => {
     const f = new Float64Array(S.n);
@@ -52,18 +59,19 @@ export function clipFea(loops: Loop[], d: Dims, W: number, E: number, nu: number
     const k = targetDv / u[2 * lip + 1]; // scale to reach the lip travel
     const eps = elementStrain(m, u, R).map((e) => e * Math.abs(k));
     const sorted = Float64Array.from(eps).sort();
+    const fl = Float64Array.from(eps.filter((_, i) => inLeaf(m.elems[i]))).sort();
     let at = 0;
     eps.forEach((e, i) => { if (e > eps[at]) at = i; });
     const ge = m.elems[at];
     const where: [number, number] = [m.x0 + ((ge % m.nx) + 0.5) * h, m.y0 + (Math.floor(ge / m.nx) + 0.5) * h];
     cases.push({
-      name, force: Math.abs(k), target, peakStrain: sorted[sorted.length - 1], p99Strain: sorted[Math.floor(sorted.length * 0.99)],
-      lipMove: [u[2 * lip] * k, u[2 * lip + 1] * k], notes: [`peak at u=${where[0].toFixed(1)}, v=${where[1].toFixed(1)}`],
+      name, force: Math.abs(k), target, peakStrain: sorted[sorted.length - 1], p99Strain: sorted[Math.floor(sorted.length * 0.99)], flexPeak: fl[fl.length - 1] ?? 0, flexP99: fl[Math.floor(fl.length * 0.99)] ?? 0,
+      lipMove: [u[2 * lip] * k, u[2 * lip + 1] * k], barMove: u[2 * bar] * k, notes: [`peak at u=${where[0].toFixed(1)}, v=${where[1].toFixed(1)}`],
     });
     return { u: u.map((x) => x * k), eps };
   };
 
-  const lipTravel = -(d.eL + 0.45); // lip must drop past the flange edge with 0.45 mm to spare
+  const lipTravel = -d.travel; // lip must drop past the flange edge with 0.35 mm to spare
   const tgt = `lip moves ${(-lipTravel).toFixed(2)} mm down (engagement ${d.eL} mm)`;
   const rel = run('Release: pull tab down and forward (30 deg)', (x, y) => y < d.tabEnd + 0.01 && y > d.tabEnd - 3.2 && x > 9, [0.5, -0.866], lipTravel, tgt);
   const barMove = rel.u[2 * bar];
@@ -72,7 +80,7 @@ export function clipFea(loops: Loop[], d: Dims, W: number, E: number, nu: number
   run('Release: pull tab towards you', (x, y) => y < d.tabEnd + 0.01 && y > d.tabEnd - 3.2 && x > 9, [1, 0], lipTravel, tgt);
   run('Release: pull tab straight down (back of the grip)', (x, y) => y < d.tabEnd + 0.01 && y > d.tabEnd - 3.2 && x < 8, [0, -1], lipTravel, tgt);
   // snap-on: flange edge pushes on the lip ramp (normal of the ramp)
-  const a = [d.uL0, -17.7], b = [d.uL, d.lipTop];
+  const a = [d.uLL, -17.7], b = [d.uL, d.lipTop];
   const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
   const nrm: [number, number] = [(b[1] - a[1]) / L, -(b[0] - a[0]) / L];
   run('Snap-on: flange pushes the lip ramp', (x, y) => {
@@ -100,7 +108,7 @@ export function clipFea(loops: Loop[], d: Dims, W: number, E: number, nu: number
     const knock = (GRIP.pre + GRIP.stop) / GRIP.pre;
     cases.push({
       name: `Rail grip: pad pressed ${GRIP.pre} mm by the rail's top wall`, force: Fg, target: `holds the clip down on the top flange: it slides along the rail at about ${(2 * 0.3 * Fg).toFixed(1)} N (friction 0.3); ${kg.toFixed(0)} N per mm of pad travel; a knock that lifts the clip takes it to ${((sorted[sorted.length - 1] * knock) * 100).toFixed(2)}% before the tooth meets the wall`,
-      peakStrain: sorted[sorted.length - 1], p99Strain: sorted[Math.floor(sorted.length * 0.99)], lipMove: [0, 0], notes: [`${(kg * 0.2).toFixed(1)} to ${(kg * 0.5).toFixed(1)} N for 0.2 to 0.5 mm (print and rail tolerance)`],
+      peakStrain: sorted[sorted.length - 1], p99Strain: sorted[Math.floor(sorted.length * 0.99)], flexPeak: sorted[sorted.length - 1], flexP99: sorted[Math.floor(sorted.length * 0.99)], lipMove: [0, 0], barMove: 0, notes: [`${(kg * 0.2).toFixed(1)} to ${(kg * 0.5).toFixed(1)} N for 0.2 to 0.5 mm (print and rail tolerance)`],
     });
   }
   // strain field of the release case for display
@@ -113,5 +121,6 @@ export function clipFea(loops: Loop[], d: Dims, W: number, E: number, nu: number
     lipAtStop: (-lipTravel * (d.legU - d.barEnd)) / barMove,
     barMoveAtRelease: barMove,
     tongueMoveAtRelease: tongueMove,
+    stopStrain: cases[0].flexPeak * ((d.legU - d.barEnd) / barMove),
   };
 }

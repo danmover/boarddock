@@ -24,6 +24,7 @@ import { rectSection, roundSection, solveFrame, type FElem, type FNode } from '.
 import { bestClip, boardMass, designBow, FACE, HOLD_SHARE, holdNeed, holdOf, MU, onLayer, pushTarget, RAMP, sizeClip, SLIT, spanFor, tipFor, U_ARMS, U_FREE, foldOf, type BoardLoad, type BowDesign, type ClipSpec, type Leaf } from './grip';
 import { leafPlan } from './leafplan';
 import { progress } from './progress';
+import { taper } from '../fea/beamfea';
 
 const ID = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
@@ -528,6 +529,23 @@ interface CradleSpec { ref: string; mouth: V2; d: V2; sEdge: number; toOut: numb
 const CW = 1.8; // cradle side wall
 const GUARD_FLAT = 6; // widest flat roof over a guard collar's opening; wider ones get a gable
 const CC = 0.3; // plug clearance in the cradle
+/**
+ * A plug cap's legs: tapered beams (`root` thick where they leave the plate, `tip` at the hook), bending in the cap's
+ * profile, which prints flat: within the layers. The hook's tip stands `wall` off the cradle wall and reaches `e` mm
+ * under a ledge on it (an overhang of `ledge` = wall + e), so the catch is the hook's flat top and, at rest, nothing
+ * presses. Snapping on moves each leg out `e` + 0.05 mm, past the ledge's tip; the ledge is the widest of `ledges`
+ * that keeps the strain (the beam's, times `kt` for the fillet at the root and the hook: 2D FEA, 1.4) under `target`.
+ */
+export const CAP = { root: 1.5, tip: 0.9, wall: 0.1, gap: 0.15, ledges: [0.45, 0.4, 0.35, 0.3, 0.25], kt: 1.4, target: 0.0095, fillet: 1.2 };
+export function capLeg(L: number) {
+  let out = { ledge: 0, e: 0, move: 0, strain: 0 };
+  for (const ledge of CAP.ledges) {
+    const e = ledge - CAP.wall, move = e + 0.05;
+    out = { ledge, e, move, strain: taper(CAP.root, CAP.tip, L, move).peak * CAP.kt };
+    if (out.strain <= CAP.target) break;
+  }
+  return out;
+}
 
 /**
  * U-cradles outside the wall that carry the plug bodies. Neighbouring connectors on the same edge share walls and
@@ -599,8 +617,13 @@ function cradleGroup(C: Ctx, g: CradleSpec[], H: HolderSettings) {
   const withCap = g.some((sp) => sp.cap);
   const zFloorMin = Math.min(...m.map((k) => k.zf));
   const ledgeZ0 = Math.max(0.6, zFloorMin - 4.0 > 0.6 ? zFloorMin - 4.0 : zFloorMin - 1.5);
+  // the cap's legs reach from the plate over the plugs down to a ledge on each outer wall: their length sets how wide the ledge is
+  const plugTops = m.map((k) => k.sp.zAx + k.sp.ph / 2);
+  const zPlate = Math.max(...plugTops) + 0.2;
+  const zHook = ledgeZ0 - 0.05;
+  const legL = zPlate - zHook, leg = capLeg(legL);
   if (withCap) for (const [tw, sgn] of [[tL, -1], [tR, 1]] as [number, number][]) {
-    const pr = poly([[tw - sgn * 0.01, ledgeZ0], [tw + sgn * 0.7, ledgeZ0], [tw + sgn * 0.7, ledgeZ0 + 0.3], [tw - sgn * 0.01, ledgeZ0 + 1.0]], 'NonZero'); // 0.7: LEDGE below
+    const pr = poly([[tw - sgn * 0.01, ledgeZ0], [tw + sgn * leg.ledge, ledgeZ0], [tw + sgn * leg.ledge, ledgeZ0 + 0.3], [tw - sgn * 0.01, ledgeZ0 + 1.0]], 'NonZero');
     bodies.push(sweepTZ(o, d, pr, sc0, sc1));
   }
   C.late.push(unionMF(bodies).subtract(unionMF(cuts)));
@@ -613,26 +636,26 @@ function cradleGroup(C: Ctx, g: CradleSpec[], H: HolderSettings) {
   }
   if (!withCap) return;
   // one cap over the whole group: top plate, a pad pressing on each plug, legs with hooks at the two outer ends
-  // the legs stand just clear of the ledges' tips (LEDGE out from the cradle's walls); each hook reaches in under its
-  // ledge to just short of the wall, so it catches the ledge's full width less the clearances
-  const LEDGE = 0.7, legT = 1.1, top = 1.6, gp = LEDGE + 0.15, hook = gp - 0.1;
-  const plugTops = m.map((k) => k.sp.zAx + k.sp.ph / 2);
-  const zPlate = Math.max(...plugTops) + 0.2;
-  const zHook = ledgeZ0 - 0.05;
+  // the legs stand `gap` clear of the ledges' tips; each hook reaches in under its ledge to `wall` short of the cradle's wall
+  const { root, tip, top } = { ...CAP, top: 1.6 };
+  const hook = leg.ledge + CAP.gap - CAP.wall;
+  const gp = leg.ledge + CAP.gap;
   const xl = tL - gp, xr = tR + gp;
   let prof = poly([
-    [xl - legT, zHook - 1.4], [xl + hook, zHook - 0.6], [xl + hook, zHook], [xl, zHook], [xl, zPlate], [xr, zPlate], [xr, zHook], [xr - hook, zHook], [xr - hook, zHook - 0.6], [xr + legT, zHook - 1.4],
-    [xr + legT, zPlate + top - 0.6], [xr + legT - 0.6, zPlate + top], [xl - legT + 0.6, zPlate + top], [xl - legT, zPlate + top - 0.6],
+    [xl - tip, zHook - 1.4], [xl + hook, zHook - 0.6], [xl + hook, zHook], [xl, zHook], [xl, zPlate], [xr, zPlate], [xr, zHook], [xr - hook, zHook], [xr - hook, zHook - 0.6], [xr + tip, zHook - 1.4],
+    [xr + root, zPlate + top - 0.6], [xr + root - 0.6, zPlate + top], [xl - root + 0.6, zPlate + top], [xl - root, zPlate + top - 0.6],
   ], 'NonZero');
+  // (fillets where each leg meets the plate: the strain would pile up in a square corner)
+  const closed = prof.offset(CAP.fillet, 'Round').offset(-CAP.fillet, 'Round');
+  prof = unionCS([prof, closed.intersect(rect2(xl - 0.1, zPlate - 2.5, xl + 2.5, zPlate)), closed.intersect(rect2(xr - 2.5, zPlate - 2.5, xr + 0.1, zPlate))]);
   m.forEach((k, i) => { if (zPlate - plugTops[i] > 0.4) prof = prof.add(rect2(k.ti - k.halfIn + 0.4, plugTops[i] + 0.2, k.ti + k.halfIn - 0.4, zPlate + 0.01)); });
   const mesh = prof.extrude(capL);
   const at: V2 = add(o, d, sc0 + 0.3);
   const Tm = matFromBasis([t[0], t[1], 0], [0, 0, 1], [d[0], d[1], 0], [at[0], at[1], 0]);
-  const L = zPlate - zHook;
-  const eps = (3 * legT * (hook - (gp - LEDGE) + 0.05)) / (2 * L * L); // each leg springs out past its ledge's tip
+  const eps = leg.strain;
   const refs = g.map((sp) => sp.ref).join(' + ');
   C.parts.push(part(`cap_${C.parts.length}`, `Plug cap (${refs})`, mesh, Tm, '#f2c94c', 1, { kind: 'cap', module: C.mid, refs: g.map((sp) => sp.ref) }, { seq: 20 + (C.job.level ?? 0), dir: [0, 0, 1] }));
-  C.checks.push({ group: 'Plugs', name: `Cap legs (${refs})`, value: `${(eps * 100).toFixed(2)}% strain`, status: strainStatus(C, eps), detail: `${round(L, 1)} mm legs, ${round(hook, 2)} mm hooks under the cradle ledges; they flex within the layers` });
+  C.checks.push({ group: 'Plugs', name: `Cap legs (${refs})`, value: `${(eps * 100).toFixed(2)}% strain`, status: strainStatus(C, eps), detail: `${round(legL, 1)} mm legs, ${CAP.root} mm at the plate tapering to ${CAP.tip} mm, bending within the layers; each hook reaches ${round(leg.e, 2)} mm under a ${round(leg.ledge, 2)} mm ledge on the cradle and touches nothing at rest (a click, not a press); the strain is at the ${round(leg.move, 2)} mm they spring out to pass it` });
 }
 
 /** A strap loop's size: its slot takes a 12 mm strap (13 mm wide), 1.5 mm ends; 7 mm tall, or as low as 3.5 mm under a
