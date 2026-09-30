@@ -783,6 +783,18 @@ export function generatePanel(p: Project): GenResult {
       for (const id of ids) ownBox.set(id, u);
     }
 
+    // what a ribbon or jumper must never lie across, so that a holder always comes off: straight up from its board and holder
+    // (the release button on top of it, its tongue out of the socket and a hand to it), and a release lever with a finger's
+    // room above it (the ribbon's own boards and holders excepted where it leaves them)
+    const LIFT = 30, keep: Obstacle[] = [];
+    const ofBox = new Map<number[], string[]>();
+    for (const [module, b] of ownBox) (ofBox.get(b) ?? ofBox.set(b, []).get(b)!).push(module);
+    for (const [b, modules] of ofBox) keep.push({ box: [b[0], b[1], b[5], b[3], b[4], b[5] + LIFT], label: `the way the ${nameOf2(modules[0])} holder lifts off`, module: modules[0], modules });
+    for (const dl of display.filter((x) => x.id === 'dock_lever')) for (const T of [dl.toAssembly, ...(dl.instances ?? [])]) {
+      const b = emptyBox(); boxOf(dl.mesh.pos, T, b);
+      const u = uvBox(b);
+      keep.push({ box: [u[0] - 2, u[1] - 2, u[2], u[3] + 2, u[4] + 2, u[5] + 12], label: 'a release lever' });
+    }
     const routes: { l: NonNullable<Project['links']>[number]; A: CableEnd; B: CableEnd; ch: Choice; d: number; zc: number; free?: [number, number] }[] = [];
     const endsOf = (l: NonNullable<Project['links']>[number]) => {
       const EA = ends.get(`${l.a.module}/${l.a.ref}`), EB = ends.get(`${l.b.module}/${l.b.ref}`);
@@ -807,7 +819,7 @@ export function generatePanel(p: Project): GenResult {
     for (const { l, e } of dbg) {
       const { EA, EB, A, B } = e!;
       const jump = l.kind === 'jumper', rw = jump ? Math.max(1, l.wires?.length ?? 1) * 1.6 : Math.min(ribbonWidth(l.a), ribbonWidth(l.b));
-      const ch = ribbonRoute(ribbonEnd(EA, A, jump), ribbonEnd(EB, B, jump), jump ? 1.6 : 0.9, rw, obs, [...rising, ...laid], ownBox.get(l.a.module) ?? null, ownBox.get(l.b.module) ?? null);
+      const ch = ribbonRoute(ribbonEnd(EA, A, jump), ribbonEnd(EB, B, jump), jump ? 1.6 : 0.9, rw, obs, [...rising, ...laid], ownBox.get(l.a.module) ?? null, ownBox.get(l.b.module) ?? null, keep);
       routes.push({ l, A, B, ch, d: jump ? 1.6 : 1.8, zc: 0, free: ch.free });
       ch.route.pts.forEach((q, i) => {
         if (!i) return;
@@ -818,8 +830,10 @@ export function generatePanel(p: Project): GenResult {
           const a = o.map((v, j) => v + ((q[j] - v) * k) / n), b = o.map((v, j) => v + ((q[j] - v) * (k + 1)) / n);
           const bx: Box = [Math.min(a[0], b[0]) - h, Math.min(a[1], b[1]) - h, Math.min(a[2], b[2]) - 0.5, Math.max(a[0], b[0]) + h, Math.max(a[1], b[1]) + h, Math.max(a[2], b[2]) + 0.5];
           laid.push(bx);
-          // where it crosses between the boards it is in the way of other cables (lying on a board, a cable just drapes over it)
-          if (ch.route.kinds[i - 1] === 'escape') obs.push({ box: bx, label: jump ? 'jumper wires' : 'a debug ribbon', plug: A.plug });
+          // where it crosses between the boards, or runs a long way along one, it is in the way of other cables (a short leg
+          // lying on its own board, a cable just drapes over it)
+          const across = ch.route.kinds[i - 1] === 'escape';
+          if (across || Math.hypot(q[0] - o[0], q[1] - o[1], q[2] - o[2]) > 25) obs.push({ box: bx, label: jump ? 'jumper wires' : 'a debug ribbon', plug: A.plug, ...(across ? {} : { ribbonOnly: true }) });
         }
       });
     }
@@ -909,7 +923,7 @@ export function generatePanel(p: Project): GenResult {
         const own = new Set([A.plug, B.plug]), mods = new Set([l.a.module, l.b.module]), rr = d / 2 - 0.1;
         const clear = (arc: number[][]) => arc.every((c) => !obs.some((ob) => /^rail /.test(ob.label) && !(ob.plug && own.has(ob.plug)) && !(ob.module && mods.has(ob.module))
           && c[0] > ob.box[0] - rr && c[0] < ob.box[3] + rr && c[1] > ob.box[1] - rr && c[1] < ob.box[4] + rr && c[2] > ob.box[2] - rr && c[2] < ob.box[5] + rr));
-        return { route, vl, hit: hits(route, obs, [A, B], d / 2), path: filletPath(route.pts, bendR(q), flat(l) || l.kind === 'jumper' ? undefined : clear) };
+        return { route, vl, hit: hits(route, l.kind === 'jumper' ? obs.filter((o) => !o.ribbonOnly) : obs, [A, B], d / 2), path: filletPath(route.pts, bendR(q), flat(l) || l.kind === 'jumper' ? undefined : clear) };
       });
     };
     // each cable's comb lane: where it runs straight along its street (it has bent away by a bend's radius before the

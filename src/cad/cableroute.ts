@@ -13,6 +13,8 @@ export interface Obstacle {
   box: Box;
   label: string;
   module?: string; // the board it belongs to
+  modules?: string[]; // (a stack lifts off as one: all its boards)
+  ribbonOnly?: boolean; // a ribbon's long run along a board: in the way of other ribbons (which nest outside it), not of jumper wires
   plug?: string; // "module/ref" when it is a plug
   stand?: boolean; // table stand piece: streets run through their combs
   solid?: boolean; // a rail or stand piece: fills its box (the settled cable may not brush it; the router still allows the usual slack along a stand)
@@ -202,11 +204,17 @@ const JOGS = [6, 12];
  * square to the socket's long side, and lies along its board. Then either it loops over the top from one board to
  * the other, high enough to clear everything between them and whatever is in `above` (earlier ribbons, cables rising
  * from plugs) so ribbons nest rather than cross; or it folds along its board and goes round one end of the two
- * (`ownA`, `ownB`: their envelopes), at the height of the sockets, outside the ribbons already there. The shortest
- * that hits nothing wins.
+ * (`ownA`, `ownB`: their envelopes), at the height of the sockets, outside the ribbons already there. Beside the dock
+ * (round the end) wins where it hits nothing and costs under 40 mm or 25 % more than going over; the shortest that
+ * hits nothing wins otherwise.
  */
-export function ribbonRoute(A: RibbonEnd, B: RibbonEnd, t: number, rw: number, obs: Obstacle[], above: Box[] = [], ownA: Box | null = null, ownB: Box | null = null): RibbonChoice {
+export function ribbonRoute(A: RibbonEnd, B: RibbonEnd, t: number, rw: number, obs0: Obstacle[], above: Box[] = [], ownA: Box | null = null, ownB: Box | null = null, keep: Obstacle[] = []): RibbonChoice {
   const R = 7;
+  // (`keep`: what a ribbon must not lie across even though nothing stands there: the way another board's holder lifts
+  // off, the room over a release lever. They count like obstacles, and over the top the ribbon rises clear of them)
+  // (its own boards lift off with it, as do the ones stacked with them: it is unplugged first)
+  const others = keep.filter((k) => !k.module || !(k.modules ?? [k.module]).some((m) => m === A.module || m === B.module));
+  const obs = [...obs0.filter((o) => !(o.ribbonOnly && A.straight)), ...others];
   // leave the socket flat along x (the way `pref` points where it can, else up, else towards the other end)
   const lay = (e: RibbonEnd, other: number[], pref: number[] | null) => {
     // jumper wires leave their housings straight out, then bend
@@ -243,6 +251,7 @@ export function ribbonRoute(A: RibbonEnd, B: RibbonEnd, t: number, rw: number, o
       cands.push({ pts: [...pa, ...pb], iA: pa.length - 1, iB: pa.length });
     }
   }
+  const nOver = cands.length - 1; // (the last of these, index nOver, is the last one over the top; the rest go round)
   // round either end, a ribbon's width further out for each try (outside the ones already there)
   if (ownA && ownB) for (const sg of [1, -1]) for (let k = 0; k < 3; k++) {
     const a = lay(A, B.p, [sg, 0, 0]), b = lay(B, A.p, [sg, 0, 0]);
@@ -253,10 +262,10 @@ export function ribbonRoute(A: RibbonEnd, B: RibbonEnd, t: number, rw: number, o
     const pa = [a.S, a.E, fa, [uS, fa[1], fa[2]]], pb = [[uS, fb[1], fb[2]], fb, b.E, b.S];
     cands.push({ pts: [...pa, ...pb], iA: pa.length - 1, iB: pa.length });
   }
-  let best: RibbonChoice | null = null;
+  let bestOver: RibbonChoice | null = null, bestRound: RibbonChoice | null = null;
   // (whether a leg runs straight out of a plug, or straight into it)
   const outOf = (p: number[], q: number[], d: number[]) => { const v = [q[0] - p[0], q[1] - p[1], q[2] - p[2]], L = Math.hypot(v[0], v[1], v[2]); return L < 1e-6 || (v[0] * d[0] + v[1] * d[1] + v[2] * d[2]) / L > 0.99; };
-  for (const { pts, iA, iB } of cands) {
+  for (const [c, { pts, iA, iB }] of cands.entries()) {
     // along each board it may touch its own holder (it lies on it); between them it has to clear everything
     const kinds = pts.slice(1).map((_, i) => (i < iA || i >= iB ? 'exit' : 'escape') as SegKind);
     const route: Route = { pts, kinds };
@@ -265,11 +274,20 @@ export function ribbonRoute(A: RibbonEnd, B: RibbonEnd, t: number, rw: number, o
     const strict = kinds.map((k, i) => (k === 'escape' || (i < iA ? !A.straight || outOf(pts[i], pts[i + 1], A.d) : !B.straight || outOf(pts[i + 1], pts[i], B.d)) ? k : 'escape'));
     const len = routeLength(route), h = hits({ pts, kinds: strict }, obs, [A, B], 1.2);
     const score = len + h.length * 300 + h.reduce((q, x2) => q + x2.depth, 0) * 4;
-    if (best && score >= best.score) continue;
+    const round = c > nOver;
+    if (round ? bestRound && score >= bestRound.score : bestOver && score >= bestOver.score) continue;
     const lenTo = (k: number) => pts.slice(1, k + 1).reduce((q, p2, i) => q + dist(p2, pts[i]), 0);
-    best = { route, street: -1, hits: h, len, score, ea: route, eb: route, direct: true, free: [lenTo(iA) - R, lenTo(iB) + R] };
+    const pick: RibbonChoice = { route, street: -1, hits: h, len, score, ea: route, eb: route, direct: true, free: [lenTo(iA) - R, lenTo(iB) + R] };
+    if (round) bestRound = pick; else bestOver = pick;
   }
-  return best!;
+  const over = bestOver as RibbonChoice | null, beside = bestRound as RibbonChoice | null;
+  if (over && beside) {
+    // beside the dock where that costs little and hits nothing (for narrow ribbons and wires: a wide ribbon's way round
+    // is the shortest that hits nothing, as before), else over it, high enough
+    if (rw <= 7 && !beside.hits.length && (over.hits.length || beside.len - over.len <= Math.max(40, 0.25 * over.len))) return beside;
+    return beside.score < over.score ? beside : over;
+  }
+  return (over ?? beside)!;
 }
 
 interface Run { n: number; i: number; head: boolean; u: number; vc: number; vl: number; r: number; x: number }
