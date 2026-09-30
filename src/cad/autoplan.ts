@@ -170,8 +170,11 @@ interface State { units: number[][]; brk: boolean[]; sel: number[] }
 /** What a layout comes to, by the planner's own measures (for the tests and `lastPlan`). */
 export interface Detail { rows: number[]; order: number[]; lens: number[]; reach: number; hot: number; hotRow: number; mains: number; alike: number; docks: number; railLen: number; blocked: number }
 
-export interface PlanStats { cost: number; classic: number; evals: number; ms: number; defs: number; candidates: number; detail: Detail }
+/** `cable` and `classicCable`: the estimated mm of cable of the best layout and of the classic order (arrange.ts asks the real router when the gain is thin). */
+export interface PlanStats { cost: number; classic: number; cable: number; classicCable: number; evals: number; ms: number; defs: number; candidates: number; detail: Detail }
 export let lastPlan: PlanStats | null = null;
+const newDetail = (): Detail => ({ rows: [], order: [], lens: [], reach: 0, hot: 0, hotRow: 0, mains: 0, alike: 0, docks: 0, railLen: 0, blocked: 0 });
+const sumLens = (d: Detail) => d.lens.reduce((a, v) => a + v, 0);
 
 const MARGIN = 8, PAD = 3; // (panelgen's margin at a rail's ends, and a little slack on every width against the real holders' extra bulk)
 const KEEP_APART = 45; // (mm between two boards whose cable ran into something)
@@ -677,7 +680,8 @@ export function planCandidates(p: Project, classic: RailMount[], count = 2): Pla
   const nD = model.defs.length;
   // room to grow: leave this many docks' width free at the end of each rail
   if (model.W.spare) model.reserve = model.W.spare * (model.defs.reduce((a, d) => a + d.opts[0].u1 - d.opts[0].u0 + PAD + p.panel.gap, 0) / Math.max(1, nD));
-  const c0 = model.evaluate(start);
+  const d0 = newDetail();
+  const c0 = model.evaluate(start, d0);
   // (the same random moves whatever the options, so two runs that differ by an option differ by its weight and not by luck; not `pick` either: the best and the next best of one search)
   const rnd = mulberry(hash(`${p.modules.map((m) => m.board.name).join('|')}#${nLinks(p)}${(o.avoid ?? []).join(';')}${p.panel.maxRail}`));
   const iters = Math.min(9000, 1500 + 420 * nD);
@@ -697,13 +701,13 @@ export function planCandidates(p: Project, classic: RailMount[], count = 2): Pla
     out.push({ ...emit(model, f.s, classic), cost: f.cost });
     if (out.length >= count) break;
   }
-  lastPlan = { cost: out[0].cost, classic: c0, evals: model.evals, ms: Date.now() - t0, defs: nD, candidates: out.length, detail: out[0].detail };
+  lastPlan = { cost: out[0].cost, classic: c0, cable: sumLens(out[0].detail), classicCable: sumLens(d0), evals: model.evals, ms: Date.now() - t0, defs: nD, candidates: out.length, detail: out[0].detail };
   return out;
 }
 
 /** A state as mounts in order, each with its turn and edges and the row it is on. */
 function emit(m: Model, s: State, classic: RailMount[]): { mounts: RailMount[]; detail: Detail } {
-  const det: Detail = { rows: [], order: [], lens: [], reach: 0, hot: 0, hotRow: 0, mains: 0, alike: 0, docks: 0, railLen: 0, blocked: 0 };
+  const det = newDetail();
   m.evaluate(s, det);
   void classic;
   return { detail: det, mounts: det.order.map((d, k) => {
@@ -714,7 +718,7 @@ function emit(m: Model, s: State, classic: RailMount[]): { mounts: RailMount[]; 
 
 /** The layout Auto-arrange uses: the planner's pick (`opts.pick` of its best few), never one it scores worse than the classic order. */
 export function planAuto(p: Project, classic: RailMount[]): RailMount[] {
-  if (!classic.length) return classic;
+  if (!classic.length) { lastPlan = null; return classic; }
   const c = planCandidates(p, classic, 2);
   return c[Math.min(p.panel.opts?.pick ?? 0, c.length - 1)].mounts;
 }

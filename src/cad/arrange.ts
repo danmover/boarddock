@@ -3,16 +3,20 @@
 // overlapping, a plug blocked, a failing Check) or its cables lie inside something (measured exactly, overlap.ts: the
 // router lets a cable brush a box), tries the planner's next best, plans again keeping the boards whose cable ran into
 // something apart, and last builds the classic order. The build with least trouble, then least overlap, wins. `deep` (a
-// click on Auto-arrange): builds them all and takes the cheapest of the real ones, cables and all. What was chosen is
+// click on Auto-arrange), and any rack where the planner's estimated gain over the classic order is thin (the estimate is
+// 5 to 10 per cent out): builds them all and takes the cheapest of the real ones, cables and all. What was chosen is
 // remembered for the same rack, so an edit that doesn't change the layout doesn't build (or measure) again.
 import type { ArrangeOpts, GenResult, Project } from '../model/types';
 import { baseRef } from '../model/links';
 import { generatePanel } from './panelgen';
 import { cableOverlap } from './overlap';
+import { lastPlan } from './autoplan';
 
 export interface Trial { how: Choice; result: GenResult; trouble: number; overlap: number; cost: number }
 /** Cables may lie this far inside things (mm³ in all) before another layout is tried: a brush of the router's own tolerance. */
 export const OVERLAP_OK = 1;
+/** The planner's estimate of its cable, as a share of the classic order's, above which the real router is asked about both (the estimate is 5 to 10 per cent out on a rack). */
+export const THIN = 0.85;
 type Choice = { plan: 'classic' } | { pick: number; avoid: string[] };
 
 /** What is wrong with a build: cables touching things, docks overlapping, plugs in use that are blocked, failing Checks. */
@@ -48,6 +52,7 @@ const chosen = new Map<string, Choice>();
 
 /** Build the panel, confirming the automatic layout. Everything but an automatic layout is one build. */
 export function generateChecked(p: Project, deep = false): GenResult {
+  let full = deep;
   const o = p.panel.opts;
   if (!p.panel.auto || o?.plan === 'classic' || o?.pick != null) return generatePanel(p);
   const sig = signature(p), known = chosen.get(sig);
@@ -64,18 +69,21 @@ export function generateChecked(p: Project, deep = false): GenResult {
   // whose cable ran into something kept apart (twice over); and last the classic order
   let avoid: string[] = [];
   let ok = clean(add({ pick: 0, avoid }));
+  // a thin estimated gain over the classic order (under THIN of the cable) is within what the estimate can miss: build them
+  // all, as for a click, and take the cheapest of the real ones
+  full = full || (!!lastPlan && lastPlan.classicCable > 0 && lastPlan.cable > THIN * lastPlan.classicCable);
   if (!ok) ok = clean(add({ pick: 1, avoid }));
   for (let round = 0; !ok && round < 2; round++) {
     avoid = [...new Set([...avoid, ...trials.flatMap((t) => clashing(t.result))])];
     if (!avoid.length) break;
     ok = clean(add({ pick: 0, avoid }));
   }
-  if (deep && trials.length === 1) add({ pick: 1, avoid });
-  if (!ok || deep) add({ plan: 'classic' });
+  if (full && trials.length === 1) add({ pick: 1, avoid });
+  if (!ok || full) add({ plan: 'classic' });
   // (least trouble, then least overlap, then, when asked, the real cost; the planner's own order when about equal)
   const key = (t: Trial) => t.trouble * 1000 + t.overlap;
   let best = trials[0];
-  for (const t of trials.slice(1)) if (key(t) < key(best) - 0.5 || (deep && Math.abs(key(t) - key(best)) <= 0.5 && t.cost < best.cost)) best = t;
+  for (const t of trials.slice(1)) if (key(t) < key(best) - 0.5 || (full && Math.abs(key(t) - key(best)) <= 0.5 && t.cost < best.cost)) best = t;
   chosen.set(sig, best.how);
   if (chosen.size > 24) chosen.delete(chosen.keys().next().value!);
   return best.result;
